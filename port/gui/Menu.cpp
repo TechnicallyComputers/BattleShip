@@ -88,7 +88,6 @@ void EnsureMenuFontsLoaded() {
 }
 
 ImFont* GetMenuFont(const std::string& name) {
-    EnsureMenuFontsLoaded();
     if (gMenuFonts.contains(name)) {
         return gMenuFonts.at(name);
     }
@@ -200,6 +199,7 @@ Menu::Menu(const std::string& cVar, const std::string& name, uint8_t searchSideb
 }
 
 void Menu::InitElement() {
+    EnsureMenuFontsLoaded();
     popped = CVarGetInteger(CVAR_SETTING("Menu.Popout"), 0);
     poppedSize.x = CVarGetInteger(CVAR_SETTING("Menu.PoppedWidth"), 1280);
     poppedSize.y = CVarGetInteger(CVAR_SETTING("Menu.PoppedHeight"), 800);
@@ -644,7 +644,10 @@ void Menu::DrawElement() {
     ImFont* standardLargest = GetMenuFont("MenuStandard");
     ImFont* standardSmall = GetMenuFont("MenuStandardSmall");
     if (standardLargest == nullptr) {
-        return;
+        standardLargest = ImGui::GetFont();
+    }
+    if (standardSmall == nullptr) {
+        standardSmall = standardLargest;
     }
     for (auto& [reason, info] : disabledMap) {
         info.active = info.evaluation(info);

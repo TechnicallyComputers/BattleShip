@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
 
 project(ssb64 LANGUAGES C CXX)
 
+include(ExternalProject)
+
 # Pulled-in BEFORE the libultraship subdirectory so its
 # find_package(tinyxml2) sees our pkg-config-fallback shim. Required
 # for Ubuntu 22.04 jammy, where libtinyxml2-dev ships no CMake config.

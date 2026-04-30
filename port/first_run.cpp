@@ -10,18 +10,14 @@
 #include <SDL2/SDL.h>
 #include <imgui.h>
 
-#include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <future>
 #include <string>
-#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -63,63 +59,22 @@ std::string RealAppBundlePath() {
     return Ship::Context::GetAppBundlePath();
 }
 
-// Locate the torch binary. Tries (in priority order):
-//   1. Next to ssb64 binary (shipped layout — Win/Linux: same dir; macOS:
-//      Contents/MacOS/torch).
-//   2. macOS Resources dir (Contents/Resources/torch).
-//   3. Dev build location (build/TorchExternal/src/TorchExternal-build/torch).
-//   4. PATH lookup via the bare name (last-resort).
-std::string FindTorchBinary() {
-    const std::string app = RealAppBundlePath();
-    std::vector<std::string> candidates = {
-        app + "/torch",
-        app + "/torch.exe",
-#ifdef __APPLE__
-        // macOS bundle: GetAppBundlePath returns .app/Contents/Resources;
-        // the sidecar torch binary lives in .app/Contents/MacOS alongside
-        // the main executable per Apple convention.
-        app + "/../MacOS/torch",
-#endif
-        // dev: when ssb64 binary lives in <build>/, sibling dir holds torch
-        app + "/TorchExternal/src/TorchExternal-build/torch",
-        app + "/TorchExternal/src/TorchExternal-build/Release/torch.exe",
-        app + "/TorchExternal/src/TorchExternal-build/Debug/torch.exe",
-    };
-    auto hit = FindExisting(candidates);
-    if (!hit.empty()) return hit;
+std::string TryOpenLogPath(const fs::path& candidate) {
+    if (candidate.empty()) {
+        return {};
+    }
 
     std::error_code ec;
-    const fs::path path(candidate);
-    if (path.has_parent_path()) {
-        fs::create_directories(path.parent_path(), ec);
+    if (candidate.has_parent_path()) {
+        fs::create_directories(candidate.parent_path(), ec);
     }
 
     std::ofstream out(candidate, std::ios::app);
     if (!out) {
         return {};
     }
-    return candidate;
-}
 
-// Locate the directory that contains config.yml (the torch project config —
-// enumerates all yamls/us/*.yml extraction recipes). Torch must be invoked
-// with this directory as cwd.
-std::string FindTorchConfigDir() {
-    const std::string app = RealAppBundlePath();
-    std::vector<std::string> candidates = {
-        app,                                  // macOS Resources, Windows exe-dir
-        app + "/../share/BattleShip",         // Linux AppImage usr/bin → usr/share/BattleShip;
-                                              // /usr install bin → share/BattleShip
-        app + "/..",                          // dev: build/ssb64 → project root
-        ".",                                  // last-ditch cwd
-    };
-    for (const auto& dir : candidates) {
-        if (fs::exists(dir + "/config.yml") && fs::exists(dir + "/yamls/us")) {
-            return dir;
-        }
-    }
-
-    return {};
+    return candidate.string();
 }
 
 void AppendLogLine(const std::string& logPath, const std::string& line) {
@@ -153,13 +108,32 @@ std::string QuoteCommandArg(const std::string& arg) {
     return quoted;
 }
 
+std::string ResolveLogPath(const std::string& preferredLogPath, const std::string& sourceDir,
+                           const std::string& destinationDir) {
+    const std::vector<fs::path> candidates = {
+        fs::path(preferredLogPath),
+        fs::path(destinationDir) / "logs" / "asset-extract.log",
+        fs::path(sourceDir) / "logs" / "asset-extract.log",
+        fs::current_path() / "logs" / "asset-extract.log",
+    };
+
+    for (const auto& candidate : candidates) {
+        const std::string resolved = TryOpenLogPath(candidate);
+        if (!resolved.empty()) {
+            return resolved;
+        }
+    }
+
+    return {};
+}
+
 std::string FindTorchExecutable() {
     std::vector<std::string> candidates;
     for (const auto& base : {
-             Ship::Context::GetAppBundlePath(),
+             RealAppBundlePath(),
              Ship::Context::GetAppDirectoryPath(),
              std::string("."),
-             Ship::Context::GetAppBundlePath() + "/..",
+             RealAppBundlePath() + "/..",
          }) {
 #ifdef _WIN32
         candidates.push_back(base + "/torch.exe");
@@ -246,12 +220,11 @@ bool RunTorchCommand(const std::string& commandLine, const std::string& workingD
 // config plus yamls/us/*.yml recipes used by standalone Torch.
 std::string FindAssetConfigDir() {
     std::vector<fs::path> roots = {
-        fs::path(Ship::Context::GetAppBundlePath()),
+        fs::path(RealAppBundlePath()),
         fs::current_path(),
     };
 
     for (const auto& root : roots) {
-        std::error_code ec;
         fs::path dir = root;
         while (!dir.empty()) {
             if (fs::exists(dir / "config.yml") && fs::exists(dir / "yamls" / "us")) {
@@ -269,10 +242,6 @@ std::string FindAssetConfigDir() {
     return {};
 }
 
-// Locate a ROM file. Searches in priority order:
-//   1. App data dir   — where the user is told to drop their ROM.
-//   2. Bundle dir     — sometimes shipped together for testing.
-//   3. cwd / project  — dev workflow.
 std::string FindBaseRom() {
     const std::string appData = Ship::Context::GetAppDirectoryPath();
     const std::string bundle = RealAppBundlePath();
@@ -282,20 +251,50 @@ std::string FindBaseRom() {
             candidates.push_back(base + "/baserom.us." + ext);
         }
     }
-    return FindExisting(candidates);
+
+    const std::string found = FindExisting(candidates);
+    if (found.empty()) {
+        return {};
+    }
+
+    std::error_code ec;
+    const fs::path absolute = fs::absolute(fs::path(found), ec);
+    if (!ec) {
+        return absolute.string();
+    }
+
+    return found;
+}
+
+void DrawWizardFrame(const std::function<void()>& drawContents) {
+    auto context = Ship::Context::GetInstance();
+    auto window = context->GetWindow();
+    auto gui = window->GetGui();
+
+    window->HandleEvents();
+    gui->StartDraw();
+    window->StartFrame();
+    drawContents();
+    window->RunGuiOnly();
+    gui->EndDraw();
+    window->EndFrame();
 }
 
 } // namespace
 
-ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool silent) {
-    if (fs::exists(target_o2r_path)) {
-        return { true, target_o2r_path, {}, {} };
+ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool silent,
+                                       const std::string& romOverridePath) {
+    std::error_code ec;
+    const fs::path absoluteTargetPath = fs::absolute(fs::path(target_o2r_path), ec);
+    const fs::path targetPath = ec ? fs::path(target_o2r_path) : absoluteTargetPath;
+    if (fs::exists(targetPath)) {
+        return { true, targetPath.string(), {}, {} };
     }
 
     port_log("first_run: %s missing — running asset extraction\n",
              target_o2r_path.c_str());
 
-    const std::string rom = FindBaseRom();
+    std::string rom = romOverridePath.empty() ? FindBaseRom() : romOverridePath;
     if (rom.empty()) {
         const std::string appData = Ship::Context::GetAppDirectoryPath();
         port_log("first_run: ERROR no ROM found.\n"
@@ -311,6 +310,12 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
         }
         return { false, {}, "ROM not found", {} };
     }
+
+    ec.clear();
+    const fs::path absoluteRomPath = fs::absolute(fs::path(rom), ec);
+    if (!ec) {
+        rom = absoluteRomPath.string();
+    }
     port_log("first_run: using ROM %s\n", rom.c_str());
 
     const std::string cfgDir = FindAssetConfigDir();
@@ -320,84 +325,54 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     }
     port_log("first_run: asset config dir -> %s\n", cfgDir.c_str());
 
-    // Stage a writable copy of config.yml + yamls/ in the app-data dir
-    // and run torch from there. The bundled config dir is read-only in
-    // every shipped layout (AppImage squashfs, macOS .app/Contents/...,
-    // /usr/local install). Torch reads config from cwd and writes
-    // BattleShip.o2r + a version file + side-artifact dirs (src/assets,
-    // include/assets, modding) into cwd. On a read-only cwd those
-    // writes fail mid-pipeline, but torch reports a successful exit
-    // anyway — surfaces as "torch reported success but BattleShip.o2r
-    // is missing." Staging into the app-data dir gives torch a
-    // writable scratch space and lands BattleShip.o2r right next to
-    // the target path so we can rename within the same filesystem.
-    fs::create_directories(fs::path(target_o2r_path).parent_path());
-    const fs::path workDir =
-        fs::path(target_o2r_path).parent_path() / "torch-work";
-    std::error_code ec;
+    const std::string torchExe = FindTorchExecutable();
+    if (torchExe.empty()) {
+        port_log("first_run: ERROR could not locate torch executable\n");
+        return { false, {}, "Could not locate torch executable", {} };
+    }
+    port_log("first_run: torch executable -> %s\n", torchExe.c_str());
+
+    fs::create_directories(targetPath.parent_path());
+    const fs::path workDir = fs::absolute(targetPath.parent_path() / "torch-work");
     fs::remove_all(workDir, ec);
     ec.clear();
     fs::create_directories(workDir, ec);
     if (ec) {
-        port_log("first_run: ERROR could not create %s: %s\n",
-                 workDir.string().c_str(), ec.message().c_str());
-        return false;
+        port_log("first_run: ERROR could not create %s: %s\n", workDir.string().c_str(), ec.message().c_str());
+        return { false, {}, "Could not create torch work directory: " + ec.message(), {} };
     }
     fs::copy_file(fs::path(cfgDir) / "config.yml",
                   workDir / "config.yml",
                   fs::copy_options::overwrite_existing, ec);
     if (ec) {
-        port_log("first_run: ERROR could not stage config.yml: %s\n",
-                 ec.message().c_str());
-        return false;
+        port_log("first_run: ERROR could not stage config.yml: %s\n", ec.message().c_str());
+        return { false, {}, "Could not stage config.yml: " + ec.message(), {} };
     }
+
     fs::copy(fs::path(cfgDir) / "yamls", workDir / "yamls",
              fs::copy_options::recursive |
                  fs::copy_options::overwrite_existing,
              ec);
     if (ec) {
-        port_log("first_run: ERROR could not stage yamls/: %s\n",
-                 ec.message().c_str());
-        return false;
+        port_log("first_run: ERROR could not stage yamls/: %s\n", ec.message().c_str());
+        return { false, {}, "Could not stage yamls/: " + ec.message(), {} };
     }
     const std::string runDir = workDir.string();
     port_log("first_run: torch work dir -> %s\n", runDir.c_str());
 
-    // Compose: cd "<runDir>" && "<torch>" o2r "<rom>"
-    //
-    // Append the ssb64.log path to the child's stdio. Our parent process
-    // has spdlog and assorted file descriptors open; if the child writes
-    // to a closed/redirected stdout it can be killed by SIGPIPE (status
-    // 141). Routing both streams to ssb64.log keeps the extraction trace
-    // diagnosable and isolates us from stdio inheritance quirks.
-    const std::string logPath = Ship::Context::GetPathRelativeToAppDirectory(
-        "logs/torch-extract.log");
-    fs::create_directories(fs::path(logPath).parent_path());
-    std::string cmd;
-#ifdef _WIN32
-    cmd = "cmd /C \"cd /D " + ShellQuote(runDir) + " && " +
-          ShellQuote(torch) + " o2r " + ShellQuote(rom) +
-          " > " + ShellQuote(logPath) + " 2>&1\"";
-#else
-    cmd = "cd " + ShellQuote(runDir) + " && " +
-          ShellQuote(torch) + " o2r " + ShellQuote(rom) +
-          " > " + ShellQuote(logPath) + " 2>&1";
-#endif
-    port_log("first_run: > %s\n", cmd.c_str());
-
-    const std::string preferredLogPath = Ship::Context::GetPathRelativeToAppDirectory(
-        "logs/asset-extract.log");
-    const std::string logPath = ResolveLogPath(preferredLogPath, cfgDir, cfgDir);
+    const std::string preferredLogPath = Ship::Context::GetPathRelativeToAppDirectory("logs/asset-extract.log");
+    const std::string logPath = ResolveLogPath(preferredLogPath, cfgDir, runDir);
     if (!logPath.empty()) {
         std::ofstream truncate(logPath, std::ios::trunc);
     }
 
     const std::string commandLine = QuoteCommandArg(torchExe) + " o2r " + QuoteCommandArg(rom) +
-                                    " -s " + QuoteCommandArg(cfgDir) + " -d " + QuoteCommandArg(cfgDir);
+                                    " -s " + QuoteCommandArg(runDir) + " -d " + QuoteCommandArg(runDir);
+    port_log("first_run: > %s\n", commandLine.c_str());
     AppendLogLine(logPath, "Command: " + commandLine);
 
     std::string commandError;
-    if (!RunTorchCommand(commandLine, cfgDir, logPath, commandError)) {
+    if (!RunTorchCommand(commandLine, runDir, logPath, commandError)) {
         port_log("first_run: ERROR extractor failed: %s\n", commandError.c_str());
         const std::string msg =
             "BattleShip failed to extract assets from your ROM.\n\n"
@@ -420,64 +395,22 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
         return { false, {}, "Torch reported success but BattleShip.o2r is missing", logPath };
     }
 
-    // Move into the target app-data path. The work dir lives under the
-    // same parent as target_o2r_path so this is an intra-fs rename.
-    fs::rename(emitted, target_o2r_path, ec);
+    fs::rename(emitted, targetPath, ec);
     if (ec) {
         ec.clear();
-        fs::copy_file(emitted, target_o2r_path,
-                      fs::copy_options::overwrite_existing, ec);
+        fs::copy_file(emitted, targetPath, fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            port_log("first_run: ERROR failed to install %s -> %s: %s\n",
-                     emitted.c_str(), target_o2r_path.c_str(),
-                     ec.message().c_str());
+            port_log("first_run: ERROR failed to install %s -> %s: %s\n", emitted.c_str(),
+                     targetPath.string().c_str(), ec.message().c_str());
             return { false, {}, "Failed to install BattleShip.o2r: " + ec.message(), logPath };
         }
     }
-    // Drop the staging dir (config.yml + yamls/ + any torch
-    // side-artifacts). Best-effort — leaving it behind isn't fatal.
+
     fs::remove_all(workDir, ec);
 
-    port_log("first_run: extracted BattleShip.o2r -> %s\n",
-             target_o2r_path.c_str());
-    return { true, target_o2r_path, {}, logPath };
+    port_log("first_run: extracted BattleShip.o2r -> %s\n", targetPath.string().c_str());
+    return { true, targetPath.string(), {}, logPath };
 }
-
-namespace {
-
-// Render one pre-gameloop GUI frame (no game commands). Mirrors the
-// gui->StartDraw() / interpreter / gui->EndDraw() sequence used by
-// Fast3dWindow::DrawAndRunGraphicsCommands but substitutes RunGuiOnly()
-// for the game-render step.
-//
-// window->EndFrame() at the end is critical: RunGuiOnly's StartFrame
-// acquires a drawable from the swap chain, but only EndFrame's
-// SwapBuffers actually presents it. Skipping EndFrame leaks drawables
-// into CAImageQueue (Metal) / DXGI's swap chain; after enough wizard
-// frames the queue corrupts and the very next nextDrawable call (the
-// game's first real frame) segfaults inside QuartzCore.
-void DrawWizardFrame(const std::function<void()>& drawContents) {
-    auto context = Ship::Context::GetInstance();
-    auto window = context->GetWindow();
-    auto gui = window->GetGui();
-
-    window->HandleEvents();
-
-    gui->StartDraw();
-    // Mirror DrawAndRunGraphicsCommands: StartFrame populates
-    // mGfxCurrentWindowDimensions from the actual window before
-    // RunGuiOnly hands them to UpdateFramebufferParameters. Skipping it
-    // worked on Metal (it tolerates 0×0 framebuffer params) but on
-    // D3D11/OpenGL the backbuffer is created with zeroed dimensions and
-    // the wizard renders as a black screen.
-    window->StartFrame();
-    drawContents();
-    window->RunGuiOnly();
-    gui->EndDraw();
-    window->EndFrame();
-}
-
-} // namespace
 
 bool RunFirstRunWizard(const std::string& target_o2r_path) {
     port_log("first_run: launching ImGui wizard\n");
@@ -490,7 +423,6 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
     }
 
     const std::string appData = Ship::Context::GetAppDirectoryPath();
-    const std::string targetParent = fs::path(target_o2r_path).parent_path().string();
 
     // 256 char ImGui input buffer. Pre-fill with the conventional path the
     // user is most likely to try first; they can edit/replace freely.
@@ -538,7 +470,9 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
      * standard "unsupported" toast. */
     using DropFunc = bool (*)(char*);
     DropFunc consumer = [](char*) -> bool { return true; };
-    if (fdm) fdm->RegisterDropHandler(consumer);
+    if (fdm) {
+        fdm->RegisterDropHandler(consumer);
+    }
 
     while (state != State::Done && state != State::Cancelled) {
         if (!window->IsRunning()) {
@@ -637,37 +571,14 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
                     if (!fs::exists(romPath)) {
                         statusMsg = "ROM not found at that path.";
                     } else {
-                        // Stage the ROM into appData so FindBaseRom picks
-                        // it up, then run extraction on a background
-                        // thread so the wizard can keep rendering frames
-                        // (and the progress bar animates).
-                        fs::create_directories(appData);
-                        const std::string staged =
-                            appData + "/baserom.us." +
-                            fs::path(romPath).extension().string().substr(1);
-                        std::error_code ec;
-                        if (fs::path(romPath) != fs::path(staged)) {
-                            fs::copy_file(romPath, staged,
-                                          fs::copy_options::overwrite_existing,
-                                          ec);
-                        }
-                        if (ec) {
-                            statusMsg = "Could not stage ROM: " + ec.message();
-                        } else {
-                            state = State::Extracting;
-                            statusMsg.clear();
-                            // Capture target_o2r_path by value — the
-                            // future may outlive any reference into
-                            // RunFirstRunWizard's scope on shutdown.
-                            std::string target = target_o2r_path;
-                            extractFuture = std::async(
-                                std::launch::async,
-                                [target]() {
-                                    return ExtractAssetsIfNeeded(
-                                        target, /*silent=*/true);
-                                });
-                            extractRunning = true;
-                        }
+                        state = State::Extracting;
+                        statusMsg.clear();
+                        std::string target = target_o2r_path;
+                        std::string selectedRom = romPath;
+                        extractFuture = std::async(std::launch::async, [target, selectedRom]() {
+                            return ExtractAssetsIfNeeded(target, true, selectedRom);
+                        });
+                        extractRunning = true;
                     }
                 }
 
@@ -712,7 +623,9 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
         extractFuture.wait();
     }
 
-    if (fdm) fdm->UnregisterDropHandler(consumer);
+    if (fdm) {
+        fdm->UnregisterDropHandler(consumer);
+    }
 
     if (state == State::Cancelled) {
         port_log("first_run: wizard cancelled by user\n");

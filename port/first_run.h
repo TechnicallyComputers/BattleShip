@@ -17,7 +17,8 @@ struct ExtractionResult {
 // silent=true suppresses native SDL_ShowSimpleMessageBox popups. The
 // ImGui wizard sets this so failures land in the wizard's own status
 // line instead of an alien-looking second dialog.
-ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool silent = false);
+ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool silent = false,
+                                       const std::string& romOverridePath = {});
 
 /* Drive an ImGui first-run wizard until either:
  *   - the user provides a ROM and extraction succeeds (returns true,
