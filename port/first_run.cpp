@@ -44,10 +44,49 @@ std::string FindExisting(const std::vector<std::string>& candidates) {
     return {};
 }
 
-std::string TryOpenLogPath(const std::string& candidate) {
-    if (candidate.empty()) {
-        return {};
+// Resolve the directory containing this process's executable.
+//
+// Ship::Context::GetAppBundlePath() on Linux + NON_PORTABLE returns
+// the literal CMAKE_INSTALL_PREFIX (default /usr/local), which is
+// wrong for AppImages (binary actually lives at
+// /tmp/.mount_XYZ/usr/bin/) and for any non-prefix install. Use
+// /proc/self/exe to get the real directory and fall back to the
+// upstream API only if the readlink fails.
+std::string RealAppBundlePath() {
+#if defined(__linux__)
+    std::error_code ec;
+    fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec && !exe.empty()) {
+        return exe.parent_path().string();
     }
+#endif
+    return Ship::Context::GetAppBundlePath();
+}
+
+// Locate the torch binary. Tries (in priority order):
+//   1. Next to ssb64 binary (shipped layout — Win/Linux: same dir; macOS:
+//      Contents/MacOS/torch).
+//   2. macOS Resources dir (Contents/Resources/torch).
+//   3. Dev build location (build/TorchExternal/src/TorchExternal-build/torch).
+//   4. PATH lookup via the bare name (last-resort).
+std::string FindTorchBinary() {
+    const std::string app = RealAppBundlePath();
+    std::vector<std::string> candidates = {
+        app + "/torch",
+        app + "/torch.exe",
+#ifdef __APPLE__
+        // macOS bundle: GetAppBundlePath returns .app/Contents/Resources;
+        // the sidecar torch binary lives in .app/Contents/MacOS alongside
+        // the main executable per Apple convention.
+        app + "/../MacOS/torch",
+#endif
+        // dev: when ssb64 binary lives in <build>/, sibling dir holds torch
+        app + "/TorchExternal/src/TorchExternal-build/torch",
+        app + "/TorchExternal/src/TorchExternal-build/Release/torch.exe",
+        app + "/TorchExternal/src/TorchExternal-build/Debug/torch.exe",
+    };
+    auto hit = FindExisting(candidates);
+    if (!hit.empty()) return hit;
 
     std::error_code ec;
     const fs::path path(candidate);
@@ -62,24 +101,21 @@ std::string TryOpenLogPath(const std::string& candidate) {
     return candidate;
 }
 
-std::string ResolveLogPath(const std::string& requestedLogPath, const std::string& sourceDir,
-                           const std::string& destinationDir) {
-    std::vector<std::string> candidates;
-    if (!requestedLogPath.empty()) {
-        candidates.push_back(requestedLogPath);
-    }
-    if (!destinationDir.empty()) {
-        candidates.push_back((fs::path(destinationDir) / "logs" / "asset-extract.log").string());
-    }
-    if (!sourceDir.empty()) {
-        candidates.push_back((fs::path(sourceDir) / "logs" / "asset-extract.log").string());
-    }
-    candidates.push_back((fs::current_path() / "logs" / "asset-extract.log").string());
-
-    for (const auto& candidate : candidates) {
-        auto resolved = TryOpenLogPath(candidate);
-        if (!resolved.empty()) {
-            return resolved;
+// Locate the directory that contains config.yml (the torch project config —
+// enumerates all yamls/us/*.yml extraction recipes). Torch must be invoked
+// with this directory as cwd.
+std::string FindTorchConfigDir() {
+    const std::string app = RealAppBundlePath();
+    std::vector<std::string> candidates = {
+        app,                                  // macOS Resources, Windows exe-dir
+        app + "/../share/BattleShip",         // Linux AppImage usr/bin → usr/share/BattleShip;
+                                              // /usr install bin → share/BattleShip
+        app + "/..",                          // dev: build/ssb64 → project root
+        ".",                                  // last-ditch cwd
+    };
+    for (const auto& dir : candidates) {
+        if (fs::exists(dir + "/config.yml") && fs::exists(dir + "/yamls/us")) {
+            return dir;
         }
     }
 
@@ -239,7 +275,7 @@ std::string FindAssetConfigDir() {
 //   3. cwd / project  — dev workflow.
 std::string FindBaseRom() {
     const std::string appData = Ship::Context::GetAppDirectoryPath();
-    const std::string bundle = Ship::Context::GetAppBundlePath();
+    const std::string bundle = RealAppBundlePath();
     std::vector<std::string> candidates;
     for (const auto& base : {appData, bundle, bundle + "/..", std::string(".")}) {
         for (const char* ext : {"z64", "n64", "v64"}) {
@@ -284,12 +320,70 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     }
     port_log("first_run: asset config dir -> %s\n", cfgDir.c_str());
 
-    const std::string torchExe = FindTorchExecutable();
-    if (torchExe.empty()) {
-        port_log("first_run: ERROR could not locate torch executable\n");
-        return { false, {}, "Could not locate torch executable", {} };
+    // Stage a writable copy of config.yml + yamls/ in the app-data dir
+    // and run torch from there. The bundled config dir is read-only in
+    // every shipped layout (AppImage squashfs, macOS .app/Contents/...,
+    // /usr/local install). Torch reads config from cwd and writes
+    // BattleShip.o2r + a version file + side-artifact dirs (src/assets,
+    // include/assets, modding) into cwd. On a read-only cwd those
+    // writes fail mid-pipeline, but torch reports a successful exit
+    // anyway — surfaces as "torch reported success but BattleShip.o2r
+    // is missing." Staging into the app-data dir gives torch a
+    // writable scratch space and lands BattleShip.o2r right next to
+    // the target path so we can rename within the same filesystem.
+    fs::create_directories(fs::path(target_o2r_path).parent_path());
+    const fs::path workDir =
+        fs::path(target_o2r_path).parent_path() / "torch-work";
+    std::error_code ec;
+    fs::remove_all(workDir, ec);
+    ec.clear();
+    fs::create_directories(workDir, ec);
+    if (ec) {
+        port_log("first_run: ERROR could not create %s: %s\n",
+                 workDir.string().c_str(), ec.message().c_str());
+        return false;
     }
-    port_log("first_run: torch executable -> %s\n", torchExe.c_str());
+    fs::copy_file(fs::path(cfgDir) / "config.yml",
+                  workDir / "config.yml",
+                  fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        port_log("first_run: ERROR could not stage config.yml: %s\n",
+                 ec.message().c_str());
+        return false;
+    }
+    fs::copy(fs::path(cfgDir) / "yamls", workDir / "yamls",
+             fs::copy_options::recursive |
+                 fs::copy_options::overwrite_existing,
+             ec);
+    if (ec) {
+        port_log("first_run: ERROR could not stage yamls/: %s\n",
+                 ec.message().c_str());
+        return false;
+    }
+    const std::string runDir = workDir.string();
+    port_log("first_run: torch work dir -> %s\n", runDir.c_str());
+
+    // Compose: cd "<runDir>" && "<torch>" o2r "<rom>"
+    //
+    // Append the ssb64.log path to the child's stdio. Our parent process
+    // has spdlog and assorted file descriptors open; if the child writes
+    // to a closed/redirected stdout it can be killed by SIGPIPE (status
+    // 141). Routing both streams to ssb64.log keeps the extraction trace
+    // diagnosable and isolates us from stdio inheritance quirks.
+    const std::string logPath = Ship::Context::GetPathRelativeToAppDirectory(
+        "logs/torch-extract.log");
+    fs::create_directories(fs::path(logPath).parent_path());
+    std::string cmd;
+#ifdef _WIN32
+    cmd = "cmd /C \"cd /D " + ShellQuote(runDir) + " && " +
+          ShellQuote(torch) + " o2r " + ShellQuote(rom) +
+          " > " + ShellQuote(logPath) + " 2>&1\"";
+#else
+    cmd = "cd " + ShellQuote(runDir) + " && " +
+          ShellQuote(torch) + " o2r " + ShellQuote(rom) +
+          " > " + ShellQuote(logPath) + " 2>&1";
+#endif
+    port_log("first_run: > %s\n", cmd.c_str());
 
     const std::string preferredLogPath = Ship::Context::GetPathRelativeToAppDirectory(
         "logs/asset-extract.log");
@@ -319,20 +413,17 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
         return BuildFailure(commandError, logPath);
     }
 
-    const std::string emitted = cfgDir + "/BattleShip.o2r";
+    const std::string emitted = (workDir / "BattleShip.o2r").string();
     if (!fs::exists(emitted)) {
         port_log("first_run: ERROR extractor reported success but %s is missing\n",
                  emitted.c_str());
         return { false, {}, "Torch reported success but BattleShip.o2r is missing", logPath };
     }
 
-    // Move (or copy + remove if move-across-filesystems fails) into the
-    // target app-data path.
-    fs::create_directories(fs::path(target_o2r_path).parent_path());
-    std::error_code ec;
+    // Move into the target app-data path. The work dir lives under the
+    // same parent as target_o2r_path so this is an intra-fs rename.
     fs::rename(emitted, target_o2r_path, ec);
     if (ec) {
-        // Cross-filesystem rename failed — fall back to copy + delete.
         ec.clear();
         fs::copy_file(emitted, target_o2r_path,
                       fs::copy_options::overwrite_existing, ec);
@@ -342,8 +433,10 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
                      ec.message().c_str());
             return { false, {}, "Failed to install BattleShip.o2r: " + ec.message(), logPath };
         }
-        fs::remove(emitted, ec);
     }
+    // Drop the staging dir (config.yml + yamls/ + any torch
+    // side-artifacts). Best-effort — leaving it behind isn't fatal.
+    fs::remove_all(workDir, ec);
 
     port_log("first_run: extracted BattleShip.o2r -> %s\n",
              target_o2r_path.c_str());

@@ -6,6 +6,10 @@
 #include <sys/rdp.h>
 #include <reloc_data.h>
 #include <sys/audio.h>
+#ifdef PORT
+extern char *getenv(const char *name);
+extern int atoi(const char *str);
+#endif
 extern void *func_800269C0_275C0(u16 id);
 extern void func_80026738_27338(void *arg0);
 extern void func_800266A0_272A0(void);
@@ -3278,6 +3282,15 @@ void mnPlayers1PGameSetSceneData(void)
 	gSCManagerSceneData.player = sMNPlayers1PGameManPlayer;
 	gSCManagerBackupData.spgame_difficulty = sMNPlayers1PGameLevelValue;
 	gSCManagerSceneData.spgame_stage = 0;
+#ifdef PORT
+	{
+		const char *stage_env = getenv("SSB64_SPGAME_STAGE");
+		if (stage_env != NULL)
+		{
+			gSCManagerSceneData.spgame_stage = (u8)atoi(stage_env);
+		}
+	}
+#endif
 	gSCManagerBackupData.spgame_stock_count = sMNPlayers1PGameStockValue;
 
 	if (sMNPlayers1PGameSlot.is_fighter_selected != FALSE)
@@ -3388,6 +3401,17 @@ void mnPlayers1PGameInitPlayer(s32 player)
 		sMNPlayers1PGameSlot.is_recalling = FALSE;
 		sMNPlayers1PGameSlot.is_cursor_adjusting = FALSE;
 	}
+#ifdef PORT
+	// Match the equivalent reset in mnPlayersVSInitPlayer. The decomp's 1P-game
+	// InitPlayer leaves `is_status_selected` carrying its prior-CSS value, so on
+	// re-entry the FighterProcUpdate sees `is_fighter_selected=TRUE,
+	// is_status_selected=TRUE, rotation<0.1` and skips the
+	// `scSubsysFighterSetStatus(...Win)` call — the freshly-spawned fighter never
+	// gets its selected/win pose applied and renders in the default forward-facing
+	// idle (issue #7). Reset the flag here so the status is re-applied on the
+	// first frame post-MakeFighter.
+	sMNPlayers1PGameSlot.is_status_selected = FALSE;
+#endif
 }
 
 // 0x801381D0 - Unused?

@@ -4909,6 +4909,10 @@ void ftMainSetStatus(GObj *fighter_gobj, s32 status_id, f32 frame_begin, f32 ani
             if (motion_desc->offset != 0x80000000)
             {
                 // Actually subaction scripts?
+                // Note: event_file_head==0 is legitimate when motion_desc->offset
+                // is already a fully-resolved pointer (e.g. opening/win-pose scripts
+                // stored as D_ovl1_* symbols in submotion descs). On N64 *NULL read
+                // RDRAM[0]=0, so offset+0=offset worked. Don't NULL-out the result.
                 if (fp->anim_desc.flags.is_use_submotion_script)
                 {
 #ifdef PORT
@@ -4917,7 +4921,7 @@ void ftMainSetStatus(GObj *fighter_gobj, s32 status_id, f32 frame_begin, f32 ani
                     event_file_head = *fp->data->p_file_submotion;
 #endif
 
-                    event_script_ptr = (event_file_head != 0) ? (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head) : NULL;
+                    event_script_ptr = (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head);
                 }
                 else
                 {
@@ -4927,7 +4931,7 @@ void ftMainSetStatus(GObj *fighter_gobj, s32 status_id, f32 frame_begin, f32 ani
                     event_file_head = *fp->data->p_file_mainmotion;
 #endif
 
-                    event_script_ptr = (event_file_head != 0) ? (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head) : NULL;
+                    event_script_ptr = (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head);
                 }
             }
             else event_script_ptr = NULL;
@@ -4944,7 +4948,7 @@ void ftMainSetStatus(GObj *fighter_gobj, s32 status_id, f32 frame_begin, f32 ani
                 event_file_head = *fp->data->p_file_submotion;
 #endif
 
-                event_script_ptr = (event_file_head != 0) ? (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head) : NULL;
+                event_script_ptr = (void*) ((intptr_t)motion_desc->offset + (intptr_t)event_file_head);
             }
             else event_script_ptr = NULL;
 

@@ -139,6 +139,31 @@ if command -v ninja >/dev/null 2>&1; then GEN="Ninja"; else GEN="Unix Makefiles"
 step "Configuring CMake ($GEN, $CONFIG)"
 cmake -S "$WT_DIR" -B "$WT_DIR/build" -G "$GEN" -DCMAKE_BUILD_TYPE="$CONFIG"
 
+# ── 5b. Symlink extracted assets ──
+# Torch extraction (BattleShip.o2r, f3d.o2r, ssb64.o2r) is slow and produces
+# bytewise-identical output for a given baserom. The binary loads them from
+# its CWD on launch — without them, the game prints "archive ... does not
+# exist" and exits. Reuse the main tree's extracted assets via symlink so
+# parallel worktrees don't each re-run extraction.
+step "Symlinking extracted assets (BattleShip.o2r / f3d.o2r / ssb64.o2r)"
+linked_any=0
+for asset in BattleShip.o2r f3d.o2r ssb64.o2r; do
+    src=""
+    for cand in "$ROOT/build/$asset" "$ROOT/$asset"; do
+        if [[ -f "$cand" ]]; then src="$cand"; break; fi
+    done
+    if [[ -n "$src" ]]; then
+        ln -sf "$src" "$WT_DIR/build/$asset"
+        linked_any=1
+    else
+        printf '  warn: %s not found in main tree (%s/build or %s) — extract it there first\n' \
+            "$asset" "$ROOT" "$ROOT" >&2
+    fi
+done
+if [[ $linked_any -eq 0 ]]; then
+    printf '\033[33m  No assets symlinked. Run extraction in the main tree (e.g. %s/build.sh) before launching the worktree binary.\033[0m\n' "$ROOT" >&2
+fi
+
 # ── 6. Optional: compile ──
 if [[ $DO_BUILD -eq 1 ]]; then
     if command -v sysctl >/dev/null 2>&1; then

@@ -216,6 +216,21 @@ int PortInit(int argc, char* argv[]) {
 	if (!sContext->InitConsoleVariables()) { port_log("SSB64: InitConsoleVariables failed\n"); return 1; }
 	port_log("SSB64: Config + CVars OK\n");
 
+	/* Pillarbox the framebuffer to 4:3 every launch. The game emits 4:3
+	 * GBI only — when LUS's viewport runs at the window aspect (LUS
+	 * default: gAdvancedResolution.Enabled=0, viewport == content region),
+	 * fullscreen on a 16:9 monitor draws into a 16:9 framebuffer that the
+	 * game only fills 4:3 of, leaving the side strips as un-cleared
+	 * garbage. Force LUS's aspect-correction path on with a 4:3 target so
+	 * mCurDimensions and DrawGame()'s sPosX pillarbox the game image
+	 * inside black bars. Drop these forced sets when we ship genuine
+	 * widescreen DL patches game-side. */
+	if (auto cv = sContext->GetConsoleVariables()) {
+		cv->SetFloat("gAdvancedResolution.AspectRatioX", 4.0f);
+		cv->SetFloat("gAdvancedResolution.AspectRatioY", 3.0f);
+		cv->SetInteger("gAdvancedResolution.Enabled", 1);
+	}
+
 #ifdef __APPLE__
 	/* Force the Metal backend on macOS.  The OpenGL backend works but
 	 * Apple's GLD driver emits a one-shot

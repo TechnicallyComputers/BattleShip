@@ -1,6 +1,6 @@
 # SSB64 PC Port — Claude Session Context
 
-PC port of Super Smash Bros. 64 built from the complete decompilation at github.com/Killian-C/ssb-decomp-re. Target integration: libultraship (LUS) + Torch asset pipeline.
+PC port of Super Smash Bros. 64 built from the complete decompilation at github.com/VetriTheRetri/ssb-decomp-re. Target integration: libultraship (LUS) + Torch asset pipeline.
 
 ## Documentation
 
@@ -68,7 +68,7 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 
 - **Never use relative `build` paths in Bash tool calls** — Claude Code resets cwd between `Bash` calls. `cmake --build build` from the project root builds the main tree, not the worktree. Always use absolute paths: `cmake --build <worktree>/build ...`.
 - `build.sh --skip-extract` still tries `git submodule update --init` unconditionally, which fails on a new worktree (pinned SHAs not on remote). Use `new-worktree.sh` instead, or drive `cmake`/`cmake --build` directly with absolute paths.
-- If two windows both need fresh assets (`ssb64.o2r`), run asset extraction in one worktree and symlink `ssb64.o2r` / `f3d.o2r` into the others — rebuilding assets from the ROM in parallel is slow and wasteful.
+- The binary loads `BattleShip.o2r`, `f3d.o2r`, and `ssb64.o2r` from its CWD at launch; without them it exits with `archive ... does not exist`. `new-worktree.sh` symlinks all three from the main tree's `build/` into the worktree's `build/`. If the main tree has never been extracted, run `./build.sh` there first so the symlinks resolve.
 
 ---
 
