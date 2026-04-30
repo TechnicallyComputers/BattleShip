@@ -9,6 +9,13 @@
 #   .\build.ps1 -Jobs 8        # Parallel build job count (default: NUMBER_OF_PROCESSORS)
 #   .\build.ps1 -Diagnose      # Print environment diagnostics and exit (paste into bug reports)
 #   .\build.ps1 -Help          # Show this help
+#
+# IMPORTANT: keep this file pure ASCII. Windows PowerShell 5.1 reads BOM-less
+# files as the system codepage (Windows-1252), so any non-ASCII character
+# (em-dash, box-drawing, smart quotes) becomes a parse error on default Win10
+# installs. See issue #28.
+
+#Requires -Version 5.1
 
 param(
     [switch]$SkipExtract,
@@ -26,8 +33,27 @@ if ($Help) {
     exit 0
 }
 
-$ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Use 'Continue' rather than 'Stop' as the default. Under Windows PowerShell
+# 5.1, $ErrorActionPreference='Stop' combined with `2>&1` on native commands
+# wraps every stderr line in a NativeCommandError and throws immediately --
+# even when the tool exits 0, and even when the caller already explicitly
+# checks $LASTEXITCODE. That defeats the rich per-step error messages this
+# script tries to surface (submodule auth failures, CMake configure failures,
+# build failures). Every native invocation below has an explicit LASTEXITCODE
+# check, so 'Continue' is sufficient and far less surprising.
+$ErrorActionPreference = "Continue"
+$Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+
+# Mutually-exclusive switches: catch contradictory invocations early so they
+# don't burn 5 minutes building before the inconsistency surfaces.
+if ($SkipExtract -and $ExtractOnly) {
+    Write-Host "ERROR: -SkipExtract and -ExtractOnly are mutually exclusive." -ForegroundColor Red
+    exit 1
+}
+if ($Release -and $Debug) {
+    Write-Host "ERROR: -Release and -Debug are mutually exclusive." -ForegroundColor Red
+    exit 1
+}
 
 $Config = if ($Release) { "Release" } else { "Debug" }
 if ($Jobs -le 0) {
@@ -62,45 +88,86 @@ function Get-CommandSourceOrNull($name) {
     if ($cmd) { return $cmd.Source } else { return $null }
 }
 
+# Walk every $name match on PATH and return the first one that is NOT a
+# WindowsApps stub. Critical because `Get-Command python` (no -All) may
+# resolve to the stub even when a real python.exe is *earlier* on PATH and
+# is what actually runs when the user types `python` -- get-command sorts by
+# command type, not PATH order. Without this, stub detection produces false
+# positives and the script refuses to run on a perfectly working machine.
+function Get-FirstNonStubSource($name) {
+    # NB: don't name this variable $matches -- that's a PowerShell automatic
+    # variable set by the -match operator (which Test-IsWindowsAppsStub uses
+    # internally), and the collision can leave the foreach iterating over
+    # regex match results instead of commands.
+    $candidates = @(Get-Command $name -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandType -eq 'Application' })
+    foreach ($m in $candidates) {
+        if (-not (Test-IsWindowsAppsStub $m.Source)) { return $m.Source }
+    }
+    return $null
+}
+
+# Test whether a resolved exe is the Microsoft Store WindowsApps stub: a
+# zero-byte ReparsePoint under %LOCALAPPDATA%\Microsoft\WindowsApps. Invoking
+# one of these pops the Store dialog and hangs the script (the reason -Diagnose
+# would freeze on `py --version` before this check existed). Path-only matching
+# is not enough -- a real Python installer can place python.exe under
+# WindowsApps too -- so confirm by attribute and zero size.
+function Test-IsWindowsAppsStub($path) {
+    if (-not $path) { return $false }
+    if ($path -notlike '*\WindowsApps\*') { return $false }
+    try {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    return ($item.Length -eq 0) -and ($item.Attributes.ToString() -match 'ReparsePoint')
+}
+
 # Probe `python --version` then `py -3 --version`. Returns a hashtable with
 # keys: Cmd (string[]), Version (string). Exits with a clear error message
-# when neither is a working Python 3 — including a specific call-out for
+# when neither is a working Python 3 - including a specific call-out for
 # the Microsoft Store stub (a zero-byte python.exe in WindowsApps that
 # launches the Store and exits 9009 with no stdout).
 function Resolve-Python {
-    # 1. Try `python` directly.
-    $pythonPath = Get-CommandSourceOrNull 'python'
-    $isStoreStub = $pythonPath -and ($pythonPath -like '*WindowsApps*')
+    # 1. Try `python` directly. Use Get-FirstNonStubSource so we find the real
+    #    python.exe even when a WindowsApps stub is also on PATH.
+    $pythonPath = Get-FirstNonStubSource 'python'
+    # Track whether ANY python.exe on PATH is a stub, so we can give a better
+    # error message later if no working interpreter is found.
+    $isStoreStub = (Get-CommandSourceOrNull 'python' | Where-Object { Test-IsWindowsAppsStub $_ }) -ne $null
 
-    if ($pythonPath -and -not $isStoreStub) {
-        $verRaw = & python --version 2>&1
+    if ($pythonPath) {
+        $verRaw = & $pythonPath --version 2>&1
         if ($LASTEXITCODE -eq 0 -and "$verRaw" -match 'Python 3\.') {
-            return @{ Cmd = @('python'); Version = "$verRaw"; Source = $pythonPath }
+            return @{ Cmd = @($pythonPath); Version = "$verRaw"; Source = $pythonPath }
         }
     }
 
     # 2. Try `py -3` (python.org launcher; preferred fallback when only `py`
     #    is on PATH or `python` is the Store stub).
-    $pyPath = Get-CommandSourceOrNull 'py'
+    $pyPath = Get-FirstNonStubSource 'py'
+    $pyIsStub = (Get-CommandSourceOrNull 'py' | Where-Object { Test-IsWindowsAppsStub $_ }) -ne $null
     if ($pyPath) {
-        $verRaw = & py -3 --version 2>&1
+        $verRaw = & $pyPath -3 --version 2>&1
         if ($LASTEXITCODE -eq 0 -and "$verRaw" -match 'Python 3\.') {
-            return @{ Cmd = @('py', '-3'); Version = "$verRaw"; Source = $pyPath }
+            return @{ Cmd = @($pyPath, '-3'); Version = "$verRaw"; Source = $pyPath }
         }
     }
 
     # No working Python 3. Print an actionable error.
     Write-Host "ERROR: Python 3 not found." -ForegroundColor Red
-    if ($isStoreStub) {
-        Write-Host "  'python' on PATH points to the Microsoft Store stub:" -ForegroundColor Red
-        Write-Host "    $pythonPath" -ForegroundColor Red
-        Write-Host "  This zero-byte stub opens the Store rather than running Python." -ForegroundColor Red
+    if ($isStoreStub -or $pyIsStub) {
+        Write-Host "  Microsoft Store stubs intercept Python invocations:" -ForegroundColor Red
+        if ($isStoreStub) { Write-Host "    python -> $pythonPath" -ForegroundColor Red }
+        if ($pyIsStub)    { Write-Host "    py     -> $pyPath" -ForegroundColor Red }
+        Write-Host "  These zero-byte stubs open the Store rather than running Python." -ForegroundColor Red
         Write-Host "  Either:" -ForegroundColor Red
         Write-Host "    (a) install Python 3 from https://www.python.org/downloads/ and tick" -ForegroundColor Red
         Write-Host "        'Add Python to PATH' in the installer, or" -ForegroundColor Red
         Write-Host "    (b) disable the Store stub at" -ForegroundColor Red
         Write-Host "        Settings > Apps > Advanced app settings > App execution aliases" -ForegroundColor Red
-        Write-Host "        (uncheck 'python.exe' and 'python3.exe')." -ForegroundColor Red
+        Write-Host "        (uncheck 'python.exe', 'python3.exe', and 'py.exe')." -ForegroundColor Red
     } else {
         Write-Host "  Tried: 'python', 'py -3'. Neither found a working Python 3." -ForegroundColor Red
         Write-Host "  Install Python 3 from https://www.python.org/downloads/ and tick" -ForegroundColor Red
@@ -141,21 +208,30 @@ if ($Diagnose) {
 
     Write-Step "Tools"
     foreach ($tool in @('python', 'py', 'cmake', 'msbuild', 'cl', 'git', 'ninja')) {
-        $src = Get-CommandSourceOrNull $tool
+        # For every tool, prefer the first non-stub on PATH so a working
+        # interpreter behind a WindowsApps stub is reported as the active one.
+        $src = Get-FirstNonStubSource $tool
+        $stubSrc = Get-CommandSourceOrNull $tool | Where-Object { Test-IsWindowsAppsStub $_ }
         if (-not $src) {
-            Write-Host ("  {0,-9} : NOT FOUND" -f $tool)
+            if ($stubSrc) {
+                Write-Host ("  {0,-9} : {1}  [Microsoft Store stub - WILL NOT RUN]" -f $tool, $stubSrc) -ForegroundColor Yellow
+            } else {
+                Write-Host ("  {0,-9} : NOT FOUND" -f $tool)
+            }
             continue
         }
-        $isStub = ($tool -eq 'python') -and ($src -like '*WindowsApps*')
-        if ($isStub) {
-            Write-Host ("  {0,-9} : {1}  [Microsoft Store stub — Python WILL NOT RUN]" -f $tool, $src) -ForegroundColor Yellow
-            continue
-        }
-        $verArgs = if ($tool -eq 'msbuild') { @('-version') } else { @('--version') }
+        # NB: don't use array splat (`& $src @verArgs`) here -- under PS 5.1 it
+        # can hang when invoking a native exe inside a foreach with stderr
+        # redirection, even though the same call works standalone. Pass the
+        # version flag directly as a literal.
         $ver = $null
-        try { $ver = (& $tool @verArgs 2>&1 | Select-Object -First 1) } catch { $ver = "(error: $_)" }
+        $verFlag = if ($tool -eq 'msbuild') { '-version' } else { '--version' }
+        try { $ver = (& $src $verFlag 2>&1 | Select-Object -First 1) } catch { $ver = "(error: $_)" }
         Write-Host ("  {0,-9} : {1}" -f $tool, $src)
         Write-Host ("            {0}" -f $ver)
+        if ($stubSrc -and ($stubSrc -ne $src)) {
+            Write-Host ("            (note: stub also present at $stubSrc)") -ForegroundColor DarkGray
+        }
     }
 
     Write-Step "Repository"
@@ -182,7 +258,7 @@ if ($Diagnose) {
         }
         $gen = Get-CMakeCacheValue $cacheFile 'CMAKE_GENERATOR:INTERNAL'
         if ($gen -and ($gen -notlike 'Visual Studio*')) {
-            Write-Warn "Generator '$gen' is single-config — build.ps1 assumes a Visual Studio multi-config layout."
+            Write-Warn "Generator '$gen' is single-config - build.ps1 assumes a Visual Studio multi-config layout."
             Write-Host "  Run '.\build.ps1 -Clean' then re-build to force re-configure with the default generator." -ForegroundColor Yellow
             Write-Host "  Or set `$env:CMAKE_GENERATOR='Visual Studio 17 2022' before running build.ps1." -ForegroundColor Yellow
         }
@@ -201,7 +277,7 @@ if (-not $ExtractOnly) {
 }
 
 # Surface long-path / OneDrive concerns at every run (not just -Diagnose).
-# These don't fail the build outright — they just steer triage when the build
+# These don't fail the build outright - they just steer triage when the build
 # does fail downstream.
 if ($env:OneDrive -and ($Root.StartsWith($env:OneDrive, [StringComparison]::OrdinalIgnoreCase))) {
     Write-Warn "Repo is inside OneDrive ($env:OneDrive)."
@@ -212,7 +288,7 @@ if ($Root.Length -gt 100) {
     Write-Host "  If submodule init fails, move the checkout to a shorter path (e.g. C:\src\ssb64\)." -ForegroundColor Yellow
 }
 
-# ── Clean ──
+# -- Clean --
 if ($Clean) {
     Write-Step "Cleaning build directory"
     if (Test-Path $BuildDir) {
@@ -226,7 +302,7 @@ if ($Clean) {
     }
 }
 
-# ── Validate ROM ──
+# -- Validate ROM --
 if (-not (Test-Path $ROM)) {
     Write-Host "ERROR: ROM not found at $ROM" -ForegroundColor Red
     Write-Host "Place your NTSC-U v1.0 ROM in the project root as baserom.us.z64,"
@@ -234,7 +310,7 @@ if (-not (Test-Path $ROM)) {
     exit 1
 }
 
-# ── Submodules ──
+# -- Submodules --
 if (-not $ExtractOnly) {
     Write-Step "Initializing submodules"
     git -C $Root submodule update --init --recursive
@@ -250,7 +326,7 @@ if (-not $ExtractOnly) {
     }
 }
 
-# ── Generate reloc_data.h, Torch YAML configs, RelocFileTable.cpp ──
+# -- Generate reloc_data.h, Torch YAML configs, RelocFileTable.cpp --
 # All three are downstream of tools/reloc_data_symbols.us.txt and the ROM.
 #
 # Pipeline:
@@ -263,7 +339,7 @@ if (-not $ExtractOnly) {
 # reloc_data.h + yamls/us/reloc_*.yml are gitignored and must be rebuilt on
 # every fresh checkout. RelocFileTable.cpp is committed, but we still
 # regenerate it here so it stays in lock-step with whatever the YAML
-# generator emitted — if the two ever disagree at runtime, the resource
+# generator emitted - if the two ever disagree at runtime, the resource
 # loader falls back to the file_NNNN fallback names and every fighter /
 # sprite / icon lookup silently returns NULL.
 if (-not $ExtractOnly) {
@@ -285,13 +361,13 @@ if (-not $ExtractOnly) {
     } finally { Pop-Location }
 }
 
-# ── Encode credits text ──
+# -- Encode credits text --
 # staff/titles/info/companies credit strings are #include'd directly
 # into scstaffroll.c via .credits.encoded / .credits.metadata files,
 # which are gitignored. Every fresh checkout has to rerun the encoder.
 # staff/titles use the default title font; info/companies need the
 # paragraph font for digits, punctuation and accents. The tool is
-# idempotent — it overwrites the outputs unconditionally.
+# idempotent - it overwrites the outputs unconditionally.
 if (-not $ExtractOnly) {
     Write-Step "Encoding credits text"
     Push-Location (Join-Path $Root "src\credits")
@@ -309,7 +385,7 @@ if (-not $ExtractOnly) {
     }
 }
 
-# ── CMake configure ──
+# -- CMake configure --
 if (-not $ExtractOnly) {
     Write-Step "Configuring CMake ($Config)"
     cmake -S $Root -B $BuildDir
@@ -325,7 +401,7 @@ if (-not $ExtractOnly) {
     }
 
     # Sanity-check the picked generator. CMake's default-generator selection
-    # on Windows can pick Ninja (single-config) if it's on PATH — e.g. when
+    # on Windows can pick Ninja (single-config) if it's on PATH - e.g. when
     # vcpkg / scoop / Chocolatey installs Ninja. This script's path layout
     # ($BuildDir\$Config\BattleShip.exe) only works for multi-config Visual
     # Studio generators. Warn loudly if the cache says otherwise so the user
@@ -353,7 +429,7 @@ if (-not $ExtractOnly) {
     }
 }
 
-# ── Build game ──
+# -- Build game --
 if (-not $ExtractOnly) {
     Write-Step "Building ssb64 ($Config, j=$Jobs)"
     cmake --build $BuildDir --target ssb64 --config $Config --parallel $Jobs
@@ -369,7 +445,7 @@ if (-not $ExtractOnly) {
     Write-Host "Game built: $GameExe" -ForegroundColor Green
 }
 
-# ── Build Torch + Extract assets ──
+# -- Build Torch + Extract assets --
 if (-not $SkipExtract) {
     # Build Torch via ExternalProject
     Write-Step "Building Torch ($Config, j=$Jobs)"
@@ -419,7 +495,7 @@ if (-not $SkipExtract) {
     }
 }
 
-# ── Package Fast3D shader archive ──
+# -- Package Fast3D shader archive --
 Write-Step "Packaging Fast3D shader archive"
 if (-not (Test-Path $Fast3DShaderDir)) {
     Write-Host "ERROR: Fast3D shader directory not found at $Fast3DShaderDir" -ForegroundColor Red
@@ -437,18 +513,20 @@ if (Test-Path $F3DO2R) {
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $stream = [System.IO.File]::Open($F3DO2R, [System.IO.FileMode]::Create)
-$zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Create)
-Get-ChildItem -Recurse -File $Fast3DShaderDir | ForEach-Object {
-    $rel = "shaders/" + $_.FullName.Substring($Fast3DShaderDir.Length + 1).Replace('\', '/')
-    $entry = $zip.CreateEntry($rel)
-    $es = $entry.Open()
-    $fs = [System.IO.File]::OpenRead($_.FullName)
-    $fs.CopyTo($es)
-    $fs.Close()
-    $es.Close()
-}
-$zip.Dispose()
-$stream.Close()
+try {
+    $zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        Get-ChildItem -Recurse -File $Fast3DShaderDir | ForEach-Object {
+            $rel = "shaders/" + $_.FullName.Substring($Fast3DShaderDir.Length + 1).Replace('\', '/')
+            $entry = $zip.CreateEntry($rel)
+            $es = $entry.Open()
+            try {
+                $fs = [System.IO.File]::OpenRead($_.FullName)
+                try { $fs.CopyTo($es) } finally { $fs.Dispose() }
+            } finally { $es.Dispose() }
+        }
+    } finally { $zip.Dispose() }
+} finally { $stream.Dispose() }
 
 if (-not (Test-Path $F3DO2R)) {
     Write-Host "ERROR: f3d.o2r was not created" -ForegroundColor Red
@@ -463,7 +541,7 @@ if ((Test-Path $ExeDir) -and ($ExeDir -ne $Root)) {
     Write-Host "Copied f3d.o2r to $ExeDir"
 }
 
-# ── Done ──
+# -- Done --
 Write-Host "`n" -NoNewline
 Write-Step "Build complete"
 if (Test-Path $GameExe) {
