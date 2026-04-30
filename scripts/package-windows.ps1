@@ -34,7 +34,8 @@ function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in src/credits/),
 # so a fresh checkout (CI or otherwise) must run the encoder before
-# cmake builds scstaffroll.c. ROM-independent — same step as build.sh.
+# cmake builds scstaffroll.c. ROM-independent — same step CMake's
+# GenerateCreditsAssets target runs.
 Write-Step "Encoding credits text"
 Push-Location (Join-Path $Root "src/credits")
 foreach ($f in @("staff.credits.us.txt", "titles.credits.us.txt")) {

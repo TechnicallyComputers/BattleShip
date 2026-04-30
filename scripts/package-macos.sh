@@ -44,7 +44,8 @@ fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in src/credits/),
 # so a fresh checkout (CI or otherwise) must run the encoder before
-# cmake builds scstaffroll.c. ROM-independent — same step as build.sh.
+# cmake builds scstaffroll.c. ROM-independent — same step CMake's
+# GenerateCreditsAssets target runs.
 step "Encoding credits text"
 (
     cd "$ROOT/src/credits"
@@ -67,8 +68,8 @@ step "Building BattleShip + torch"
 cmake --build "$BUILD_DIR" -j"$JOBS"
 
 # Build the f3d.o2r shader archive (ROM-independent, just zips the LUS
-# shaders directory). build.sh produces this at $ROOT/f3d.o2r — reuse the
-# same recipe rather than re-implement.
+# shaders directory). CMake's GenerateF3DO2R target produces this at
+# $ROOT/f3d.o2r — reuse the same recipe rather than re-implement.
 step "Packaging Fast3D shader archive"
 F3D_O2R="$BUILD_DIR/f3d.o2r"
 rm -f "$F3D_O2R"

@@ -432,11 +432,26 @@ void PortMenu::DrawElement() {
         Ship::Menu::DrawElement();
     }
 
+    // Re-extract confirmation: render as an in-context ImGui modal rather
+    // than calling SDL_ShowSimpleMessageBox, which would nest a blocking
+    // native modal (NSAlert / Win32 MessageBox) inside the in-progress
+    // ImGui frame and the GPU command encode for that frame. ImGui's own
+    // popup runs in the same context with no thread/native-modal nesting.
     if (mShowReextractMessage) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Re-extract scheduled",
-                                 "BattleShip.o2r will be regenerated from your ROM the next time the game launches.",
-                                 nullptr);
+        ImGui::OpenPopup("Re-extract scheduled");
         mShowReextractMessage = false;
+    }
+    const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Re-extract scheduled", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextWrapped(
+            "BattleShip.o2r will be regenerated from your ROM the next time the game launches.");
+        ImGui::Spacing();
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 

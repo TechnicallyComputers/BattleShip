@@ -1005,7 +1005,12 @@ void Menu::DrawElement() {
             }
         }
     }
-    if (!useColumns || menuSearchText.length() > 0) {
+    // Mirror the open-guard at line ~954. Earlier versions of this code
+    // dropped the headerSearch qualifier here, which calls EndChild without
+    // a matching BeginChild when useColumns=true && headerSearch=false &&
+    // search-active — fires when the user enables "Search In Sidebar" then
+    // types into a 2-column section's sidebar search.
+    if (!useColumns || (headerSearch && menuSearchText.length() > 0)) {
         ImGui::EndChild();
     }
 
