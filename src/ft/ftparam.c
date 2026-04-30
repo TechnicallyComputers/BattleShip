@@ -10,8 +10,23 @@ extern void func_80026738_27338(void *arg0);
 extern alSoundEffect* func_800269C0_275C0(u16);
 
 #ifdef PORT
-extern void portFixupFTTexturePartContainer(void *container);
+extern void *portFixupFTTexturePartContainer(void *container);
 #endif
+
+/* Resolve `attr->textureparts_container` (a reloc token under PORT, a real
+ * pointer on N64). Under PORT the resolved bytes are post-pass1-corrupted
+ * and may alias with adjacent reloc-token data for some fighters; the
+ * fixup returns a static-storage corrected COPY so we never modify the
+ * file image. The non-PORT path returns the resolved pointer directly. */
+static FTTexturePartContainer *ftParamGetTexturePartsContainer(FTStruct *fp)
+{
+#ifdef PORT
+    void *raw = (void *)PORT_RESOLVE(fp->attr->textureparts_container);
+    return (FTTexturePartContainer *)portFixupFTTexturePartContainer(raw);
+#else
+    return (FTTexturePartContainer *)PORT_RESOLVE(fp->attr->textureparts_container);
+#endif
+}
 
 // // // // // // // // // // // //
 //                               //
@@ -53,16 +68,6 @@ s32 dFTParamSkeletonColAnimIDs[/* */] =
     0x10,   // Poly Ness
     0x10    // Giant Donkey Kong
 };
-
-static FTTexturePartContainer *ftParamGetTexturePartsContainer(FTStruct *fp)
-{
-    FTTexturePartContainer *container = (FTTexturePartContainer*)PORT_RESOLVE(fp->attr->textureparts_container);
-
-#ifdef PORT
-    portFixupFTTexturePartContainer(container);
-#endif
-    return container;
-}
 
 // 0x8012B820
 f32 dFTParamStaleTable[/* */] = 
