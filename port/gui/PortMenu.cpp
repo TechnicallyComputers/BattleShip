@@ -1,6 +1,7 @@
 #include "PortMenu.h"
 
 #include "Compat.h"
+#include "../enhancements/enhancements.h"
 
 #include <fast/backends/gfx_rendering_api.h>
 #include <ship/Context.h>
@@ -271,6 +272,30 @@ void PortMenu::AddMenuSettings() {
         .CVar(CVAR_TEXTURE_FILTER)
         .RaceDisable(false)
         .Options(ComboboxOptions().Tooltip("Sets the active texture filtering mode.").ComboMap(kTextureFilteringMap));
+
+    path.sidebarName = "Gameplay";
+    path.column = SECTION_COLUMN_1;
+    AddSidebarEntry("Settings", "Gameplay", 1);
+
+    AddWidget(path, "Per-Port Enhancements", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Disable Tap Jump (P1)", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::TapJumpCVarName(0))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "When enabled, pushing up on the analog stick no longer triggers a jump for player 1. "
+            "Jump buttons (X, Y, C-up, etc.) still work."));
+    AddWidget(path, "Disable Tap Jump (P2)", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::TapJumpCVarName(1))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Same as P1, applied to player 2."));
+    AddWidget(path, "Disable Tap Jump (P3)", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::TapJumpCVarName(2))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Same as P1, applied to player 3."));
+    AddWidget(path, "Disable Tap Jump (P4)", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::TapJumpCVarName(3))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Same as P1, applied to player 4."));
 }
 
 void PortMenu::AddMenuWindows() {
