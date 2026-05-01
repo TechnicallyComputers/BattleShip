@@ -1,4 +1,7 @@
 #include <ft/fighter.h>
+#include <stdint.h>
+
+extern int32_t CVarGetInteger(const char* name, int32_t defaultValue);
 
 // // // // // // // // // // // //
 //                               //
@@ -86,7 +89,10 @@ sb32 ftCommonKneeBendCheckButtonTap(FTStruct *fp)
 // 0x8013F474
 s32 ftCommonKneeBendGetInputTypeCommon(FTStruct *fp)
 {
-    if ((fp->input.pl.stick_range.y >= FTCOMMON_KNEEBEND_STICK_RANGE_MIN) && (fp->tap_stick_y <= FTCOMMON_KNEEBEND_BUFFER_TICS_MAX))
+    char cvarName[32];
+    sprintf(cvarName, "gDisableTapJump_P%d", fp->player + 1);
+
+    if (!CVarGetInteger(cvarName, 0) && (fp->input.pl.stick_range.y >= FTCOMMON_KNEEBEND_STICK_RANGE_MIN) && (fp->tap_stick_y <= FTCOMMON_KNEEBEND_BUFFER_TICS_MAX))
     {
         return FTCOMMON_KNEEBEND_INPUT_TYPE_STICK;
     }
@@ -121,7 +127,10 @@ sb32 ftCommonKneeBendCheckInterruptCommon(GObj *fighter_gobj)
 // 0x8013F53C
 s32 ftCommonKneeBendGetInputTypeRun(FTStruct *fp)
 {
-    if ((fp->input.pl.stick_range.y > FTCOMMON_KNEEBEND_RUN_STICK_RANGE_MIN) && (fp->tap_stick_y <= FTCOMMON_KNEEBEND_BUFFER_TICS_MAX))
+    char cvarName[32];
+    sprintf(cvarName, "gDisableTapJump_P%d", fp->player + 1);
+
+    if (!CVarGetInteger(cvarName, 0) && (fp->input.pl.stick_range.y > FTCOMMON_KNEEBEND_RUN_STICK_RANGE_MIN) && (fp->tap_stick_y <= FTCOMMON_KNEEBEND_BUFFER_TICS_MAX))
     {
         return FTCOMMON_KNEEBEND_INPUT_TYPE_STICK;
     }
