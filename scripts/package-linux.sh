@@ -160,6 +160,28 @@ cp "$ICON_SRC" "$ICON_HI512"
 # Without this, the AppImage links dynamically against whatever .so
 # versions happen to be on the user's distro and fails on anything
 # but the exact build host's distro+version.
+#
+# linuxdeploy ships patchelf 0.15 + a binutils-2.34-era strip. Both predate
+# DT_RELR (compact relative relocations, glibc 2.36+). On hosts that link with
+# DT_RELR — Fedora 38+, Ubuntu 23.10+, Arch, Steam Deck Holo — bundling host
+# libs with those tools corrupts .relr.dyn: patchelf 0.15 mis-rewrites the
+# dynamic table, and strip refuses the section type outright. Result: AppImage
+# builds, then SIGSEGVs in _dl_init the moment ld.so loads the first bundled
+# lib. Detect a DT_RELR-era host (sniff libcrypto for the section) and wire
+# the host's modern toolchain in: PATCHELF env var overrides linuxdeploy's
+# bundled patchelf, NO_STRIP=1 skips the broken strip pass entirely. CI builds
+# on jammy (glibc 2.35) — pre-DT_RELR — and is unaffected.
+LIBCRYPTO_HOST="$(ldconfig -p 2>/dev/null | awk '/libcrypto\.so\.3/ && /x86-64/ {print $NF; exit}')"
+if [[ -n "$LIBCRYPTO_HOST" ]] && readelf -d "$LIBCRYPTO_HOST" 2>/dev/null | grep -q '(RELR)'; then
+    export NO_STRIP=1
+    if command -v patchelf >/dev/null 2>&1; then
+        export PATCHELF="$(command -v patchelf)"
+        printf '\033[33m! Host uses DT_RELR — overriding linuxdeploy patchelf with %s and setting NO_STRIP=1\033[0m\n' "$PATCHELF"
+    else
+        printf '\033[31mWARNING: host uses DT_RELR but patchelf is not installed — bundled patchelf 0.15 will corrupt .relr.dyn and the AppImage will segfault at launch. Install patchelf >=0.18.\033[0m\n' >&2
+    fi
+fi
+
 if command -v linuxdeploy >/dev/null 2>&1; then
     step "Bundling shared libraries via linuxdeploy"
     linuxdeploy \
