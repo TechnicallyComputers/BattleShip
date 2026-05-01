@@ -53,6 +53,9 @@ assets/*
 !assets/icon.ico
 !assets/icon.icns
 !assets/macos_dmg_banner.png
+!assets/custom/
+!assets/custom/fonts/
+!assets/custom/fonts/*
 __pycache__
 bin/
 relocAssets/

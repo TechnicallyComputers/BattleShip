@@ -67,8 +67,7 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 ### Gotchas
 
 - **Never use relative `build` paths in Bash tool calls** — Claude Code resets cwd between `Bash` calls. `cmake --build build` from the project root builds the main tree, not the worktree. Always use absolute paths: `cmake --build <worktree>/build ...`.
-- `build.sh --skip-extract` still tries `git submodule update --init` unconditionally, which fails on a new worktree (pinned SHAs not on remote). Use `new-worktree.sh` instead, or drive `cmake`/`cmake --build` directly with absolute paths.
-- The binary loads `BattleShip.o2r`, `f3d.o2r`, and `ssb64.o2r` from its CWD at launch; without them it exits with `archive ... does not exist`. `new-worktree.sh` symlinks all three from the main tree's `build/` into the worktree's `build/`. If the main tree has never been extracted, run `./build.sh` there first so the symlinks resolve.
+- The binary loads `BattleShip.o2r`, `f3d.o2r`, and `ssb64.o2r` from its CWD at launch; without them it exits with `archive ... does not exist`. `new-worktree.sh` symlinks all three from the main tree's `build/` into the worktree's `build/`. If the main tree has never been extracted, run `cmake --build <main-tree>/build --target ExtractAssets` there first so the symlinks resolve.
 
 ---
 
