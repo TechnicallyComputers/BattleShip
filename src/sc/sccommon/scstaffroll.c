@@ -14,6 +14,14 @@ extern void port_log(const char *fmt, ...);
  * we emit a port_log only every Nth tick so a multi-minute roll doesn't blow
  * the log to gigabytes. Reset to 0 in scStaffrollFuncStart. */
 static u32 sPortStaffrollScrollTicks = 0;
+/* Set to 1 by scStaffrollGetPauseStatusHighlight on the first frame A or B is
+ * tapped; the highlight + overlap layers consult it to dump one frame of
+ * detail and then it's cleared. Avoids flooding the log on every cursor frame. */
+sb32 sPortHighlightLogEnable = 0;
+/* Periodic crosshair-position trace (every ~120 frames) so we can correlate the
+ * cursor's logical x/y against the projected name corners that get logged when
+ * A/B are pressed. */
+static u32 sPortCrosshairLogTick = 0;
 #endif
 
 // // // // // // // // // // // //
@@ -710,6 +718,19 @@ sb32 scStaffrollCheckCursorNameOverlap(Vec3f *vec)
 	{
 		ret = FALSE;
 	}
+#ifdef PORT
+	/* One-shot dump per A-press (gated by sPortHighlightLogEnable below).
+	 * Logs the cursor position and the half-plane edge it tested against. */
+	extern sb32 sPortHighlightLogEnable;
+	if (sPortHighlightLogEnable)
+	{
+		port_log("SSB64:     overlap test cursor=(%.1f,%.1f) centered=(%.1f,%.1f) edge=(%.1f,%.1f,%.1f) v=%.1f -> %s\n",
+		         (double)sobj->pos.x, (double)sobj->pos.y,
+		         (double)x, (double)y,
+		         (double)vec->x, (double)vec->y, (double)vec->z,
+		         (double)v, ret ? "INSIDE" : "outside");
+	}
+#endif
 	return ret;
 }
 
@@ -740,7 +761,9 @@ void func_ovl59_80131F34(GObj *arg0)
 void func_ovl59_8013202C(GObj *arg0)
 {
 	GObj *gobj = gGCCommonLinks[nGCCommonLinkID02];
+#ifndef PORT
 	GObj *ugobj = arg0->user_data.p;
+#endif
 
 	if (gobj == NULL)
 	{
@@ -750,12 +773,27 @@ void func_ovl59_8013202C(GObj *arg0)
 		gcAddGObjProcess(gobj, func_ovl59_80131F34, nGCProcessKindFunc, 1);
 
 		gobj->user_data.p = arg0;
+#ifndef PORT
+		/* On N64 this writes a 4-byte GObj pointer at offset 0x1C of the
+		 * SCStaffrollName cn (aliased through GObj*'s unk_gobj_0x1C union
+		 * field) — equivalent to setting cn->unkgmcreditsstruct0x1C. The
+		 * field is write-only across the entire codebase: no reader.
+		 *
+		 * On LP64 the GObj layout shifts unk_gobj_0x1C from offset 0x1C
+		 * to offset 0x30, and the union widens from 4 to 8 bytes — so
+		 * the compiler emits an 8-byte store at cn+48. cn allocations
+		 * are 40 bytes apart, so cn+48 lands at the *next* cn's name_id.
+		 * That trashes the next name's metadata index and the lock-on
+		 * test reads garbage on the 4th-or-so click. Skip the write. */
 		ugobj->unk_gobj_0x1C = gobj;
+#endif
 	}
 	else
 	{
 		gobj->user_data.p = arg0;
+#ifndef PORT
 		ugobj->unk_gobj_0x1C = gobj;
+#endif
 	}
 }
 
@@ -1059,6 +1097,15 @@ void scStaffrollMakeStaffRoleTextSObjs(GObj *text_gobj, GObj *staff_gobj)
 	f32 wbase;
 	f32 hbase;
 	SCStaffrollName *staff = staff_gobj->user_data.p;
+#ifdef PORT
+	port_log("SSB64: MakeStaffRoleTextSObjs ENTER text_gobj=%p staff_gobj=%p staff=%p\n",
+	         (void*)text_gobj, (void*)staff_gobj, (void*)staff);
+	if (staff != NULL)
+	{
+		port_log("SSB64:   staff->name_id=%d (info_metadata_entries=%d)\n",
+		         (int)staff->name_id, (int)ARRAY_COUNT(dSCStaffrollStaffRoleTextInfo));
+	}
+#endif
 
 	wbase = 350.0F;
 	hbase = 40.0F;
@@ -1307,20 +1354,36 @@ sb32 scStaffrollCheckCursorHighlightPrompt(GObj *gobj, SCStaffrollProjection *pr
 	Vec3f sp28;
 
 	b = TRUE;
+#ifdef PORT
+	if (sPortHighlightLogEnable)
+	{
+		port_log("SSB64:   CheckCursorHighlightPrompt gobj=%p name corners (centered 640x480 space):\n"
+		         "             p0=(%.1f,%.1f) p1=(%.1f,%.1f) p2=(%.1f,%.1f) p3=(%.1f,%.1f)\n",
+		         (void*)gobj,
+		         (double)proj->px0, (double)proj->py0,
+		         (double)proj->px1, (double)proj->py1,
+		         (double)proj->px2, (double)proj->py2,
+		         (double)proj->px3, (double)proj->py3);
+	}
+#endif
 
 	func_ovl59_80131E70(&sp4C, proj->px0, proj->py0, proj->px2, proj->py2);
 	func_ovl59_80131E70(&sp40, proj->px1, proj->py1, proj->px3, proj->py3);
 	func_ovl59_80131E70(&sp34, proj->px0, proj->py0, proj->px1, proj->py1);
 	func_ovl59_80131E70(&sp28, proj->px2, proj->py2, proj->px3, proj->py3);
 
-	if 
+	if
 	(
-		(scStaffrollCheckCursorNameOverlap(&sp4C) == FALSE) && 
-		(scStaffrollCheckCursorNameOverlap(&sp40) != FALSE) && 
-		(scStaffrollCheckCursorNameOverlap(&sp34) != FALSE) && 
+		(scStaffrollCheckCursorNameOverlap(&sp4C) == FALSE) &&
+		(scStaffrollCheckCursorNameOverlap(&sp40) != FALSE) &&
+		(scStaffrollCheckCursorNameOverlap(&sp34) != FALSE) &&
 		(scStaffrollCheckCursorNameOverlap(&sp28) == FALSE)
 	)
 	{
+#ifdef PORT
+		if (sPortHighlightLogEnable)
+			port_log("SSB64:   *** cursor INSIDE name gobj=%p — triggering highlight\n", (void*)gobj);
+#endif
 		func_800269C0_275C0(nSYAudioFGMTrainingSel);
 
 		b = FALSE;
@@ -1340,8 +1403,47 @@ void func_ovl59_8013330C(void)
 	DObj *dobj;
 	SCStaffrollProjection proj;
 	sb32 b;
+#ifdef PORT
+	s32 port_name_count = 0;
+	if (sPortHighlightLogEnable)
+	{
+		port_log("SSB64:   camera eye=(%.2f,%.2f,%.2f) at=(%.2f,%.2f,%.2f) up=(%.4f,%.4f,%.4f) fovy=%.1f aspect=%.3f near=%.1f far=%.1f scale=%.3f\n",
+		         (double)sSCStaffrollCamera->vec.eye.x,
+		         (double)sSCStaffrollCamera->vec.eye.y,
+		         (double)sSCStaffrollCamera->vec.eye.z,
+		         (double)sSCStaffrollCamera->vec.at.x,
+		         (double)sSCStaffrollCamera->vec.at.y,
+		         (double)sSCStaffrollCamera->vec.at.z,
+		         (double)sSCStaffrollCamera->vec.up.x,
+		         (double)sSCStaffrollCamera->vec.up.y,
+		         (double)sSCStaffrollCamera->vec.up.z,
+		         (double)sSCStaffrollCamera->projection.persp.fovy,
+		         (double)sSCStaffrollCamera->projection.persp.aspect,
+		         (double)sSCStaffrollCamera->projection.persp.near,
+		         (double)sSCStaffrollCamera->projection.persp.far,
+		         (double)sSCStaffrollCamera->projection.persp.scale);
+	}
+#endif
 
 	func_ovl59_80131C88(sSCStaffrollCamera);
+#ifdef PORT
+	if (sPortHighlightLogEnable)
+	{
+		port_log("SSB64:   sSCStaffrollMatrix (view*persp) row by row:\n"
+		         "             [%.4f %.4f %.4f %.4f]\n"
+		         "             [%.4f %.4f %.4f %.4f]\n"
+		         "             [%.4f %.4f %.4f %.4f]\n"
+		         "             [%.4f %.4f %.4f %.4f]\n",
+		         (double)sSCStaffrollMatrix[0][0], (double)sSCStaffrollMatrix[0][1],
+		         (double)sSCStaffrollMatrix[0][2], (double)sSCStaffrollMatrix[0][3],
+		         (double)sSCStaffrollMatrix[1][0], (double)sSCStaffrollMatrix[1][1],
+		         (double)sSCStaffrollMatrix[1][2], (double)sSCStaffrollMatrix[1][3],
+		         (double)sSCStaffrollMatrix[2][0], (double)sSCStaffrollMatrix[2][1],
+		         (double)sSCStaffrollMatrix[2][2], (double)sSCStaffrollMatrix[2][3],
+		         (double)sSCStaffrollMatrix[3][0], (double)sSCStaffrollMatrix[3][1],
+		         (double)sSCStaffrollMatrix[3][2], (double)sSCStaffrollMatrix[3][3]);
+	}
+#endif
 
 	gobj = gGCCommonLinks[3];
 
@@ -1356,13 +1458,37 @@ void func_ovl59_8013330C(void)
 			func_ovl59_80131D30(dobj, &proj.pv1, &proj.px1, &proj.py1);
 			func_ovl59_80131D30(dobj, &proj.pv2, &proj.px2, &proj.py2);
 			func_ovl59_80131D30(dobj, &proj.pv3, &proj.px3, &proj.py3);
+#ifdef PORT
+			port_name_count++;
+			if (sPortHighlightLogEnable)
+			{
+				port_log("SSB64:   name[%d] dobj_tra=(%.2f,%.2f,%.2f) rot=(%.4f,%.4f,%.4f) sca=(%.3f,%.3f,%.3f)\n",
+				         (int)(port_name_count - 1),
+				         (double)dobj->translate.vec.f.x,
+				         (double)dobj->translate.vec.f.y,
+				         (double)dobj->translate.vec.f.z,
+				         (double)dobj->rotate.vec.f.x,
+				         (double)dobj->rotate.vec.f.y,
+				         (double)dobj->rotate.vec.f.z,
+				         (double)dobj->scale.vec.f.x,
+				         (double)dobj->scale.vec.f.y,
+				         (double)dobj->scale.vec.f.z);
+			}
+#endif
 
 			b = scStaffrollCheckCursorHighlightPrompt(gobj, &proj);
 
 			gobj = gobj->link_next;
-		} 
+		}
 		while ((gobj != NULL) && (b != FALSE));
 	}
+#ifdef PORT
+	if (sPortHighlightLogEnable)
+	{
+		port_log("SSB64:   walked %d name gobj(s); ended early=%d (b=%d)\n",
+		         (int)port_name_count, (int)(b == FALSE), (int)b);
+	}
+#endif
 }
 
 // 0x8013341C - Highlight staff member if A is pressed and/or pause if B is pressed, get bool for if paused or not
@@ -1374,7 +1500,19 @@ sb32 scStaffrollGetPauseStatusHighlight(void)
 
 	if (button_tap & (A_BUTTON | B_BUTTON))
 	{
+#ifdef PORT
+		SObj *cur_sobj = SObjGetStruct(sSCStaffrollCrosshairGObj);
+		port_log("SSB64: A/B pressed (button_tap=0x%x A=%d B=%d) cursor=(%.1f,%.1f) — running highlight check\n",
+		         (unsigned)button_tap,
+		         (int)((button_tap & A_BUTTON) ? 1 : 0),
+		         (int)((button_tap & B_BUTTON) ? 1 : 0),
+		         (double)cur_sobj->pos.x, (double)cur_sobj->pos.y);
+		sPortHighlightLogEnable = 1;
+#endif
 		func_ovl59_8013330C();
+#ifdef PORT
+		sPortHighlightLogEnable = 0;
+#endif
 
 		if (button_tap & B_BUTTON)
 		{
@@ -1454,6 +1592,9 @@ void scStaffrollFuncRun(GObj *gobj)
 SCStaffrollName* SCStaffrollNameUpdateAlloc(GObj *gobj)
 {
 	SCStaffrollName *cn;
+#ifdef PORT
+	sb32 from_pool = (sSCStaffrollNameAllocFree != NULL);
+#endif
 
 	if (sSCStaffrollNameAllocFree == NULL)
 	{
@@ -1467,6 +1608,10 @@ SCStaffrollName* SCStaffrollNameUpdateAlloc(GObj *gobj)
 	cn->offset_x = cn->unkgmcreditsstruct0x10 = cn->interpolation = cn->status = 0;
 
 	gobj->user_data.p = cn;
+#ifdef PORT
+	port_log("SSB64: NameUpdateAlloc gobj=%p cn=%p (from_pool=%d) name_id_at_alloc=%d\n",
+	         (void*)gobj, (void*)cn, (int)from_pool, (int)cn->name_id);
+#endif
 
 	return cn;
 }
@@ -1474,6 +1619,10 @@ SCStaffrollName* SCStaffrollNameUpdateAlloc(GObj *gobj)
 // 0x80133684
 void SCStaffrollNameSetPrevAlloc(SCStaffrollName *cn)
 {
+#ifdef PORT
+	port_log("SSB64: NameSetPrevAlloc cn=%p name_id=%d (going to free list, head was %p)\n",
+	         (void*)cn, (int)cn->name_id, (void*)sSCStaffrollNameAllocFree);
+#endif
 	cn->next = sSCStaffrollNameAllocFree;
 	sSCStaffrollNameAllocFree = cn;
 }
@@ -1566,6 +1715,10 @@ void scStaffrollJobAndNameInitStruct(GObj *gobj, DObj *first_dobj, DObj *second_
 
 	cn->name_id = sSCStaffrollNameID;
 	cn->job_or_name = job_or_name;
+#ifdef PORT
+	port_log("SSB64: JobAndNameInitStruct gobj=%p cn=%p name_id=%d job_or_name=%d offset_x=%.2f\n",
+	         (void*)gobj, (void*)cn, (int)cn->name_id, (int)cn->job_or_name, (double)cn->offset_x);
+#endif
 }
 
 // 0x80133A78
@@ -1955,6 +2108,16 @@ void scStaffrollCrosshairThreadUpdate(GObj *gobj)
 
 		sSCStaffrollCrosshairPositionX = sobj->pos.x - base_x;
 		sSCStaffrollCrosshairPositionY = sobj->pos.y - base_y;
+#ifdef PORT
+		/* Once a second, dump the cursor pos so we can correlate against the
+		 * projected name corners that get logged on A/B press. */
+		if ((++sPortCrosshairLogTick % 60) == 0)
+		{
+			port_log("SSB64: crosshair pos=(%.1f,%.1f) stick=(%d,%d)\n",
+			         (double)sobj->pos.x, (double)sobj->pos.y,
+			         (int)stick_x, (int)stick_y);
+		}
+#endif
 
 		gcSleepCurrentGObjThread(1);
 	}
