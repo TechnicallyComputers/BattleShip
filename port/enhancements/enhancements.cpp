@@ -12,6 +12,7 @@ constexpr const char* kTapJumpCVars[PORT_ENHANCEMENT_MAX_PLAYERS] = {
 };
 
 constexpr const char* kHitboxViewCVar = "gEnhancements.HitboxView";
+constexpr const char* kStageClearFrozenWallpaperCVar = "gEnhancements.StageClearFrozenWallpaper";
 
 // Mirrors dbObjectDisplayMode in src/sys/develop.h. Duplicated here to keep the
 // C ABI of port_enhancement_hitbox_display_override() free of game headers.
@@ -43,6 +44,10 @@ extern "C" int port_enhancement_hitbox_display_override(int current_mode) {
     }
 }
 
+extern "C" int port_enhancement_stage_clear_frozen_wallpaper_enabled(void) {
+    return CVarGetInteger(kStageClearFrozenWallpaperCVar, 1) != 0;
+}
+
 namespace ssb64 {
 namespace enhancements {
 
@@ -55,6 +60,10 @@ const char* TapJumpCVarName(int playerIndex) {
 
 const char* HitboxViewCVarName() {
     return kHitboxViewCVar;
+}
+
+const char* StageClearFrozenWallpaperCVarName() {
+    return kStageClearFrozenWallpaperCVar;
 }
 
 }
