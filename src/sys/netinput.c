@@ -1,5 +1,6 @@
 #include <sys/netinput.h>
 
+#include <sys/netpeer.h>
 #include <sys/taskman.h>
 
 typedef struct SYNetInputSlot
@@ -503,5 +504,10 @@ void syNetInputFuncRead(void)
 		}
 	}
 	syNetInputPublishMainController();
+
+	if (syNetPeerCheckStartBarrierReleased() == FALSE)
+	{
+		return;
+	}
 	sSYNetInputTick++;
 }

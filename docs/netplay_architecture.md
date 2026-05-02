@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`src/sys/netinput.c` and `src/sys/netinput.h` prepare the VS Mode controller path for rollback netcode without adding networking or save-state rewind yet. The module owns deterministic per-player input samples for each VS simulation tick, records those samples in bounded history buffers, and republishes the resolved input through the existing `SYController` globals that battle code already consumes.
+`src/sys/netinput.c` and `src/sys/netinput.h` prepare the VS Mode controller path for rollback netcode. The module owns deterministic per-player input samples for each VS simulation tick, records those samples in bounded history buffers, and republishes the resolved input through the existing `SYController` globals that battle code already consumes.
 
 Companion handoff notes for future agent sessions live in `docs/netcode_agent_rules.md`.
 
@@ -12,6 +12,7 @@ This keeps the first netplay boundary at the controller layer:
 - battle simulation still reads `gSYControllerDevices`
 - netplay-only input policy lives in `src/sys/netinput.c`
 - debug replay file I/O lives in `src/sys/netreplay.c`
+- debug UDP P2P transport and match bootstrap live in `src/sys/netpeer.c`
 
 ## Current Integration
 
@@ -23,6 +24,8 @@ The VS update order is:
 VS scene start
   -> syNetInputStartVSSession()
   -> syNetReplayStartVSSession()
+  -> syNetPeerStartVSSession()
+  -> bootstrap P2P sessions wait on BATTLE_READY/BATTLE_START
   -> netinput tick starts at 0
 
 taskman game tick during VS
@@ -31,13 +34,16 @@ taskman game tick during VS
   -> syControllerFuncRead()
   -> resolve one SYNetInputFrame per player for the current tick
   -> publish resolved frames into gSYControllerDevices
-  -> advance netinput tick
+  -> advance netinput tick once the optional P2P start barrier is released
   -> scene_update()
   -> syNetReplayUpdate()
+  -> syNetPeerUpdate()
   -> fighter input derivation
 ```
 
 `syNetInputGetTick()` returns a VS-local tick counter reset by `syNetInputStartVSSession()`. `dSYTaskmanUpdateCount` remains part of the engine, but netplay input history is keyed by match-local time so rematches and scene transitions do not reuse stale global tick assumptions.
+
+The P2P start barrier is debug-only and only active when both `SSB64_NETPLAY=1` and `SSB64_NETPLAY_BOOTSTRAP=1` are set. Local VS, replay playback/recording, and manual P2P input injection without bootstrap continue advancing netinput immediately.
 
 ## Canonical Input Frame
 
@@ -135,6 +141,16 @@ For full-match debug replay files, `netinput.c` also keeps a separate replay fra
 | `syNetReplayWriteDebugFile()` | Write explicit replay metadata and input frames to disk. |
 | `syNetReplayLoadDebugFile()` | Load a debug replay file for playback. |
 
+`src/sys/netpeer.h` exposes the debug UDP P2P surface:
+
+| Function | Role |
+| -------- | ---- |
+| `syNetPeerInitDebugEnv()` | Read debug netplay environment variables and run optional match metadata bootstrap. |
+| `syNetPeerStartVSSession()` | Open/reuse the UDP socket for VS, configure local/remote slot ownership, and enable the optional in-battle start barrier. |
+| `syNetPeerCheckStartBarrierReleased()` | Return whether netinput may advance the VS-local tick. Non-netplay and non-bootstrap sessions return true. |
+| `syNetPeerUpdate()` | Receive packets, drive the start barrier, send local input frames, and log runtime stats. |
+| `syNetPeerStopVSSession()` | Close the debug UDP socket and log the session summary. |
+
 ## VS Replay Direction
 
 Saved VS replays are deterministic engine re-runs, not video captures. The current debug replay file includes:
@@ -159,6 +175,32 @@ SSB64_REPLAY_PLAY=/tmp/test.ssb64r ./BattleShip
 
 `SSB64_REPLAY_RECORD_FRAMES` is optional and defaults to 1800 frames. Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
 
+## Debug P2P Netplay
+
+`src/sys/netpeer.c` adds a UDP-only debug transport for manual P2P testing. It is not a final lobby or NAT traversal layer; it exists to prove that two local game instances can share match setup and exchange per-tick input frames.
+
+Current debug environment variables:
+
+- `SSB64_NETPLAY=1` enables the UDP P2P module.
+- `SSB64_NETPLAY_LOCAL_PLAYER` selects the local slot index.
+- `SSB64_NETPLAY_REMOTE_PLAYER` selects the remote slot index.
+- `SSB64_NETPLAY_BIND` is the local IPv4 bind address in `host:port` form.
+- `SSB64_NETPLAY_PEER` is the remote IPv4 address in `host:port` form.
+- `SSB64_NETPLAY_DELAY` offsets sent input ticks by a fixed frame delay. It defaults to 2.
+- `SSB64_NETPLAY_SESSION` optionally overrides the packet session id. It defaults to 1.
+- `SSB64_NETPLAY_BOOTSTRAP=1` enables automatic VS match bootstrap.
+- `SSB64_NETPLAY_HOST=1` marks the peer that creates and sends match metadata.
+- `SSB64_NETPLAY_SEED` optionally overrides the bootstrap match RNG seed.
+
+Packet phases:
+
+- `INPUT` packets carry recent local `SYNetInputFrame` samples, tagged with delayed VS-local ticks and staged into the remote confirmed input history.
+- `MATCH_CONFIG` packets carry explicit `SYNetInputReplayMetadata` so both peers enter the same VS battle with the same stage, rules, players, characters, and RNG seed.
+- Bootstrap `READY` / `START` packets complete the pre-VS metadata handshake.
+- In-battle `BATTLE_READY` / `BATTLE_START` packets align the VS-local netinput tick before runtime input packets begin.
+
+Match metadata sync and tick start sync are separate. Metadata bootstrap makes both peers enter the same battle state, but the in-battle start barrier is what keeps `syNetInputGetTick()` at 0 until both peers have reached VS and exchanged readiness.
+
 ## Validation Path
 
 Before adding sockets or rollback state restoration, use the saved-input path to validate deterministic VS input replay:
@@ -169,17 +211,18 @@ Before adding sockets or rollback state restoration, use the saved-input path to
 4. Set the relevant slots to `nSYNetInputSourceSaved`.
 5. Compare `syNetInputGetHistoryInputChecksum()` against the replay file checksum.
 
-This verifies the input layer can reproduce the same per-tick controller stream before introducing network transport or state rewind.
+This verifies the input layer can reproduce the same per-tick controller stream before introducing rollback state rewind.
 
 ## Non-Goals
 
 This module does not yet implement:
 
-- network sockets or packet formats
-- matchmaking, lobby, or peer/session ownership
+- matchmaking, lobby, ELO, region, or ping selection
+- STUN/TURN, NAT traversal, or relay fallback
 - game-state snapshot/restore
 - framebuffer rollback
 - full determinism hashing of fighter/world state
+- wall-clock input scheduling, rollback prediction windows, or resimulation
 - netplay support for 1P Game, Training Mode, Bonus 1 Practice, or Bonus 2 Practice
 
 Those systems should build on top of this input boundary rather than bypassing it.
