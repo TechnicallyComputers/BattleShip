@@ -12,6 +12,7 @@ extern void portFixupSprite(void *sprite);
 extern void portFixupBitmapArray(void *bitmaps, unsigned int count);
 extern void portFixupSpriteBitmapData(void *sprite, void *bitmaps);
 extern void portTextureCacheDeleteRange(const void *base, size_t size);
+extern int port_enhancement_stage_clear_frozen_wallpaper_enabled(void);
 #endif
 extern void *func_800269C0_275C0(u16 id);
 
@@ -2218,6 +2219,14 @@ void sc1PStageClearCopyFramebufToWallpaper(void)
 		portFixupSpriteBitmapData(wp_sprite, wp_bitmap);
 
 		dst = (u16*)PORT_RESOLVE(wp_bitmap->buf);
+		/* User opt-out, OR the GPU readback bridge couldn't grab a clean
+		 * source FB (e.g. Windows D3D11 default config — see
+		 * port/bridge/framebuffer_capture.cpp). In either case leave the
+		 * fixed-up asset pixels untouched: the wallpaper renders the asset's
+		 * stored solid-black bitmap, matching the pre-fix behaviour. */
+		if (!port_enhancement_stage_clear_frozen_wallpaper_enabled()) {
+			return;
+		}
 		if (port_capture_game_framebuffer() != 0 || dst == NULL) {
 			return;
 		}

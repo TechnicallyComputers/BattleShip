@@ -16,6 +16,12 @@ int port_enhancement_tap_jump_disabled(int player_index);
 // match restart.
 int port_enhancement_hitbox_display_override(int current_mode);
 
+// 1P stage-clear "frozen frame" wallpaper. Default on. When off, the stage-
+// clear bonus screen reverts to the asset's stored solid-black background
+// (matches the pre-#57 behaviour). Provides an escape hatch for backends
+// where the GPU-readback bridge is unavailable or unreliable.
+int port_enhancement_stage_clear_frozen_wallpaper_enabled(void);
+
 #ifdef __cplusplus
 }
 
@@ -23,6 +29,7 @@ namespace ssb64 {
 namespace enhancements {
 const char* TapJumpCVarName(int playerIndex);
 const char* HitboxViewCVarName();
+const char* StageClearFrozenWallpaperCVarName();
 }
 }
 #endif

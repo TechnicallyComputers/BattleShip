@@ -305,6 +305,16 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Same as P1, applied to player 4."));
 
+    AddWidget(path, "1P Stage Clear: Frozen Frame Background", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::StageClearFrozenWallpaperCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "On real hardware the 1P stage-clear bonus screen freezes the last gameplay frame "
+            "as the background. The port reproduces this via a one-shot GPU readback when the "
+            "scene loads (no per-frame cost). Some video backends or low-end GPUs may not "
+            "support readback cleanly — disable to fall back to a solid black background.")
+                     .DefaultValue(true));
+
     AddWidget(path, "Debug", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Hitbox View", WIDGET_CVAR_COMBOBOX)
         .CVar(enhancements::HitboxViewCVarName())

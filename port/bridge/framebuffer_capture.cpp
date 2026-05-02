@@ -45,15 +45,50 @@ extern "C" int port_capture_game_framebuffer(void) {
         return -4;
     }
 
-    /* mGameFb is created via mRapi->CreateFramebuffer() directly at init
-     * time, not via Interpreter::CreateFrameBuffer, so it's not entered
-     * into the mFrameBuffers map (that map is for game-driven aux FBs).
-     * Its dimensions track mCurDimensions (the upscaled native res).
-     * If the renderer is in mRendersToFb=false mode (Windows default
-     * when the imgui game viewport matches the resolution), draws went
-     * to FB 0 instead, so read from there. On macOS the __APPLE__ guard
-     * in ViewportMatchesRendererResolution forces mRendersToFb=true. */
-    int fbId = interp->mRendersToFb ? interp->mGameFb : 0;
+    /* mGameFb / mGameFbMsaaResolved are created via mRapi->CreateFramebuffer()
+     * directly at init time, not via Interpreter::CreateFrameBuffer, so they
+     * aren't entered into the mFrameBuffers map (that map is for game-driven
+     * aux FBs). Their dimensions track mCurDimensions (the upscaled native
+     * res) when ViewportMatchesRendererResolution() returns false; otherwise
+     * mGameFb tracks the window dims with mMsaaLevel.
+     *
+     * FB 0 is the swap-chain back buffer. By the time this runs (scene
+     * transition), Present has already rotated the back buffer; under DXGI
+     * FLIP_DISCARD on D3D11 its contents are undefined. Worse, sourcing
+     * CopyResource against FB 0 with the renderer's mCurDimensions can
+     * dimension-mismatch the swap-chain texture and trigger a device-lost
+     * event. So we never read FB 0 — instead bail with -7 if no off-screen
+     * game FB is populated, and let the caller leave the wallpaper as
+     * solid black (graceful degradation, matches pre-fix behaviour).
+     *
+     * On macOS the __APPLE__ guard in ViewportMatchesRendererResolution
+     * forces mRendersToFb=true, so this always picks mGameFb. On Windows
+     * D3D11 / Linux GL, mRendersToFb=true is reached when the user has
+     * MSAA enabled or has set a non-1:1 internal resolution multiplier
+     * (the imgui game viewport then no longer matches the renderer res).
+     * In the default 1x / no-MSAA Windows config, mRendersToFb=false and
+     * we bail. */
+    if (!interp->mRendersToFb) {
+        return -7;
+    }
+
+    int fbId;
+    if (interp->mMsaaLevel > 1) {
+        /* MSAA path: mGameFb is multi-sampled and not directly CPU-readable.
+         * When the imgui game viewport doesn't match the renderer res, the
+         * interpreter resolves into mGameFbMsaaResolved at end-of-frame. When
+         * it does match, the resolve target is FB 0 (swap-chain) instead and
+         * mGameFbMsaaResolved is left stale — see Interpreter.cpp:5905. We
+         * can't read FB 0 (post-Present, undefined contents), so bail. */
+        if (interp->ViewportMatchesRendererResolution()) {
+            return -8;
+        }
+        fbId = interp->mGameFbMsaaResolved;
+    } else {
+        /* Single-sampled mGameFb at mCurDimensions; safe to read directly. */
+        fbId = interp->mGameFb;
+    }
+
     uint32_t srcW = interp->mCurDimensions.width;
     uint32_t srcH = interp->mCurDimensions.height;
     if (srcW == 0 || srcH == 0) {
