@@ -25,7 +25,7 @@ VS scene start
   -> syNetInputStartVSSession()
   -> syNetReplayStartVSSession()
   -> syNetPeerStartVSSession()
-  -> bootstrap P2P sessions wait on BATTLE_READY/BATTLE_START
+  -> bootstrap P2P sessions enable the execution gate
   -> netinput tick starts at 0
 
 taskman game tick during VS
@@ -36,6 +36,8 @@ taskman game tick during VS
   -> publish resolved frames into gSYControllerDevices
   -> advance netinput tick once the optional P2P start barrier is released
   -> scene_update()
+  -> syNetPeerUpdateBattleGate()
+  -> return early if bootstrap P2P execution is not ready
   -> syNetReplayUpdate()
   -> syNetPeerUpdate()
   -> fighter input derivation
@@ -43,7 +45,7 @@ taskman game tick during VS
 
 `syNetInputGetTick()` returns a VS-local tick counter reset by `syNetInputStartVSSession()`. `dSYTaskmanUpdateCount` remains part of the engine, but netplay input history is keyed by match-local time so rematches and scene transitions do not reuse stale global tick assumptions.
 
-The P2P start barrier is debug-only and only active when both `SSB64_NETPLAY=1` and `SSB64_NETPLAY_BOOTSTRAP=1` are set. Local VS, replay playback/recording, and manual P2P input injection without bootstrap continue advancing netinput immediately.
+The P2P start barrier and VS execution gate are debug-only and only active when both `SSB64_NETPLAY=1` and `SSB64_NETPLAY_BOOTSTRAP=1` are set. Local VS, replay playback/recording, and manual P2P input injection without bootstrap continue advancing netinput and VS updates immediately.
 
 ## Canonical Input Frame
 
@@ -147,7 +149,9 @@ For full-match debug replay files, `netinput.c` also keeps a separate replay fra
 | -------- | ---- |
 | `syNetPeerInitDebugEnv()` | Read debug netplay environment variables and run optional match metadata bootstrap. |
 | `syNetPeerStartVSSession()` | Open/reuse the UDP socket for VS, configure local/remote slot ownership, and enable the optional in-battle start barrier. |
+| `syNetPeerCheckBattleExecutionReady()` | Return whether VS battle simulation/presentation may advance. Non-netplay and non-bootstrap sessions return true. |
 | `syNetPeerCheckStartBarrierReleased()` | Return whether netinput may advance the VS-local tick. Non-netplay and non-bootstrap sessions return true. |
+| `syNetPeerUpdateBattleGate()` | Receive control packets and drive `BATTLE_READY` / `BATTLE_START` while VS execution is held. |
 | `syNetPeerUpdate()` | Receive packets, drive the start barrier, send local input frames, and log runtime stats. |
 | `syNetPeerStopVSSession()` | Close the debug UDP socket and log the session summary. |
 
@@ -199,7 +203,13 @@ Packet phases:
 - Bootstrap `READY` / `START` packets complete the pre-VS metadata handshake.
 - In-battle `BATTLE_READY` / `BATTLE_START` packets align the VS-local netinput tick before runtime input packets begin.
 
-Match metadata sync and tick start sync are separate. Metadata bootstrap makes both peers enter the same battle state, but the in-battle start barrier is what keeps `syNetInputGetTick()` at 0 until both peers have reached VS and exchanged readiness.
+Match metadata sync, input tick start sync, and VS execution sync are separate layers:
+
+- Metadata bootstrap makes both peers enter the same battle state.
+- The input tick barrier keeps `syNetInputGetTick()` at 0 until both peers have reached VS and exchanged readiness.
+- The VS execution gate keeps `scVSBattleFuncUpdate()` from advancing battle/interface presentation while the bootstrap barrier is still waiting.
+
+The execution gate is intentionally shaped as a reusable readiness query. Future runtime pacing, peer advertised ticks, and rollback readiness checks should build on this boundary instead of adding more one-off checks to the VS scene.
 
 ## Validation Path
 

@@ -86,6 +86,8 @@ sb32 sSYNetPeerBattleStartReceived;
 sb32 sSYNetPeerBattleBarrierReleased;
 u32 sSYNetPeerBattleBarrierWaitFrames;
 u32 sSYNetPeerBattleStartRepeatFrames;
+u32 sSYNetPeerExecutionHoldFrames;
+sb32 sSYNetPeerExecutionBeginLogged;
 
 #if defined(PORT) && !defined(_WIN32)
 s32 sSYNetPeerSocket = -1;
@@ -743,6 +745,8 @@ void syNetPeerInitDebugEnv(void)
 	sSYNetPeerBattleBarrierReleased = TRUE;
 	sSYNetPeerBattleBarrierWaitFrames = 0;
 	sSYNetPeerBattleStartRepeatFrames = 0;
+	sSYNetPeerExecutionHoldFrames = 0;
+	sSYNetPeerExecutionBeginLogged = FALSE;
 
 	if ((netplay_env == NULL) || (atoi(netplay_env) == 0))
 	{
@@ -858,6 +862,8 @@ void syNetPeerStartVSSession(void)
 	sSYNetPeerBattleBarrierReleased = (sSYNetPeerBattleBarrierEnabled == FALSE) ? TRUE : FALSE;
 	sSYNetPeerBattleBarrierWaitFrames = 0;
 	sSYNetPeerBattleStartRepeatFrames = 0;
+	sSYNetPeerExecutionHoldFrames = 0;
+	sSYNetPeerExecutionBeginLogged = (sSYNetPeerBattleBarrierEnabled == FALSE) ? TRUE : FALSE;
 
 	syNetInputSetSlotSource(sSYNetPeerLocalPlayer, nSYNetInputSourceLocal);
 	syNetInputSetSlotSource(sSYNetPeerRemotePlayer, nSYNetInputSourceRemotePredicted);
@@ -869,7 +875,7 @@ void syNetPeerStartVSSession(void)
 #endif
 }
 
-sb32 syNetPeerCheckStartBarrierReleased(void)
+sb32 syNetPeerCheckBattleExecutionReady(void)
 {
 	if ((sSYNetPeerIsEnabled == FALSE) || (sSYNetPeerBootstrapIsEnabled == FALSE) ||
 		(sSYNetPeerBattleBarrierEnabled == FALSE))
@@ -877,6 +883,11 @@ sb32 syNetPeerCheckStartBarrierReleased(void)
 		return TRUE;
 	}
 	return sSYNetPeerBattleBarrierReleased;
+}
+
+sb32 syNetPeerCheckStartBarrierReleased(void)
+{
+	return syNetPeerCheckBattleExecutionReady();
 }
 
 void syNetPeerBuildPacket(u8 *buffer, u32 *out_size)
@@ -1092,13 +1103,45 @@ void syNetPeerLogStats(void)
 	}
 	sSYNetPeerLastLogTick = tick;
 
-	port_log("SSB64 NetPeer: role=%s local=%d remote=%d barrier=%d tick=%u sent=%u recv=%u dropped=%u staged=%u highest_remote=%u late=%u checksum=0x%08X\n",
+	port_log("SSB64 NetPeer: role=%s local=%d remote=%d barrier=%d execution_ready=%d tick=%u sent=%u recv=%u dropped=%u staged=%u highest_remote=%u late=%u checksum=0x%08X\n",
 	         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 	         sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer,
-	         sSYNetPeerBattleBarrierReleased, tick,
+	         sSYNetPeerBattleBarrierReleased, syNetPeerCheckBattleExecutionReady(), tick,
 	         sSYNetPeerPacketsSent, sSYNetPeerPacketsReceived, sSYNetPeerPacketsDropped,
 	         sSYNetPeerFramesStaged, sSYNetPeerHighestRemoteTick, sSYNetPeerLateFrames,
 	         sSYNetPeerInputChecksum);
+#endif
+}
+
+void syNetPeerLogExecutionHold(void)
+{
+#ifdef PORT
+	if ((sSYNetPeerExecutionHoldFrames == 1) ||
+		((sSYNetPeerExecutionHoldFrames % SYNETPEER_BARRIER_LOG_INTERVAL) == 0))
+	{
+		port_log("SSB64 NetPeer: execution hold role=%s local=%d remote=%d tick=%u hold=%u barrier_wait=%u peer_ready=%d start_sent=%d start_recv=%d highest_remote=%u late=%u\n",
+		         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+		         sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer, syNetInputGetTick(),
+		         sSYNetPeerExecutionHoldFrames, sSYNetPeerBattleBarrierWaitFrames,
+		         sSYNetPeerBattlePeerReady, sSYNetPeerBattleStartSent,
+		         sSYNetPeerBattleStartReceived, sSYNetPeerHighestRemoteTick,
+		         sSYNetPeerLateFrames);
+	}
+#endif
+}
+
+void syNetPeerLogExecutionBegin(void)
+{
+#ifdef PORT
+	if (sSYNetPeerExecutionBeginLogged == FALSE)
+	{
+		sSYNetPeerExecutionBeginLogged = TRUE;
+		port_log("SSB64 NetPeer: execution begin role=%s local=%d remote=%d tick=%u hold=%u barrier_wait=%u highest_remote=%u late=%u\n",
+		         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+		         sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer, syNetInputGetTick(),
+		         sSYNetPeerExecutionHoldFrames, sSYNetPeerBattleBarrierWaitFrames,
+		         sSYNetPeerHighestRemoteTick, sSYNetPeerLateFrames);
+	}
 #endif
 }
 
@@ -1170,7 +1213,7 @@ void syNetPeerUpdateStartBarrier(void)
 #endif
 }
 
-void syNetPeerUpdate(void)
+void syNetPeerUpdateBattleGate(void)
 {
 	if (sSYNetPeerIsActive == FALSE)
 	{
@@ -1179,7 +1222,23 @@ void syNetPeerUpdate(void)
 	syNetPeerReceiveRemoteInput();
 	syNetPeerUpdateStartBarrier();
 
-	if (sSYNetPeerBattleBarrierReleased == FALSE)
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		sSYNetPeerExecutionHoldFrames++;
+		syNetPeerLogExecutionHold();
+	}
+	else syNetPeerLogExecutionBegin();
+}
+
+void syNetPeerUpdate(void)
+{
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	syNetPeerUpdateBattleGate();
+
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
 	{
 		return;
 	}

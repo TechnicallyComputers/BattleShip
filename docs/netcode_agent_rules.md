@@ -24,6 +24,7 @@ Build rollback netcode in phases:
 - `src/sys/netpeer.c` and `src/sys/netpeer.h` implement the debug UDP P2P transport, explicit input packet serialization, packet checksums, and local/remote player slot ownership.
 - `src/sys/netpeer.c` can bootstrap matching VS battle metadata with `MATCH_CONFIG`, pre-VS `READY` / `START`, and a shared RNG seed.
 - `src/sys/netpeer.c` now runs a bootstrap-only in-battle start barrier with `BATTLE_READY` / `BATTLE_START` before netinput advances from tick 0.
+- `src/sys/netpeer.c` exposes a bootstrap-only VS execution gate so `scVSBattleFuncUpdate()` can hold battle/interface updates until both peers have crossed the start barrier.
 - `src/sc/sccommon/scvsbattle.c` routes VS battle input through `syNetInputFuncRead`.
 - `src/sc/sccommon/scvsbattle.c` calls `syNetInputStartVSSession()` at VS match start so repeated matches do not inherit previous input history or slot ownership.
 - `src/sc/sccommon/scvsbattle.c` calls `syNetReplayStartVSSession()` and `syNetReplayUpdate()` for debug record/playback.
@@ -37,6 +38,7 @@ Build rollback netcode in phases:
 - Keep `src/sys/controller.c` focused on local hardware input and N64-style controller behavior.
 - Put new netplay-only input functions in `src/sys/netinput.c` and declarations in `src/sys/netinput.h`.
 - Put debug P2P transport, packet formats, bootstrap handshakes, and barrier state in `src/sys/netpeer.c` and declarations in `src/sys/netpeer.h`.
+- Keep reusable netplay execution readiness checks in `src/sys/netpeer.c`; VS scenes should call a query such as `syNetPeerCheckBattleExecutionReady()` rather than duplicating bootstrap state checks.
 - Do not add remote, predicted, or saved input metadata to `SYController`.
 - Resolve input source first, then publish the selected result into `gSYControllerDevices[player]`.
 - Existing battle/fighter code should continue reading `SYController` fields without knowing the input source.
@@ -56,6 +58,7 @@ Build rollback netcode in phases:
 - Debug replay record/playback is controlled by `SSB64_REPLAY_RECORD`, `SSB64_REPLAY_PLAY`, and optional `SSB64_REPLAY_RECORD_FRAMES`.
 - Debug P2P is controlled by `SSB64_NETPLAY`, `SSB64_NETPLAY_LOCAL_PLAYER`, `SSB64_NETPLAY_REMOTE_PLAYER`, `SSB64_NETPLAY_BIND`, `SSB64_NETPLAY_PEER`, `SSB64_NETPLAY_DELAY`, `SSB64_NETPLAY_SESSION`, `SSB64_NETPLAY_BOOTSTRAP`, `SSB64_NETPLAY_HOST`, and `SSB64_NETPLAY_SEED`.
 - The start barrier should only gate bootstrap P2P sessions. Non-netplay, replay, and manual P2P sessions should return true from `syNetPeerCheckStartBarrierReleased()` and advance netinput normally.
+- The VS execution gate should only hold bootstrap P2P sessions. Non-netplay, replay, and manual P2P sessions should return true from `syNetPeerCheckBattleExecutionReady()` and run scene updates normally.
 
 ## Determinism Rules
 
@@ -72,7 +75,7 @@ Build rollback netcode in phases:
 - `SYNETINPUT_HISTORY_LENGTH` is fixed at 720 frames. Revisit this when delay, max rollback window, replay length, and memory ownership are better defined.
 - `button_update` currently mirrors newly pressed buttons. Confirm whether any battle path requires the original controller repeat behavior before relying on it for menus or non-battle scenes.
 - The current replay serializer is a debug runner, not a final user-facing replay browser or stable long-term file contract.
-- Bootstrap P2P now aligns netinput tick 0, but tick drift after start still needs validation with checksums and eventually gameplay-state hashes.
+- Bootstrap P2P now aligns netinput tick 0 and holds VS execution until the start barrier releases, but tick drift after start still needs validation with checksums and eventually gameplay-state hashes.
 - One-way packet diagnosis is still manual. Keep logging role, local/remote players, tick, staged frames, highest remote tick, dropped packets, late frames, and barrier state when changing netpeer.
 - No gameplay-state hash exists yet.
 - No rollback snapshot/restore API exists yet.
@@ -81,7 +84,8 @@ Build rollback netcode in phases:
 ## Suggested Next Steps
 
 - Add a narrow VS gameplay-state hash after debug replay input checksums are passing.
-- Add input checksum windows to bootstrap P2P logs to confirm both peers remain aligned after the start barrier.
+- Add input checksum windows to bootstrap P2P logs to confirm both peers remain aligned after the execution gate opens.
+- Add peer advertised simulation tick and input headroom logging before deciding between simple tick pacing, catch-up simulation, or rollback snapshot/restore first.
 - Design the final VS-facing menu flow: Local VS, Netplay, and Replays as separate user-facing entries.
 - Define save-state boundaries for rollback after replayed input determinism is validated.
 
@@ -92,7 +96,7 @@ Build rollback netcode in phases:
 - Test that menus, 1P Game, Training Mode, Bonus 1 Practice, and Bonus 2 Practice still use `syControllerFuncRead`.
 - For replay work, run from `build/`, record with `SSB64_REPLAY_RECORD=/tmp/test.ssb64r`, replay with `SSB64_REPLAY_PLAY=/tmp/test.ssb64r`, compare the logged input checksum first, then add stronger gameplay-state validation.
 - For manual P2P, run two instances from `build/` with reciprocal `SSB64_NETPLAY_BIND` / `SSB64_NETPLAY_PEER` values and no bootstrap; confirm remote inputs still stage.
-- For bootstrap P2P, run one host with `SSB64_NETPLAY_BOOTSTRAP=1 SSB64_NETPLAY_HOST=1` and one client with `SSB64_NETPLAY_BOOTSTRAP=1`; inspect `~/.local/share/BattleShip/ssb64.log` for metadata applied, VS session start, `BATTLE_READY`, `BATTLE_START`, barrier release, and runtime tick/staged/late stats.
+- For bootstrap P2P, run one host with `SSB64_NETPLAY_BOOTSTRAP=1 SSB64_NETPLAY_HOST=1` and one client with `SSB64_NETPLAY_BOOTSTRAP=1`; inspect `~/.local/share/BattleShip/ssb64.log` for metadata applied, VS session start, `BATTLE_READY`, `BATTLE_START`, execution hold, execution begin, barrier release, and runtime tick/staged/late stats.
 
 ## Packaging Note
 
