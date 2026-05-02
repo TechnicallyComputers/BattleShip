@@ -40,6 +40,22 @@ int port_capture_game_framebuffer(void);
  */
 const uint16_t *port_get_captured_framebuffer(void);
 
+/**
+ * Pin the LUS interpreter to off-screen rendering (mRendersToFb=true) so the
+ * prior gameplay frame is preserved in mGameFb at scene-transition time.
+ * Required by the GPU-readback bridge on backends where FB 0 is the swap-
+ * chain back buffer and contents are undefined post-Present (Windows D3D11
+ * with DXGI FLIP_DISCARD, Linux GL with similar swap semantics).
+ *
+ * Cost when enabled: one extra full-screen blit per frame from mGameFb into
+ * FB 0; sub-millisecond on any modern GPU. No effect on macOS — the platform
+ * already pins this on via the __APPLE__ guard inside the interpreter.
+ *
+ * Idempotent. Safe to call before the LUS context exists (will become
+ * effective once it does).
+ */
+void port_capture_set_force_render_to_fb(int enable);
+
 #ifdef __cplusplus
 }
 #endif

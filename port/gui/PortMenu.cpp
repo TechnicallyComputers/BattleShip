@@ -1,6 +1,7 @@
 #include "PortMenu.h"
 
 #include "Compat.h"
+#include "../bridge/framebuffer_capture.h"
 #include "../enhancements/enhancements.h"
 
 #include <fast/backends/gfx_rendering_api.h>
@@ -308,11 +309,19 @@ void PortMenu::AddMenuSettings() {
     AddWidget(path, "1P Stage Clear: Frozen Frame Background", WIDGET_CVAR_CHECKBOX)
         .CVar(enhancements::StageClearFrozenWallpaperCVarName())
         .RaceDisable(false)
+        .Callback([](WidgetInfo&) {
+            // When this flips on we need LUS to start rendering off-screen so
+            // mGameFb is populated by the time the next stage-clear scene
+            // transition fires. When it flips off we drop the per-frame blit.
+            port_capture_set_force_render_to_fb(
+                port_enhancement_stage_clear_frozen_wallpaper_enabled());
+        })
         .Options(CheckboxOptions().Tooltip(
             "On real hardware the 1P stage-clear bonus screen freezes the last gameplay frame "
-            "as the background. The port reproduces this via a one-shot GPU readback when the "
-            "scene loads (no per-frame cost). Some video backends or low-end GPUs may not "
-            "support readback cleanly — disable to fall back to a solid black background.")
+            "as the background. The port reproduces this via a GPU readback when the scene "
+            "loads. While enabled, the renderer draws each frame to an off-screen buffer "
+            "(sub-millisecond cost) so the prior gameplay frame is preserved across the "
+            "scene transition. Disable to revert to a solid black background.")
                      .DefaultValue(true));
 
     AddWidget(path, "Debug", WIDGET_SEPARATOR_TEXT);

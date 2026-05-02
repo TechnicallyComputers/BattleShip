@@ -31,6 +31,31 @@
 
 static uint16_t sCaptureBuf[PORT_FB_CAPTURE_W * PORT_FB_CAPTURE_H];
 
+/* Cached desire from the port (CVar / ESC-menu toggle). Mirrored onto the
+ * live LUS interpreter as soon as one is reachable; we re-apply on every
+ * capture in case the interpreter was recreated (e.g. backend switch). */
+static bool sForceRenderToFbDesired = false;
+
+static void apply_force_render_to_fb_to_interp(Fast::Interpreter *interp) {
+    if (interp != nullptr) {
+        interp->SetForceRenderToFb(sForceRenderToFbDesired);
+    }
+}
+
+extern "C" void port_capture_set_force_render_to_fb(int enable) {
+    sForceRenderToFbDesired = (enable != 0);
+    auto ctx = Ship::Context::GetInstance();
+    if (!ctx) {
+        return;
+    }
+    auto win = std::dynamic_pointer_cast<Fast::Fast3dWindow>(ctx->GetWindow());
+    if (!win) {
+        return;
+    }
+    auto interp = win->GetInterpreterWeak().lock();
+    apply_force_render_to_fb_to_interp(interp.get());
+}
+
 extern "C" int port_capture_game_framebuffer(void) {
     auto ctx = Ship::Context::GetInstance();
     if (!ctx) {
@@ -44,6 +69,14 @@ extern "C" int port_capture_game_framebuffer(void) {
     if (!interp || interp->mRapi == nullptr) {
         return -4;
     }
+
+    /* Re-apply the desired force-render flag in case the interpreter was
+     * recreated after our last call (e.g. user changed video backend).
+     * NOTE: this only takes effect on the NEXT frame's StartFrame, so it's
+     * here purely as a safety belt — the port should call
+     * port_capture_set_force_render_to_fb(1) once at boot so mGameFb is
+     * already populated by the time this capture runs. */
+    apply_force_render_to_fb_to_interp(interp.get());
 
     /* mGameFb / mGameFbMsaaResolved are created via mRapi->CreateFramebuffer()
      * directly at init time, not via Interpreter::CreateFrameBuffer, so they
