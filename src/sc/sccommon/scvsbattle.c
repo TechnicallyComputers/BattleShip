@@ -6,6 +6,7 @@ extern void port_coroutine_yield(void);
 #include <gr/ground.h>
 #include <sc/scene.h>
 #include <sys/netinput.h>
+#include <sys/netreplay.h>
 #include <sys/video.h>
 #include <reloc_data.h>
 #include <gm/gmcamera.h>
@@ -85,6 +86,7 @@ SYTaskmanSetup dSCVSBattleTaskmanSetup =
 void scVSBattleFuncUpdate(void)
 {
 	ifCommonBattleUpdateInterfaceAll();
+	syNetReplayUpdate();
 }
 
 // 0x8018D0E0 - Get player's initial facing direction for battle start
@@ -142,6 +144,7 @@ void scVSBattleStartBattle(void)
 	SYColorRGBA color;
 
 	syNetInputStartVSSession();
+	syNetReplayStartVSSession(gSCManagerBattleState);
 
 	gSCManagerSceneData.is_reset = FALSE;
 	gSCManagerSceneData.is_suddendeath = FALSE;
@@ -574,6 +577,7 @@ void scVSBattleStartScene(void)
 		func_800266A0_272A0();
 		gmRumbleInitPlayers();
 	}
+	syNetReplayFinishVSSession();
 	gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
 	gSCManagerSceneData.scene_curr = nSCKindVSResults;
 }

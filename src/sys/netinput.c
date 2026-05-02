@@ -14,6 +14,7 @@ SYNetInputSlot sSYNetInputSlots[MAXCONTROLLERS];
 SYNetInputFrame sSYNetInputHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 SYNetInputFrame sSYNetInputRemoteHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 SYNetInputFrame sSYNetInputSavedHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+SYNetInputFrame sSYNetInputReplayFrames[MAXCONTROLLERS][SYNETINPUT_REPLAY_MAX_FRAMES];
 SYNetInputReplayMetadata sSYNetInputReplayMetadata;
 u32 sSYNetInputTick;
 u32 sSYNetInputRecordedFrameCount;
@@ -102,6 +103,16 @@ void syNetInputReset(void)
 	sSYNetInputReplayMetadata.time_limit = 0;
 	sSYNetInputReplayMetadata.item_switch = 0;
 	sSYNetInputReplayMetadata.item_toggles = 0;
+	sSYNetInputReplayMetadata.rng_seed = 0;
+	sSYNetInputReplayMetadata.game_type = 0;
+	sSYNetInputReplayMetadata.game_rules = 0;
+	sSYNetInputReplayMetadata.is_team_battle = FALSE;
+	sSYNetInputReplayMetadata.handicap = 0;
+	sSYNetInputReplayMetadata.is_team_attack = FALSE;
+	sSYNetInputReplayMetadata.is_stage_select = FALSE;
+	sSYNetInputReplayMetadata.damage_ratio = 0;
+	sSYNetInputReplayMetadata.item_appearance_rate = 0;
+	sSYNetInputReplayMetadata.is_not_teamshadows = FALSE;
 
 	for (player = 0; player < MAXCONTROLLERS; player++)
 	{
@@ -113,12 +124,18 @@ void syNetInputReset(void)
 		sSYNetInputReplayMetadata.costumes[player] = 0;
 		sSYNetInputReplayMetadata.teams[player] = 0;
 		sSYNetInputReplayMetadata.handicaps[player] = 0;
+		sSYNetInputReplayMetadata.levels[player] = 0;
+		sSYNetInputReplayMetadata.shades[player] = 0;
 
 		for (i = 0; i < SYNETINPUT_HISTORY_LENGTH; i++)
 		{
 			syNetInputClearFrame(&sSYNetInputHistory[player][i]);
 			syNetInputClearFrame(&sSYNetInputRemoteHistory[player][i]);
 			syNetInputClearFrame(&sSYNetInputSavedHistory[player][i]);
+		}
+		for (i = 0; i < SYNETINPUT_REPLAY_MAX_FRAMES; i++)
+		{
+			syNetInputClearFrame(&sSYNetInputReplayFrames[player][i]);
 		}
 	}
 }
@@ -217,7 +234,12 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 		break;
 
 	case nSYNetInputSourceSaved:
-		if (syNetInputGetStoredFrame(sSYNetInputSavedHistory, player, tick, out_frame) == FALSE)
+		if (syNetInputGetReplayFrame(player, tick, out_frame) != FALSE)
+		{
+			out_frame->source = nSYNetInputSourceSaved;
+			out_frame->is_predicted = FALSE;
+		}
+		else if (syNetInputGetStoredFrame(sSYNetInputSavedHistory, player, tick, out_frame) == FALSE)
 		{
 			syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceSaved, FALSE);
 		}
@@ -307,6 +329,42 @@ u32 syNetInputGetHistoryChecksum(s32 player, u32 tick_begin, u32 frame_count)
 	return checksum;
 }
 
+u32 syNetInputAccumulateInputChecksum(u32 checksum, s32 player, SYNetInputFrame *frame)
+{
+	checksum ^= (u32)player;
+	checksum *= 16777619U;
+	checksum ^= frame->tick;
+	checksum *= 16777619U;
+	checksum ^= frame->buttons;
+	checksum *= 16777619U;
+	checksum ^= (u8)frame->stick_x;
+	checksum *= 16777619U;
+	checksum ^= (u8)frame->stick_y;
+	checksum *= 16777619U;
+
+	return checksum;
+}
+
+u32 syNetInputGetHistoryInputChecksum(u32 frame_count)
+{
+	SYNetInputFrame frame;
+	u32 checksum = 2166136261U;
+	u32 tick;
+	s32 player;
+
+	for (tick = 0; tick < frame_count; tick++)
+	{
+		for (player = 0; player < MAXCONTROLLERS; player++)
+		{
+			if (syNetInputGetHistoryFrame(player, tick, &frame) != FALSE)
+			{
+				checksum = syNetInputAccumulateInputChecksum(checksum, player, &frame);
+			}
+		}
+	}
+	return checksum;
+}
+
 void syNetInputSetRecordingEnabled(sb32 is_enabled)
 {
 	sSYNetInputIsRecording = is_enabled;
@@ -325,6 +383,80 @@ sb32 syNetInputGetRecordingEnabled(void)
 u32 syNetInputGetRecordedFrameCount(void)
 {
 	return sSYNetInputRecordedFrameCount;
+}
+
+void syNetInputClearReplayFrames(void)
+{
+	s32 player;
+	s32 i;
+
+	sSYNetInputRecordedFrameCount = 0;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		for (i = 0; i < SYNETINPUT_REPLAY_MAX_FRAMES; i++)
+		{
+			syNetInputClearFrame(&sSYNetInputReplayFrames[player][i]);
+		}
+	}
+}
+
+sb32 syNetInputSetReplayFrame(s32 player, u32 tick, const SYNetInputFrame *frame)
+{
+	if ((syNetInputCheckPlayer(player) == FALSE) || (frame == NULL) || (tick >= SYNETINPUT_REPLAY_MAX_FRAMES))
+	{
+		return FALSE;
+	}
+	sSYNetInputReplayFrames[player][tick] = *frame;
+	sSYNetInputReplayFrames[player][tick].tick = tick;
+	sSYNetInputReplayFrames[player][tick].is_valid = TRUE;
+
+	if (sSYNetInputRecordedFrameCount < (tick + 1))
+	{
+		sSYNetInputRecordedFrameCount = tick + 1;
+	}
+	return TRUE;
+}
+
+sb32 syNetInputGetReplayFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	SYNetInputFrame *frame;
+
+	if ((syNetInputCheckPlayer(player) == FALSE) || (tick >= SYNETINPUT_REPLAY_MAX_FRAMES))
+	{
+		return FALSE;
+	}
+	frame = &sSYNetInputReplayFrames[player][tick];
+
+	if ((frame->is_valid == FALSE) || (frame->tick != tick))
+	{
+		return FALSE;
+	}
+	if (out_frame != NULL)
+	{
+		*out_frame = *frame;
+	}
+	return TRUE;
+}
+
+u32 syNetInputGetReplayInputChecksum(void)
+{
+	SYNetInputFrame frame;
+	u32 checksum = 2166136261U;
+	u32 tick;
+	s32 player;
+
+	for (tick = 0; tick < sSYNetInputRecordedFrameCount; tick++)
+	{
+		for (player = 0; player < MAXCONTROLLERS; player++)
+		{
+			if (syNetInputGetReplayFrame(player, tick, &frame) != FALSE)
+			{
+				checksum = syNetInputAccumulateInputChecksum(checksum, player, &frame);
+			}
+		}
+	}
+	return checksum;
 }
 
 void syNetInputSetReplayMetadata(const SYNetInputReplayMetadata *metadata)
@@ -364,12 +496,12 @@ void syNetInputFuncRead(void)
 	{
 		syNetInputResolveFrame(player, tick, &frame);
 		syNetInputPublishFrame(player, &frame);
+
+		if (sSYNetInputIsRecording != FALSE)
+		{
+			syNetInputSetReplayFrame(player, tick, &frame);
+		}
 	}
 	syNetInputPublishMainController();
-
-	if (sSYNetInputIsRecording != FALSE)
-	{
-		sSYNetInputRecordedFrameCount++;
-	}
 	sSYNetInputTick++;
 }

@@ -11,6 +11,7 @@ This keeps the first netplay boundary at the controller layer:
 - local hardware input still comes from `src/sys/controller.c`
 - battle simulation still reads `gSYControllerDevices`
 - netplay-only input policy lives in `src/sys/netinput.c`
+- debug replay file I/O lives in `src/sys/netreplay.c`
 
 ## Current Integration
 
@@ -21,6 +22,7 @@ The VS update order is:
 ```text
 VS scene start
   -> syNetInputStartVSSession()
+  -> syNetReplayStartVSSession()
   -> netinput tick starts at 0
 
 taskman game tick during VS
@@ -31,6 +33,7 @@ taskman game tick during VS
   -> publish resolved frames into gSYControllerDevices
   -> advance netinput tick
   -> scene_update()
+  -> syNetReplayUpdate()
   -> fighter input derivation
 ```
 
@@ -79,6 +82,8 @@ Slots default to local input. This means routing VS battle through `syNetInputFu
 
 All buffers use `SYNETINPUT_HISTORY_LENGTH` and index by `tick % SYNETINPUT_HISTORY_LENGTH`. Reads validate both `is_valid` and exact `tick` to reject stale ring entries.
 
+For full-match debug replay files, `netinput.c` also keeps a separate replay frame stream capped by `SYNETINPUT_REPLAY_MAX_FRAMES`. This avoids treating the 720-frame rollback ring as permanent replay storage.
+
 ## Publishing To SYController
 
 `syNetInputPublishFrame()` converts a canonical frame back into the existing `SYController` shape:
@@ -108,26 +113,51 @@ All buffers use `SYNETINPUT_HISTORY_LENGTH` and index by `tick % SYNETINPUT_HIST
 | `syNetInputGetHistoryFrame()` | Read the resolved input actually published for a player/tick. |
 | `syNetInputGetPublishedFrame()` | Read the latest published input for a player. |
 | `syNetInputGetHistoryChecksum()` | Produce a lightweight checksum over resolved input history for validation. |
+| `syNetInputGetHistoryInputChecksum()` | Produce a source-independent checksum over published buttons/sticks for replay validation. |
 | `syNetInputSetRecordingEnabled()` | Enable or disable recording of resolved VS input frames. |
 | `syNetInputGetRecordingEnabled()` | Inspect whether resolved VS input recording is enabled. |
 | `syNetInputGetRecordedFrameCount()` | Read the number of VS ticks recorded since recording was enabled. |
+| `syNetInputClearReplayFrames()` | Clear the full-match replay frame stream. |
+| `syNetInputSetReplayFrame()` | Store one replay frame for a player and tick. |
+| `syNetInputGetReplayFrame()` | Read one replay frame for a player and tick. |
+| `syNetInputGetReplayInputChecksum()` | Produce a source-independent checksum over the full-match replay stream. |
 | `syNetInputSetReplayMetadata()` | Stage metadata needed by future saved VS replay files. |
 | `syNetInputGetReplayMetadata()` | Read staged VS replay metadata if available. |
 | `syNetInputFuncRead()` | VS controller callback that resolves and publishes current-tick inputs. |
 
+`src/sys/netreplay.h` exposes the debug runner surface:
+
+| Function | Role |
+| -------- | ---- |
+| `syNetReplayInitDebugEnv()` | Read debug replay environment variables at port startup. |
+| `syNetReplayStartVSSession()` | Configure record or playback state after a clean VS netinput session starts. |
+| `syNetReplayUpdate()` | Write a record file at the frame limit or verify playback once enough frames have run. |
+| `syNetReplayWriteDebugFile()` | Write explicit replay metadata and input frames to disk. |
+| `syNetReplayLoadDebugFile()` | Load a debug replay file for playback. |
+
 ## VS Replay Direction
 
-Saved VS replays should be deterministic engine re-runs, not video captures. A future replay file should include:
+Saved VS replays are deterministic engine re-runs, not video captures. The current debug replay file includes:
 
 - magic and version
-- game/build compatibility marker
+- metadata size, frame size, frame count, player count, and input checksum
 - VS scene/mode identifier
 - initial battle settings and player slot setup
-- stage, stocks/time/rules, item settings, characters, costumes, teams, and handicaps
+- stage, stocks/time/rules, item settings, characters, costumes, teams, handicaps, CPU levels, and match-start RNG seed
 - per-player `SYNetInputFrame` stream
-- optional input checksums or stronger future gameplay-state hashes
+- source-independent input checksum for record/playback comparison
 
-Playback should reset the VS netinput session, load metadata, stage saved inputs with `syNetInputSetSavedInput()`, set replayed slots to `nSYNetInputSourceSaved`, and run the normal game engine.
+Playback resets the VS netinput session, loads metadata, stages full-match replay inputs, sets replayed slots to `nSYNetInputSourceSaved`, restores the match-start RNG seed, and runs the normal game engine.
+
+The debug runner is controlled with environment variables:
+
+```sh
+cd build
+SSB64_REPLAY_RECORD=/tmp/test.ssb64r SSB64_REPLAY_RECORD_FRAMES=1800 ./BattleShip
+SSB64_REPLAY_PLAY=/tmp/test.ssb64r ./BattleShip
+```
+
+`SSB64_REPLAY_RECORD_FRAMES` is optional and defaults to 1800 frames. Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
 
 ## Validation Path
 
@@ -137,7 +167,7 @@ Before adding sockets or rollback state restoration, use the saved-input path to
 2. Capture `sSYNetInputHistory` through `syNetInputGetHistoryFrame()`.
 3. Re-stage those samples with `syNetInputSetSavedInput()`.
 4. Set the relevant slots to `nSYNetInputSourceSaved`.
-5. Compare `syNetInputGetHistoryChecksum()` or stronger future battle-state hashes across runs.
+5. Compare `syNetInputGetHistoryInputChecksum()` against the replay file checksum.
 
 This verifies the input layer can reproduce the same per-tick controller stream before introducing network transport or state rewind.
 
