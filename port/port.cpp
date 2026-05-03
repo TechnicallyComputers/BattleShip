@@ -459,6 +459,13 @@ void PortShutdown(void) {
 	// kernel runs the effect to completion after the process exits.
 	if (sContext) {
 		if (auto cd = sContext->GetControlDeck()) {
+			// Shut down the raphnet pipeline FIRST. Each transport's Close
+			// sends RQ_RNT_SUSPEND_POLLING(0) so the adapter is usable as a
+			// plain HID joystick again after process exit (the firmware does
+			// NOT auto-resume on hid_close). Order: ShutdownRaphnet → Stop-
+			// AllRumble → sContext.reset() — same singleton-reentry caveat
+			// applies as the rumble cleanup below.
+			cd->ShutdownRaphnet();
 			cd->StopAllRumble();
 		}
 	}
