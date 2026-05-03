@@ -178,36 +178,48 @@ extern "C" void port_enhancement_analog_remap(int player_index, signed char* sti
     const float up    = stick->GetAxisDirectionValue(Ship::UP);
     const float down  = stick->GetAxisDirectionValue(Ship::DOWN);
 
-    // Per-axis signed input in [-RAW_MAX, +RAW_MAX].
-    const float in_x = right - left;
-    const float in_y = up - down;
+    // libultraship hands us per-direction magnitudes in [0, RAW_MAX] where
+    // RAW_MAX is MAX_AXIS_RANGE (85.0f). The Ownasaurus/USBtoN64v2 firmware,
+    // by contrast, runs the formula on the int16 USB stick value directly
+    // (XPAD_MAX = 32767). Run the formula in the firmware's domain so it
+    // is byte-faithful to usbh_xpad.c — including the `-(in+1)` asymmetry,
+    // which is meaningful at int16 scale (one LSB of 32767, present to
+    // protect against negating INT16_MIN) but would explode to ~1% of full
+    // scale if applied to LUS's [-85, +85] floats directly. Output naturally
+    // lands in [-127, +127] like the firmware.
+    const float in_x = (right - left) * (32767.0f / 85.0f);
+    const float in_y = (up - down)    * (32767.0f / 85.0f);
 
-    // RAW_MAX matches libultraship's MAX_AXIS_RANGE (85.0f) — the per-direction
-    // normalized cap GetAxisDirectionValue() can return.
-    constexpr float RAW_MAX = 85.0f;
+    constexpr float XPAD_MAX = 32767.0f;
     const float dz_pct =
         std::clamp(CVarGetFloat(kAnalogRemapDeadzoneCVars[player_index], kAnalogRemapDeadzoneDefault), 0.0f, 0.99f);
     const float rng_pct =
         std::clamp(CVarGetFloat(kAnalogRemapRangeCVars[player_index], kAnalogRemapRangeDefault), 0.50f, 1.50f);
 
-    const float dz_val      = dz_pct * RAW_MAX;
-    const float dz_relation = (RAW_MAX > dz_val) ? RAW_MAX / (RAW_MAX - dz_val) : 1.0f;
     const float n64_max     = 127.0f * rng_pct;
-    const float scale       = n64_max / RAW_MAX;
+    const float dz_val      = dz_pct * XPAD_MAX;
+    const float dz_relation = (XPAD_MAX > dz_val) ? XPAD_MAX / (XPAD_MAX - dz_val) : 1.0f;
 
-    auto remap_axis = [&](float in) -> signed char {
-        if (in >= dz_val) {
-            float out = (in - dz_val) * dz_relation * scale;
-            if (out > 127.0f) out = 127.0f;
-            return static_cast<signed char>(out);
-        } else if (in <= -dz_val) {
-            // Verbatim source asymmetry: temp = -(in+1) before deadzone math.
-            float temp = -(in + 1.0f);
-            float out  = (temp - dz_val) * dz_relation * scale;
-            if (out > 127.0f) out = 127.0f;
-            return static_cast<signed char>(-out);
+    // Verbatim usbh_xpad.c L260-L303 formula. The firmware truncates with a
+    // (uint8_t) cast then unary-negates; at range > ~100% that truncation
+    // wraps a >127 result into a small negative value (firmware bug). We
+    // clamp to s8 instead so the user's range slider stays monotonic past
+    // 100%.
+    auto remap_axis = [&](float stick) -> signed char {
+        float out;
+        if (stick >= dz_val) {
+            float unscaled = (stick - dz_val) * dz_relation;
+            out = unscaled * (n64_max / XPAD_MAX);
+        } else if (stick <= -dz_val) {
+            float temp     = -(stick + 1.0f);
+            float unscaled = (temp - dz_val) * dz_relation;
+            out            = -(unscaled * (n64_max / XPAD_MAX));
+        } else {
+            return 0;
         }
-        return 0;
+        if (out >  127.0f) out =  127.0f;
+        if (out < -127.0f) out = -127.0f;
+        return static_cast<signed char>(out);
     };
 
     *stick_x = remap_axis(in_x);
