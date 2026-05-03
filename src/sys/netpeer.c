@@ -481,9 +481,11 @@ void syNetPeerSendBytes(const u8 *buffer, u32 size)
 	sendto(sSYNetPeerSocket, buffer, size, 0,
 	       (struct sockaddr*)&sSYNetPeerPeerAddress, sizeof(sSYNetPeerPeerAddress));
 }
+#endif
 
 void syNetPeerSendControlPacket(u16 packet_type)
 {
+#if defined(PORT) && !defined(_WIN32)
 	u8 buffer[SYNETPEER_CONTROL_PACKET_BYTES];
 	u8 *cursor = buffer;
 	u32 checksum;
@@ -495,8 +497,10 @@ void syNetPeerSendControlPacket(u16 packet_type)
 	checksum = syNetPeerChecksumBytes(buffer, cursor - buffer);
 	syNetPeerWriteU32(&cursor, checksum);
 	syNetPeerSendBytes(buffer, SYNETPEER_CONTROL_PACKET_BYTES);
+#endif
 }
 
+#if defined(PORT) && !defined(_WIN32)
 void syNetPeerSendMatchConfigPacket(void)
 {
 	u8 buffer[SYNETPEER_BOOTSTRAP_PACKET_BYTES];
