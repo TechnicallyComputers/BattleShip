@@ -97,7 +97,7 @@ for sm in libultraship torch decomp; do
     # `decomp` may not yet be a submodule on `main` (added on agent/decomp-submodule).
     # Skip silently if the main tree doesn't track this submodule yet.
     if [[ -z "$(git -C "$ROOT" config -f .gitmodules "submodule.$sm.path" 2>/dev/null)" ]]; then
-        printf '\033[33m  Skipping submodule %s (not configured in main tree's .gitmodules)\033[0m\n' "$sm"
+        printf '\033[33m  Skipping submodule %s (not configured in main tree .gitmodules)\033[0m\n' "$sm"
         continue
     fi
     pinned_sha="$(git -C "$ROOT" rev-parse "HEAD:$sm")"
@@ -190,7 +190,7 @@ cat <<EOF
   Branch:   $BRANCH  (base: $BASE)
   Build:    $WT_DIR/build       ($GEN, $CONFIG)
   ROM:      symlinked
-  Submods:  libultraship, torch — independent clones, origin set to fork
+  Submods:  libultraship, torch, decomp — independent clones, origin set to fork
 
   Point a new Claude window at: $WT_DIR
   Build:    cmake --build $WT_DIR/build --target ssb64 -j
