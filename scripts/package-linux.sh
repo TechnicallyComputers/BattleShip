@@ -51,7 +51,7 @@ fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
 # ── 0. Run codegen scripts that don't need the ROM ──
 step "Encoding credits text"
 (
-    cd "$ROOT/src/credits"
+    cd "$ROOT/decomp/src/credits"
     for f in staff.credits.us.txt titles.credits.us.txt; do
         python3 "$ROOT/tools/creditsTextConverter.py" "$f" > /dev/null
     done
