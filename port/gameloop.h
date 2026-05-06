@@ -39,6 +39,10 @@ void PortGameShutdown(void);
  */
 void port_resume_service_threads(void);
 
+/** Frame index for net barrier / logging (PC port). */
+int port_get_push_frame_count(void);
+void port_reset_push_frame_count_for_net_barrier(void);
+
 #ifdef __cplusplus
 }
 #endif

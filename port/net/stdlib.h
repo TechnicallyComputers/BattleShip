@@ -1,0 +1,36 @@
+#ifndef __STDLIB_H__
+#define __STDLIB_H__
+
+#ifndef NULL
+#define NULL 0
+#endif
+
+#ifdef PORT
+#if defined(_MSC_VER)
+__declspec(noreturn) extern void abort(void);
+#else
+extern void abort(void) __attribute__((noreturn));
+#endif
+extern void *malloc(unsigned long size);
+extern void free(void *ptr);
+extern void *realloc(void *ptr, unsigned long size);
+extern int abs(int j);
+extern long strtol(const char *nptr, char **endptr, int base);
+extern char *getenv(const char *name);
+#endif
+
+typedef struct lldiv_t
+{
+	long long quot;
+	long long rem;
+} lldiv_t;
+
+typedef struct ldiv_t
+{
+	long quot;
+	long rem;
+} ldiv_t;
+
+lldiv_t lldiv(long long num, long long denom);
+ldiv_t ldiv(long num, long denom);
+#endif /* !__STDLIB_H__ */
