@@ -24,6 +24,16 @@
 #include "port.h"
 #include "port_watchdog.h"
 
+extern "C" {
+int syNetPeerIsVSSessionActive(void);
+void syNetRollbackApplyPortSimPacing(unsigned int refresh_hz);
+#ifdef PORT
+int syNetPeerShouldPumpBattleGateOnHostFrame(void);
+void syNetPeerPumpBattleGateOnHostFrame(void);
+int syNetPeerWantsSyncPresentHold(void);
+#endif
+}
+
 #include <libultraship/libultraship.h>
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
@@ -399,6 +409,16 @@ void PortGameInit(void)
 
 static int sFrameCount = 0;
 
+extern "C" int port_get_push_frame_count(void)
+{
+	return sFrameCount;
+}
+
+extern "C" void port_reset_push_frame_count_for_net_barrier(void)
+{
+	sFrameCount = 0;
+}
+
 /* ========================================================================= */
 /*  Screenshot capture (env-var driven)                                      */
 /* ========================================================================= */
@@ -540,7 +560,47 @@ void PortPushFrame(void)
 	 * Each thread runs until it yields at osRecvMesg(BLOCK) on empty queue. */
 	port_resume_service_threads();
 
+#ifdef PORT
+	/* Net barrier may run here and from VS taskman freeze; duplicate recv pump is safe (UDP drain). */
+	if (syNetPeerShouldPumpBattleGateOnHostFrame() != 0) {
+		syNetPeerPumpBattleGateOnHostFrame();
+	}
+#endif
+
 	sFrameCount++;
+
+	uint32_t sim_pacing_hz = 60U;
+
+	if (syNetPeerIsVSSessionActive() != 0)
+	{
+		auto ctx_sim = Ship::Context::GetInstance();
+
+		if (ctx_sim)
+		{
+			auto w_sim = ctx_sim->GetWindow();
+			auto f3 = w_sim ? std::dynamic_pointer_cast<Fast::Fast3dWindow>(w_sim) : nullptr;
+
+			if (f3)
+			{
+				uint32_t rr = f3->GetCurrentRefreshRate();
+
+				if (rr != 0U)
+				{
+					sim_pacing_hz = rr;
+				}
+				else
+				{
+					int32_t tf = f3->GetTargetFps();
+
+					if (tf > 0)
+					{
+						sim_pacing_hz = (uint32_t)tf;
+					}
+				}
+			}
+		}
+	}
+	syNetRollbackApplyPortSimPacing(sim_pacing_hz);
 
 	/* VI-style idle presentation: when no gfx task was submitted this VI,
 	 * original hardware still scans out the current RDRAM framebuffer.
@@ -549,6 +609,19 @@ void PortPushFrame(void)
 	 * the cached game framebuffer texture through the normal GUI/window path
 	 * without re-running any display list or touching game memory. */
 	if (sDLSubmitsThisFrame == 0) {
+#ifdef PORT
+		const bool netplaySyncPresentHold = (syNetPeerWantsSyncPresentHold() != 0);
+#else
+		const bool netplaySyncPresentHold = false;
+#endif
+		if (netplaySyncPresentHold) {
+			/* Netplay VS sync hold: do not present stale staging / partial VS; pace ~one VI without swapping. */
+			auto target = frameStart + std::chrono::microseconds(16667);
+			auto now = std::chrono::steady_clock::now();
+			if (now < target) {
+				std::this_thread::sleep_for(target - now);
+			}
+		} else {
 		bool idlePresented = false;
 		static int sFreezePacing = -1;
 		if (sFreezePacing < 0) {
@@ -578,6 +651,7 @@ void PortPushFrame(void)
 					/* busy-wait */
 				}
 			}
+		}
 		}
 	}
 	sDLSubmitsThisFrame = 0;

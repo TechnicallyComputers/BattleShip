@@ -31,6 +31,12 @@ option(NON_MATCHING "Build without matching decomp constraints" ON)
 option(NON_EQUIVALENT "Build without equivalent decomp constraints" ON)
 option(USE_AUTO_VCPKG "Use automated vcpkg for dependency management" ON)
 option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for rendering regression testing" OFF)
+option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
+
+if(SSB64_NETMENU AND NOT WIN32)
+    find_package(CURL REQUIRED)
+    find_package(Threads REQUIRED)
+endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
@@ -178,9 +184,19 @@ file(GLOB_RECURSE SSB64_SRC_SC      "decomp/src/sc/*.c"      "decomp/src/sc/*.h"
 file(GLOB_RECURSE SSB64_SRC_SYS     "decomp/src/sys/*.c"     "decomp/src/sys/*.h")
 file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h")
 
+# Port UDP/P2P + replay/sync (canonical under port/net/sys — not in decomp submodule).
+set(SSB64_PORT_NET_SYS_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netinput.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netpeer.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netreplay.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netsync.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netrollback.c"
+)
+
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/net/")
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -207,6 +223,14 @@ set(SSB64_DECOMP_SOURCES
 
 # Exclude .inc.c files (inline data included by other .c files)
 list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX "\\.inc\\.c$")
+
+# Root for #include <sys/net*.h> -> port/net/sys/*.h on selected TUs.
+set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+
+if(SSB64_NETMENU)
+    # Mirror port/net/**.c over decomp/src/** when paths align; aliases + port-only list in module.
+    include(Ssb64NetmenuSources)
+endif()
 
 ################################################################################
 # Excluded directories (not compiled):
@@ -247,11 +271,50 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
+if(SSB64_NETMENU)
+    list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
+endif()
+
 ################################################################################
 # Decomp C code — OBJECT library with custom include/ shadowing system headers
 ################################################################################
 
 add_library(ssb64_game OBJECT ${SSB64_DECOMP_SOURCES})
+
+target_sources(ssb64_game PRIVATE ${SSB64_PORT_NET_SYS_SOURCES})
+
+# Net sys sources need -I port/net so #include <sys/netpeer.h> -> port/net/sys/netpeer.h without shadowing <sc/scene.h>.
+if(MSVC)
+    set_source_files_properties(${SSB64_PORT_NET_SYS_SOURCES} PROPERTIES COMPILE_OPTIONS "/I${_SSB64_PORT_NET_SYS_PARENT}")
+else()
+    set_source_files_properties(${SSB64_PORT_NET_SYS_SOURCES} PROPERTIES COMPILE_OPTIONS "-I${_SSB64_PORT_NET_SYS_PARENT}")
+endif()
+
+if(SSB64_NETMENU)
+    target_sources(ssb64_game PRIVATE ${SSB64_PORT_NETMENU_SOURCES})
+    # BEFORE: foundation shims in port/net (string.h, stdlib.h, sys/taskman.h) must precede decomp/include
+    # and decomp/src; then narrower include roots for matchmaking/mm_*.h and lb/*.h lookups.
+    target_include_directories(ssb64_game BEFORE PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net"
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/matchmaking"
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/lb")
+    target_include_directories(ssb64_game PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
+else()
+    # Decomp VS scenes include <sys/net*.h>; add trailing -I port/net on these TUs only so decomp/src stays
+    # ahead for <sc/scene.h> and port/net/sys supplies net headers.
+    set(_SSB64_DECOMP_NETINCLUDE_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/sccommon/scvsbattle.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/taskman.c")
+    if(MSVC)
+        set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "/I${_SSB64_PORT_NET_SYS_PARENT}")
+    else()
+        set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "-I${_SSB64_PORT_NET_SYS_PARENT}")
+    endif()
+endif()
 
 # Port stub definitions (C code that satisfies N64 linker symbols)
 file(GLOB SSB64_STUBS "port/stubs/*.c")
@@ -381,6 +444,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     # NOTE: Do NOT add decomp/include here. The C decomp shim headers (stdlib.h,
     # stddef.h, ...) shadow the C++ standard library when picked up by port/*.cpp,
     # producing libc++ <cstdlib> errors. Only ssb64_game (C decomp) consumes them.
+    ${CMAKE_CURRENT_SOURCE_DIR}/include       # ssb64_paths_capi.h, generated reloc headers consumed selectively
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
@@ -393,6 +457,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+if(SSB64_NETMENU AND NOT WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
+endif()
 
 ################################################################################
 # Platform-specific settings
@@ -455,6 +522,18 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${TORCH_EXECUTABLE}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
 )
+
+if(SSB64_NETMENU)
+    # Entire tree so custom menu PNGs (any filename under port/net/assets/) ship next to the binary;
+    # mn_vs_submenu_png.c loads RealAppBundlePath()/port/net/assets/<filename>.
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/port/net/assets
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net/assets
+    )
+endif()
 
 ################################################################################
 # Asset extraction targets
