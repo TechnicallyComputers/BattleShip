@@ -6,6 +6,16 @@
 
 Companion handoff notes for future agent sessions live in `docs/netcode_agent_rules.md`.
 
+Sim pacing vs remote tick labels (`HighestRemoteTick`) and environment knobs are documented in [`docs/netplay_pacing.md`](netplay_pacing.md).
+
+Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authoritative battle state to sim ticks, are documented in [`docs/netplay_taskman_simtick.md`](netplay_taskman_simtick.md) — including **simulation authority** (only the rollback frame index; not Taskman or VI as clocks), an **execution trace**, and **sim-tick phase skew** risks for cross-peer input timing.
+
+**Frame composition** (deterministic `gcRunAll` traversal / entity lists vs peer) is documented in [`docs/netplay_frame_composition.md`](netplay_frame_composition.md), including `SSB64_NETPLAY_GC_TRAVERSAL_DIAG`.
+
+**Rollback state contract** (GGPO-style: snapshot completeness, deterministic resim, not “input sync fixes all”) is documented in [`docs/netplay_rollback_state_contract.md`](netplay_rollback_state_contract.md).
+
+**Canonical State Image (CSI)** — cross-peer / cross-build comparison via explicit serialization (not raw struct `memcmp`) — is documented in [`docs/netplay_canonical_state_image.md`](netplay_canonical_state_image.md).
+
 This keeps the first netplay boundary at the controller layer:
 
 - local hardware input still comes from `src/sys/controller.c`
@@ -14,6 +24,7 @@ This keeps the first netplay boundary at the controller layer:
 - debug replay file I/O lives in `src/sys/netreplay.c`
 - debug UDP P2P transport and match bootstrap live in `src/sys/netpeer.c`
 - narrow gameplay-state hashing for diagnostics lives in `src/sys/netsync.c`
+- **`gcRunAll` traversal fingerprint** (PORT): `gcPortHashGcRunAllTraversalFingerprint` in `decomp/src/sys/objman.c`, wrapped by `syNetSyncHashGcRunAllTraversalFingerprint` in `port/net/sys/netsync.c` — see [`docs/netplay_frame_composition.md`](netplay_frame_composition.md)
 
 ## Current Integration
 
@@ -30,23 +41,20 @@ VS scene start
   -> netinput tick starts at 0
 
 taskman game tick during VS
-  -> scene controller callback
-  -> syNetInputFuncRead()
-  -> syControllerFuncRead()
-  -> resolve one SYNetInputFrame per player for the current tick
-  -> publish resolved frames into gSYControllerDevices
-  -> advance netinput tick once the optional P2P start barrier is released
-  -> scene_update()
-  -> syNetPeerUpdateBattleGate()
-  -> return early if bootstrap P2P execution is not ready
-  -> syNetReplayUpdate()
-  -> syNetPeerUpdate()
+  -> scene controller callback (`syNetInputFuncRead`)
+  -> **Active Linux UDP:** `syNetPeerUpdateBattleGate` (recv + delays + barrier + bind/exec) then execution-ready gate **before** HID latch / resolve / publish; **inactive:** `PumpIngressBeforeInputRead` only
+  -> publish synchronized frames into `gSYControllerDevices` only when admission passes; advance netinput tick only after each full `scVSBattleFuncUpdate` (`syNetInputAdvanceAuthoritativeSimTick`), unless skew/stall suppresses scene_update (no tick advance that iteration)
+  -> `scene_update()` (`scVSBattleFuncUpdate` or skew net slice)
   -> fighter input derivation
 ```
 
-`syNetInputGetTick()` returns a VS-local tick counter reset by `syNetInputStartVSSession()`. `dSYTaskmanUpdateCount` remains part of the engine, but netplay input history is keyed by match-local time so rematches and scene transitions do not reuse stale global tick assumptions.
+`syNetInputGetTick()` returns a VS-local tick counter reset by `syNetInputStartVSSession()`; it advances once per completed `scVSBattleFuncUpdate` (`syNetInputAdvanceAuthoritativeSimTick`), not from `syNetInputFuncRead` alone. `dSYTaskmanUpdateCount` remains part of the engine, but netplay input history is keyed by match-local time so rematches and scene transitions do not reuse stale global tick assumptions.
+
+**GGPO-style replay:** during rollback resim (nested `syNetInputFuncRead` inside `syNetRollbackRunResim`), local slots must not re-sample HID — `syNetInputMakeLocalFrame` takes authoritative inputs from published history for that tick, analogous to `ggpo_synchronize_inputs` overwriting raw adds during rewind.
 
 The P2P start barrier and VS execution gate are debug-only and only active when both `SSB64_NETPLAY=1` and `SSB64_NETPLAY_BOOTSTRAP=1` are set. Local VS, replay playback/recording, and manual P2P input injection without bootstrap continue advancing netinput and VS updates immediately.
+
+**GGPO battle frame:** `syNetGgpoBattleFrameGet()` mirrors `syNetInputGetTick()` (same counter, advanced only in `syNetInputAdvanceAuthoritativeSimTick` after each full `scVSBattleFuncUpdate`). Skew pacing may run `scVSBattleFuncUpdateSkewPacingNetSlice` instead of a full update — neither advances. Deterministic `syUtilsRandTime*` (when `SSB64_NETPLAY_DETERMINISTIC_RANDTIME=1`) mixes that sim tick into RandTime, not wall time. Rollback resim rewinds via `syNetInputSetTick` each replayed tick (which keeps the frame counter aligned).
 
 ## Canonical Input Frame
 
@@ -153,7 +161,7 @@ For full-match debug replay files, `netinput.c` also keeps a separate replay fra
 | `syNetPeerInitDebugEnv()` | Read debug netplay environment variables and run optional match metadata bootstrap. |
 | `syNetPeerStartVSSession()` | Open/reuse the UDP socket for VS, configure local/remote slot ownership, and enable the optional in-battle start barrier. |
 | `syNetPeerCheckBattleExecutionReady()` | Return whether VS battle simulation/presentation may advance. Non-netplay and non-bootstrap sessions return true. |
-| `syNetPeerCheckStartBarrierReleased()` | Return whether netinput may advance the VS-local tick. Non-netplay and non-bootstrap sessions return true. |
+| `syNetPeerCheckStartBarrierReleased()` | Same as `syNetPeerCheckBattleExecutionReady()` — when false, `syNetInputFuncRead` returns before resolve/publish for live ticks. |
 | `syNetPeerUpdateBattleGate()` | Receive control packets and drive `BATTLE_READY` / `BATTLE_START` while VS execution is held. |
 | `syNetPeerUpdate()` | Receive packets, drive the start barrier, send local input frames, and log runtime stats. |
 | `syNetPeerStopVSSession()` | Close the debug UDP socket and log the session summary. |

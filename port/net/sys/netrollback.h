@@ -9,6 +9,12 @@
  * `SYNETROLLBACK_SCAN_WINDOW`, we load the snapshot immediately before the divergence and fast-forward resimulate
  * (`syNetInputFuncRead` + `scVSBattleFuncUpdate`) to the live frontier.
  *
+ * Input scan compares **full** `SYNetInputFrame` metadata (tick, buttons, sticks, source, predicted, valid) for
+ * remote human slots when both rows exist. Optional: `SSB64_NETPLAY_ROLLBACK_MISMATCH_REMOTE_WITHOUT_PUBLISHED` (non-zero)
+ * also treats “remote ring row without published history” as a mismatch. Each save records `syNetSyncHashBattleFighters` /
+ * `syNetSyncHashMapCollisionKinematics`; after load+apply, optional verify (`SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY`,
+ * default on; set `=0` to disable) logs if recomputed hashes diverge from those fingerprints (partial snapshot drift).
+ *
  * Ordering: barrier/execution-ready path runs first; `syNetRollbackAfterBattleUpdate` follows your normal battle
  * update; `syNetRollbackUpdate` consumes the newest remote data when not already inside a resim.
  */

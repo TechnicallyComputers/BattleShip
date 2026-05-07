@@ -184,15 +184,6 @@ file(GLOB_RECURSE SSB64_SRC_SC      "decomp/src/sc/*.c"      "decomp/src/sc/*.h"
 file(GLOB_RECURSE SSB64_SRC_SYS     "decomp/src/sys/*.c"     "decomp/src/sys/*.h")
 file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h")
 
-# Port UDP/P2P + replay/sync (canonical under port/net/sys — not in decomp submodule).
-set(SSB64_PORT_NET_SYS_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netinput.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netpeer.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netreplay.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netsync.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netrollback.c"
-)
-
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
@@ -281,15 +272,6 @@ endif()
 
 add_library(ssb64_game OBJECT ${SSB64_DECOMP_SOURCES})
 
-target_sources(ssb64_game PRIVATE ${SSB64_PORT_NET_SYS_SOURCES})
-
-# Net sys sources need -I port/net so #include <sys/netpeer.h> -> port/net/sys/netpeer.h without shadowing <sc/scene.h>.
-if(MSVC)
-    set_source_files_properties(${SSB64_PORT_NET_SYS_SOURCES} PROPERTIES COMPILE_OPTIONS "/I${_SSB64_PORT_NET_SYS_PARENT}")
-else()
-    set_source_files_properties(${SSB64_PORT_NET_SYS_SOURCES} PROPERTIES COMPILE_OPTIONS "-I${_SSB64_PORT_NET_SYS_PARENT}")
-endif()
-
 if(SSB64_NETMENU)
     target_sources(ssb64_game PRIVATE ${SSB64_PORT_NETMENU_SOURCES})
     # BEFORE: foundation shims in port/net (string.h, stdlib.h, sys/taskman.h) must precede decomp/include
@@ -318,6 +300,10 @@ endif()
 
 # Port stub definitions (C code that satisfies N64 linker symbols)
 file(GLOB SSB64_STUBS "port/stubs/*.c")
+if(SSB64_NETMENU)
+    # Extended netpeer / rollback live in port/net when netmenu is on; omit offline-only glue (would duplicate symbols).
+    list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/net_port_glue_offline\\.c$")
+endif()
 target_sources(ssb64_game PRIVATE ${SSB64_STUBS})
 
 # Selectively include decomp libultra files that provide needed functionality.

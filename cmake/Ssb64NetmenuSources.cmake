@@ -61,6 +61,13 @@ set(_SSB64_PORT_NETMENU_PORTONLY_REL
     mn_vs_submenu_png.c
     sc/sccommon/scautomatch.c
     sc/sccommon/scnetmatchstaging.c
+    sys/netrollback.c
+    sys/netdesyncclassifier.c
+    sys/netpeer_frame_commit.c
+    sys/netphase.c
+    sys/nettickgridlock.c
+    sys/netfighterphase.c
+    sys/netcontrollerfreeze.c
 )
 foreach(_r IN LISTS _SSB64_PORT_NETMENU_PORTONLY_REL)
     set(_pp "${_ssb64_port_net_root}/${_r}")
@@ -73,7 +80,7 @@ foreach(_r IN LISTS _SSB64_PORT_NETMENU_PORTONLY_REL)
 endforeach()
 
 if(NOT WIN32)
-    foreach(_r IN ITEMS matchmaking/mm_stun.c matchmaking/mm_matchmaking.c matchmaking/mm_lan_detect.c)
+    foreach(_r IN ITEMS matchmaking/mm_stun.c matchmaking/mm_matchmaking.c matchmaking/mm_lan_detect.c bootstrap/mm_server_barrier.c)
         set(_pp "${_ssb64_port_net_root}/${_r}")
         if(EXISTS "${_pp}")
             list(FIND SSB64_PORT_NETMENU_SOURCES "${_pp}" _fi)

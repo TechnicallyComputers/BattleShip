@@ -26,12 +26,16 @@
 
 extern "C" {
 int syNetPeerIsVSSessionActive(void);
+unsigned int syNetPeerGetVsContractViHz(void);
 void syNetRollbackApplyPortSimPacing(unsigned int refresh_hz);
 #ifdef PORT
 int syNetPeerShouldPumpBattleGateOnHostFrame(void);
 void syNetPeerPumpBattleGateOnHostFrame(void);
 int syNetPeerWantsSyncPresentHold(void);
+int syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
 #endif
+extern unsigned int dSYTaskmanUpdateCount;
+extern unsigned int dSYTaskmanFrameCount;
 }
 
 #include <libultraship/libultraship.h>
@@ -409,6 +413,16 @@ void PortGameInit(void)
 
 static int sFrameCount = 0;
 
+static unsigned long long sNetplayPushWallCalls = 0ULL;
+static unsigned long long sNetplayPushSimAdvances = 0ULL;
+static unsigned long long sNetplayPushSimSkips = 0ULL;
+
+/* VS decouple sim stepping state (moved to file scope so net barrier can resync first-frame phase). */
+static bool sVsDecouplePrevSessionActive = false;
+static bool sVsDecouplePacingInit = false;
+static std::chrono::steady_clock::time_point sVsNextSimStepDeadline{};
+static std::chrono::nanoseconds sVsDecoupleBarrierLatchBiasNs{};
+
 extern "C" int port_get_push_frame_count(void)
 {
 	return sFrameCount;
@@ -417,6 +431,40 @@ extern "C" int port_get_push_frame_count(void)
 extern "C" void port_reset_push_frame_count_for_net_barrier(void)
 {
 	sFrameCount = 0;
+}
+
+/**
+ * Call when the netplay battle execution barrier first releases (see syNetPeerReleaseBattleBarrier).
+ * The next PortPushFrame with decoupled VS sim will treat the decouple clock as uninitialized and
+ * latch sVsNextSimStepDeadline to "now", aligning the first post-go sim step with a clean interval.
+ */
+extern "C" void port_reset_vs_decouple_pacing_for_net_barrier(void)
+{
+	sVsDecouplePacingInit = false;
+	sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
+}
+
+extern "C" void port_add_vs_decouple_barrier_latch_bias_ns(long long delta_ns)
+{
+	if (delta_ns == 0LL)
+	{
+		return;
+	}
+	sVsDecoupleBarrierLatchBiasNs += std::chrono::nanoseconds{delta_ns};
+}
+
+extern "C" void port_get_netplay_push_frame_diag(unsigned long long *out_wall_calls, unsigned long long *out_sim_advances,
+                                                 unsigned long long *out_sim_skips)
+{
+	if (out_wall_calls != nullptr) {
+		*out_wall_calls = sNetplayPushWallCalls;
+	}
+	if (out_sim_advances != nullptr) {
+		*out_sim_advances = sNetplayPushSimAdvances;
+	}
+	if (out_sim_skips != nullptr) {
+		*out_sim_skips = sNetplayPushSimSkips;
+	}
 }
 
 /* ========================================================================= */
@@ -527,6 +575,8 @@ void PortPushFrame(void)
 	 * frame-pacing fallback below. */
 	auto frameStart = std::chrono::steady_clock::now();
 
+	sNetplayPushWallCalls++;
+
 	/* Pump SDL events so the window stays responsive and WindowIsRunning
 	 * detects the close button. HandleEvents also updates controller state. */
 	auto context = Ship::Context::GetInstance();
@@ -536,6 +586,80 @@ void PortPushFrame(void)
 			window->HandleEvents();
 		}
 	}
+
+	const bool vs_active = (syNetPeerIsVSSessionActive() != 0);
+
+	/* Netplay: keep UDP recv + barrier pump moving even when we skip a high-Hz host frame for sim cadence. */
+#ifdef PORT
+	if (vs_active) {
+		if (syNetPeerShouldPumpBattleGateOnHostFrame() != 0) {
+			syNetPeerPumpBattleGateOnHostFrame();
+		}
+	}
+#endif
+
+	/*
+	 * Netplay VS: decouple host refresh rate from simulation pacing.
+	 * Default ON — advance the game (VI → scheduler → taskman) at the negotiated barrier VI Hz
+	 * (see syNetPeerGetVsContractViHz, typically 60) so peers share the same taskman K / tick cadence
+	 * regardless of monitor Hz. Set SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM=0 to restore legacy behavior
+	 * (local display refresh drives syNetRollbackApplyPortSimPacing during VS).
+	 */
+	int decouple_env = 1;
+	if (const char *decouple_str = std::getenv("SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM")) {
+		if (decouple_str[0] != '\0') {
+			decouple_env = std::atoi(decouple_str);
+		}
+	}
+	const bool decouple_vs_sim = vs_active && (decouple_env != 0);
+
+	bool run_game_sim_tick = true;
+#ifdef PORT
+	const bool bypass_decouple_tick_grid =
+	    (vs_active != 0) && (syNetPeerShouldBypassDecoupleSimPacingForTickGrid() != 0);
+#else
+	const bool bypass_decouple_tick_grid = false;
+#endif
+	if (decouple_vs_sim && !bypass_decouple_tick_grid) {
+		if (!sVsDecouplePrevSessionActive) {
+			sVsDecouplePacingInit = false;
+		}
+		unsigned int contract_hz = syNetPeerGetVsContractViHz();
+		if (contract_hz == 0U) {
+			contract_hz = 60U;
+		}
+		if (contract_hz < 1U) {
+			contract_hz = 1U;
+		}
+		if (contract_hz > 480U) {
+			contract_hz = 480U;
+		}
+
+		auto now = std::chrono::steady_clock::now();
+		if (!sVsDecouplePacingInit) {
+			sVsNextSimStepDeadline = now + sVsDecoupleBarrierLatchBiasNs;
+			sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
+			sVsDecouplePacingInit = true;
+		}
+		if (now < sVsNextSimStepDeadline) {
+			run_game_sim_tick = false;
+		} else {
+			const auto period = std::chrono::microseconds(1000000 / static_cast<int>(contract_hz));
+			while (sVsNextSimStepDeadline <= now) {
+				sVsNextSimStepDeadline += period;
+			}
+		}
+	}
+	if (sVsDecouplePrevSessionActive && !vs_active) {
+		sVsDecouplePacingInit = false;
+	}
+	sVsDecouplePrevSessionActive = vs_active;
+
+	if (vs_active && decouple_vs_sim && !run_game_sim_tick) {
+		sNetplayPushSimSkips++;
+	}
+
+	if (run_game_sim_tick || !vs_active) {
 	/* Propagate the previous frame's queued framebuffer (if any) to VI's
 	 * "current" slot. The scheduler's CheckReadyFramebuffer fnCheck reads
 	 * osViGetCurrent/NextFramebuffer to decide whether the slot the game
@@ -560,47 +684,47 @@ void PortPushFrame(void)
 	 * Each thread runs until it yields at osRecvMesg(BLOCK) on empty queue. */
 	port_resume_service_threads();
 
-#ifdef PORT
-	/* Net barrier may run here and from VS taskman freeze; duplicate recv pump is safe (UDP drain). */
-	if (syNetPeerShouldPumpBattleGateOnHostFrame() != 0) {
-		syNetPeerPumpBattleGateOnHostFrame();
-	}
-#endif
-
 	sFrameCount++;
+	sNetplayPushSimAdvances++;
 
 	uint32_t sim_pacing_hz = 60U;
 
-	if (syNetPeerIsVSSessionActive() != 0)
+	if (vs_active)
 	{
-		auto ctx_sim = Ship::Context::GetInstance();
+		if (decouple_vs_sim) {
+			unsigned int chz = syNetPeerGetVsContractViHz();
+			sim_pacing_hz = (chz != 0U) ? chz : 60U;
+		} else {
+			auto ctx_sim = Ship::Context::GetInstance();
 
-		if (ctx_sim)
-		{
-			auto w_sim = ctx_sim->GetWindow();
-			auto f3 = w_sim ? std::dynamic_pointer_cast<Fast::Fast3dWindow>(w_sim) : nullptr;
-
-			if (f3)
+			if (ctx_sim)
 			{
-				uint32_t rr = f3->GetCurrentRefreshRate();
+				auto w_sim = ctx_sim->GetWindow();
+				auto f3 = w_sim ? std::dynamic_pointer_cast<Fast::Fast3dWindow>(w_sim) : nullptr;
 
-				if (rr != 0U)
+				if (f3)
 				{
-					sim_pacing_hz = rr;
-				}
-				else
-				{
-					int32_t tf = f3->GetTargetFps();
+					uint32_t rr = f3->GetCurrentRefreshRate();
 
-					if (tf > 0)
+					if (rr != 0U)
 					{
-						sim_pacing_hz = (uint32_t)tf;
+						sim_pacing_hz = rr;
+					}
+					else
+					{
+						int32_t tf = f3->GetTargetFps();
+
+						if (tf > 0)
+						{
+							sim_pacing_hz = (uint32_t)tf;
+						}
 					}
 				}
 			}
 		}
 	}
 	syNetRollbackApplyPortSimPacing(sim_pacing_hz);
+	}
 
 	/* VI-style idle presentation: when no gfx task was submitted this VI,
 	 * original hardware still scans out the current RDRAM framebuffer.
@@ -662,6 +786,30 @@ void PortPushFrame(void)
 	/* Screenshot capture: env-var driven, zero cost when disabled. */
 	port_screenshot_init_once();
 	port_screenshot_maybe_capture(sFrameCount);
+
+	{
+		const char *pd = std::getenv("SSB64_NETPLAY_PUSH_FRAME_DIAG_MS");
+		if (pd != nullptr && pd[0] != '\0') {
+			int ms = std::atoi(pd);
+			if (ms > 0) {
+				static auto sLastPushDiagLog = std::chrono::steady_clock::now();
+				auto now = std::chrono::steady_clock::now();
+				if (std::chrono::duration_cast<std::chrono::milliseconds>(now - sLastPushDiagLog).count() >= ms) {
+					port_log(
+					    "SSB64 NetDiag: push_frame wall_calls=%llu sim_adv=%llu sim_skip=%llu push_idx=%d "
+					    "tm_up=%u tm_fr=%u vs_active=%d\n",
+					    (unsigned long long)sNetplayPushWallCalls,
+					    (unsigned long long)sNetplayPushSimAdvances,
+					    (unsigned long long)sNetplayPushSimSkips,
+					    sFrameCount,
+					    dSYTaskmanUpdateCount,
+					    dSYTaskmanFrameCount,
+					    vs_active ? 1 : 0);
+					sLastPushDiagLog = now;
+				}
+			}
+		}
+	}
 
 	/* RenderDoc capture trigger: env-var driven, zero cost when disabled.
 	 * TriggerCapture() tells RenderDoc to capture the NEXT Present interval,

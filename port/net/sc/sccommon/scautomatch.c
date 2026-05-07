@@ -15,6 +15,7 @@ extern int atoi(const char *str);
 #endif
 #if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
 #include <sc/scmanager.h>
+#include <sys/taskman.h>
 #include <stdio.h>
 #include <sys/netpeer.h>
 #include <mm_matchmaking.h>
@@ -30,6 +31,7 @@ void mnVSNetAutomatchAMFinalizeVsLoad(void);
 sb32 mnVSNetAutomatchAMConsumeStagingHandshake(void);
 sb32 mnVSNetAutomatchAMIsError(void);
 void mnVSNetAutomatchAMStagingReturnToAutomatch(void);
+void mnVSNetAutomatchForceRequeueAfterBarrierTimeout(void);
 #endif
 extern void *func_800269C0_275C0(u16 id);
 extern void func_80026738_27338(void *arg0);
@@ -3940,6 +3942,17 @@ void mnVSNetAutomatchAMStagingReturnToAutomatch(void)
 	mnVSNetAutomatchSetSceneData();
 	syTaskmanSetLoadScene();
 	mnVSNetAutomatchAMReset();
+}
+
+void mnVSNetAutomatchForceRequeueAfterBarrierTimeout(void)
+{
+	port_log("SSB64 Automatch: P2P sync barrier timeout -> match staging + re-queue\n");
+	syNetPeerStopVSSession();
+	gSCManagerSceneData.is_vs_automatch_battle = (ub8)FALSE;
+	gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
+	gSCManagerSceneData.scene_curr = nSCKindVSNetMatchStaging;
+	mnVSNetAutomatchSetSceneData();
+	syTaskmanSetLoadScene();
 }
 
 void mnVSNetAutomatchAMStartSearch(void)

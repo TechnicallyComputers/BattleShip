@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Builds BattleShip as a Linux AppImage.
 #
-# Output: <repo-root>/dist/BattleShip-x86_64.AppImage
+# Usage:
+#   ./scripts/package-linux.sh
+#   ./scripts/package-linux.sh -DSSB64_NETMENU=ON    # netplay / net-menu build
+#
+# Additional CMake cache variables may be passed through (they are forwarded to
+# the configure step after NON_PORTABLE=ON and Release).
+#
+# Output:
+#   Default:     <repo-root>/dist/BattleShip-x86_64.AppImage
+#   Netmenu ON:  <repo-root>/dist/BattleShip-Netplay-x86_64.AppImage
 #
 # AppDir layout produced (before appimagetool packs it):
 #   AppDir/
@@ -36,12 +45,34 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT/build-bundle-linux"
 DIST_DIR="$ROOT/dist"
-APPDIR="$DIST_DIR/BattleShip.AppDir"
 APP_NAME="BattleShip"
-APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
+
+# Extra CMake configure arguments (e.g. -DSSB64_NETMENU=ON).
+EXTRA_CMAKE_ARGS=("$@")
+
+IS_NETPLAY=0
+for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+	case "$a" in
+		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON)
+			IS_NETPLAY=1
+			break
+			;;
+	esac
+done
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	BUILD_DIR="$ROOT/build-bundle-linux-netplay"
+	APPDIR="$DIST_DIR/BattleShip-Netplay.AppDir"
+	APPIMAGE="$DIST_DIR/BattleShip-Netplay-x86_64.AppImage"
+	DESKTOP_DISPLAY_NAME="BattleShip Netplay"
+else
+	BUILD_DIR="$ROOT/build-bundle-linux"
+	APPDIR="$DIST_DIR/BattleShip.AppDir"
+	APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
+	DESKTOP_DISPLAY_NAME="BattleShip"
+fi
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
@@ -61,10 +92,11 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
-step "Configuring release build with NON_PORTABLE=ON"
+step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMENU=ON)}"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
+    "${EXTRA_CMAKE_ARGS[@]}" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -95,6 +127,14 @@ cp "$ROOT/gamecontrollerdb.txt" "$APPDIR/usr/share/$APP_NAME/gamecontrollerdb.tx
 cp "$ROOT/config.yml" "$APPDIR/usr/share/$APP_NAME/config.yml"
 cp "$ROOT/yamls/us/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/us/"
 
+# VS net-menu PNGs (mn_vs_submenu_png.c); must sit next to the binary like CMake
+# POST_BUILD ($<TARGET_FILE_DIR>/port/net/assets). RealAppBundlePath() is the
+# exe's parent (AppDir/usr/bin), not usr/share/ — so not under the data dir.
+if [[ "$IS_NETPLAY" -eq 1 ]] && [[ -d "$ROOT/port/net/assets" ]]; then
+	mkdir -p "$APPDIR/usr/bin/port/net/assets"
+	cp -a "$ROOT/port/net/assets/." "$APPDIR/usr/bin/port/net/assets/"
+fi
+
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
 # RealAppBundlePath() (= /proc/self/exe parent = AppDir/usr/bin inside
 # the AppImage) and from current_path() (= AppDir/usr/share/BattleShip
@@ -114,7 +154,7 @@ cp "$ROOT/assets/custom/fonts/Inconsolata-Regular.ttf" "$APPDIR/usr/share/$APP_N
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=BattleShip
+Name=$DESKTOP_DISPLAY_NAME
 Exec=$APP_NAME
 Icon=$APP_NAME
 Categories=Game;ArcadeGame;

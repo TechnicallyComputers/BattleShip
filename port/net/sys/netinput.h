@@ -5,15 +5,26 @@
  * NetInput — authoritative per-slot controller frames aligned to `sSYNetInputTick`.
  *
  * Pipeline (normal VS): scenes call `syNetInputFuncRead` once per sim step. On PORT it snapshots HID into an internal
- * latch and clears `gSYControllerDevices[]` before resolve. It resolves each player’s frame for the current tick
+ * latch (once per `sSYNetInputTick`; **before** stall-until-remote / skew pacing so the sample is keyed to the local sim
+ * tick, not wall/network timing) and clears `gSYControllerDevices[]` before resolve. It resolves each player’s frame for the current tick
  * (local HID from the latch, replay, remote-confirmed ring, or prediction), publishes into `gSYControllerDevices[]`,
- * snapshots `SYNETINPUT_HISTORY_LENGTH` rings, then bumps `sSYNetInputTick` only after the battle start barrier
- * releases (`syNetPeerCheckStartBarrierReleased`), so pre-fight ticks stay frozen together.
+ * snapshots `SYNETINPUT_HISTORY_LENGTH` rings. `sSYNetInputTick` advances only after a full `scVSBattleFuncUpdate`
+ * (`syNetInputAdvanceAuthoritativeSimTick`). FuncRead returns early when the battle execution gate is closed
+ * (`syNetPeerCheckStartBarrierReleased`), so pre-fight ticks stay frozen together.
+ *
+ * GGPO-shaped rule: rollback resim replays local slots from published history for that tick (not fresh HID); live VS still
+ * samples hardware once per tick before resolve.
+ *
+ * **GGPO battle frame** (`syNetGgpoBattleFrame*`): mirrors `syNetInputGetTick()` — set together in `syNetInputSetTick` and
+ * advanced only in `syNetInputAdvanceAuthoritativeSimTick()` at the end of each completed `scVSBattleFuncUpdate`.
+ * Skew pacing may call `syNetInputFuncRead` without running `scVSBattleFuncUpdate`; neither advances.
+ * Deterministic `syUtilsRandTime*` (when enabled) mixes `syNetInputGetTick()` with the PRNG seed, not wall time.
  *
  * `SYNetInputSource` distinguishes how a slot is fed; NetPeer fills remote rings via `syNetInputSetRemoteInput`.
  * Published history (`syNetInputGetHistoryFrame`) is what rollback compares against wire copies.
- * Linux UDP: `syNetPeerPumpIngressBeforeInputRead()` runs at the start of `syNetInputFuncRead` so the remote ring
- * is fresh before resolve/publish for the current tick.
+ * Linux UDP: active VS sessions run `syNetPeerUpdateBattleGate()` at the start of `syNetInputFuncRead` (replacing the
+ * pump-only path) so barrier + ingress + execution readiness are finalized **before** resolve/publish; inactive sessions
+ * still use `syNetPeerPumpIngressBeforeInputRead()`.
  */
 
 #include <PR/ultratypes.h>
@@ -81,8 +92,18 @@ typedef struct SYNetInputReplayMetadata /* Header written alongside recorded fra
 
 extern void syNetInputReset(void);
 extern void syNetInputStartVSSession(void); /* Calls Reset and reads netplay env (e.g. predict-neutral). */
-extern u32 syNetInputGetTick(void);        /* Monotonic sim index advanced in `syNetInputFuncRead` after barrier. */
+extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
+extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
+#if defined(PORT) && !defined(_WIN32)
+/* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=!execution, S=stall, K=skew. */
+extern void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after);
+#endif
+#ifdef PORT
+extern u32 syNetGgpoBattleFrameGet(void);        /* Same value as `syNetInputGetTick()` while in VS battle. */
+extern void syNetGgpoBattleFrameAdvance(void);   /* No-op: frame advances in `syNetInputAdvanceAuthoritativeSimTick`. */
+extern void syNetGgpoBattleFrameSet(u32 frame); /* Same as `syNetInputSetTick(frame)` (keeps frame counter aligned). */
+#endif
 extern void syNetInputSetSlotSource(s32 player, SYNetInputSource source);
 extern SYNetInputSource syNetInputGetSlotSource(s32 player);
 extern void syNetInputSetRemoteInput(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y); /* NetPeer recv path fills remote ring. */
@@ -92,6 +113,7 @@ extern sb32 syNetInputGetPublishedFrame(s32 player, SYNetInputFrame *out_frame);
 extern u32 syNetInputGetHistoryChecksum(s32 player, u32 tick_begin, u32 frame_count);
 extern u32 syNetInputGetHistoryInputChecksum(u32 frame_count);
 extern u32 syNetInputGetHistoryInputValueChecksumForPlayer(s32 player, u32 tick_begin, u32 frame_count);
+extern u32 syNetInputGetRemoteHistoryValueChecksumForPlayer(s32 player, u32 tick_begin, u32 frame_count);
 extern void syNetInputGetHistoryInputValueChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                        u32 *out_combined_checksum);
 #ifdef PORT
@@ -107,12 +129,16 @@ extern void syNetInputGetHistoryInputDiagChecksumWindow(u32 tick_begin, u32 fram
 extern void syNetInputGetRemoteHistoryDiagChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                          u32 *out_combined_checksum);
 /*
- * First tick in [tick_begin, tick_begin+frame_count) where published history disagrees with remote ring on
+ * getenv `SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH`: 0 = off. Bit 1: abort on first published-history vs remote-ring
+ * mismatch in the NetSync validation window. Bit 2: abort when rollback finds a history vs remote mismatch before resim.
+ * Use 3 for both. First tick in [tick_begin, tick_begin+frame_count) where published history disagrees with remote ring on
  * sim inputs (tick/buttons/sticks) when presence differs or both sides valid — detects resolve/storage skew.
  * Returns FALSE if none. out_kind: 0=presence-only mismatch, 1=value mismatch.
  */
+extern s32 syNetInputGetAbortOnInputMismatchMask(void);
 extern sb32 syNetInputDiagFindFirstPublishedRemoteMismatch(u32 tick_begin, u32 frame_count, s32 *out_player,
                                                            u32 *out_tick, u32 *out_kind);
+extern void syNetInputLogDesyncNeedle(u32 validation_tick, u32 needle_tick, int trace_level);
 /* Clear `last_confirmed` for NetPeer remote receive slots (call after bind / session slot wiring). */
 extern void syNetInputClearRemoteSlotPredictionState(void);
 #endif
@@ -125,7 +151,14 @@ extern sb32 syNetInputGetReplayFrame(s32 player, u32 tick, SYNetInputFrame *out_
 extern u32 syNetInputGetReplayInputChecksum(void);
 extern void syNetInputSetReplayMetadata(const SYNetInputReplayMetadata *metadata);
 extern sb32 syNetInputGetReplayMetadata(SYNetInputReplayMetadata *out_metadata);
-extern void syNetInputFuncRead(void); /* Resolve → Publish all slots → optional replay capture → bump tick post-barrier. */
+extern void syNetInputFuncRead(void); /* HID latch → synchronize all slots → publish → replay capture (tick++ is post-sim). */
+#ifdef PORT
+/*
+ * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`
+ * that tic so sim does not double-step while `sSYNetInputTick` stays unchanged.
+ */
+extern sb32 syNetInputTakeSuppressSceneUpdate(void);
+#endif
 extern void syNetInputRollbackPrepareForResim(u32 resim_start_tick); /* Reseed last_published + remote prediction seed before resim loop. */
 extern sb32 syNetInputGetRemoteHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 /* Post-publish simulation input only: valid after syNetInputPublishFrame for this tick. NULL if player out of range. */
