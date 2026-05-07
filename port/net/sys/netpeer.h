@@ -12,7 +12,9 @@
  *   1) Bootstrap control plane (READY / START …) enters both processes into identical VS metadata.
  *   2) Battle barrier + post-barrier gates (`syNetPeerCheckBattleExecutionReady`): wall-clock deadline release,
  *      optional strict INPUT_BIND, then host-led BATTLE_EXEC_SYNC (frozen sim tick + VI phase bucket)
- *      before the first `syNetInput` tick increment (Linux UDP); taskman + PortPushFrame counters resync at barrier release.
+ *      before the first `syNetInput` tick increment (Linux UDP); optional `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1`
+ *      additionally requires `syNetTickGridLockIsLocked()` for guests until tick-grid calibration completes.
+ *      Taskman + PortPushFrame counters resync at barrier release.
  *   3) Runtime transport (`syNetPeerUpdate`): after execution is ready, emits INPUT payloads + recv pump.
  *
  * Game code usually calls `syNetPeerUpdateBattleGate` early inside VS scenes (receive + barrier),
@@ -40,7 +42,7 @@ extern sb32 syNetPeerCheckStartBarrierReleased(void);
  */
 extern void syNetPeerUpdateBattleGate(void);
 /*
- * Drain inbound UDP + apply pending INPUT_DELAY_SYNC **before** `syNetInputFuncRead` resolves/publishes.
+ * For **active** Linux UDP VS sessions, `syNetInputFuncRead` calls `syNetPeerUpdateBattleGate()` first (superset of recv + delay apply); this entry point remains for call sites that only need ingress + delay sync without the full gate.
  * Keeps `sSYNetInputRemoteHistory` fresh for the current sim tick (Linux UDP; no-op elsewhere).
  */
 extern void syNetPeerPumpIngressBeforeInputRead(void);
@@ -49,6 +51,12 @@ extern void syNetPeerUpdate(void);
 /* Closes socket + tears down bookkeeping at VS unload / session end. */
 extern void syNetPeerStopVSSession(void);
 extern sb32 syNetPeerIsVSSessionActive(void);
+/*
+ * Barrier VI contract Hz (host default 60; guest latched from BATTLE_START_TIME wire layout).
+ * Used by PortPushFrame to lock netplay sim stepping / taskman pacing independently of host monitor Hz.
+ * Returns 0 when no VS session is active.
+ */
+extern u32 syNetPeerGetVsContractViHz(void);
 #ifdef PORT
 /*
  * Applies staged MATCH_CONFIG to replay/battle globals, RNG seed, and (unless suppressed) scene_curr.
@@ -91,6 +99,19 @@ extern s32 syNetPeerGetRemotePlayerSlot(void);
 extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
+#ifdef PORT
+/*
+ * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads `HighestRemoteTick` by
+ * more than the configured lead cap (`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`, default 4 — see netpeer.c). See docs/netplay_pacing.md.
+ */
+extern sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
+extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);
+/*
+ * When tick-grid exec gate is enabled (SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1) and the grid is locked, PortPushFrame
+ * skips decouple deadline holds for sim-tick indexing (Linux UDP).
+ */
+extern sb32 syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
+#endif
 
 #if defined(PORT) && !defined(_WIN32)
 /*

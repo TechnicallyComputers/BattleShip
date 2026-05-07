@@ -18,6 +18,7 @@
 #include <stdlib.h>
 extern void port_log(const char *fmt, ...);
 #include "gameloop.h"
+#include <sc/sccommon/scvsbattle.h>
 #endif
 
 #include <sc/sctypes.h>
@@ -31,6 +32,7 @@ extern SCCommonData gSCManagerSceneData;
 #ifdef PORT
 #include "port_log.h"
 #include <sys/netpeer.h>
+#include <sys/netinput.h>
 _Static_assert(sizeof(uintptr_t) == 8, "PORT build requires 64-bit uintptr_t");
 #endif
 
@@ -1013,24 +1015,10 @@ void func_80005D10()
 }
 
 #ifdef PORT
+/* GGPO + tick-grid alignment: never spin task_update-only on the barrier (always FREEZE=0). */
 static sb32 syTaskmanShouldFreezeForNetBarrier(void)
 {
-	char *e;
-
-	if (gSCManagerSceneData.scene_curr != nSCKindVSBattle)
-	{
-		return FALSE;
-	}
-	if (syNetPeerCheckBattleExecutionReady() != FALSE)
-	{
-		return FALSE;
-	}
-	e = getenv("SSB64_NETPLAY_TASKMAN_BARRIER_FREEZE");
-	if ((e != NULL) && (e[0] != '\0') && (strtol(e, NULL, 10) == 0))
-	{
-		return FALSE;
-	}
-	return TRUE;
+	return FALSE;
 }
 
 void syTaskmanResyncCountersAfterNetBarrier(void)
@@ -1222,7 +1210,16 @@ void syTaskmanRunTask(SYTaskFunction *tfunc)
 void func_800062B4(SYTaskFunction *tfunc)
 {
 	sSYTaskmanFuncController();
-	tfunc->scene_update();
+#ifdef PORT
+	if (syNetInputTakeSuppressSceneUpdate() != FALSE)
+	{
+		scVSBattleFuncUpdateSkewPacingNetSlice();
+	}
+	else
+#endif
+	{
+		tfunc->scene_update();
+	}
 }
 
 // 0x800062EC
@@ -1242,7 +1239,16 @@ void func_800062EC(SYTaskFunction *tfunc)
 void syTaskmanCommonTaskUpdate(SYTaskFunction *tfunc)
 {
 	sSYTaskmanFuncController();
-	tfunc->scene_update();
+#ifdef PORT
+	if (syNetInputTakeSuppressSceneUpdate() != FALSE)
+	{
+		scVSBattleFuncUpdateSkewPacingNetSlice();
+	}
+	else
+#endif
+	{
+		tfunc->scene_update();
+	}
 
 	if (syTaskmanCheckBreakLoop() != FALSE)
 	{

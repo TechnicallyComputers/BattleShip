@@ -36,6 +36,49 @@ static u32 syNetSyncHashF32(f32 value)
 	return reinterpret.uv;
 }
 
+u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
+{
+	u32 h;
+
+	if (fp == NULL)
+	{
+		return 2166136261U;
+	}
+	h = 2166136261U;
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->player);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->fkind);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_id);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->motion_id);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->percent_damage);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->stock_count);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->lr);
+	h = syNetSyncFnvAccumulateU32(h, (u32)(fp->ga != FALSE));
+
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.y));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.z));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_ground.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_ground.z));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_damage_ground));
+
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->hitlag_tics);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_total_tics);
+	if (fp->joints[nFTPartsJointTopN] != NULL)
+	{
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->joints[nFTPartsJointTopN]->translate.vec.f.x));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->joints[nFTPartsJointTopN]->translate.vec.f.y));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->joints[nFTPartsJointTopN]->translate.vec.f.z));
+	}
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_damage_air.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_damage_air.y));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_damage_air.z));
+
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.y));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.z));
+	return h;
+}
+
 /* Walk active fighter GObj list; fold selected scalars per player slot, then merge slots deterministically. */
 u32 syNetSyncHashBattleFighters(void)
 {
@@ -159,4 +202,9 @@ u32 syNetSyncHashMapCollisionKinematics(void)
 		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].z));
 	}
 	return hash;
+}
+
+u32 syNetSyncHashGcRunAllTraversalFingerprint(void)
+{
+	return gcPortHashGcRunAllTraversalFingerprint();
 }

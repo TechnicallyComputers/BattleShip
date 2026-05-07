@@ -87,8 +87,7 @@ SYTaskmanSetup dSCVSBattleTaskmanSetup =
 // 0x8018D0C0
 void scVSBattleFuncUpdate(void)
 {
-	syNetPeerUpdateBattleGate();
-
+	/* Ingress + barrier were advanced in `syNetInputFuncRead` for active Linux UDP VS before publish (admission freeze). */
 	if (syNetPeerCheckBattleExecutionReady() == FALSE)
 	{
 		return;
@@ -100,6 +99,23 @@ void scVSBattleFuncUpdate(void)
 	}
 	syNetPeerUpdate();
 	syNetRollbackAfterBattleUpdate();
+	syNetInputAdvanceAuthoritativeSimTick();
+}
+
+/*
+ * When skew pacing holds sim (no `syNetInputAdvanceAuthoritativeSimTick`), taskman skips scene_update — run gate + wire + rollback
+ * detection only. Omits ifCommonBattleUpdateInterfaceAll (gcRunAll), replay, and post-sim snapshot: no sim step
+ * completed for this task iteration.
+ */
+void scVSBattleFuncUpdateSkewPacingNetSlice(void)
+{
+	syNetPeerUpdateBattleGate();
+
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		return;
+	}
+	syNetPeerUpdate();
 }
 
 // 0x8018D0E0 - Get player's initial facing direction for battle start
@@ -168,7 +184,7 @@ void scVSBattleStartBattle(void)
 	gSCManagerSceneData.is_suddendeath = FALSE;
 
 	scVSBattleSetupFiles();
-
+#ifndef PORT
 	if (!(gSCManagerBackupData.error_flags & LBBACKUP_ERROR_1PGAMEMARIO) && (gSCManagerBackupData.boot > 68))
 	{
 		file = lbRelocGetExternHeapFile((u32)llSYKseg1ValidateFileID, syTaskmanMalloc(lbRelocGetFileSize((u32)llSYKseg1ValidateFileID), 0x10));
@@ -182,6 +198,7 @@ void scVSBattleStartBattle(void)
 			gSCManagerBackupData.error_flags |= LBBACKUP_ERROR_1PGAMEMARIO;
 		}
 	}
+#endif
 	gcMakeDefaultCameraGObj(nGCCommonLinkIDCamera, GOBJ_PRIORITY_DEFAULT, 100, COBJ_FLAG_ZBUFFER, GPACK_RGBA8888(0x00, 0x00, 0x00, 0xFF));
 	efParticleInitAll();
 	ftParamInitGame();
