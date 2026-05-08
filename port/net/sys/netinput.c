@@ -131,33 +131,74 @@ static int sSYNetInputStrictContractEnvCache = -1;
 static sb32 sSYNetInputStrictContractSkippedPublish;
 static u32 sSYNetInputStrictRStuckSimTick = ~(u32)0;
 static u32 sSYNetInputStrictRStuckFrames;
+static int sSYNetInputAdmissionSummaryIvCache = -999;
+static int sSYNetInputStallUntilRemoteEnvCache = -1;
+static int sSYNetInputPredictDiagLevelCache = -999;
+static int sSYNetInputFrameCommitDiagLevelCache = -999;
 
 int g_NetInputDelayFrames = 0;
 sb32 g_UseInputPrediction = TRUE;
+
+int syNetInputEnvGetMatchInputDelayOrNeg1(void)
+{
+	const char *e;
+	int v;
+
+	e = getenv("SSB64_NETPLAY_MATCH_INPUT_DELAY");
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		return -1;
+	}
+	v = atoi(e);
+	if (v < 0)
+	{
+		v = 0;
+	}
+	/* Align with `syNetPeerConfigureUdpForAutomatch`: values above 99 are treated as "use default" for u32 arg. */
+	if (v > 99)
+	{
+		v = 99;
+	}
+	return v;
+}
 
 static void syNetInputLoadExecutionDelayAndPredictionFromEnv(void)
 {
 	char *e;
 	int v;
+	int md;
 
 	g_NetInputDelayFrames = 0;
-	e = getenv("SSB64_NET_DELAY_FRAMES");
-	if ((e == NULL) || (e[0] == '\0'))
+	md = syNetInputEnvGetMatchInputDelayOrNeg1();
+	if (md >= 0)
 	{
-		e = getenv("SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES");
-	}
-	if ((e != NULL) && (e[0] != '\0'))
-	{
-		v = atoi(e);
-		if (v < 0)
-		{
-			v = 0;
-		}
+		v = md;
 		if (v > 4)
 		{
 			v = 4;
 		}
 		g_NetInputDelayFrames = v;
+	}
+	else
+	{
+		e = getenv("SSB64_NET_DELAY_FRAMES");
+		if ((e == NULL) || (e[0] == '\0'))
+		{
+			e = getenv("SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES");
+		}
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			v = atoi(e);
+			if (v < 0)
+			{
+				v = 0;
+			}
+			if (v > 4)
+			{
+				v = 4;
+			}
+			g_NetInputDelayFrames = v;
+		}
 	}
 	g_UseInputPrediction = TRUE;
 	e = getenv("SSB64_NETPLAY_INPUT_PREDICTION");
@@ -285,20 +326,19 @@ void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after
 
 static void syNetInputMaybeAdmissionPeriodicSummary(u32 tick)
 {
-	static int s_summary_iv = -999;
 	char *e;
 	int iv;
 
-	if (s_summary_iv == -999)
+	if (sSYNetInputAdmissionSummaryIvCache == -999)
 	{
 		e = getenv("SSB64_NETPLAY_FRAME_COMMIT_SUMMARY");
-		s_summary_iv = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
-		if (s_summary_iv < 0)
+		sSYNetInputAdmissionSummaryIvCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+		if (sSYNetInputAdmissionSummaryIvCache < 0)
 		{
-			s_summary_iv = 0;
+			sSYNetInputAdmissionSummaryIvCache = 0;
 		}
 	}
-	iv = s_summary_iv;
+	iv = sSYNetInputAdmissionSummaryIvCache;
 	if (iv <= 0)
 	{
 		return;
@@ -325,6 +365,14 @@ sb32 syNetInputStrictInputContractEnabled(void)
 sb32 syNetInputStrictContractSkippedPublishThisPass(void)
 {
 	return sSYNetInputStrictContractSkippedPublish;
+}
+
+void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
+{
+	sSYNetInputAdmissionSummaryIvCache = -999;
+	sSYNetInputStallUntilRemoteEnvCache = -1;
+	sSYNetInputPredictDiagLevelCache = -999;
+	sSYNetInputFrameCommitDiagLevelCache = -999;
 }
 #endif
 
@@ -453,6 +501,9 @@ void syNetInputReset(void)
 void syNetInputStartVSSession(void)
 {
 	syNetInputReset();
+#if defined(PORT) && !defined(_WIN32)
+	syNetInputRefreshCachedNetplayEnvForNewMatch();
+#endif
 #ifdef PORT
 	{
 		char *env_pn;
@@ -1379,15 +1430,14 @@ void syNetInputExportPeerConnectStatus(s32 *out_last_tick, u8 *out_disconnected,
 #if !defined(_WIN32)
 static sb32 syNetInputEnvStallUntilRemoteEnabled(void)
 {
-	static int s_cached = -1;
 	const char *e;
 
-	if (s_cached < 0)
+	if (sSYNetInputStallUntilRemoteEnvCache < 0)
 	{
 		e = getenv("SSB64_NETPLAY_STALL_UNTIL_REMOTE");
-		s_cached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+		sSYNetInputStallUntilRemoteEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 	}
-	return (s_cached != 0) ? TRUE : FALSE;
+	return (sSYNetInputStallUntilRemoteEnvCache != 0) ? TRUE : FALSE;
 }
 
 static sb32 syNetInputRemoteSlotsMissingRingFrameForTick(u32 tick)
@@ -1429,19 +1479,18 @@ static sb32 syNetInputRemoteSlotsMissingRingFrameForTick(u32 tick)
 /*
  * Strict remote-miss: publish **local** sim slot(s) from HID latch into published history so `syNetPeerGatherHistoryBundle`
  * can emit INPUT before remote `RemoteHistory[slot][sim_tick + input_delay]` exists; full resolve/publish for all slots stays deferred.
+ *
+ * The latch in `syNetInputFuncRead` is always for **this** authoritative sim `tick`. `syNetInputMakeLocalFrame` labels the
+ * frame with its `tick` argument — it must be **`tick`**, not `tick - exec_delay`. Execution delay only shifts **which remote
+ * sim tick** we probe in `syNetInputRemoteSlotsMissingRingFrameForTick(syNetInputStrictContractRemoteProbeSimTick(tick))`, not
+ * the local publish key (mis-labeling broke inputs for exec_delay > 0).
  */
 static void syNetInputStrictContractPartialPublishLocalFromLatch(u32 tick)
 {
 	SYNetInputFrame frame;
 	s32 slot;
 	s32 extra;
-	u32 pub_tick;
-
-	pub_tick = tick;
-	if (syNetInputGetExecutionDelayFrames() > 0)
-	{
-		pub_tick = syNetInputStrictContractRemoteProbeSimTick(tick);
-	}
+	const u32 pub_tick = tick;
 
 	slot = syNetPeerGetLocalSimSlot();
 	if ((slot >= 0) && (slot < MAXCONTROLLERS))
@@ -1483,25 +1532,24 @@ static void syNetInputSynchronizeInputsForTick(u32 tick, SYNetInputFrame *out_fr
  */
 static void syNetInputMaybeLogInputPredictDiag(u32 tick, const SYNetInputFrame *synced)
 {
-	static int s_lvl = -999;
 	s32 ri;
 	s32 n;
 	s32 slot;
 	sb32 any_pred;
 	u32 probe;
 
-	if (s_lvl == -999)
+	if (sSYNetInputPredictDiagLevelCache == -999)
 	{
 		char *e;
 
 		e = getenv("SSB64_NETPLAY_INPUT_PREDICT_DIAG");
-		s_lvl = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
-		if (s_lvl < 0)
+		sSYNetInputPredictDiagLevelCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+		if (sSYNetInputPredictDiagLevelCache < 0)
 		{
-			s_lvl = 0;
+			sSYNetInputPredictDiagLevelCache = 0;
 		}
 	}
-	if (s_lvl == 0)
+	if (sSYNetInputPredictDiagLevelCache == 0)
 	{
 		return;
 	}
@@ -1539,7 +1587,7 @@ static void syNetInputMaybeLogInputPredictDiag(u32 tick, const SYNetInputFrame *
 	{
 		return;
 	}
-	if ((s_lvl < 2) && ((tick % 60U) != 0U))
+	if ((sSYNetInputPredictDiagLevelCache < 2) && ((tick % 60U) != 0U))
 	{
 		return;
 	}
@@ -1558,21 +1606,20 @@ static void syNetInputMaybeLogInputPredictDiag(u32 tick, const SYNetInputFrame *
  */
 static void syNetInputMaybeLogFrameCommitDiag(u32 tick, char path, sb32 exec_ok, sb32 publish)
 {
-	static int s_lvl = -999;
 	u32 hr;
 
-	if (s_lvl == -999)
+	if (sSYNetInputFrameCommitDiagLevelCache == -999)
 	{
 		char *e;
 
 		e = getenv("SSB64_NETPLAY_FRAME_COMMIT_DIAG");
-		s_lvl = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
-		if (s_lvl < 0)
+		sSYNetInputFrameCommitDiagLevelCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+		if (sSYNetInputFrameCommitDiagLevelCache < 0)
 		{
-			s_lvl = 0;
+			sSYNetInputFrameCommitDiagLevelCache = 0;
 		}
 	}
-	if (s_lvl == 0)
+	if (sSYNetInputFrameCommitDiagLevelCache == 0)
 	{
 		return;
 	}
@@ -1584,7 +1631,7 @@ static void syNetInputMaybeLogFrameCommitDiag(u32 tick, char path, sb32 exec_ok,
 	{
 		return;
 	}
-	if ((s_lvl < 2) && ((tick % 60U) != 0U))
+	if ((sSYNetInputFrameCommitDiagLevelCache < 2) && ((tick % 60U) != 0U))
 	{
 		return;
 	}

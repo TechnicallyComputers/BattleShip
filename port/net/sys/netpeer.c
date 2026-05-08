@@ -65,6 +65,7 @@ static void syNetPeerFrameCommitReset(void);
 static u32 sSYNetPeerDesyncTracePrevFigh;
 static sb32 sSYNetPeerDesyncTracePrevValid;
 static int sSYNetPeerDesyncTraceLevelCache = -999;
+static int sSYNetPeerMpTicDiagAssertEnvCache = -999;
 
 extern sb32 sSYNetPeerIsActive;
 
@@ -75,29 +76,30 @@ extern sb32 sSYNetPeerIsActive;
  * routing logs without requiring env setup. `clock_sync_sample` and `tick_diag tag=barrier_release` are
  * always emitted on Linux UDP (not gated by this level).
  */
+static int sSYNetPeerTickDiagEnvCache = -999;
+
 static int syNetPeerTickDiagLevel(void)
 {
-	static int s_env_lvl = -999;
 	int effective;
 	char *e;
 
-	if (s_env_lvl == -999)
+	if (sSYNetPeerTickDiagEnvCache == -999)
 	{
 		e = getenv("SSB64_NETPLAY_TICK_DIAG");
 		if ((e != NULL) && (e[0] != '\0'))
 		{
-			s_env_lvl = atoi(e);
-			if (s_env_lvl < 0)
+			sSYNetPeerTickDiagEnvCache = atoi(e);
+			if (sSYNetPeerTickDiagEnvCache < 0)
 			{
-				s_env_lvl = 0;
+				sSYNetPeerTickDiagEnvCache = 0;
 			}
 		}
 		else
 		{
-			s_env_lvl = 0;
+			sSYNetPeerTickDiagEnvCache = 0;
 		}
 	}
-	effective = s_env_lvl;
+	effective = sSYNetPeerTickDiagEnvCache;
 	if (sSYNetPeerIsActive != FALSE)
 	{
 		if (effective < 1)
@@ -2874,6 +2876,15 @@ void syNetPeerGetSyncPipelineProgress(u32 *out_step, u32 *out_total)
 	}
 }
 
+sb32 syNetPeerShouldHardAbortOnNetplayInputMismatch(void)
+{
+	if (syNetInputGetAbortOnInputMismatchFatal() == FALSE)
+	{
+		return FALSE;
+	}
+	return (syNetPeerGetSyncPipelinePhase() == nSYNetPeerSyncPipeline_Running) ? TRUE : FALSE;
+}
+
 sb32 syNetPeerGetMergedMinConfirmedSimTick(s32 *out_min_tick)
 {
 	s32 i;
@@ -3405,30 +3416,42 @@ sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *pe
 		return FALSE;
 	}
 	{
-		char *adapt_env = getenv("SSB64_NETPLAY_ADAPTIVE_DELAY");
-		char *delay_max_env = getenv("SSB64_NETPLAY_DELAY_MAX");
+		u32 effective_input_delay = input_delay;
+		int md_match_delay;
 
-		sSYNetPeerAdaptiveDelayEnabled = FALSE;
-		sSYNetPeerInputDelayFloor = input_delay;
-		sSYNetPeerInputDelayCeil = 12U;
-		if ((adapt_env != NULL) && (atoi(adapt_env) != 0))
+		md_match_delay = syNetInputEnvGetMatchInputDelayOrNeg1();
+		if (md_match_delay >= 0)
 		{
-			sSYNetPeerAdaptiveDelayEnabled = TRUE;
+			effective_input_delay = (u32)md_match_delay;
+			port_log("SSB64 NetPeer automatch: SSB64_NETPLAY_MATCH_INPUT_DELAY=%d overrides caller input_delay=%u\n",
+			         md_match_delay, (unsigned int)input_delay);
 		}
-		if ((delay_max_env != NULL) && (atoi(delay_max_env) > 0))
 		{
-			sSYNetPeerInputDelayCeil = (u32)atoi(delay_max_env);
+			char *adapt_env = getenv("SSB64_NETPLAY_ADAPTIVE_DELAY");
+			char *delay_max_env = getenv("SSB64_NETPLAY_DELAY_MAX");
+
+			sSYNetPeerAdaptiveDelayEnabled = FALSE;
+			sSYNetPeerInputDelayFloor = effective_input_delay;
+			sSYNetPeerInputDelayCeil = 12U;
+			if ((adapt_env != NULL) && (atoi(adapt_env) != 0))
+			{
+				sSYNetPeerAdaptiveDelayEnabled = TRUE;
+			}
+			if ((delay_max_env != NULL) && (atoi(delay_max_env) > 0))
+			{
+				sSYNetPeerInputDelayCeil = (u32)atoi(delay_max_env);
+			}
+			if (sSYNetPeerInputDelayCeil < sSYNetPeerInputDelayFloor)
+			{
+				sSYNetPeerInputDelayCeil = sSYNetPeerInputDelayFloor;
+			}
 		}
-		if (sSYNetPeerInputDelayCeil < sSYNetPeerInputDelayFloor)
-		{
-			sSYNetPeerInputDelayCeil = sSYNetPeerInputDelayFloor;
-		}
+		sSYNetPeerIsEnabled = TRUE;
+		sSYNetPeerBootstrapIsEnabled = TRUE;
+		sSYNetPeerBootstrapIsHost = (you_are_host != FALSE) ? TRUE : FALSE;
+		sSYNetPeerSessionID = (session_id != 0U) ? session_id : SYNETPEER_DEFAULT_SESSION_ID;
+		sSYNetPeerInputDelay = (effective_input_delay > 99U) ? SYNETPEER_DEFAULT_INPUT_DELAY : effective_input_delay;
 	}
-	sSYNetPeerIsEnabled = TRUE;
-	sSYNetPeerBootstrapIsEnabled = TRUE;
-	sSYNetPeerBootstrapIsHost = (you_are_host != FALSE) ? TRUE : FALSE;
-	sSYNetPeerSessionID = (session_id != 0U) ? session_id : SYNETPEER_DEFAULT_SESSION_ID;
-	sSYNetPeerInputDelay = (input_delay > 99U) ? SYNETPEER_DEFAULT_INPUT_DELAY : input_delay;
 
 	if ((sSYNetPeerBootstrapIsHost != FALSE))
 	{
@@ -3545,13 +3568,23 @@ void syNetPeerInitDebugEnv(void)
 	{
 		sSYNetPeerRemotePlayer = atoi(remote_player_env);
 	}
-	if (delay_env != NULL)
 	{
-		s32 delay = atoi(delay_env);
+		int md_match_delay_d = syNetInputEnvGetMatchInputDelayOrNeg1();
 
-		if (delay >= 0)
+		if (md_match_delay_d >= 0)
 		{
-			sSYNetPeerInputDelay = delay;
+			sSYNetPeerInputDelay = (u32)md_match_delay_d;
+			port_log("SSB64 NetPeer: SSB64_NETPLAY_MATCH_INPUT_DELAY=%d overrides SSB64_NETPLAY_DELAY for wire delay\n",
+			         md_match_delay_d);
+		}
+		else if (delay_env != NULL)
+		{
+			s32 delay = atoi(delay_env);
+
+			if (delay >= 0)
+			{
+				sSYNetPeerInputDelay = (u32)delay;
+			}
 		}
 	}
 #ifdef PORT
@@ -3681,6 +3714,7 @@ void syNetPeerStartVSSession(void)
 	{
 		return;
 	}
+	syNetPeerRefreshCachedNetplayEnvForNewMatch();
 	if (syNetPeerOpenSocket() == FALSE)
 	{
 		return;
@@ -4483,18 +4517,19 @@ void syNetPeerSendLocalInput(void)
 }
 
 #if defined(PORT) && !defined(_WIN32)
+static int sSYNetPeerUdpFrameTraceEnvCache = -1;
+
 static sb32 syNetPeerWantUdpFrameTrace(void)
 {
-	static int s_cached = -1;
 	const char *e;
 
-	if (s_cached >= 0)
+	if (sSYNetPeerUdpFrameTraceEnvCache >= 0)
 	{
-		return (sb32)s_cached;
+		return (sb32)sSYNetPeerUdpFrameTraceEnvCache;
 	}
 	e = getenv("SSB64_NETPLAY_UDP_FRAME_TRACE");
-	s_cached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
-	return (sb32)s_cached;
+	sSYNetPeerUdpFrameTraceEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (sb32)sSYNetPeerUdpFrameTraceEnvCache;
 }
 
 static void syNetPeerLogUdpInputBundleDiag(u32 packet_seq, u32 ack_tick, u32 cur_tick, u8 sender_slot,
@@ -4876,18 +4911,19 @@ void syNetPeerPumpIngressBeforeInputRead(void)
 }
 
 #ifdef PORT
+static int sSYNetPeerGcTraversalDiagEnvCache = -999;
+
 static int syNetPeerGetGcTraversalDiagLevel(void)
 {
-	static int s_cache = -999;
 	const char *e;
 
-	if (s_cache != -999)
+	if (sSYNetPeerGcTraversalDiagEnvCache != -999)
 	{
-		return s_cache;
+		return sSYNetPeerGcTraversalDiagEnvCache;
 	}
 	e = getenv("SSB64_NETPLAY_GC_TRAVERSAL_DIAG");
-	s_cache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
-	return s_cache;
+	sSYNetPeerGcTraversalDiagEnvCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	return sSYNetPeerGcTraversalDiagEnvCache;
 }
 
 static int syNetPeerGetDesyncTraceLevel(void)
@@ -5163,6 +5199,19 @@ static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_beg
 }
 #endif /* PORT && !_WIN32 */
 
+#if defined(PORT) && !defined(_WIN32)
+void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
+{
+	syNetInputRefreshCachedNetplayEnvForNewMatch();
+	sSYNetPeerTickDiagEnvCache = -999;
+	sSYNetPeerDesyncTraceLevelCache = -999;
+	sSYNetPeerMpTicDiagAssertEnvCache = -999;
+	sSYNetPeerGcTraversalDiagEnvCache = -999;
+	sSYNetPeerFrameCommitEnvCache = -999;
+	sSYNetPeerUdpFrameTraceEnvCache = -1;
+}
+#endif
+
 void syNetPeerLogNetSyncValidation(u32 tick)
 {
 	u32 checksums[MAXCONTROLLERS];
@@ -5205,10 +5254,24 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 				    (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
 				        ? "hard-abort (SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL)"
 				        : "soft (unset mask or set SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL=1 to abort)");
+#if !defined(_WIN32)
+				if (syNetPeerShouldHardAbortOnNetplayInputMismatch() != FALSE)
+				{
+					abort();
+				}
+				else if (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
+				{
+					port_log(
+					    "SSB64 NetPeer: ABORT_ON_INPUT_MISMATCH_FATAL skipped (sync pipeline phase=%d; hard-abort only "
+					    "in Running)\n",
+					    (int)syNetPeerGetSyncPipelinePhase());
+				}
+#else
 				if (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
 				{
 					abort();
 				}
+#endif
 			}
 		}
 	}
@@ -5217,15 +5280,13 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 	fighter_hash = syNetSyncHashBattleFighters();
 	map_hash = syNetSyncHashMapCollisionKinematics();
 	{
-		static int s_mp_tic_diag_env = -999;
-
-		if (s_mp_tic_diag_env == -999)
+		if (sSYNetPeerMpTicDiagAssertEnvCache == -999)
 		{
 			char *e = getenv("SSB64_NETPLAY_ASSERT_MP_TIC");
 
-			s_mp_tic_diag_env = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+			sSYNetPeerMpTicDiagAssertEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 		}
-		if (s_mp_tic_diag_env != 0)
+		if (sSYNetPeerMpTicDiagAssertEnvCache != 0)
 		{
 			port_log("SSB64 NetSync: mp_tic_diag sim_tick=%u mp_collision_tic=%u\n", syNetInputGetTick(),
 			         (unsigned int)gMPCollisionUpdateTic);
