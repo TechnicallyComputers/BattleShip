@@ -147,6 +147,16 @@ typedef enum SYNetPeerSyncPipelinePhase
 
 extern SYNetPeerSyncPipelinePhase syNetPeerGetSyncPipelinePhase(void);
 extern void syNetPeerGetSyncPipelineProgress(u32 *out_step, u32 *out_total);
+/*
+ * When `SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL=1`, hard `abort()` only while the sync pipeline is `Running`
+ * (steady battle). During bootstrap / barrier / exec-sync, mismatches are logged but do not kill the process.
+ */
+extern sb32 syNetPeerShouldHardAbortOnNetplayInputMismatch(void);
+/*
+ * Clears cached `getenv` reads in netpeer/netinput so per-match env changes apply without restarting the binary.
+ * Call once per VS session start (invoked from `syNetPeerStartVSSession` and `syNetInputStartVSSession`).
+ */
+extern void syNetPeerRefreshCachedNetplayEnvForNewMatch(void);
 /* GGPO-style merged max(last_confirmed tick) across INPUT peer_connect_status; FALSE if no confirmed ticks yet. */
 extern sb32 syNetPeerGetMergedMinConfirmedSimTick(s32 *out_min_tick);
 #endif

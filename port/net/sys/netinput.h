@@ -97,12 +97,17 @@ typedef struct SYNetInputReplayMetadata /* Header written alongside recorded fra
 
 extern void syNetInputReset(void);
 extern void syNetInputStartVSSession(void); /* Calls Reset and reads netplay env (e.g. predict-neutral). */
+#if defined(PORT) && !defined(_WIN32)
+/* Resets getenv caches used by netinput helpers; paired with `syNetPeerRefreshCachedNetplayEnvForNewMatch`. */
+extern void syNetInputRefreshCachedNetplayEnvForNewMatch(void);
+#endif
 extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
 #if defined(PORT) && !defined(_WIN32)
 /*
- * Fixed execution delay for strict-contract readiness (independent of `SSB64_NETPLAY_DELAY` / committed wire input delay).
+ * Fixed execution delay for strict-contract readiness (independent of `SSB64_NETPLAY_DELAY` / committed wire input delay
+ * unless `SSB64_NETPLAY_MATCH_INPUT_DELAY` is set — then both derive from that; exec uses min(value,4)).
  * Both peers should use the same value (`SSB64_NET_DELAY_FRAMES` or `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default **0** = pre-patch strict probe).
  * Matchmaking may assign `g_NetInputDelayFrames` after session start.
  */
@@ -115,11 +120,16 @@ extern sb32 g_UseInputPrediction;
 extern int syNetInputGetExecutionDelayFrames(void);
 extern sb32 syNetInputGetUseInputPrediction(void);
 /*
+ * getenv `SSB64_NETPLAY_MATCH_INPUT_DELAY`: integer 0–99. When set, overrides per-layer exec/wire env for **both**
+ * committed wire delay (`sSYNetPeerInputDelay`) and execution delay (`g_NetInputDelayFrames`, capped at 4). Returns -1 if unset.
+ */
+extern int syNetInputEnvGetMatchInputDelayOrNeg1(void);
+/*
  * getenv `SSB64_NETPLAY_STRICT_INPUT_CONTRACT`: when **`1`**, Linux UDP VS uses a **strict authoritative input baseline**:
  * exec / skew / catch-up do not gate admission; `scVSBattleFuncUpdate` bypasses `syNetPeerCheckBattleExecutionReady` while VS+strict.
  * Remote ring readiness uses sim tick `max(0, tick - g_NetInputDelayFrames)` when delay > 0 (delay 0 probes `tick` unchanged).
- * Strict partial local publish uses that executable sim tick for frame labels when delay > 0. If `g_UseInputPrediction`, predicted
- * remotes are written into `sSYNetInputRemoteHistory` at the wire key for the current sim tick. Optional stuck bypass:
+ * Strict partial local publish still labels frames at the **current** sim `tick` (hardware latch is keyed to that tick).
+ * If `g_UseInputPrediction`, predicted remotes are written into `sSYNetInputRemoteHistory` at the wire key for the current sim tick. Optional stuck bypass:
  * `SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG=1` with execution delay 0.
  */
 extern sb32 syNetInputStrictInputContractEnabled(void);

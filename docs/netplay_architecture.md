@@ -18,6 +18,8 @@ Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authorit
 
 ## Debugging environment (commit / edges / pacing)
 
+A **complete index** of `SSB64_*` netplay/netmenu environment variables lives in [`docs/netplay_environment_variables.md`](netplay_environment_variables.md).
+
 Useful flags for the **frame-commit + desync-classification + input-edge** phase (all read in `port/net/sys/` unless noted):
 
 | Priority | Variable | Notes |

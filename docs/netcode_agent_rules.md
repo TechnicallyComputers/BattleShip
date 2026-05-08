@@ -34,6 +34,10 @@ Build rollback netcode in phases:
 - `src/sc/sc1pmode/sc1pgame.c`, `src/sc/sc1pmode/sc1ptrainingmode.c`, and `src/sc/sc1pmode/sc1pbonusstage.c` remain on `syControllerFuncRead`.
 - `docs/netplay_architecture.md` documents the current input architecture.
 
+## Environment variable reference
+
+- [`docs/netplay_environment_variables.md`](netplay_environment_variables.md) lists `SSB64_*` environment variables used by netplay / netmenu (input, netpeer, rollback, matchmaking, diagnostics). Use it when debugging, scripting launches, or porting this stack.
+
 ## Architecture Rules
 
 - Keep `src/sys/controller.c` focused on local hardware input and N64-style controller behavior.
