@@ -163,13 +163,16 @@ extern void syNetInputGetHistoryInputDiagChecksumWindow(u32 tick_begin, u32 fram
 extern void syNetInputGetRemoteHistoryDiagChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                          u32 *out_combined_checksum);
 /*
- * getenv `SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH`: 0 = off. Bit 1: abort on first published-history vs remote-ring
- * mismatch in the NetSync validation window. Bit 2: abort when rollback finds a history vs remote mismatch before resim.
+ * getenv `SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH`: 0 = off. Bit 1: trip on first published-history vs remote-ring
+ * mismatch in the NetSync validation window. Bit 2: trip when rollback finds a history vs remote mismatch before resim.
  * Use 3 for both. First tick in [tick_begin, tick_begin+frame_count) where published history disagrees with remote ring on
  * sim inputs (tick/buttons/sticks) when presence differs or both sides valid — detects resolve/storage skew.
+ * By default these paths **log only** (no process abort). getenv `SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL`
+ * (non-zero): also call abort() after logging so CI / bisect can hard-stop.
  * Returns FALSE if none. out_kind: 0=presence-only mismatch, 1=value mismatch.
  */
 extern s32 syNetInputGetAbortOnInputMismatchMask(void);
+extern sb32 syNetInputGetAbortOnInputMismatchFatal(void);
 extern sb32 syNetInputDiagFindFirstPublishedRemoteMismatch(u32 tick_begin, u32 frame_count, s32 *out_player,
                                                            u32 *out_tick, u32 *out_kind);
 extern void syNetInputLogDesyncNeedle(u32 validation_tick, u32 needle_tick, int trace_level);

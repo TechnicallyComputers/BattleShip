@@ -1,6 +1,10 @@
-# Ssb64NetmenuSources.cmake — when SSB64_NETMENU is ON, prefer port/net/*.c over
-# decomp/src/<same relative path> (mirror rule), apply path aliases for renames,
-# and add port-only translation units. Included from the root CMakeLists.txt.
+# Ssb64NetmenuSources.cmake — SSB64_NETMENU build policy:
+#
+# - Do not fork netmenu / netplay C in the decomp submodule. Maintain copies under
+#   port/net (same relative path as decomp/src where possible, or an alias row below).
+# - This module removes decomp TUs that have a port/net replacement and adds every
+#   port/net/*.c to the link (mirror swap, rename aliases, then a completeness sweep
+#   so port-only files like netinput.c/netpeer.c are never omitted).
 #
 # Inputs:  CMAKE_CURRENT_SOURCE_DIR, SSB64_DECOMP_SOURCES (list, modified in place)
 # Outputs: SSB64_PORT_NETMENU_SOURCES (list of absolute .c paths under port/net)
@@ -53,40 +57,21 @@ foreach(i RANGE 0 ${_alias_last})
     endif()
 endforeach()
 
-# Port-only: no decomp/src/<same relpath> twin (or twin handled only above).
-set(_SSB64_PORT_NETMENU_PORTONLY_REL
-    menus/mnvsonline.c
-    menus/mnvsoffline.c
-    menus/mnvsonline_maps.c
-    mn_vs_submenu_png.c
-    sc/sccommon/scautomatch.c
-    sc/sccommon/scnetmatchstaging.c
-    sys/netrollback.c
-    sys/netdesyncclassifier.c
-    sys/netpeer_frame_commit.c
-    sys/netphase.c
-    sys/nettickgridlock.c
-    sys/netfighterphase.c
-    sys/netcontrollerfreeze.c
-)
-foreach(_r IN LISTS _SSB64_PORT_NETMENU_PORTONLY_REL)
-    set(_pp "${_ssb64_port_net_root}/${_r}")
-    if(EXISTS "${_pp}")
-        list(FIND SSB64_PORT_NETMENU_SOURCES "${_pp}" _fi)
-        if(_fi EQUAL -1)
-            list(APPEND SSB64_PORT_NETMENU_SOURCES "${_pp}")
+# Link every remaining port/net translation unit (port-only modules and any future
+# copies). Mirror/alias steps above already removed decomp counterparts where applicable.
+foreach(_p IN LISTS _ssb64_port_net_c)
+    file(RELATIVE_PATH _rel "${_ssb64_port_net_root}" "${_p}")
+    if("${_rel}" IN_LIST _SSB64_PORT_NET_MIRROR_DENYLIST)
+        continue()
+    endif()
+    if(WIN32)
+        # POSIX/curl matchmaking and server barrier are omitted on Windows (sources are stubbed).
+        if(_rel MATCHES "^matchmaking/" OR _rel STREQUAL "bootstrap/mm_server_barrier.c")
+            continue()
         endif()
     endif()
+    list(FIND SSB64_PORT_NETMENU_SOURCES "${_p}" _ssb64_port_net_sweep_fi)
+    if(_ssb64_port_net_sweep_fi EQUAL -1)
+        list(APPEND SSB64_PORT_NETMENU_SOURCES "${_p}")
+    endif()
 endforeach()
-
-if(NOT WIN32)
-    foreach(_r IN ITEMS matchmaking/mm_stun.c matchmaking/mm_matchmaking.c matchmaking/mm_lan_detect.c bootstrap/mm_server_barrier.c)
-        set(_pp "${_ssb64_port_net_root}/${_r}")
-        if(EXISTS "${_pp}")
-            list(FIND SSB64_PORT_NETMENU_SOURCES "${_pp}" _fi)
-            if(_fi EQUAL -1)
-                list(APPEND SSB64_PORT_NETMENU_SOURCES "${_pp}")
-            endif()
-        endif()
-    endforeach()
-endif()

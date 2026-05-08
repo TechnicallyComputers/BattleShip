@@ -6,6 +6,7 @@
 #include <mp/map.h>
 #include <sys/objdef.h>
 #include <sys/objman.h>
+#include <sys/objman_gcport.h>
 
 /*
  * NetSync — cheap, partial-state checksums for diagnosing divergent gameplay.

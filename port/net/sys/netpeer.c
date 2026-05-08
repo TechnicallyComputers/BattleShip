@@ -13,6 +13,7 @@
 #endif
 #include <sys/netsync.h>
 #include <sys/objman.h>
+#include <sys/objman_gcport.h>
 #if defined(SSB64_NETMENU)
 #include <sys/netfighterphase.h>
 #endif
@@ -5194,14 +5195,20 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 			{
 				port_log(
 				    "SSB64 NetPeer: ABORT_ON_INPUT_MISMATCH (bit1) pub_vs_remote kind=%s player=%d tick=%u "
-				    "validation_tick=%u win=[%u,%u) — clear SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH to continue\n",
+				    "validation_tick=%u win=[%u,%u) — %s\n",
 				    (mis_kind == 0U) ? "presence" : "values",
 				    (int)mis_player,
 				    (unsigned int)mis_tick,
 				    tick,
 				    win_begin,
-				    win_begin + win_length);
-				abort();
+				    win_begin + win_length,
+				    (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
+				        ? "hard-abort (SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL)"
+				        : "soft (unset mask or set SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL=1 to abort)");
+				if (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
+				{
+					abort();
+				}
 			}
 		}
 	}

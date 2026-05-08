@@ -1042,6 +1042,14 @@ s32 syNetInputGetAbortOnInputMismatchMask(void)
 	return atoi(e);
 }
 
+sb32 syNetInputGetAbortOnInputMismatchFatal(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL");
+	return ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? TRUE : FALSE;
+}
+
 sb32 syNetInputDiagFindFirstPublishedRemoteMismatch(u32 tick_begin, u32 frame_count, s32 *out_player, u32 *out_tick,
                                                   u32 *out_kind)
 {
