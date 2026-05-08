@@ -110,9 +110,10 @@ extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each
  */
 extern sb32 syNetInputStrictInputContractEnabled(void);
 /*
- * TRUE after `syNetInputFuncRead` returned early on strict remote-not-ready (no publish that host frame).
- * `scVSBattleFuncUpdate` skips `syNetInputAdvanceAuthoritativeSimTick` + `syNetRollbackAfterBattleUpdate` while still
- * running full `scene_update` (strict R path does not use taskman scene suppress).
+ * TRUE after `syNetInputFuncRead` took the strict remote-miss path: partial local publish for wire, scene suppress
+ * (skew net slice), then early return. `scVSBattleFuncUpdate` is skipped that task iteration; tick does not advance.
+ * If full `scene_update` were reached with this flag (should not happen), `scVSBattleFuncUpdate` only runs
+ * `syNetPeerUpdate` so the battle sim is not executed twice for the same tick.
  */
 extern sb32 syNetInputStrictContractSkippedPublishThisPass(void);
 /* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=!execution, S=stall, K=skew, R=strict remote missing. */

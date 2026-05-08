@@ -32,6 +32,7 @@ option(NON_EQUIVALENT "Build without equivalent decomp constraints" ON)
 option(USE_AUTO_VCPKG "Use automated vcpkg for dependency management" ON)
 option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for rendering regression testing" OFF)
 option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
+option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstrap for debugging" OFF)
 
 if(SSB64_NETMENU AND NOT WIN32)
     find_package(CURL REQUIRED)
@@ -264,6 +265,10 @@ endif()
 
 if(SSB64_NETMENU)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
+endif()
+
+if(SSB64_NETPLAY_HARD_LAN_MODE)
+    list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
 endif()
 
 ################################################################################

@@ -1474,12 +1474,13 @@ void syNetInputFuncRead(void)
 				if (syNetInputRemoteSlotsMissingRingFrameForTick(tick) != FALSE)
 				{
 					/*
-					 * No taskman scene suppress: full `scene_update` must run for VS load / barrier while
-					 * `syNetPeerUpdate` still sends INPUT (exec bypass when strict+VS in netpeer).
-					 * Publish **local** slots from latch into published history so `syNetPeerGatherHistoryBundle` is non-empty.
+					 * Partial publish for GatherHistoryBundle / wire INPUT; same sim tick must not run a full
+					 * `ifCommonBattleUpdateInterfaceAll` until the next FuncRead can full-publish (S/K skew/stall
+					 * paths already use scene suppress for this — strict R must match or inputs/physics apply twice).
 					 */
 					syNetInputStrictContractPartialPublishLocalFromLatch(tick);
 					sSYNetInputStrictContractSkippedPublish = TRUE;
+					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
 					syNetInputAdmissionBump('R');
 					syNetInputMaybeLogFrameCommitDiag(tick, 'R', TRUE, FALSE);
 					return;

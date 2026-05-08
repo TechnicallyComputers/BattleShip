@@ -101,6 +101,17 @@ void scVSBattleFuncUpdate(void)
 	{
 		return;
 	}
+#if defined(PORT) && !defined(_WIN32)
+	/*
+	 * Belt-and-suspenders: strict R should set taskman scene suppress (skew net slice). If full `scene_update`
+	 * still runs with skipped publish, do not execute a battle sim step for this tick (tick is not advanced).
+	 */
+	if (syNetInputStrictContractSkippedPublishThisPass() != FALSE)
+	{
+		syNetPeerUpdate();
+		return;
+	}
+#endif
 	if (syNetRollbackIsResimulating() == FALSE)
 	{
 		ifCommonBattleUpdateInterfaceAll();
