@@ -1,15 +1,15 @@
 [submodule "libultraship"]
 	path = libultraship
-	url = https://github.com/TechnicallyComputers/libultraship.git
+	url = https://github.com/JRickey/libultraship.git
 	branch = ssb64
 [submodule "torch"]
 	path = torch
-	url = https://github.com/TechnicallyComputers/Torch.git
+	url = https://github.com/JRickey/Torch.git
 	branch = ssb64
 [submodule "decomp"]
 	path = decomp
-	url = https://github.com/TechnicallyComputers/ssb-decomp-re.git
+	url = https://github.com/JRickey/ssb-decomp-re.git
 	branch = port-patches
 [submodule "Battle-ShipYard"]
 	path = Battle-ShipYard
-	url = https://github.com/TechnicallyComputers/Battle-ShipYard.git
+	url = https://github.com/JRickey/Battle-ShipYard.git
