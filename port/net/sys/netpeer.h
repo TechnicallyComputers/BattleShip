@@ -95,10 +95,14 @@ extern sb32 syNetPeerIsOnlineP2PHardwareDecoupleActive(void);
  */
 extern s32 syNetPeerResolveLocalHardwareDevice(s32 sim_player);
 extern s32 syNetPeerGetLocalSimSlot(void);
+/* Dual-local INPUT (v5): second sim slot controlled from this machine, or -1. */
+extern s32 syNetPeerGetExtraLocalSenderSimSlot(void);
 extern s32 syNetPeerGetRemotePlayerSlot(void);
 extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
+/* Committed VS input delay (wire tick = sim tick + delay for GatherHistoryBundle / staged INPUT). */
+extern u32 syNetPeerGetCommittedInputDelay(void);
 #ifdef PORT
 /*
  * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads `HighestRemoteTick` by
@@ -106,6 +110,16 @@ extern u32 syNetPeerGetHighestRemoteTick(void);
  */
 extern sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
 extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);
+#if !defined(_WIN32)
+/*
+ * Catch-up when **behind** the remote tick frontier: `HighestRemoteTick - local_sim_tick >= threshold`.
+ * `SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS` (default **0** = off): extra `syNetPeerUpdateBattleGate` before
+ * `SSB64_NETPLAY_STALL_UNTIL_REMOTE`, and bypass strict stall for that `syNetInputFuncRead` pass (experimental).
+ * Optional: `SSB64_NETPLAY_SKEW_BEHIND_LOG=1` for rate-limited `catch_up_behind` lines. See docs/netplay_pacing.md.
+ */
+extern sb32 syNetPeerRunCatchUpBehindBeforeInputStall(u32 local_sim_tick);
+extern sb32 syNetPeerShouldRelaxStallUntilRemoteForCatchUp(u32 local_sim_tick);
+#endif
 /*
  * When tick-grid exec gate is enabled (SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1) and the grid is locked, PortPushFrame
  * skips decouple deadline holds for sim-tick indexing (Linux UDP).

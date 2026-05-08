@@ -87,8 +87,17 @@ SYTaskmanSetup dSCVSBattleTaskmanSetup =
 // 0x8018D0C0
 void scVSBattleFuncUpdate(void)
 {
+	sb32 strict_vs_exec_bypass = FALSE;
+#ifdef PORT
+#if !defined(_WIN32)
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	{
+		strict_vs_exec_bypass = TRUE;
+	}
+#endif
+#endif
 	/* Ingress + barrier were advanced in `syNetInputFuncRead` for active Linux UDP VS before publish (admission freeze). */
-	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
@@ -98,8 +107,13 @@ void scVSBattleFuncUpdate(void)
 		syNetReplayUpdate();
 	}
 	syNetPeerUpdate();
-	syNetRollbackAfterBattleUpdate();
-	syNetInputAdvanceAuthoritativeSimTick();
+#if defined(PORT) && !defined(_WIN32)
+	if (syNetInputStrictContractSkippedPublishThisPass() == FALSE)
+#endif
+	{
+		syNetRollbackAfterBattleUpdate();
+		syNetInputAdvanceAuthoritativeSimTick();
+	}
 }
 
 /*
@@ -109,9 +123,18 @@ void scVSBattleFuncUpdate(void)
  */
 void scVSBattleFuncUpdateSkewPacingNetSlice(void)
 {
+	sb32 strict_vs_exec_bypass = FALSE;
+#ifdef PORT
+#if !defined(_WIN32)
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	{
+		strict_vs_exec_bypass = TRUE;
+	}
+#endif
+#endif
 	syNetPeerUpdateBattleGate();
 
-	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
