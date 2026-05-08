@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/package-linux.sh
 #   ./scripts/package-linux.sh -DSSB64_NETMENU=ON    # netplay / net-menu build
+#   ./scripts/package-linux.sh --netplay            # same output paths + forces NETMENU (uses port/net/sys/taskman.c)
 #
 # Additional CMake cache variables may be passed through (they are forwarded to
 # the configure step after NON_PORTABLE=ON and Release).
@@ -11,6 +12,7 @@
 # Output:
 #   Default:     <repo-root>/dist/BattleShip-x86_64.AppImage
 #   Netmenu ON:  <repo-root>/dist/BattleShip-Netplay-x86_64.AppImage
+#   (--netplay or -DSSB64_NETMENU=ON selects the Netplay output; --netplay injects NETMENU if omitted.)
 #
 # AppDir layout produced (before appimagetool packs it):
 #   AppDir/
@@ -49,10 +51,34 @@ DIST_DIR="$ROOT/dist"
 APP_NAME="BattleShip"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
-# Extra CMake configure arguments (e.g. -DSSB64_NETMENU=ON).
-EXTRA_CMAKE_ARGS=("$@")
+# Extra CMake configure arguments (forwarded to CMake). Use --netplay for the Netplay AppImage
+# with SSB64_NETMENU=ON (required so port/net/** mirrors—including taskman.c—replace decomp).
+EXTRA_CMAKE_ARGS=()
+NETPLAY_PACKAGE=0
+for a in "$@"; do
+	if [[ "$a" == "--netplay" ]]; then
+		NETPLAY_PACKAGE=1
+		continue
+	fi
+	EXTRA_CMAKE_ARGS+=("$a")
+done
+
+has_netmenu_on=0
+has_netmenu_off=0
+for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+	case "$a" in
+		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON) has_netmenu_on=1 ;;
+		-DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF) has_netmenu_off=1 ;;
+	esac
+done
+if [[ "$NETPLAY_PACKAGE" -eq 1 ]] && [[ "$has_netmenu_off" -eq 0 ]] && [[ "$has_netmenu_on" -eq 0 ]]; then
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=ON")
+fi
 
 IS_NETPLAY=0
+if [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
+	IS_NETPLAY=1
+fi
 for a in "${EXTRA_CMAKE_ARGS[@]}"; do
 	case "$a" in
 		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON)

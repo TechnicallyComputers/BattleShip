@@ -915,12 +915,17 @@ void syNetRollbackUpdate(void)
 	if ((syNetInputGetAbortOnInputMismatchMask() & 2) != 0)
 	{
 		port_log(
-		    "SSB64 NetRollback: ABORT_ON_INPUT_MISMATCH (bit2) before resim tick=%u frontier=%u slot=%d — "
-		    "clear SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH to continue\n",
+		    "SSB64 NetRollback: ABORT_ON_INPUT_MISMATCH (bit2) before resim tick=%u frontier=%u slot=%d — %s\n",
 		    mismatch,
 		    frontier,
-		    (int)mismatch_player);
-		abort();
+		    (int)mismatch_player,
+		    (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
+		        ? "hard-abort (SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL)"
+		        : "soft (unset mask or set SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL=1 to abort)");
+		if (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
+		{
+			abort();
+		}
 	}
 #endif
 	syNetRollbackRunResim(mismatch, frontier);
