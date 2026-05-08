@@ -102,11 +102,25 @@ extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
 #if defined(PORT) && !defined(_WIN32)
 /*
+ * Fixed execution delay for strict-contract readiness (independent of `SSB64_NETPLAY_DELAY` / committed wire input delay).
+ * Both peers should use the same value (`SSB64_NET_DELAY_FRAMES` or `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default **0** = pre-patch strict probe).
+ * Matchmaking may assign `g_NetInputDelayFrames` after session start.
+ */
+extern int g_NetInputDelayFrames;
+/*
+ * When TRUE (default), strict contract + missing remote ring uses last-input prediction (`syNetInputMakePredictedFrame`).
+ * Disable with `SSB64_NETPLAY_INPUT_PREDICTION=0`.
+ */
+extern sb32 g_UseInputPrediction;
+extern int syNetInputGetExecutionDelayFrames(void);
+extern sb32 syNetInputGetUseInputPrediction(void);
+/*
  * getenv `SSB64_NETPLAY_STRICT_INPUT_CONTRACT`: when **`1`**, Linux UDP VS uses a **strict authoritative input baseline**:
- * `syNetInputFuncRead` publishes only when every remote human slot has `RemoteHistory[slot][tick]`; exec / skew / catch-up
- * do not gate admission; remote prediction fallback in `syNetInputResolveFrame` is disabled (cleared frame if the gate leaks).
- * `scVSBattleFuncUpdate` / rollback hooks bypass `syNetPeerCheckBattleExecutionReady` while VS+strict so sim can advance once
- * inputs are present. Debug-only — not a shipping pacing mode.
+ * exec / skew / catch-up do not gate admission; `scVSBattleFuncUpdate` bypasses `syNetPeerCheckBattleExecutionReady` while VS+strict.
+ * Remote ring readiness uses sim tick `max(0, tick - g_NetInputDelayFrames)` when delay > 0 (delay 0 probes `tick` unchanged).
+ * Strict partial local publish uses that executable sim tick for frame labels when delay > 0. If `g_UseInputPrediction`, predicted
+ * remotes are written into `sSYNetInputRemoteHistory` at the wire key for the current sim tick. Optional stuck bypass:
+ * `SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG=1` with execution delay 0.
  */
 extern sb32 syNetInputStrictInputContractEnabled(void);
 /*
