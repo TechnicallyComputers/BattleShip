@@ -58,6 +58,7 @@ CMakeLists.txt
 
 ## Related Architecture Notes
 - `docs/netplay_architecture.md` — netplay input staging, prediction, saved input history, and the rollback input boundary
+- `docs/net_input_pipeline_audit.md` — SDL vs Raphnet convergence, scene FuncRead matrix, delay bootstrap, `SSB64_NETPLAY_LOCAL_HARDWARE`, hardening checklist
 
 ## What NOT to Include in Port
 - `decomp/src/ovl8/`, `decomp/src/db/` — Debug overlay/menu (kept on the

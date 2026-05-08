@@ -1,0 +1,144 @@
+openapi: 3.0.3
+info:
+  title: BattleShip server-assisted bootstrap (fragment)
+  description: >
+    REST sketch for optional pre-battle barrier coordination. Clients keep P2P UDP for inputs;
+    these endpoints only influence wall-clock barrier deadline + epoch policy.
+  version: 0.1.0
+
+servers:
+  - url: https://api.example.invalid
+    description: Replace with production coordinator base URL.
+
+paths:
+  /v1/sessions/{match_id}/bootstrap/ping:
+    post:
+      summary: Submit bootstrap ping sample(s); receive/advance barrier contract
+      operationId: postSessionBootstrapPing
+      parameters:
+        - name: match_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Automatch session identifier (same family as MmMatchResult.match_id).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BootstrapPingRequest'
+      responses:
+        '200':
+          description: Bootstrap ping accepted; contract may be partial until both peers have checked in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapPingResponse'
+        '401':
+          description: Missing or invalid bearer / ticket.
+        '404':
+          description: Unknown match_id or expired session.
+
+  /v1/sessions/{match_id}/bootstrap/contract:
+    get:
+      summary: Poll authoritative barrier contract (optional if ping responses stream contract)
+      operationId: getSessionBootstrapContract
+      parameters:
+        - name: match_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Latest merged barrier policy for this match.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapContract'
+        '401':
+          description: Missing or invalid bearer / ticket.
+        '404':
+          description: Unknown match_id.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived token issued with automatch result (alternative bind ticket_id in body).
+
+  schemas:
+    BootstrapPingRequest:
+      type: object
+      required:
+        - ticket_id
+        - client_ping_seq
+      properties:
+        ticket_id:
+          type: string
+          description: Opaque ticket from MmMatchResult.ticket_id; binds caller to the session.
+        client_ping_seq:
+          type: integer
+          minimum: 0
+          description: Monotonic per-client sequence for idempotency / reorder detection.
+        client_unix_ms:
+          type: integer
+          format: int64
+          description: Optional client wall clock at send (diagnostics only; server uses monotonic receive times for policy).
+        rtt_summary:
+          type: object
+          description: Optional Tier-A opaque UDP measurement summary from local TIME_PING/TIME_PONG (min/median/max RTT, spread).
+          additionalProperties: true
+        ping_sent_monotonic_ms:
+          type: integer
+          format: int64
+          description: Optional client monotonic timestamp when UDP ping was emitted (if exported by client).
+
+    BootstrapPingResponse:
+      type: object
+      required:
+        - bootstrap_epoch
+        - barrier_deadline_unix_ms
+      properties:
+        bootstrap_epoch:
+          type: integer
+          format: int64
+          description: >
+            Logical epoch both clients must agree on; bumps invalidate stale local barrier negotiation.
+        barrier_deadline_unix_ms:
+          type: integer
+          format: int64
+          description: >
+            Authoritative Unix-ms wall deadline for the VS barrier (host still VI-quantizes locally with existing helpers).
+        recommended_extra_lead_ms:
+          type: integer
+          minimum: 0
+          description: Server-suggested extra lead beyond client-computed lead (maps toward BARRIER_EXTRA_LEAD semantics).
+        clock_sync_rounds:
+          type: integer
+          minimum: 0
+          description: Optional hint for additional UDP clock-sync rounds before arming barrier.
+        policy_json:
+          type: object
+          additionalProperties: true
+          description: Opaque policy blob (p95 targets, max skew envelope, etc.).
+        contract_complete:
+          type: boolean
+          description: True when server has enough samples from all peers to finalize deadline.
+
+    BootstrapContract:
+      allOf:
+        - $ref: '#/components/schemas/BootstrapPingResponse'
+        - type: object
+          properties:
+            match_id:
+              type: string
+            session_id:
+              type: integer
+              format: int32
+              description: Numeric session id echo (MmMatchResult.session_id style).
