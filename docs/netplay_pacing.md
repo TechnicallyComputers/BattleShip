@@ -32,6 +32,19 @@ If **skew** (`tick - HighestRemoteTick`) exceeds the **lead cap**, `syNetInputFu
 
 Large negative skew is **not** handled by holding local tick (that would increase backlog). Mitigation remains **ingress pumps** (`PortPushFrame` host-frame gate pump, `syNetPeerUpdateBattleGate`) and rollback. A future revision could add **catch-up** policy (multiple sim steps per wall frame) under a separate flag; this document describes lead-only behavior.
 
+**Experimental catch-up behind (`skew >> 0` in the sense `hr` ahead of local tick)**
+
+| **`SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS`** | When **`> 0`**: if **`HighestRemoteTick - local_sim_tick >= N`**, netinput runs an **extra** `syNetPeerUpdateBattleGate()` before `SSB64_NETPLAY_STALL_UNTIL_REMOTE`, and **bypasses strict stall** for that `syNetInputFuncRead` pass (publish may proceed without remote ring rows for the current tick). **`0`** or unset = off. Clamped **0…10000**. Parsed on each `syNetPeerStartVSSession` (same cadence as lead cap). |
+| **`SSB64_NETPLAY_SKEW_BEHIND_LOG`** | **`1`**: rate-limited `catch_up_behind` lines when pump/relax triggers. |
+
+This is **orthogonal** to **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** (lead cap when local tick is **ahead** of `hr`). Tune them independently for experiments; bake defaults in later once stable.
+
+## Strict authoritative input contract (debug baseline)
+
+| **`SSB64_NETPLAY_STRICT_INPUT_CONTRACT`** | **`1`** (Linux UDP VS): **Mode 1 — strict confirmed inputs.** Authoritative sim steps only after `syNetInputFuncRead` has confirmed remote ring data for every remote human slot at the **wire-aligned** row: `RemoteHistory[slot][sim_tick + committed_input_delay]` (same tick label as staged INPUT from `syNetPeerGatherHistoryBundle`; `sim_tick` is `syNetInputGetTick()`). Admission uses **only** that check (not exec sync, skew, catch-up-behind, or `STALL_UNTIL_REMOTE`). Skew pacing is disabled; `syNetInputResolveFrame` does **not** predict missing remotes (clears the frame if the gate leaks). `scVSBattleFuncUpdate`, skew net slice, and rollback snapshot/update hooks **bypass** `syNetPeerCheckBattleExecutionReady` while VS+strict. **Strict remote-miss** does **not** taskman-suppress `scene_update`; it **partial-publishes local** sim slot(s) from the HID latch into published history so **`syNetPeerGatherHistoryBundle` / INPUT send** still run, and `syNetPeerGatherHistoryBundle` falls back to **`syNetInputMakeLocalFrame`** when strict is on and published tick lags sim tick. That pass skips **`syNetInputAdvanceAuthoritativeSimTick`** + **`syNetRollbackAfterBattleUpdate`** until full publish succeeds. **`syNetPeerUpdate`** sends INPUT while strict+VS even if exec is not ready yet. **Unset / `0`**: default behavior. |
+
+While testing this mode, disable `SSB64_NETPLAY_TICK_GRID_EXEC_GATE`, `SSB64_NETPLAY_SKEW_*`, and optional `SSB64_NETPLAY_STALL_UNTIL_REMOTE` (strict subsumes the ring-row stall for admission).
+
 ## Ordering and guards
 
 Skew pacing is evaluated **only** when:
@@ -50,9 +63,12 @@ If tick does not advance for several controller passes, `syNetPeerUpdate` may em
 | Variable | Role |
 |----------|------|
 | `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS` | Positive skew lead cap before suppressing full `scVSBattleFuncUpdate` (see Skew hold section). |
+| `SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS` | When **> 0**, catch-up behind `hr` (extra gate pump + relax strict stall-until-remote for that read). See **Experimental catch-up behind** above. |
+| `SSB64_NETPLAY_SKEW_BEHIND_LOG` | Log `catch_up_behind` when catch-up triggers (rate-limited). |
 | `SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM` | Decouple host refresh rate from sim stepping (`port/gameloop.cpp`). |
 | `SSB64_NETPLAY_SIM_HZ` | Target sim Hz for taskman interval scaling (`syNetRollbackApplyPortSimPacing`). |
-| `SSB64_NETPLAY_STALL_UNTIL_REMOTE` | Stall full battle update (and thus **`syNetInputAdvanceAuthoritativeSimTick`**) until remote ring has a frame for current tick (strict readiness). |
+| `SSB64_NETPLAY_STALL_UNTIL_REMOTE` | Stall full battle update (and thus **`syNetInputAdvanceAuthoritativeSimTick`**) until remote ring has a frame at **sim_tick + committed_input_delay** (wire-aligned row; same rule as strict admission). |
+| `SSB64_NETPLAY_STRICT_INPUT_CONTRACT` | **`1`**: strict ring admission + partial local publish for wire + `GatherHistoryBundle` strict fallback + exec bypass + INPUT before exec ready; remote-miss skips **full** publish and tick advance without scene suppress (see **Strict authoritative input contract**). |
 | `SSB64_NETPLAY_HOSTFRAME_GATE_PUMP` | Pump `syNetPeerUpdateBattleGate` on host frames when execution not ready. |
 | `SSB64_NETPLAY_SYNC_PRESENT_HOLD` | Avoid idle present during barrier/sync (`syNetPeerWantsSyncPresentHold`). |
 | `SSB64_NETPLAY_BARRIER_ESCAPE_MS` / `SSB64_NETPLAY_BARRIER_REQUEUE_MS` | Wall-clock escape / automatch re-queue while barrier waiting (Linux UDP). |

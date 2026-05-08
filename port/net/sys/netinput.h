@@ -22,6 +22,11 @@
  *
  * `SYNetInputSource` distinguishes how a slot is fed; NetPeer fills remote rings via `syNetInputSetRemoteInput`.
  * Published history (`syNetInputGetHistoryFrame`) is what rollback compares against wire copies.
+ *
+ * Edge semantics (`button_tap` / `button_release`): derived in `syNetInputPublishFrame` from the current resolved
+ * frame’s `buttons` vs the prior **published** sim tick (`frame->tick - 1`) in `sSYNetInputHistory` when present, not
+ * from a transient slot shadow alone — so prediction/rollback cannot shift “pressed this frame” without changing the
+ * stored per-tick hold stream. Optional trace: `SSB64_NETPLAY_INPUT_EDGE_DIAG` (see `netinput.c`).
  * Linux UDP: active VS sessions run `syNetPeerUpdateBattleGate()` at the start of `syNetInputFuncRead` (replacing the
  * pump-only path) so barrier + ingress + execution readiness are finalized **before** resolve/publish; inactive sessions
  * still use `syNetPeerPumpIngressBeforeInputRead()`.
@@ -96,7 +101,21 @@ extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per co
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
 #if defined(PORT) && !defined(_WIN32)
-/* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=!execution, S=stall, K=skew. */
+/*
+ * getenv `SSB64_NETPLAY_STRICT_INPUT_CONTRACT`: when **`1`**, Linux UDP VS uses a **strict authoritative input baseline**:
+ * `syNetInputFuncRead` publishes only when every remote human slot has `RemoteHistory[slot][tick]`; exec / skew / catch-up
+ * do not gate admission; remote prediction fallback in `syNetInputResolveFrame` is disabled (cleared frame if the gate leaks).
+ * `scVSBattleFuncUpdate` / rollback hooks bypass `syNetPeerCheckBattleExecutionReady` while VS+strict so sim can advance once
+ * inputs are present. Debug-only — not a shipping pacing mode.
+ */
+extern sb32 syNetInputStrictInputContractEnabled(void);
+/*
+ * TRUE after `syNetInputFuncRead` returned early on strict remote-not-ready (no publish that host frame).
+ * `scVSBattleFuncUpdate` skips `syNetInputAdvanceAuthoritativeSimTick` + `syNetRollbackAfterBattleUpdate` while still
+ * running full `scene_update` (strict R path does not use taskman scene suppress).
+ */
+extern sb32 syNetInputStrictContractSkippedPublishThisPass(void);
+/* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=!execution, S=stall, K=skew, R=strict remote missing. */
 extern void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after);
 #endif
 #ifdef PORT
@@ -153,6 +172,8 @@ extern void syNetInputSetReplayMetadata(const SYNetInputReplayMetadata *metadata
 extern sb32 syNetInputGetReplayMetadata(SYNetInputReplayMetadata *out_metadata);
 extern void syNetInputFuncRead(void); /* HID latch → synchronize all slots → publish → replay capture (tick++ is post-sim). */
 #ifdef PORT
+extern void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
 /*
  * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`
  * that tic so sim does not double-step while `sSYNetInputTick` stays unchanged.

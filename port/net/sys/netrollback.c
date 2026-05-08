@@ -508,12 +508,21 @@ sb32 syNetRollbackLoadSnapshotAfterCompletedTick(u32 completed_sim_tick)
 void syNetRollbackAfterBattleUpdate(void)
 {
 	u32 completed_tick;
+	sb32 strict_vs_exec_bypass = FALSE;
 
 	if (syNetRollbackIsActive() == FALSE)
 	{
 		return;
 	}
-	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+#ifdef PORT
+#if !defined(_WIN32)
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	{
+		strict_vs_exec_bypass = TRUE;
+	}
+#endif
+#endif
+	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
@@ -802,9 +811,20 @@ void syNetRollbackUpdate(void)
 	{
 		return;
 	}
-	if (syNetPeerCheckBattleExecutionReady() == FALSE)
 	{
-		return;
+		sb32 strict_vs_exec_bypass = FALSE;
+#ifdef PORT
+#if !defined(_WIN32)
+		if ((syNetInputStrictInputContractEnabled() != FALSE))
+		{
+			strict_vs_exec_bypass = TRUE;
+		}
+#endif
+#endif
+		if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
+		{
+			return;
+		}
 	}
 	if (syNetRollbackIsResimulating() != FALSE)
 	{

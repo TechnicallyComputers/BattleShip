@@ -16,6 +16,25 @@ Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authorit
 
 **Canonical State Image (CSI)** — cross-peer / cross-build comparison via explicit serialization (not raw struct `memcmp`) — is documented in [`docs/netplay_canonical_state_image.md`](netplay_canonical_state_image.md).
 
+## Debugging environment (commit / edges / pacing)
+
+Useful flags for the **frame-commit + desync-classification + input-edge** phase (all read in `port/net/sys/` unless noted):
+
+| Priority | Variable | Notes |
+|----------|----------|--------|
+| Must | `SSB64_NETPLAY_FRAME_COMMIT_TOKEN` | Cross-peer commit tokens on the wire. **Default is on** when unset (`=1`); set `=0` to disable. |
+| Must | `SSB64_NETPLAY_DESYNC_CLASSIFIER` | `0` off, `1` evidence + report on VS stop, `2` also logs when the **leading** category would change (noisy). |
+| High | `SSB64_NETPLAY_INPUT_EDGE_DIAG` | `≥1`: first A-button 0→1 per sim slot + `rollback_prepare` lines (`port/net/sys/netinput.c`). |
+| Testing | `SSB64_NETPLAY_FRAME_COMMIT_STARVATION` | Integer threshold (default **4**): validations without a peer commit token before INPUT starvation latch. Set **2** or **3** to surface hidden “no peer token” gaps earlier. |
+
+**Execution / skew (names differ from generic “_DEBUG” placeholders):**
+
+- **Tick-grid execution gate (guest):** `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1` — battle sim waits on tick-grid lock when phase is RUNNING (`netpeer.c`).
+- **Skew pacing holds:** `SSB64_NETPLAY_PACING_LOG=1` — rate-limited logs when skew pacing defers tick advance (`netpeer.c`). Cap / tuning: `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`.
+- **Admission / tick visibility:** `SSB64_NETPLAY_TICK_DIAG` (level; VS session has a floor so tick_diag is not silent). Stall path: `SSB64_NETPLAY_STALL_UNTIL_REMOTE`. Frame-commit cadence: `SSB64_NETPLAY_FRAME_COMMIT_DIAG` (`netinput.c`). Taskman: `SSB64_NETPLAY_TASKMAN_DEBUG` (`taskman.c`).
+
+There is **no** `SSB64_NETPLAY_EXECUTION_GATE_DEBUG` or `SSB64_NETPLAY_SKEW_DEBUG` string in this tree; use the rows above.
+
 This keeps the first netplay boundary at the controller layer:
 
 - local hardware input still comes from `src/sys/controller.c`

@@ -56,6 +56,7 @@ static s32 syNetPeerGetPrimaryLocalHardwareDeviceIndex(void)
 
 static void syNetPeerResetSkewPacingSessionStats(void);
 static void syNetPeerRefreshSkewPacingLeadMaxFromEnv(void);
+static void syNetPeerRefreshSkewBehindMaxFromEnv(void);
 static void syNetPeerResetDesyncTraceSession(void);
 #if !defined(_WIN32)
 static void syNetPeerFrameCommitReset(void);
@@ -3687,6 +3688,7 @@ void syNetPeerStartVSSession(void)
 	{
 		syNetPeerApplySimSlotInputSources();
 		syNetPeerRefreshSkewPacingLeadMaxFromEnv();
+		syNetPeerRefreshSkewBehindMaxFromEnv();
 		syNetPeerRefreshTickGridExecGateFromEnv();
 		return;
 	}
@@ -3747,6 +3749,7 @@ void syNetPeerStartVSSession(void)
 	syNetPeerResetAdaptiveDelayTracking();
 	syNetPeerResetSkewPacingSessionStats();
 	syNetPeerRefreshSkewPacingLeadMaxFromEnv();
+	syNetPeerRefreshSkewBehindMaxFromEnv();
 	syNetPeerResetDesyncTraceSession();
 #if !defined(_WIN32)
 	syNetPeerFrameCommitReset();
@@ -4160,9 +4163,41 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 
 	if (syNetInputGetPublishedFrame(slot, &published_frame) == FALSE)
 	{
+#if defined(PORT) && !defined(_WIN32)
+		if (syNetInputStrictInputContractEnabled() != FALSE)
+		{
+			u32 sim_tick;
+			SYNetInputFrame lf;
+
+			sim_tick = syNetInputGetTick();
+			syNetInputMakeLocalFrame(slot, sim_tick, &lf);
+			frames[0].tick = sim_tick + sSYNetPeerInputDelay;
+			frames[0].buttons = lf.buttons;
+			frames[0].stick_x = lf.stick_x;
+			frames[0].stick_y = lf.stick_y;
+			*out_frame_count = 1;
+			return TRUE;
+		}
+#endif
 		return FALSE;
 	}
 	latest_tick = published_frame.tick;
+#if defined(PORT) && !defined(_WIN32)
+	if ((syNetInputStrictInputContractEnabled() != FALSE) && (latest_tick != syNetInputGetTick()))
+	{
+		u32 sim_tick;
+		SYNetInputFrame lf;
+
+		sim_tick = syNetInputGetTick();
+		syNetInputMakeLocalFrame(slot, sim_tick, &lf);
+		frames[0].tick = sim_tick + sSYNetPeerInputDelay;
+		frames[0].buttons = lf.buttons;
+		frames[0].stick_x = lf.stick_x;
+		frames[0].stick_y = lf.stick_y;
+		*out_frame_count = 1;
+		return TRUE;
+	}
+#endif
 	frame_count = 0;
 	for (back = SYNETPEER_MAX_PACKET_FRAMES - 1; back >= 0; back--)
 	{
@@ -5857,6 +5892,15 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 
 void syNetPeerUpdate(void)
 {
+	sb32 allow_without_exec = FALSE;
+#ifdef PORT
+#if !defined(_WIN32)
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	{
+		allow_without_exec = TRUE;
+	}
+#endif
+#endif
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
 		return;
@@ -5867,7 +5911,7 @@ void syNetPeerUpdate(void)
 	}
 	syNetPeerUpdateBattleGate();
 
-	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	if ((allow_without_exec == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
@@ -5987,15 +6031,29 @@ s32 syNetPeerGetRemotePlayerSlot(void)
 	return sSYNetPeerRemotePlayer;
 }
 
+s32 syNetPeerGetExtraLocalSenderSimSlot(void)
+{
+	return sSYNetPeerExtraLocalSenderSlot;
+}
+
 u32 syNetPeerGetHighestRemoteTick(void)
 {
 	return sSYNetPeerHighestRemoteTick;
+}
+
+u32 syNetPeerGetCommittedInputDelay(void)
+{
+	return sSYNetPeerInputDelay;
 }
 
 #ifdef PORT
 static u32 sSYNetPeerSkewPacingHoldFrameCount;
 static u32 sSYNetPeerSkewPacingLastLogTick = ~(u32)0;
 static u32 sSYNetPeerSkewPacingLeadMaxTicks = SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT;
+static u32 sSYNetPeerSkewBehindMaxTicks;
+#if !defined(_WIN32)
+static u32 sSYNetPeerCatchUpBehindLastLogTick = ~(u32)0;
+#endif
 
 static void syNetPeerRefreshSkewPacingLeadMaxFromEnv(void)
 {
@@ -6019,6 +6077,102 @@ static void syNetPeerRefreshSkewPacingLeadMaxFromEnv(void)
 	}
 	sSYNetPeerSkewPacingLeadMaxTicks = (u32)v;
 }
+
+static void syNetPeerRefreshSkewBehindMaxFromEnv(void)
+{
+	const char *e;
+	int v;
+
+	e = getenv("SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS");
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		sSYNetPeerSkewBehindMaxTicks = 0U;
+		return;
+	}
+	v = atoi(e);
+	if (v < 0)
+	{
+		v = 0;
+	}
+	if (v > 10000)
+	{
+		v = 10000;
+	}
+	sSYNetPeerSkewBehindMaxTicks = (u32)v;
+}
+
+#if !defined(_WIN32)
+static void syNetPeerMaybeLogCatchUpBehind(u32 local_sim_tick, u32 hr, const char *action)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_SKEW_BEHIND_LOG");
+	if ((e == NULL) || (e[0] == '\0') || (atoi(e) == 0))
+	{
+		return;
+	}
+	if ((sSYNetPeerCatchUpBehindLastLogTick != ~(u32)0) && (local_sim_tick - sSYNetPeerCatchUpBehindLastLogTick) < 60U)
+	{
+		return;
+	}
+	sSYNetPeerCatchUpBehindLastLogTick = local_sim_tick;
+	port_log(
+	    "SSB64 NetPeer: catch_up_behind tick=%u hr=%u gap=%lld thr=%u action=%s\n",
+	    (unsigned int)local_sim_tick, (unsigned int)hr, (long long)((s64)hr - (s64)local_sim_tick),
+	    (unsigned int)sSYNetPeerSkewBehindMaxTicks, action);
+}
+
+static sb32 syNetPeerCatchUpBehindThresholdMet(u32 local_sim_tick, u32 *out_hr)
+{
+	u32 hr;
+	s64 gap;
+
+	if (sSYNetPeerSkewBehindMaxTicks == 0U)
+	{
+		return FALSE;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return FALSE;
+	}
+	hr = sSYNetPeerHighestRemoteTick;
+	if (out_hr != NULL)
+	{
+		*out_hr = hr;
+	}
+	gap = (s64)hr - (s64)local_sim_tick;
+	if (gap < (s64)sSYNetPeerSkewBehindMaxTicks)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+sb32 syNetPeerRunCatchUpBehindBeforeInputStall(u32 local_sim_tick)
+{
+	u32 hr;
+
+	if (syNetPeerCatchUpBehindThresholdMet(local_sim_tick, &hr) == FALSE)
+	{
+		return FALSE;
+	}
+	syNetPeerUpdateBattleGate();
+	syNetPeerMaybeLogCatchUpBehind(local_sim_tick, hr, "pump_gate");
+	return TRUE;
+}
+
+sb32 syNetPeerShouldRelaxStallUntilRemoteForCatchUp(u32 local_sim_tick)
+{
+	u32 hr;
+
+	if (syNetPeerCatchUpBehindThresholdMet(local_sim_tick, &hr) == FALSE)
+	{
+		return FALSE;
+	}
+	syNetPeerMaybeLogCatchUpBehind(local_sim_tick, hr, "relax_stall");
+	return TRUE;
+}
+#endif /* !_WIN32 */
 
 static void syNetPeerMaybeLogSkewPacingHold(u32 tick, s32 skew)
 {
@@ -6053,6 +6207,12 @@ sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew)
 	{
 		return FALSE;
 	}
+#if !defined(_WIN32)
+	if (syNetInputStrictInputContractEnabled() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
 		return FALSE;
@@ -6095,6 +6255,9 @@ static void syNetPeerResetSkewPacingSessionStats(void)
 {
 	sSYNetPeerSkewPacingHoldFrameCount = 0U;
 	sSYNetPeerSkewPacingLastLogTick = ~(u32)0;
+#if !defined(_WIN32)
+	sSYNetPeerCatchUpBehindLastLogTick = ~(u32)0;
+#endif
 }
 
 static void syNetPeerResetDesyncTraceSession(void)
