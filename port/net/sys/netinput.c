@@ -135,6 +135,8 @@ static int sSYNetInputAdmissionSummaryIvCache = -999;
 static int sSYNetInputStallUntilRemoteEnvCache = -1;
 static int sSYNetInputPredictDiagLevelCache = -999;
 static int sSYNetInputFrameCommitDiagLevelCache = -999;
+static int sSYNetInputDelaySyncDiagLevelCache = -999;
+static u32 sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 
 int g_NetInputDelayFrames = 0;
 sb32 g_UseInputPrediction = TRUE;
@@ -373,6 +375,8 @@ void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetInputStallUntilRemoteEnvCache = -1;
 	sSYNetInputPredictDiagLevelCache = -999;
 	sSYNetInputFrameCommitDiagLevelCache = -999;
+	sSYNetInputDelaySyncDiagLevelCache = -999;
+	sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 }
 #endif
 
@@ -660,20 +664,7 @@ static u32 syNetInputRemoteHistoryWireLookupTick(u32 sim_tick)
 	{
 		return sim_tick;
 	}
-	ring_tick = sim_tick;
-	d = syNetPeerGetCommittedInputDelay();
-	if (d != 0U)
-	{
-		if (sim_tick > ~(u32)0U - d)
-		{
-			ring_tick = ~(u32)0U;
-		}
-		else
-		{
-			ring_tick = sim_tick + d;
-		}
-	}
-	return ring_tick;
+	return syNetPeerDelayWireTickFromSim(sim_tick);
 }
 #else
 static u32 syNetInputRemoteHistoryWireLookupTick(u32 sim_tick)
@@ -1645,6 +1636,125 @@ static void syNetInputMaybeLogFrameCommitDiag(u32 tick, char path, sb32 exec_ok,
 	    (sSYNetInputSuppressSceneUpdateAfterRead != FALSE) ? 1 : 0,
 	    (unsigned int)hr);
 }
+
+#define SYNETINPUT_DELAY_SYNC_DIAG_BOOT_TICKS 300U
+
+static int syNetInputGetDelaySyncDiagLevel(void)
+{
+	char *e;
+
+	if (sSYNetInputDelaySyncDiagLevelCache != -999)
+	{
+		return sSYNetInputDelaySyncDiagLevelCache;
+	}
+	e = getenv("SSB64_NETPLAY_DELAY_SYNC_DIAG");
+	sSYNetInputDelaySyncDiagLevelCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	if (sSYNetInputDelaySyncDiagLevelCache < 0)
+	{
+		sSYNetInputDelaySyncDiagLevelCache = 0;
+	}
+	if (sSYNetInputDelaySyncDiagLevelCache > 2)
+	{
+		sSYNetInputDelaySyncDiagLevelCache = 2;
+	}
+	return sSYNetInputDelaySyncDiagLevelCache;
+}
+
+static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
+{
+	u32 mark;
+	u32 prev_tracked_d;
+	u32 probe_sim;
+	u32 wire_tick;
+	u32 d;
+	u32 hr;
+	int lvl;
+	s32 n;
+	s32 i;
+	s32 slot;
+	sb32 boot_window;
+	sb32 d_changed;
+	sb32 have_ring;
+	SYNetInputFrame frame;
+	s32 log_slot[2];
+	int log_ok[2];
+	s32 log_n;
+
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	lvl = syNetInputGetDelaySyncDiagLevel();
+	if (lvl == 0)
+	{
+		return;
+	}
+	prev_tracked_d = sSYNetInputDelaySyncDiagLastCommittedD;
+	d = syNetPeerGetCommittedInputDelay();
+	d_changed = (sb32)((prev_tracked_d != ~(u32)0U) && (prev_tracked_d != d));
+	sSYNetInputDelaySyncDiagLastCommittedD = d;
+
+	mark = syNetPeerGetDelaySyncDiagExecReadySimTick();
+	boot_window = FALSE;
+	if ((mark != ~(u32)0U) && (sim_tick_for_read >= mark))
+	{
+		if ((sim_tick_for_read - mark) < SYNETINPUT_DELAY_SYNC_DIAG_BOOT_TICKS)
+		{
+			boot_window = TRUE;
+		}
+	}
+
+	if ((lvl < 2) && (d_changed == FALSE) && (boot_window == FALSE))
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+
+	probe_sim = syNetInputStrictContractRemoteProbeSimTick(sim_tick_for_read);
+	wire_tick = syNetInputRemoteHistoryWireLookupTick(probe_sim);
+	hr = syNetPeerGetHighestRemoteTick();
+
+	log_slot[0] = -1;
+	log_slot[1] = -1;
+	log_ok[0] = -1;
+	log_ok[1] = -1;
+	log_n = 0;
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; (i < n) && (log_n < 2); i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputCheckPlayer(slot) == FALSE)
+		{
+			continue;
+		}
+		have_ring = syNetInputGetStoredFrame(sSYNetInputRemoteHistory, slot, wire_tick, &frame);
+		log_slot[log_n] = slot;
+		log_ok[log_n] = (have_ring != FALSE) ? 1 : 0;
+		log_n++;
+	}
+
+	port_log(
+	    "SSB64 NetInput: delay_sync_diag sim_read=%u probe_sim=%u D=%u wire=%u exec_d=%d hr=%u ls=%d rs0=%d rok0=%d rs1=%d rok1=%d d_ch=%d boot=%d\n",
+	    (unsigned int)sim_tick_for_read,
+	    (unsigned int)probe_sim,
+	    (unsigned int)d,
+	    (unsigned int)wire_tick,
+	    syNetInputGetExecutionDelayFrames(),
+	    (unsigned int)hr,
+	    (int)syNetPeerGetLocalSimSlot(),
+	    (log_n > 0) ? (int)log_slot[0] : -1,
+	    (log_n > 0) ? log_ok[0] : -1,
+	    (log_n > 1) ? (int)log_slot[1] : -1,
+	    (log_n > 1) ? log_ok[1] : -1,
+	    (d_changed != FALSE) ? 1 : 0,
+	    (boot_window != FALSE) ? 1 : 0);
+}
 #endif
 
 /*
@@ -1720,6 +1830,7 @@ void syNetInputFuncRead(void)
 				char *fe;
 
 				probe_sim = syNetInputStrictContractRemoteProbeSimTick(tick);
+				syNetInputMaybeLogDelaySyncDiag(tick);
 				remote_miss = syNetInputRemoteSlotsMissingRingFrameForTick(probe_sim);
 				if (remote_miss == FALSE)
 				{

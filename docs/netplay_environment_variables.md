@@ -14,6 +14,21 @@ rg 'getenv\("SSB64_' port/net port/gameloop.cpp
 
 See also [docs/netplay_architecture.md](netplay_architecture.md) and [docs/netcode_agent_rules.md](netcode_agent_rules.md).
 
+### Delay Sync Test Preset (fixed delay, community / lab)
+
+Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + committed_delay`) before enabling adaptive delay, execution delay, or rollback. Set **the same values on both peers**.
+
+| Goal | Setting |
+|------|--------|
+| Linked match delay off | **Unset** `SSB64_NETPLAY_MATCH_INPUT_DELAY` (it forces **both** wire delay and exec delay; exec is capped at **4**, so you cannot use it to get exec **0** with wire **&gt; 4**). |
+| Fixed wire delay | **`SSB64_NETPLAY_DELAY`** = same integer on host and guest (or the same automatch `input_delay` on both sides). |
+| Adaptive off | **Unset** or **`SSB64_NETPLAY_ADAPTIVE_DELAY=0`**. |
+| Execution delay zero | **`SSB64_NET_DELAY_FRAMES=0`** and **`SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES=0`** (or leave unset when match delay is unset). |
+| Strict confirmations | **`SSB64_NETPLAY_STRICT_INPUT_CONTRACT=1`**. |
+| Pacing | Leave skew / stall envs at defaults until the baseline is stable; see [docs/netplay_pacing.md](netplay_pacing.md). |
+
+**Diagnostics:** **`SSB64_NETPLAY_DELAY_SYNC_DIAG`** — `0` off (default), **`1`** first ~300 sim ticks after execution begin plus every tick where committed delay changes and logs when deferred delay applies; **`2`** every sim tick while VS is active (very noisy). Compare host vs guest `delay_sync_diag` lines for `sim`, `D`, `wire`, and remote ring presence.
+
 ---
 
 ## Input, delay, strict contract ([`port/net/sys/netinput.c`](port/net/sys/netinput.c))
@@ -32,6 +47,7 @@ See also [docs/netplay_architecture.md](netplay_architecture.md) and [docs/netco
 - **`SSB64_NETPLAY_FRAME_COMMIT_DIAG`** — Admission path logging level.
 - **`SSB64_NETPLAY_FRAME_COMMIT_SUMMARY`** — Frame-commit summary logging.
 - **`SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG`** — With exec delay 0, force advance after sustained strict-R miss (diagnostic).
+- **`SSB64_NETPLAY_DELAY_SYNC_DIAG`** — Delay / wire alignment trace (`0` / `1` / `2`); see **Delay Sync Test Preset** above.
 
 ---
 

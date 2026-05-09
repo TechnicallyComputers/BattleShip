@@ -103,6 +103,18 @@ extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 /* Committed VS input delay (wire tick = sim tick + delay for GatherHistoryBundle / staged INPUT). */
 extern u32 syNetPeerGetCommittedInputDelay(void);
+/* Authoritative wire index: `sim_tick + committed_delay` (saturating add). Inverse clamps to 0. */
+extern u32 syNetPeerDelayWireTickFromSim(u32 sim_tick);
+extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
+#if defined(PORT) && !defined(_WIN32)
+/*
+ * Applies host ramp + guest INPUT_DELAY_SYNC pending in one place (after `ReceiveRemoteInput`).
+ * See `syNetPeerPumpIngressBeforeInputRead` / `syNetPeerUpdateBattleGate`.
+ */
+extern void syNetPeerApplyPendingDelayContract(void);
+/* `~(u32)0` until first execution-begin for this session; used by delay-sync diagnostics. */
+extern u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void);
+#endif
 #ifdef PORT
 /*
  * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads `HighestRemoteTick` by
