@@ -316,6 +316,52 @@ static u32 sSYNetPeerDelaySyncEffectiveTick;
 static sb32 sSYNetPeerDelaySyncPendingValid;
 static sb32 sSYNetPeerTickGridExecGate;
 
+#if !defined(_WIN32)
+static u32 sSYNetPeerDelaySyncDiagExecReadyMark = ~(u32)0;
+static int sSYNetPeerDelaySyncDiagEnvCache = -999;
+
+static int syNetPeerGetDelaySyncDiagLevel(void)
+{
+	char *e;
+
+	if (sSYNetPeerDelaySyncDiagEnvCache != -999)
+	{
+		return sSYNetPeerDelaySyncDiagEnvCache;
+	}
+	e = getenv("SSB64_NETPLAY_DELAY_SYNC_DIAG");
+	sSYNetPeerDelaySyncDiagEnvCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	if (sSYNetPeerDelaySyncDiagEnvCache < 0)
+	{
+		sSYNetPeerDelaySyncDiagEnvCache = 0;
+	}
+	if (sSYNetPeerDelaySyncDiagEnvCache > 2)
+	{
+		sSYNetPeerDelaySyncDiagEnvCache = 2;
+	}
+	return sSYNetPeerDelaySyncDiagEnvCache;
+}
+
+static void syNetPeerMaybeLogDelaySyncDiagOnDelayMutation(const char *kind, u32 prev_d, u32 new_d, u32 effective_tick)
+{
+	if (syNetPeerGetDelaySyncDiagLevel() < 1)
+	{
+		return;
+	}
+	if (prev_d == new_d)
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetPeer: delay_sync_diag apply=%s prev_D=%u new_D=%u eff_tick=%u sim_tick=%u host=%d\n",
+	    kind,
+	    (unsigned int)prev_d,
+	    (unsigned int)new_d,
+	    (unsigned int)effective_tick,
+	    (unsigned int)syNetInputGetTick(),
+	    (sSYNetPeerBootstrapIsHost != FALSE) ? 1 : 0);
+}
+#endif
+
 /*
  * Host adaptive delay must not commit before `effective_tick` — same boundary as INPUT_DELAY_SYNC on the client.
  * Otherwise wire ticks from `GatherHistoryBundle` (history_tick + delay) skew vs peer labels until the client applies.
@@ -382,7 +428,19 @@ static void syNetPeerApplyHostDelayRampPending(void)
 	t = syNetInputGetTick();
 	if (t >= sSYNetPeerHostDelayRampEffectiveTick)
 	{
-		sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerHostDelayRampTarget);
+#if !defined(_WIN32)
+		{
+			u32 prev_d;
+			u32 eff_tick;
+
+			prev_d = sSYNetPeerInputDelay;
+			eff_tick = sSYNetPeerHostDelayRampEffectiveTick;
+#endif
+			sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerHostDelayRampTarget);
+#if !defined(_WIN32)
+			syNetPeerMaybeLogDelaySyncDiagOnDelayMutation("ramp_commit", prev_d, sSYNetPeerInputDelay, eff_tick);
+		}
+#endif
 		syNetPeerResetHostDelayRampPending();
 	}
 }
@@ -398,10 +456,37 @@ static void syNetPeerApplyPendingInputDelaySync(void)
 	t = syNetInputGetTick();
 	if (t >= sSYNetPeerDelaySyncEffectiveTick)
 	{
-		sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerDelaySyncPending);
+#if !defined(_WIN32)
+		{
+			u32 prev_d;
+			u32 eff_tick;
+
+			prev_d = sSYNetPeerInputDelay;
+			eff_tick = sSYNetPeerDelaySyncEffectiveTick;
+#endif
+			sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerDelaySyncPending);
+#if !defined(_WIN32)
+			syNetPeerMaybeLogDelaySyncDiagOnDelayMutation("delay_sync_commit", prev_d, sSYNetPeerInputDelay, eff_tick);
+		}
+#endif
 		syNetPeerResetDelaySyncPending();
 	}
 }
+
+void syNetPeerApplyPendingDelayContract(void)
+{
+#if !defined(_WIN32)
+	syNetPeerApplyHostDelayRampPending();
+	syNetPeerApplyPendingInputDelaySync();
+#endif
+}
+
+#if !defined(_WIN32)
+u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void)
+{
+	return sSYNetPeerDelaySyncDiagExecReadyMark;
+}
+#endif
 #endif
 
 #if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
@@ -3541,6 +3626,10 @@ void syNetPeerInitDebugEnv(void)
 	sSYNetPeerExecutionHoldFrames = 0;
 	sSYNetPeerExecutionBeginLogged = FALSE;
 	sSYNetPeerClockAlignEnabled = FALSE;
+#if !defined(_WIN32)
+	sSYNetPeerDelaySyncDiagExecReadyMark = ~(u32)0;
+	sSYNetPeerDelaySyncDiagEnvCache = -999;
+#endif
 
 	syNetRollbackInit();
 
@@ -3772,6 +3861,16 @@ void syNetPeerStartVSSession(void)
 	}
 	sSYNetPeerExecutionHoldFrames = 0;
 	sSYNetPeerExecutionBeginLogged = (sSYNetPeerBattleBarrierEnabled == FALSE) ? TRUE : FALSE;
+#if !defined(_WIN32)
+	if (sSYNetPeerExecutionBeginLogged != FALSE)
+	{
+		sSYNetPeerDelaySyncDiagExecReadyMark = syNetInputGetTick();
+	}
+	else
+	{
+		sSYNetPeerDelaySyncDiagExecReadyMark = ~(u32)0;
+	}
+#endif
 
 	syNetPeerLoadBarrierTimingEnvFromConfig();
 	sSYNetPeerClockSyncTargetBaseline = sSYNetPeerClockSyncTargetTotal;
@@ -4206,7 +4305,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 
 			sim_tick = syNetInputGetTick();
 			syNetInputMakeLocalFrame(slot, sim_tick, &lf);
-			frames[0].tick = sim_tick + sSYNetPeerInputDelay;
+			frames[0].tick = syNetPeerDelayWireTickFromSim(sim_tick);
 			frames[0].buttons = lf.buttons;
 			frames[0].stick_x = lf.stick_x;
 			frames[0].stick_y = lf.stick_y;
@@ -4225,7 +4324,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 
 		sim_tick = syNetInputGetTick();
 		syNetInputMakeLocalFrame(slot, sim_tick, &lf);
-		frames[0].tick = sim_tick + sSYNetPeerInputDelay;
+		frames[0].tick = syNetPeerDelayWireTickFromSim(sim_tick);
 		frames[0].buttons = lf.buttons;
 		frames[0].stick_x = lf.stick_x;
 		frames[0].stick_y = lf.stick_y;
@@ -4240,7 +4339,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 			(syNetInputGetHistoryFrame(slot, latest_tick - back, &history_frame) != FALSE))
 		{
 			/* committed delay only — host adaptive ramps commit in ApplyHostDelayRampPending at effective_tick */
-			frames[frame_count].tick = history_frame.tick + sSYNetPeerInputDelay;
+			frames[frame_count].tick = syNetPeerDelayWireTickFromSim(history_frame.tick);
 			frames[frame_count].buttons = history_frame.buttons;
 			frames[frame_count].stick_x = history_frame.stick_x;
 			frames[frame_count].stick_y = history_frame.stick_y;
@@ -4905,8 +5004,7 @@ void syNetPeerPumpIngressBeforeInputRead(void)
 		return;
 	}
 	syNetPeerReceiveRemoteInput();
-	syNetPeerApplyHostDelayRampPending();
-	syNetPeerApplyPendingInputDelaySync();
+	syNetPeerApplyPendingDelayContract();
 #endif
 }
 
@@ -5209,6 +5307,7 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetPeerGcTraversalDiagEnvCache = -999;
 	sSYNetPeerFrameCommitEnvCache = -999;
 	sSYNetPeerUdpFrameTraceEnvCache = -1;
+	sSYNetPeerDelaySyncDiagEnvCache = -999;
 }
 #endif
 
@@ -5496,6 +5595,9 @@ void syNetPeerLogExecutionBegin(void)
 	if (sSYNetPeerExecutionBeginLogged == FALSE)
 	{
 		sSYNetPeerExecutionBeginLogged = TRUE;
+#if !defined(_WIN32)
+		sSYNetPeerDelaySyncDiagExecReadyMark = syNetInputGetTick();
+#endif
 		port_log(
 		    "SSB64 NetPeer: execution begin role=%s local=%d remote=%d tick=%u hold=%u barrier_wait=%u highest_remote=%u late=%u push=%d tm_up=%u tm_fr=%u scene=%u\n",
 		    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client", sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer,
@@ -5831,8 +5933,7 @@ void syNetPeerUpdateBattleGate(void)
 #endif
 	syNetPeerReceiveRemoteInput();
 #if defined(PORT) && !defined(_WIN32)
-	syNetPeerApplyHostDelayRampPending();
-	syNetPeerApplyPendingInputDelaySync();
+	syNetPeerApplyPendingDelayContract();
 	syNetPeerPollBarrierWallTimeouts();
 	if (sSYNetPeerIsActive == FALSE)
 	{
@@ -6112,6 +6213,39 @@ u32 syNetPeerGetHighestRemoteTick(void)
 u32 syNetPeerGetCommittedInputDelay(void)
 {
 	return sSYNetPeerInputDelay;
+}
+
+u32 syNetPeerDelayWireTickFromSim(u32 sim_tick)
+{
+	u32 d;
+	u32 ring_tick;
+
+	ring_tick = sim_tick;
+	d = syNetPeerGetCommittedInputDelay();
+	if (d != 0U)
+	{
+		if (sim_tick > ~(u32)0U - d)
+		{
+			ring_tick = ~(u32)0U;
+		}
+		else
+		{
+			ring_tick = sim_tick + d;
+		}
+	}
+	return ring_tick;
+}
+
+u32 syNetPeerDelaySimTickFromWire(u32 wire_tick)
+{
+	u32 d;
+
+	d = syNetPeerGetCommittedInputDelay();
+	if (d == 0U || wire_tick < d)
+	{
+		return 0U;
+	}
+	return wire_tick - d;
 }
 
 #ifdef PORT

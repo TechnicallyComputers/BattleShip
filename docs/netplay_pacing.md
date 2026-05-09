@@ -8,6 +8,8 @@ Rollback still resolves prediction mismatches; pacing reduces how often **tick**
 
 For how **sim tick** relates to taskman / host frames and why skew holds interact with `gcRunAll`, see [`netplay_taskman_simtick.md`](netplay_taskman_simtick.md).
 
+For a **fixed-delay + strict** lab preset (before tuning skew or adaptive delay), see **Delay Sync Test Preset** in [`netplay_environment_variables.md`](netplay_environment_variables.md).
+
 ## Terms
 
 | Symbol / name | Meaning |
