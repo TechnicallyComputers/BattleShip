@@ -10,6 +10,8 @@ For how **sim tick** relates to taskman / host frames and why skew holds interac
 
 For a **fixed-delay + strict** lab preset (before tuning skew or adaptive delay), see **Delay Sync Test Preset** in [`netplay_environment_variables.md`](netplay_environment_variables.md).
 
+For **`wire_base`**, **`wire_eff` / `required_wire`**, committed **`D`**, strict **`R`** vs starvation **`V`**, and how **`hr`** ties them together, see **Runtime concepts (tuning & under the hood)** in [`netplay_environment_variables.md`](netplay_environment_variables.md).
+
 ## Terms
 
 | Symbol / name | Meaning |
@@ -47,6 +49,12 @@ This is **orthogonal** to **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** (lead cap when
 
 While testing this mode, disable `SSB64_NETPLAY_TICK_GRID_EXEC_GATE`, `SSB64_NETPLAY_SKEW_*`, and optional `SSB64_NETPLAY_STALL_UNTIL_REMOTE` (strict subsumes the ring-row stall for admission).
 
+**Match-linked buffer slack (strict, optional):** When **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** is set, **`SSB64_NETPLAY_MATCH_INPUT_BUFFER_MIN_SLACK_TICKS`** (`B`, default **0**) tightens `syNetPeerIsRemoteInputReadyForSimTick` only when the peer is **ahead** on the wire: **`hr > sim + D`** implies **`(hr - (sim + D)) >= B`**; at **`hr <= sim + D`** (lockstep tie), **B** does not add a bar. With non-zero **`STRICT_REMOTE_LEAD_BUFFER_TICKS`**, the lead rule and buffer rule both apply (**AND**). Orthogonal to skew **`K`**; complementary to **starvation**. See [`netplay_environment_variables.md`](netplay_environment_variables.md).
+
+**Starvation adaptive delay bump (host, optional):** With **`SSB64_NETPLAY_STARVATION_ADAPTIVE_DELAY_BUMP`**, the **host** queues a wire-delay increase (same **`INPUT_DELAY_SYNC`** / host-ramp machinery as **`SSB64_NETPLAY_ADAPTIVE_DELAY`**) the first time match-linked starvation **latches**, so both peers pick up a larger committed `D` after the usual `sim + N` commit boundary (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`, default **N=2**)—rebuilding runway without guest-only delay changes. Tune step and cooldown in the env doc.
+
+**Starvation exit `hr` lead (optional):** **`SSB64_NETPLAY_DELAY_SYNC_STARVATION_EXIT_HR_LEAD_TICKS`** when **> 0** requires **`hr >= (sim+D) + HYSTERESIS + LEAD`** *and* **`hr >= required_wire + HYSTERESIS`** for **`EXIT_FRAMES`** before the latch clears (lead anchored to **wire_base**, not the **`hr`‑blended** effective row, so the latch can always clear if ingress recovers).
+
 ## Ordering and guards
 
 Skew pacing is evaluated **only** when:
@@ -60,6 +68,8 @@ Matches the intent of other net guards (`syNetPeerUpdateBattleGate` early return
 
 If tick does not advance for several controller passes, `syNetPeerUpdate` may emit INPUT bundles with the **same** wire tick repeatedly. That is acceptable for UDP reliability (peer deduplicates by tick / seq as usual).
 
+**Optional wire-ahead placeholders:** **`SSB64_NETPLAY_INPUT_FUTURE_WIRE_TICKS`** (`N`, default **0**) appends up to **N** extra INPUT frames at **`max(wire_tick in bundle)+1 …`** with the same buttons/stick as the bundle’s last row—see [`netplay_environment_variables.md`](netplay_environment_variables.md). Use for lab tuning of inbound headroom (`hr`); keep **N** small and symmetric across peers.
+
 ## Related environment knobs (reference)
 
 | Variable | Role |
@@ -71,6 +81,7 @@ If tick does not advance for several controller passes, `syNetPeerUpdate` may em
 | `SSB64_NETPLAY_SIM_HZ` | Target sim Hz for taskman interval scaling (`syNetRollbackApplyPortSimPacing`). |
 | `SSB64_NETPLAY_STALL_UNTIL_REMOTE` | Stall full battle update (and thus **`syNetInputAdvanceAuthoritativeSimTick`**) until remote ring has a frame at **sim_tick + committed_input_delay** (wire-aligned row; same rule as strict admission). |
 | `SSB64_NETPLAY_STRICT_INPUT_CONTRACT` | **`1`**: strict ring admission + partial local publish for wire + `GatherHistoryBundle` strict fallback + exec bypass + INPUT before exec ready; remote-miss skips **full** publish and tick advance without scene suppress (see **Strict authoritative input contract**). |
+| `SSB64_NETPLAY_MATCH_INPUT_BUFFER_MIN_SLACK_TICKS` | With **`MATCH_INPUT_DELAY`**, when **`hr > wire_base`** require **`hr - wire_base >= B`** (`wire_base = sim + D`); **`0`** off. See env doc + **Match-linked buffer slack** above. |
 | `SSB64_NETPLAY_HOSTFRAME_GATE_PUMP` | Pump `syNetPeerUpdateBattleGate` on host frames when execution not ready. |
 | `SSB64_NETPLAY_SYNC_PRESENT_HOLD` | Avoid idle present during barrier/sync (`syNetPeerWantsSyncPresentHold`). |
 | `SSB64_NETPLAY_BARRIER_ESCAPE_MS` / `SSB64_NETPLAY_BARRIER_REQUEUE_MS` | Wall-clock escape / automatch re-queue while barrier waiting (Linux UDP). |

@@ -89,12 +89,10 @@ void scVSBattleFuncUpdate(void)
 {
 	sb32 strict_vs_exec_bypass = FALSE;
 #ifdef PORT
-#if !defined(_WIN32)
-	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
 	{
 		strict_vs_exec_bypass = TRUE;
 	}
-#endif
 #endif
 	/* Ingress + barrier were advanced in `syNetInputFuncRead` for active Linux UDP VS before publish (admission freeze). */
 	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
@@ -136,12 +134,10 @@ void scVSBattleFuncUpdateSkewPacingNetSlice(void)
 {
 	sb32 strict_vs_exec_bypass = FALSE;
 #ifdef PORT
-#if !defined(_WIN32)
-	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputStrictInputContractEnabled() != FALSE))
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
 	{
 		strict_vs_exec_bypass = TRUE;
 	}
-#endif
 #endif
 	syNetPeerUpdateBattleGate();
 
