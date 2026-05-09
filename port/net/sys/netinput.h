@@ -97,18 +97,19 @@ typedef struct SYNetInputReplayMetadata /* Header written alongside recorded fra
 
 extern void syNetInputReset(void);
 extern void syNetInputStartVSSession(void); /* Calls Reset and reads netplay env (e.g. predict-neutral). */
-#if defined(PORT) && !defined(_WIN32)
+#ifdef PORT
 /* Resets getenv caches used by netinput helpers; paired with `syNetPeerRefreshCachedNetplayEnvForNewMatch`. */
 extern void syNetInputRefreshCachedNetplayEnvForNewMatch(void);
 #endif
 extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
-#if defined(PORT) && !defined(_WIN32)
+#ifdef PORT
 /*
- * Fixed execution delay for strict-contract readiness (independent of `SSB64_NETPLAY_DELAY` / committed wire input delay
- * unless `SSB64_NETPLAY_MATCH_INPUT_DELAY` is set — then both derive from that; exec uses min(value,4)).
- * Both peers should use the same value (`SSB64_NET_DELAY_FRAMES` or `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default **0** = pre-patch strict probe).
+ * Optional strict extra slack frames for required-wire admission (independent of committed wire delay D unless
+ * `SSB64_NETPLAY_MATCH_INPUT_DELAY` is set — then both derive from that; strict slack uses min(value,4)).
+ * Both peers should use the same value (`SSB64_NETPLAY_STRICT_SLACK_FRAMES`, legacy aliases
+ * `SSB64_NET_DELAY_FRAMES` / `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default 0).
  * Matchmaking may assign `g_NetInputDelayFrames` after session start.
  */
 extern int g_NetInputDelayFrames;
@@ -117,7 +118,7 @@ extern int g_NetInputDelayFrames;
  * Disable with `SSB64_NETPLAY_INPUT_PREDICTION=0`.
  */
 extern sb32 g_UseInputPrediction;
-extern int syNetInputGetExecutionDelayFrames(void);
+extern int syNetInputGetStrictExtraSlack(void);
 extern sb32 syNetInputGetUseInputPrediction(void);
 /*
  * getenv `SSB64_NETPLAY_MATCH_INPUT_DELAY`: integer 0–99. When set, overrides per-layer exec/wire env for **both**
@@ -125,14 +126,25 @@ extern sb32 syNetInputGetUseInputPrediction(void);
  */
 extern int syNetInputEnvGetMatchInputDelayOrNeg1(void);
 /*
- * getenv `SSB64_NETPLAY_STRICT_INPUT_CONTRACT`: when **`1`**, Linux UDP VS uses a **strict authoritative input baseline**:
- * exec / skew / catch-up do not gate admission; `scVSBattleFuncUpdate` bypasses `syNetPeerCheckBattleExecutionReady` while VS+strict.
- * Remote ring readiness uses sim tick `max(0, tick - g_NetInputDelayFrames)` when delay > 0 (delay 0 probes `tick` unchanged).
- * Strict partial local publish still labels frames at the **current** sim `tick` (hardware latch is keyed to that tick).
- * If `g_UseInputPrediction`, predicted remotes are written into `sSYNetInputRemoteHistory` at the wire key for the current sim tick. Optional stuck bypass:
- * `SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG=1` with execution delay 0.
+ * Authoritative wire admission (PORT): SSB64_NETPLAY_INPUT_CONTRACT 0 = legacy (exec, stall-until-remote, skew gate FuncRead).
+ * 1 = delay-sync lite: same remote-ring plus effective-wire readiness as tier 2, but no match buffer-min-slack B,
+ * no STRICT_REMOTE_LEAD_BUFFER_TICKS hr folding in syNetPeerIsRemoteInputReadyForSimTickEx; no delay-sync starvation V hold.
+ * 2 = full strict (same as legacy SSB64_NETPLAY_STRICT_INPUT_CONTRACT=1). When INPUT_CONTRACT is unset, tier 2 if
+ * STRICT_INPUT_CONTRACT is non-zero, else tier 0. Cached per match in syNetInputRefreshCachedNetplayEnvForNewMatch.
+ * Tiers 1 and 2: exec, skew, catch-up do not gate FuncRead admission; scVSBattleFuncUpdate bypasses syNetPeerCheckBattleExecutionReady while VS plus contract.
+ * Partial local publish on remote miss; prediction and stuck bypass unchanged for tier 2; tier 1 uses prediction when enabled.
  */
+extern int syNetInputGetInputContractTier(void);
+/* Tier >= 1: wire-keyed authoritative admission + partial publish on miss. */
+extern sb32 syNetInputAuthoritativeWireContractEnabled(void);
+/* Tier >= 2: full strict (match buffer B, lead_b, starvation V when handler enabled). */
 extern sb32 syNetInputStrictInputContractEnabled(void);
+/* Direct remote-ring presence check by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets). */
+extern sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick);
+/*
+ * Cached getenv for `SSB64_NETPLAY_STRICT_REMOTE_LEAD_BUFFER_TICKS` (reset in `syNetInputRefreshCachedNetplayEnvForNewMatch`).
+ */
+extern u32 syNetInputGetStrictRemoteLeadBufferTicks(void);
 /*
  * TRUE after `syNetInputFuncRead` took the strict remote-miss path: partial local publish for wire, scene suppress
  * (skew net slice), then early return. `scVSBattleFuncUpdate` is skipped that task iteration; tick does not advance.

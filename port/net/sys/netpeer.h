@@ -12,8 +12,10 @@
  *   1) Bootstrap control plane (READY / START …) enters both processes into identical VS metadata.
  *   2) Battle barrier + post-barrier gates (`syNetPeerCheckBattleExecutionReady`): wall-clock deadline release,
  *      optional strict INPUT_BIND, then host-led BATTLE_EXEC_SYNC (frozen sim tick + VI phase bucket)
- *      before the first `syNetInput` tick increment (Linux UDP); optional `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1`
- *      additionally requires `syNetTickGridLockIsLocked()` for guests until tick-grid calibration completes.
+ *      before the first `syNetInput` tick increment (Linux UDP). When exec-sync is in use, `both_sides_latched_startup`
+ *      may be set from the exec-sync completion path (not from generic VS start).
+ *      Optional `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1` additionally requires `syNetTickGridLockIsLocked()` for guests
+ *      until tick-grid calibration completes.
  *      Taskman + PortPushFrame counters resync at barrier release.
  *   3) Runtime transport (`syNetPeerUpdate`): after execution is ready, emits INPUT payloads + recv pump.
  *
@@ -103,10 +105,37 @@ extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 /* Committed VS input delay (wire tick = sim tick + delay for GatherHistoryBundle / staged INPUT). */
 extern u32 syNetPeerGetCommittedInputDelay(void);
+/* Alias used by strict-contract callsites: authoritative committed delay D. */
+extern u32 syNetPeerGetInputDelay(void);
 /* Authoritative wire index: `sim_tick + committed_delay` (saturating add). Inverse clamps to 0. */
 extern u32 syNetPeerDelayWireTickFromSim(u32 sim_tick);
 extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
-#if defined(PORT) && !defined(_WIN32)
+/* `sim_tick + D` with saturating add (base strict frontier; no extra slack). */
+extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);
+/* `sim_tick + D + strict_extra_slack` with saturating add (strict-only frontier). */
+extern u32 syNetPeerGetStrictRequiredWireTick(u32 sim_tick);
+#ifdef PORT
+/*
+ * Effective wire row for strict ring checks before lead-B: `min(max(sim+D, hr), sim+D+slack)`.
+ * Matches `syNetPeerIsRemoteInputReadyForSimTick` after startup grace.
+ */
+extern u32 syNetPeerGetEffectiveWireFrontierForAdmission(u32 sim_tick);
+/*
+ * Match-linked delay only: buffer slack B (0 = off). When `hr > sim+D`, require `(hr - (sim+D)) >= B`;
+ * when `hr <= sim+D`, B adds no bar (lockstep-safe). Cached per VS.
+ */
+extern u32 syNetPeerGetMatchInputBufferMinSlackTicks(void);
+#endif
+/* TRUE after startup bind/exec-sync latch has been reached for this VS session. */
+extern sb32 syNetPeerHasBothSidesLatchedStartup(void);
+/*
+ * full_aux_checks TRUE: full tier-2 admission (match buffer B, STRICT_REMOTE_LEAD_BUFFER_TICKS hr folding).
+ * FALSE: tier-1 lite: ring cells at the effective wire frontier only (same required_wire row; no B, no lead-B hr bar).
+ */
+extern sb32 syNetPeerIsRemoteInputReadyForSimTickEx(u32 sim_tick, sb32 full_aux_checks);
+/* Wrapper: same as `syNetPeerIsRemoteInputReadyForSimTickEx(sim_tick, TRUE)`. */
+extern sb32 syNetPeerIsRemoteInputReadyForSimTick(u32 sim_tick);
+#ifdef PORT
 /*
  * Applies host ramp + guest INPUT_DELAY_SYNC pending in one place (after `ReceiveRemoteInput`).
  * See `syNetPeerPumpIngressBeforeInputRead` / `syNetPeerUpdateBattleGate`.
@@ -114,6 +143,14 @@ extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
 extern void syNetPeerApplyPendingDelayContract(void);
 /* `~(u32)0` until first execution-begin for this session; used by delay-sync diagnostics. */
 extern u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void);
+/*
+ * Opt-in (`SSB64_NETPLAY_DELAY_SYNC_STARVATION_HANDLER`): when match-linked delay is active, latch sustained
+ * `hr < required_wire` underrun and return TRUE so netinput can pause full publish (admission `V`) until the buffer
+ * refills. `required_wire` must match the effective admission frontier (`syNetPeerGetEffectiveWireFrontierForAdmission`),
+ * not the strict cap alone. Updates internal hysteresis counters; call once per strict FuncRead after computing
+ * `required_wire`/`hr`.
+ */
+extern sb32 syNetPeerMatchDelayStarvationUpdateAndShouldHold(u32 sim_tick, u32 required_wire, u32 hr);
 #endif
 #ifdef PORT
 /*
