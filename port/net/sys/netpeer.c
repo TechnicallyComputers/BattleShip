@@ -4250,11 +4250,41 @@ static sb32 syNetPeerCheckTickGridSimReady(void)
 
 sb32 syNetPeerCheckBattleExecutionReady(void)
 {
+	if (sSYNetPeerIsEnabled == FALSE)
+	{
+		return TRUE;
+	}
+	/* Menus / idle: no VS UDP session — do not hold taskman or netinput tick on bind/exec state. */
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return TRUE;
+	}
+	/* Automatch / bootstrap clock barrier (optional): must release before post-barrier gates. */
+	if ((sSYNetPeerBootstrapIsEnabled != FALSE) && (sSYNetPeerBattleBarrierEnabled != FALSE))
+	{
+		if (sSYNetPeerBattleBarrierReleased == FALSE)
+		{
+			return FALSE;
+		}
+	}
+#if defined(PORT) && !defined(_WIN32)
+	/*
+	 * Apply INPUT_BIND + battle_exec_sync for every active UDP VS session, not only when the clock barrier
+	 * is enabled. The old `BattleBarrierEnabled == FALSE` early-return skipped these gates so execution
+	 * could begin (and `execution begin` could log) a frame before `input_bind_ack`.
+	 */
+	if ((syNetPeerRequireInputBindStrict() != FALSE) && (syNetPeerInputBindIsComplete() == FALSE))
+	{
+		return FALSE;
+	}
+	if ((syNetPeerRequireBattleExecSync() != FALSE) && (syNetPeerBattleExecSyncIsComplete() == FALSE))
+	{
+		return FALSE;
+	}
+
+#endif
 	return TRUE;
 }
-
-
-
 
 sb32 syNetPeerCheckStartBarrierReleased(void)
 {
@@ -5290,6 +5320,99 @@ void syNetPeerReceiveRemoteInput(void)
 #endif
 }
 
+#if defined(PORT) && !defined(_WIN32)
+static u64 sSYNetPeerIngressPumpCalls;
+static u64 sSYNetPeerIngressPumpDatagramsTotal;
+static int sSYNetPeerIngressDiagEnvCache = -999;
+
+static int syNetPeerGetIngressDiagLevel(void)
+{
+	const char *e;
+
+	if (sSYNetPeerIngressDiagEnvCache != -999)
+	{
+		return sSYNetPeerIngressDiagEnvCache;
+	}
+	e = getenv("SSB64_NETPLAY_INGRESS_DIAG");
+	sSYNetPeerIngressDiagEnvCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	if (sSYNetPeerIngressDiagEnvCache < 0)
+	{
+		sSYNetPeerIngressDiagEnvCache = 0;
+	}
+	if (sSYNetPeerIngressDiagEnvCache > 2)
+	{
+		sSYNetPeerIngressDiagEnvCache = 2;
+	}
+	return sSYNetPeerIngressDiagEnvCache;
+}
+
+static void syNetPeerMaybeLogIngressTransportDiag(const char *tag, u32 dgrams, u32 hr0, u32 hr1)
+{
+	int lvl;
+	u32 push_now;
+	static u32 sLastIngressDiagPush;
+
+	lvl = syNetPeerGetIngressDiagLevel();
+	if (lvl < 1)
+	{
+		return;
+	}
+	push_now = (u32)port_get_push_frame_count();
+	if (lvl < 2)
+	{
+		if ((sLastIngressDiagPush != 0U) && (push_now - sLastIngressDiagPush < 120U))
+		{
+			return;
+		}
+		sLastIngressDiagPush = push_now;
+	}
+	port_log(
+	    "SSB64 NetPeer: ingress_diag tag=%s sim=%u hr=%u->%u dgrams=%u push=%u pumps_total=%llu dgrams_total=%llu\n",
+	    (tag != NULL) ? tag : "?",
+	    (unsigned int)syNetInputGetTick(),
+	    (unsigned int)hr0,
+	    (unsigned int)hr1,
+	    (unsigned int)dgrams,
+	    (unsigned int)push_now,
+	    (unsigned long long)sSYNetPeerIngressPumpCalls,
+	    (unsigned long long)sSYNetPeerIngressPumpDatagramsTotal);
+}
+#endif
+
+void syNetPeerPumpIngressTransport(const char *caller_tag)
+{
+#if defined(PORT) && !defined(_WIN32)
+	u32 pk_before;
+	u32 pk_after;
+	u32 hr0;
+	u32 hr1;
+	u32 dgrams;
+	const char *tag;
+
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	sSYNetPeerIngressPumpCalls++;
+	pk_before = sSYNetPeerPacketsReceived;
+	hr0 = syNetPeerGetHighestRemoteTick();
+	syNetPeerReceiveRemoteInput();
+	pk_after = sSYNetPeerPacketsReceived;
+	hr1 = syNetPeerGetHighestRemoteTick();
+	dgrams = (pk_after >= pk_before) ? (pk_after - pk_before) : 0U;
+	sSYNetPeerIngressPumpDatagramsTotal += (u64)dgrams;
+	tag = ((caller_tag != NULL) && (caller_tag[0] != '\0')) ? caller_tag : "pump";
+	syNetPeerMaybeLogIngressTransportDiag(tag, dgrams, hr0, hr1);
+#elif defined(PORT)
+	(void)caller_tag;
+	/* UDP recv pump is Linux-only in this tree. */
+#endif
+}
+
 void syNetPeerPumpIngressBeforeInputRead(void)
 {
 #if defined(PORT) && !defined(_WIN32)
@@ -5301,7 +5424,7 @@ void syNetPeerPumpIngressBeforeInputRead(void)
 	{
 		return;
 	}
-	syNetPeerReceiveRemoteInput();
+	syNetPeerPumpIngressTransport("inactive_pre_read");
 	syNetPeerApplyPendingDelayContract();
 #endif
 }
@@ -5608,6 +5731,7 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetPeerDelaySyncDiagEnvCache = -999;
 	syNetPeerResetMatchBufferMinSlackEnv();
 	syNetPeerResetDelaySyncCommitLeadEnv();
+	sSYNetPeerIngressDiagEnvCache = -999;
 }
 #endif
 
@@ -5958,17 +6082,18 @@ void syNetPeerReleaseBattleBarrier(const char *reason)
 		if (sSYNetPeerBattleBarrierEnabled != FALSE)
 		{
 			/*
-			 * Only resync taskman counters once we are actually running the VS battle scene.
-			 * The clock barrier may release while scene_curr is still VSNetMatchStaging;
-			 * resetting dSYTaskman* there corrupts the staging taskman's frame cadence
-			 * and can fault on the following VS transition
-			 * (free(prev heap) then scVSBattleStartBattle). syTaskmanLoadScene already zeros
-			 * these counters when VS battle taskman starts.
+			 * VS battle scene only: do not zero dSYTaskman* or port push-frame here.
+			 * Barrier release is wall-clock aligned and can land on different local frames
+			 * per peer; snapping taskman / PortPushFrame counters at that instant desyncs
+			 * execution diagnostics and pacing from the VS taskman epoch established in
+			 * syTaskmanLoadScene (which already zeros dSYTaskman* and resets push_frame
+			 * when scene_curr is VSBattle).
+			 *
+			 * Still re-latch decouple sim deadlines and seed tick-grid lock from barrier
+			 * authority here — first post-go wall alignment without clobbering taskman.
 			 */
 			if ((u32)gSCManagerSceneData.scene_curr == (u32)nSCKindVSBattle)
 			{
-				syTaskmanResyncCountersAfterNetBarrier();
-				port_reset_push_frame_count_for_net_barrier();
 				port_reset_vs_decouple_pacing_for_net_barrier();
 				syNetTickGridLockOnBarrierReleased((sSYNetPeerBootstrapIsHost != FALSE) ? TRUE : FALSE);
 			}
@@ -6232,7 +6357,7 @@ void syNetPeerUpdateBattleGate(void)
 #if !defined(_WIN32)
 	syNetPhaseTickWallClock();
 #endif
-	syNetPeerReceiveRemoteInput();
+	syNetPeerPumpIngressTransport("funcread");
 #if defined(PORT) && !defined(_WIN32)
 	syNetPeerApplyPendingDelayContract();
 	syNetPeerMaybeApplyStartupDelaySkewAlignment();
@@ -6636,6 +6761,40 @@ u32 syNetPeerGetMatchInputBufferMinSlackTicks(void)
 {
 	return syNetPeerMatchBufferMinSlackGetB();
 }
+
+static int sSYNetPeerStrictRingFuzzTicksEnvCache = -999;
+
+void syNetPeerResetStrictRingFuzzEnvCacheForNewMatch(void)
+{
+	sSYNetPeerStrictRingFuzzTicksEnvCache = -999;
+}
+
+static u32 syNetPeerStrictRingFuzzTicksForAdmission(void)
+{
+	int v;
+	const char *e;
+
+	if (sSYNetPeerStrictRingFuzzTicksEnvCache >= 0)
+	{
+		return (u32)sSYNetPeerStrictRingFuzzTicksEnvCache;
+	}
+	v = 0;
+	e = getenv("SSB64_NETPLAY_STRICT_RING_FUZZ_TICKS");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	if (v > 2)
+	{
+		v = 2;
+	}
+	sSYNetPeerStrictRingFuzzTicksEnvCache = v;
+	return (u32)v;
+}
 #endif /* PORT */
 
 sb32 syNetPeerHasBothSidesLatchedStartup(void)
@@ -6694,9 +6853,41 @@ sb32 syNetPeerIsRemoteInputReadyForSimTickEx(u32 sim_tick, sb32 full_aux_checks)
 		{
 			continue;
 		}
-		if (syNetInputHasRemoteInputForWireTick(slot, required_wire) == FALSE)
+		if (syNetInputHasRemoteInputForWireTick(slot, required_wire) != FALSE)
 		{
-			return FALSE;
+			continue;
+		}
+		/*
+		 * Optional fuzzy ring probe: when the effective frontier is **ahead** of observed `hr` (base `sim+D` pinned),
+		 * allow confirming one of `required_wire - f` for `1 <= f <= fuzz` iff `hr + f >= required_wire`.
+		 * When `required_wire <= hr`, do not relax — avoids admitting on stale wire rows while waiting for the true frontier cell.
+		 */
+		{
+			u32 fuzz;
+			u32 f;
+			sb32 admitted;
+
+			admitted = FALSE;
+			fuzz = syNetPeerStrictRingFuzzTicksForAdmission();
+			if ((fuzz > 0U) && (required_wire > hr))
+			{
+				for (f = 1U; ((f <= fuzz) && (required_wire >= f)); f++)
+				{
+					if (((u64)hr + (u64)f) < (u64)required_wire)
+					{
+						continue;
+					}
+					if (syNetInputHasRemoteInputForWireTick(slot, required_wire - f) != FALSE)
+					{
+						admitted = TRUE;
+						break;
+					}
+				}
+			}
+			if (admitted == FALSE)
+			{
+				return FALSE;
+			}
 		}
 	}
 	if (full_aux_checks == FALSE)
