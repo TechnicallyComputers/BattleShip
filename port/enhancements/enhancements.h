@@ -22,6 +22,8 @@ int port_enhancement_hitbox_display_override(int current_mode);
 // where the GPU-readback bridge is unavailable or unreliable.
 int port_enhancement_stage_clear_frozen_wallpaper_enabled(void);
 
+void port_enhancement_stage_hazards_tick(void);
+
 // C-Stick → smash/aerial attack remap. When enabled for a player, the C-button
 // directional inputs are translated into the corresponding smash/aerial attack
 // inputs (mirroring later Smash games' right-stick behaviour) instead of the
@@ -48,6 +50,8 @@ void port_enhancement_dpad_jump(int player_index, unsigned short* button_hold, u
 // — both schemes coexist, the toggle picks which runs.
 void port_enhancement_analog_remap(int player_index, signed char* stick_x, signed char* stick_y);
 
+int port_cheat_unlock_all_active(void);
+
 #ifdef __cplusplus
 }
 
@@ -56,6 +60,7 @@ namespace enhancements {
 const char* TapJumpCVarName(int playerIndex);
 const char* HitboxViewCVarName();
 const char* StageClearFrozenWallpaperCVarName();
+const char* StageHazardsDisabledCVarName();
 const char* CStickSmashCVarName(int playerIndex);
 const char* DPadJumpCVarName(int playerIndex);
 const char* AnalogRemapCVarName(int playerIndex);

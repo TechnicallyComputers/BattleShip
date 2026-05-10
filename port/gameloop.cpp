@@ -21,6 +21,7 @@
 
 #include "gameloop.h"
 #include "coroutine.h"
+#include "enhancements/enhancements.h"
 #include "port.h"
 #include "port_watchdog.h"
 
@@ -68,6 +69,8 @@ extern "C" int portFastCaptureBackbufferPNG(const char *path);
  * gfx task when VI is still using the slot the game wants to draw into.
  * Implemented in port/stubs/n64_stubs.c. */
 extern "C" void port_vi_simulate_vblank(void);
+
+extern "C" void lbBackupApplyCheats(void);
 
 /* ========================================================================= */
 /*  External game symbols (C linkage)                                        */
@@ -573,6 +576,9 @@ static void port_screenshot_maybe_capture(int frame)
 
 void PortPushFrame(void)
 {
+	// Process cheats safely before the frame updates
+	lbBackupApplyCheats();
+
 	/* Capture the wall-clock start of this PortPushFrame for the
 	 * frame-pacing fallback below. */
 	auto frameStart = std::chrono::steady_clock::now();
@@ -692,6 +698,8 @@ void PortPushFrame(void)
 	 *   Round 3+: Display list submitted, scheduler processes GFX task, etc.
 	 * Each thread runs until it yields at osRecvMesg(BLOCK) on empty queue. */
 	port_resume_service_threads();
+
+	port_enhancement_stage_hazards_tick();
 
 	sFrameCount++;
 	sNetplayPushSimAdvances++;

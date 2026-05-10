@@ -143,6 +143,23 @@ static void portRelocEvictFileRangesInRange(void *base, size_t size)
 		sPortRelocFileRanges.end());
 }
 
+/* Called by syTaskmanStartTask before reusing the scene arena for the next
+ * scene. Evicts every port-side cache that may hold a pointer into the old
+ * arena's contents (DL widening, texture upload, struct fixup, reloc file
+ * ranges) so a stale lookup can't resolve through prior-scene state. Same
+ * eviction APIs run per-relocFile-load in port_reloc_lb_load_request. */
+extern "C" void port_taskman_evict_arena_caches(const void *base, size_t size)
+{
+	if ((base == nullptr) || (size == 0)) return;
+	extern void portPackedDisplayListCacheDeleteRange(const void *base, size_t size);
+	extern void portTextureCacheDeleteRange(const void *base, size_t size);
+	extern void portEvictStructFixupsInRange(const void *base, size_t size);
+	portPackedDisplayListCacheDeleteRange(base, size);
+	portTextureCacheDeleteRange(base, size);
+	portEvictStructFixupsInRange(base, size);
+	portRelocEvictFileRangesInRange(const_cast<void *>(base), size);
+}
+
 static bool portRelocIsFighterFigatreeFile(u32 file_id)
 {
 	static const char sFighterAnimPrefix[] = "reloc_animations/FT";
@@ -894,6 +911,15 @@ void lbRelocInitSetup(LBRelocSetup *setup)
 
 	// Clear u16 struct fixup tracking — addresses from the old heap are stale
 	portResetStructFixups();
+
+	// Clear FB-mirror registrations — see port/bridge/framebuffer_capture.h.
+	// The 1P stage-clear wallpaper buf and the lbtransition photo heap both
+	// register their CPU pointer as a mirror of a snapshot FB; on scene change
+	// the bump-reset heaps free those addresses and a fresh load could land
+	// at the same address. Without this, the new asset would render the prior
+	// scene's snapshot instead of its own pixels.
+	extern void port_capture_release_all(void);
+	port_capture_release_all();
 
 	// ROM addresses (unused in port but stored for completeness)
 	sLBRelocInternBuffer.rom_table_lo = setup->table_addr;
