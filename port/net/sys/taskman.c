@@ -1020,28 +1020,6 @@ static sb32 syTaskmanShouldFreezeForNetBarrier(void)
 {
 	return FALSE;
 }
-
-void syTaskmanResyncCountersAfterNetBarrier(void)
-{
-#ifdef PORT
-	u32 prev_up;
-	u32 prev_fr;
-
-	prev_up = dSYTaskmanUpdateCount;
-	prev_fr = dSYTaskmanFrameCount;
-#endif
-	dSYTaskmanUpdateCount = 0U;
-	dSYTaskmanFrameCount = 0U;
-#ifdef PORT
-	if (syNetPeerGetTickDiagLevel() >= 1)
-	{
-		port_log(
-		    "SSB64 Taskman: net_barrier_resync scene=%u push=%d prev_tm_up=%u prev_tm_fr=%u (counters cleared to 0)\n",
-		    (unsigned int)(u32)gSCManagerSceneData.scene_curr, port_get_push_frame_count(), (unsigned int)prev_up,
-		    (unsigned int)prev_fr);
-	}
-#endif
-}
 #endif /* PORT */
 
 // 0x80005DA0
@@ -1365,6 +1343,12 @@ void syTaskmanLoadScene(SYTaskmanSceneSetup *tscene, void (*func_start)(void))
 	dSYTaskmanUpdateCount = dSYTaskmanFrameCount = 0;
 
 #ifdef PORT
+	/* Align PortPushFrame index with the VS battle taskman epoch (not barrier release,
+	 * which can differ per peer and used to zero push/taskman mid-go). */
+	if ((u32)gSCManagerSceneData.scene_curr == (u32)nSCKindVSBattle)
+	{
+		port_reset_push_frame_count_for_net_barrier();
+	}
 	port_log("SSB64: syTaskmanLoadScene — about to call func_start=%p\n", (void *)func_start);
 #endif
 	if (func_start != NULL)
