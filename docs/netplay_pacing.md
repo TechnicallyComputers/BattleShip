@@ -180,7 +180,7 @@ Use **short** matches first; watch for stall storms.
 
 When skew pacing **suppresses `scene_update()`**, taskman still runs **`scVSBattleFuncUpdateSkewPacingNetSlice`** ([`port/net/sc/sccommon/scvsbattle.c`](../port/net/sc/sccommon/scvsbattle.c)): **`syNetPeerUpdateBattleGate`** + **`syNetPeerUpdate`** (ingress was already pumped in **`syNetInputFuncRead`**). This omits **`ifCommonBattleUpdateInterfaceAll`** (**`gcRunAll`**), **`syNetReplayUpdate`**, and **`syNetRollbackAfterBattleUpdate`** — no sim step completed for that task iteration, so no snapshot.
 
-**Barrier phase alignment:** When **`syNetPeerReleaseBattleBarrier`** runs on the VS battle scene, **`port_reset_vs_decouple_pacing_for_net_barrier`** ([`port/gameloop.cpp`](../port/gameloop.cpp)) runs alongside **`syTaskmanResyncCountersAfterNetBarrier`** / **`port_reset_push_frame_count_for_net_barrier`** so **`PortPushFrame`** decouple sim stepping (**`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`**) re-latches its deadline from wall-clock “now” on the first post-go frames.
+**Barrier phase alignment:** When **`syNetPeerReleaseBattleBarrier`** runs on the VS battle scene, **`port_reset_vs_decouple_pacing_for_net_barrier`** ([`port/gameloop.cpp`](../port/gameloop.cpp)) still re-latches decouple sim stepping (**`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`**) from wall-clock “now” on the first post-go frames, plus **`syNetTickGridLockOnBarrierReleased`**. **`dSYTaskman*`** and **`port_reset_push_frame_count_for_net_barrier`** no longer reset there (peers could release the barrier on different local frames); VS **`syTaskmanLoadScene`** zeros taskman counters and resets push-frame when **`scene_curr == nSCKindVSBattle`** so the epoch matches local scene load.
 
 ### Phase 7 — Negative skew / catch-up (future)
 
@@ -194,4 +194,4 @@ Large **negative** skew (`tick << hr`) is **not** fixed by lead caps; needs ingr
 - `hr` update: [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c) (`syNetPeerStagePacketBundle`)
 - Display/sim decouple: [`port/gameloop.cpp`](../port/gameloop.cpp) (`PortPushFrame`)
 - Taskman VS loop / barrier freeze / suppress + skew net slice: [`port/net/sys/taskman.c`](../port/net/sys/taskman.c) (`syTaskmanRunTask`, `syTaskmanCommonTaskUpdate`)
-- Barrier decouple reset: [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c) (`syNetPeerReleaseBattleBarrier`), [`port/gameloop.cpp`](../port/gameloop.cpp) (`port_reset_vs_decouple_pacing_for_net_barrier`)
+- Barrier decouple / tick-grid: [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c) (`syNetPeerReleaseBattleBarrier`), [`port/gameloop.cpp`](../port/gameloop.cpp) (`port_reset_vs_decouple_pacing_for_net_barrier`); VS push-frame reset at load: [`port/net/sys/taskman.c`](../port/net/sys/taskman.c) (`syTaskmanLoadScene`)

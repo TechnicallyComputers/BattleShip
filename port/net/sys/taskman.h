@@ -101,7 +101,6 @@ extern void syTaskmanUpdateDLBuffers(void);
 extern void syTaskmanSetLoadScene(void);
 #ifdef PORT
 extern void syTaskmanSetIntervals(u16 update, u16 framedraw);
-extern void syTaskmanResyncCountersAfterNetBarrier(void);
 #endif
 extern void syTaskmanStartTask(SYTaskmanSetup *arg);
 extern void func_80006B80(void);

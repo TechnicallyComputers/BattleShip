@@ -146,6 +146,7 @@ static int sSYNetInputAdmissionSummaryIvCache = -999;
 static int sSYNetInputStallUntilRemoteEnvCache = -1;
 static int sSYNetInputPredictDiagLevelCache = -999;
 static int sSYNetInputFrameCommitDiagLevelCache = -999;
+static int sSYNetInputIngressExtraPumpsEnvCache = -999;
 static int sSYNetInputDelaySyncDiagLevelCache = -999;
 static u32 sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 static int sSYNetInputStrictRemoteLeadBufferEnvCache = -999;
@@ -187,43 +188,34 @@ static void syNetInputLoadExecutionDelayAndPredictionFromEnv(void)
 {
 	char *e;
 	int v;
-	int md;
 
+	/*
+	 * Strict extra slack (`wire_cap = sim + D + slack`): **only** `SSB64_NETPLAY_STRICT_SLACK_FRAMES` (legacy aliases).
+	 * Match-linked `SSB64_NETPLAY_MATCH_INPUT_DELAY` sets committed wire delay `D` in netpeer but does **not** copy
+	 * into `g_NetInputDelayFrames` here — tune slack independently from match delay.
+	 */
 	g_NetInputDelayFrames = 0;
-	md = syNetInputEnvGetMatchInputDelayOrNeg1();
-	if (md >= 0)
+	e = getenv("SSB64_NETPLAY_STRICT_SLACK_FRAMES");
+	if ((e == NULL) || (e[0] == '\0'))
 	{
-		v = md;
+		e = getenv("SSB64_NET_DELAY_FRAMES");
+	}
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		e = getenv("SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES");
+	}
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+		if (v < 0)
+		{
+			v = 0;
+		}
 		if (v > 4)
 		{
 			v = 4;
 		}
 		g_NetInputDelayFrames = v;
-	}
-	else
-	{
-		e = getenv("SSB64_NETPLAY_STRICT_SLACK_FRAMES");
-		if ((e == NULL) || (e[0] == '\0'))
-		{
-			e = getenv("SSB64_NET_DELAY_FRAMES");
-		}
-		if ((e == NULL) || (e[0] == '\0'))
-		{
-			e = getenv("SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES");
-		}
-		if ((e != NULL) && (e[0] != '\0'))
-		{
-			v = atoi(e);
-			if (v < 0)
-			{
-				v = 0;
-			}
-			if (v > 4)
-			{
-				v = 4;
-			}
-			g_NetInputDelayFrames = v;
-		}
 	}
 	g_UseInputPrediction = TRUE;
 	e = getenv("SSB64_NETPLAY_INPUT_PREDICTION");
@@ -413,6 +405,8 @@ void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetInputStrictRemoteLeadBufferEnvCache = -999;
 	sSYNetInputStrictCache.is_valid = FALSE;
 	sSYNetInputInputContractTierEnvCache = -1;
+	sSYNetInputIngressExtraPumpsEnvCache = -999;
+	syNetPeerResetStrictRingFuzzEnvCacheForNewMatch();
 }
 #endif
 
@@ -1922,6 +1916,33 @@ static void syNetInputLogStrictDecision(u32 tick, u32 required_wire, u32 d, u32 
 	         (unsigned int)tick, (unsigned int)required_wire, (unsigned int)d, (unsigned int)slack, (unsigned int)hr,
 	         (miss != FALSE) ? "MISS (R)" : "READY");
 }
+
+static void syNetInputMaybeIngressExtraPumpsOnStall(void)
+{
+	int n;
+	int i;
+	const char *e;
+
+	if (sSYNetInputIngressExtraPumpsEnvCache < 0)
+	{
+		e = getenv("SSB64_NETPLAY_INGRESS_EXTRA_PUMPS_ON_STALL");
+		n = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+		if (n < 0)
+		{
+			n = 0;
+		}
+		if (n > 4)
+		{
+			n = 4;
+		}
+		sSYNetInputIngressExtraPumpsEnvCache = n;
+	}
+	n = sSYNetInputIngressExtraPumpsEnvCache;
+	for (i = 0; i < n; i++)
+	{
+		syNetPeerPumpIngressTransport("stall_extra");
+	}
+}
 #endif
 
 /*
@@ -2007,6 +2028,7 @@ void syNetInputFuncRead(void)
 					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
 					syNetInputAdmissionBump('V');
 					syNetInputMaybeLogFrameCommitDiag(tick, 'V', TRUE, FALSE);
+					syNetInputMaybeIngressExtraPumpsOnStall();
 					return;
 				}
 				if (remote_miss != FALSE)
@@ -2052,6 +2074,7 @@ void syNetInputFuncRead(void)
 					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
 					syNetInputAdmissionBump('R');
 					syNetInputMaybeLogFrameCommitDiag(tick, 'R', TRUE, FALSE);
+					syNetInputMaybeIngressExtraPumpsOnStall();
 					return;
 				}
 			}

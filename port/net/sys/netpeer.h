@@ -19,8 +19,13 @@
  *      Taskman + PortPushFrame counters resync at barrier release.
  *   3) Runtime transport (`syNetPeerUpdate`): after execution is ready, emits INPUT payloads + recv pump.
  *
- * Game code usually calls `syNetPeerUpdateBattleGate` early inside VS scenes (receive + barrier),
+ * Game code usually calls `syNetPeerUpdateBattleGate` early inside VS scenes (recv + barrier + delay apply),
  * then `syNetPeerUpdate` only when execution is unlocked so rollback/input ordering stays coherent.
+ *
+ * **Recv cadence vs sim cadence:** `syNetPeerPumpIngressTransport` drains UDP independently of whether the
+ * sim advances (e.g. `PortPushFrame` when `SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM` skips a tick, or optional
+ * stall-path extra pumps in `syNetInputFuncRead`). `syNetPeerUpdateBattleGate` still owns delay-sync apply,
+ * barrier, and bind transport after that recv step.
  *
  * Automatch HTTPS wiring lives behind `#if defined(SSB64_NETMENU)` — those symbols configure the UDP
  * path from matcher output without inventing gameplay authority (wall clocks still negotiated P2P).
@@ -44,10 +49,16 @@ extern sb32 syNetPeerCheckStartBarrierReleased(void);
  */
 extern void syNetPeerUpdateBattleGate(void);
 /*
- * For **active** Linux UDP VS sessions, `syNetInputFuncRead` calls `syNetPeerUpdateBattleGate()` first (superset of recv + delay apply); this entry point remains for call sites that only need ingress + delay sync without the full gate.
- * Keeps `sSYNetInputRemoteHistory` fresh for the current sim tick (Linux UDP; no-op elsewhere).
+ * For **active** Linux UDP VS sessions, `syNetInputFuncRead` calls `syNetPeerUpdateBattleGate()` first (recv + delay apply + barrier + bind); this entry point remains when VS is **inactive** but a session still needs UDP drained: **`syNetPeerPumpIngressTransport`** then **`syNetPeerApplyPendingDelayContract`** (Linux UDP; no-op elsewhere).
  */
 extern void syNetPeerPumpIngressBeforeInputRead(void);
+/*
+ * Recv-only ingress: drain UDP (`recvfrom` until empty) and dispatch packets into remote staging / rings.
+ * Does not apply delay-sync pending contract, barrier, or bind transport — use `syNetPeerUpdateBattleGate` / FuncRead for that.
+ * Safe to call from `PortPushFrame` when decoupled sim skips a scheduler tick so ingress cadence stays ahead of sim stalls.
+ * `caller_tag` labels `SSB64_NETPLAY_INGRESS_DIAG` lines (e.g. `port_push`, `funcread`, `inactive_pre_read`, `stall_extra`); NULL uses tag `pump`.
+ */
+extern void syNetPeerPumpIngressTransport(const char *caller_tag);
 /* Full net tick after execution-ready: emits INPUT payloads, stats logs, invokes rollback mismatch scan hooks. */
 extern void syNetPeerUpdate(void);
 /* Closes socket + tears down bookkeeping at VS unload / session end. */
@@ -125,6 +136,8 @@ extern u32 syNetPeerGetEffectiveWireFrontierForAdmission(u32 sim_tick);
  * when `hr <= sim+D`, B adds no bar (lockstep-safe). Cached per VS.
  */
 extern u32 syNetPeerGetMatchInputBufferMinSlackTicks(void);
+/* Per-match: clears lazy cache for `SSB64_NETPLAY_STRICT_RING_FUZZ_TICKS` (`syNetInputRefreshCachedNetplayEnvForNewMatch`). */
+extern void syNetPeerResetStrictRingFuzzEnvCacheForNewMatch(void);
 #endif
 /* TRUE after startup bind/exec-sync latch has been reached for this VS session. */
 extern sb32 syNetPeerHasBothSidesLatchedStartup(void);

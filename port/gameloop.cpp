@@ -31,6 +31,7 @@ void syNetRollbackApplyPortSimPacing(unsigned int refresh_hz);
 #ifdef PORT
 int syNetPeerShouldPumpBattleGateOnHostFrame(void);
 void syNetPeerPumpBattleGateOnHostFrame(void);
+void syNetPeerPumpIngressTransport(const char *caller_tag);
 int syNetPeerWantsSyncPresentHold(void);
 int syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
 #endif
@@ -430,6 +431,7 @@ extern "C" int port_get_push_frame_count(void)
 
 extern "C" void port_reset_push_frame_count_for_net_barrier(void)
 {
+	/* VS loads reset from syTaskmanLoadScene (VSBattle); avoid tying index to barrier wall time. */
 	sFrameCount = 0;
 }
 
@@ -589,15 +591,6 @@ void PortPushFrame(void)
 
 	const bool vs_active = (syNetPeerIsVSSessionActive() != 0);
 
-	/* Netplay: keep UDP recv + barrier pump moving even when we skip a high-Hz host frame for sim cadence. */
-#ifdef PORT
-	if (vs_active) {
-		if (syNetPeerShouldPumpBattleGateOnHostFrame() != 0) {
-			syNetPeerPumpBattleGateOnHostFrame();
-		}
-	}
-#endif
-
 	/*
 	 * Netplay VS: decouple host refresh rate from simulation pacing.
 	 * Default ON — advance the game (VI → scheduler → taskman) at the negotiated barrier VI Hz
@@ -612,6 +605,18 @@ void PortPushFrame(void)
 		}
 	}
 	const bool decouple_vs_sim = vs_active && (decouple_env != 0);
+
+	/* Netplay: keep UDP recv + barrier pump moving even when we skip a high-Hz host frame for sim cadence. */
+#ifdef PORT
+	if (vs_active) {
+		if (syNetPeerShouldPumpBattleGateOnHostFrame() != 0) {
+			syNetPeerPumpBattleGateOnHostFrame();
+		}
+		if (decouple_vs_sim) {
+			syNetPeerPumpIngressTransport("port_push");
+		}
+	}
+#endif
 
 	bool run_game_sim_tick = true;
 #ifdef PORT
@@ -657,6 +662,10 @@ void PortPushFrame(void)
 
 	if (vs_active && decouple_vs_sim && !run_game_sim_tick) {
 		sNetplayPushSimSkips++;
+#ifdef PORT
+		/* Decoupled sim skip: no VI or task tick this push — recv-only pump so remote rings keep filling. */
+		syNetPeerPumpIngressTransport("port_push");
+#endif
 	}
 
 	if (run_game_sim_tick || !vs_active) {
