@@ -106,11 +106,10 @@ extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
 #ifdef PORT
 /*
- * Optional strict extra slack frames for required-wire admission (independent of committed wire delay D unless
- * `SSB64_NETPLAY_MATCH_INPUT_DELAY` is set — then both derive from that; strict slack uses min(value,4)).
- * Both peers should use the same value (`SSB64_NETPLAY_STRICT_SLACK_FRAMES`, legacy aliases
- * `SSB64_NET_DELAY_FRAMES` / `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default 0).
- * Matchmaking may assign `g_NetInputDelayFrames` after session start.
+ * Strict extra slack frames for `wire_cap` / `syNetPeerGetStrictRequiredWireTick` (`SSB64_NETPLAY_STRICT_SLACK_FRAMES`,
+ * legacy aliases `SSB64_NET_DELAY_FRAMES` / `SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`, clamped 0–4; default 0).
+ * **Independent** of `SSB64_NETPLAY_MATCH_INPUT_DELAY` (match delay sets committed `D` in netpeer only).
+ * Both peers should use the same value. Matchmaking does not override this variable.
  */
 extern int g_NetInputDelayFrames;
 /*
@@ -121,8 +120,9 @@ extern sb32 g_UseInputPrediction;
 extern int syNetInputGetStrictExtraSlack(void);
 extern sb32 syNetInputGetUseInputPrediction(void);
 /*
- * getenv `SSB64_NETPLAY_MATCH_INPUT_DELAY`: integer 0–99. When set, overrides per-layer exec/wire env for **both**
- * committed wire delay (`sSYNetPeerInputDelay`) and execution delay (`g_NetInputDelayFrames`, capped at 4). Returns -1 if unset.
+ * getenv `SSB64_NETPLAY_MATCH_INPUT_DELAY`: integer 0–99. When set, netpeer uses it for the **linked** committed wire
+ * delay `D` (floor/ceiling / automatch). Strict slack (`g_NetInputDelayFrames`) is **not** derived from this; use
+ * `SSB64_NETPLAY_STRICT_SLACK_FRAMES` separately. Returns -1 if unset.
  */
 extern int syNetInputEnvGetMatchInputDelayOrNeg1(void);
 /*
