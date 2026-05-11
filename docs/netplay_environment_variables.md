@@ -65,6 +65,7 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NET_DELAY_FRAMES`** — Legacy alias for strict slack frames (0–4), after `SSB64_NETPLAY_STRICT_SLACK_FRAMES`.
 - **`SSB64_NETPLAY_INPUT_EXEC_DELAY_FRAMES`** — Legacy alias for strict slack frames, after `SSB64_NET_DELAY_FRAMES`.
 - **`SSB64_NETPLAY_INPUT_PREDICTION`** — `0` disables last-input prediction for strict remote misses; default on.
+- **`SSB64_NETPLAY_SOFT_STRICT_MISS_RESOLVE`** — Non-zero: when **authoritative wire contract** (`INPUT_CONTRACT` tier ≥ 1) sees a **strict R remote miss**, skip the partial-publish + “no sim advance” stall for that FuncRead and instead run full **`syNetInputSynchronizeInputsForTick`** so **`syNetInputResolveFrame`** may write **predicted** remotes into the wire-keyed ring (`syNetInputStoreRemotePredictedWireFromSimTick`). Only after **`syNetPeerCheckBattleExecutionReady()`** is true (input bind / battle exec sync / barrier as applicable) — during exec hold the legacy strict-R partial stall still applies so sim ticks do not run far ahead of the symmetric startup handshake. **Requires** prediction on (`INPUT_PREDICTION` not `0`); if prediction is off, behavior matches the legacy strict-R path. **Default off** (opt-in LAN / lab). **Symmetric:** use the **same** value on host and guest for deterministic lockstep. Cache reset per match with `syNetInputRefreshCachedNetplayEnvForNewMatch`. Rate-limited log: `soft_strict_miss_resolve` about every **60** sim ticks while active.
 - **`SSB64_NETPLAY_INPUT_FUTURE_WIRE_TICKS`** — See **Diagnostics / slots / UDP** (append placeholder INPUT rows ahead on the wire); default **0**.
 - **`SSB64_NETPLAY_INPUT_CONTRACT`** — Integer **0** / **1** / **2** (unset: use legacy **`STRICT_INPUT_CONTRACT`** — non-zero ⇒ tier **2**, else tier **0**). **0** = legacy FuncRead admission (exec / stall-until-remote / skew). **1** = delay-sync **lite** (effective-wire ring gate + partial publish on miss; skips match buffer **B**, `STRICT_REMOTE_LEAD_BUFFER_TICKS` **hr** folding, and delay-sync starvation **V**). **2** = full **strict** (same as **`STRICT_INPUT_CONTRACT=1`**). All tiers are **PORT** (including Windows); reset per match with `syNetInputRefreshCachedNetplayEnvForNewMatch`.
 - **`SSB64_NETPLAY_STRICT_INPUT_CONTRACT`** — `1` selects tier **2** when **`INPUT_CONTRACT`** is unset; ignored when **`INPUT_CONTRACT`** is set. Legacy name for full strict.
@@ -122,6 +123,18 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NETPLAY_BARRIER_VI_ALIGN`**, **`SSB64_NETPLAY_BARRIER_VI_HZ`**, **`SSB64_NETPLAY_BARRIER_CONSERVATIVE`**
 - **`SSB64_NETPLAY_BARRIER_MAX_CONTRACT_SKEW_MS`**, **`SSB64_NETPLAY_BARRIER_EXTRA_LEAD_MS`**
 - **`SSB64_NETPLAY_BARRIER_ESCAPE_MS`**, **`SSB64_NETPLAY_BARRIER_REQUEUE_MS`**
+- **`SSB64_NETPLAY_BARRIER_CLOCK_STALL_DIAG`** — Linux UDP: **`1`** logs every **300** `BattleBarrierWaitFrames` while the host awaits a **TIME_PONG** during the clock-sync sample loop (no sample progress). Off by default.
+
+**Running clock sync (steady match, Linux UDP, host-led)**
+
+- **`SSB64_NETPLAY_RUNNING_CLOCK_SYNC_MS`** — Interval between host **TIME_PING** rounds using the high-bit seq flag (**`0`** = off). Default **3000** ms; clamped **0…600000**.
+- **`SSB64_NETPLAY_RUNNING_CLOCK_BIAS_CLAMP_NS`** — Max nanoseconds applied per median-delta correction to `port_add_vs_decouple_barrier_latch_bias_ns`. Default **500000** (0.5 ms); clamped **0…10000000**.
+- **`SSB64_NETPLAY_RUNNING_CLOCK_BIAS_MIN_GAP_MS`** — Minimum wall time between bias applications. Default **500** ms; clamped **0…60000**.
+
+**Strict admission + running confidence (host only)**
+
+- **`SSB64_NETPLAY_STRICT_RUNNING_CONFIDENCE_FUZZ`** — **`1`**: when the host’s running offset ring is **valid** (≥4 samples) and **spread** ≤ **`SSB64_NETPLAY_STRICT_RUNNING_CONFIDENCE_SPREAD_MAX_MS`**, add **+1** tick to the strict ring fuzz window (`syNetPeerIsRemoteInputReadyForSimTickEx`). **Guest ignores** (host-only ring). Off by default.
+- **`SSB64_NETPLAY_STRICT_RUNNING_CONFIDENCE_SPREAD_MAX_MS`** — Max offset spread (ms) for the running-confidence fuzz path. Default **25**; values **< 0** are treated as **0**.
 
 **Diagnostics / slots / UDP**
 

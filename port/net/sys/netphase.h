@@ -11,6 +11,12 @@
 void syNetPhaseReset(void);
 void syNetPhaseOnVSSessionStart(sb32 barrier_enabled);
 void syNetPhaseOnBattleBarrierReleased(void);
+/*
+ * When the session is already RUNNING (no clock barrier) and `SSB64_NETPLAY_TICK_GRID_CALIBRATE_MS` is set,
+ * enter CALIBRATING so bounded tick-grid feed deviation can run before the first committed sim tick
+ * (e.g. during BATTLE_EXEC_SYNC / execution hold).
+ */
+void syNetPhaseBeginOptionalWallCalibrationFromRunning(void);
 /* Wall-clock progress for CALIBRATING timeout (call from battle gate / peer update). */
 void syNetPhaseTickWallClock(void);
 

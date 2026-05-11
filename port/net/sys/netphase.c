@@ -54,6 +54,35 @@ void syNetPhaseOnVSSessionStart(sb32 barrier_enabled)
 	s_cal_budget_ms = 0U;
 }
 
+void syNetPhaseBeginOptionalWallCalibrationFromRunning(void)
+{
+	char *e;
+	u32 budget;
+	int v;
+
+	if (s_phase != SYNET_PHASE_RUNNING)
+	{
+		return;
+	}
+	budget = 0U;
+	e = getenv("SSB64_NETPLAY_TICK_GRID_CALIBRATE_MS");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+		if ((v > 0) && (v < 600000))
+		{
+			budget = (u32)v;
+		}
+	}
+	if (budget == 0U)
+	{
+		return;
+	}
+	s_phase = SYNET_PHASE_CALIBRATING;
+	s_cal_budget_ms = budget;
+	s_cal_start_unix_ms = syNetPhaseNowUnixMs();
+}
+
 void syNetPhaseOnBattleBarrierReleased(void)
 {
 	char *e;
@@ -150,6 +179,10 @@ void syNetPhaseOnVSSessionStart(sb32 barrier_enabled)
 }
 
 void syNetPhaseOnBattleBarrierReleased(void)
+{
+}
+
+void syNetPhaseBeginOptionalWallCalibrationFromRunning(void)
 {
 }
 

@@ -9,8 +9,8 @@
  * tick, not wall/network timing) and clears `gSYControllerDevices[]` before resolve. It resolves each player’s frame for the current tick
  * (local HID from the latch, replay, remote-confirmed ring, or prediction), publishes into `gSYControllerDevices[]`,
  * snapshots `SYNETINPUT_HISTORY_LENGTH` rings. `sSYNetInputTick` advances only after a full `scVSBattleFuncUpdate`
- * (`syNetInputAdvanceAuthoritativeSimTick`). FuncRead returns early when the battle execution gate is closed
- * (`syNetPeerCheckStartBarrierReleased`), so pre-fight ticks stay frozen together.
+ * (`syNetInputAdvanceAuthoritativeSimTick`). Active UDP VS (PORT): `syNetTickCommitEvaluate` unifies exec-ready
+ * (`syNetPeerCheckBattleExecutionReady`) with wire/stall/skew admission so FuncRead and battle sim agree on tick commit.
  *
  * GGPO-shaped rule: rollback resim replays local slots from published history for that tick (not fresh HID); live VS still
  * samples hardware once per tick before resolve.
@@ -131,7 +131,8 @@ extern int syNetInputEnvGetMatchInputDelayOrNeg1(void);
  * no STRICT_REMOTE_LEAD_BUFFER_TICKS hr folding in syNetPeerIsRemoteInputReadyForSimTickEx; no delay-sync starvation V hold.
  * 2 = full strict (same as legacy SSB64_NETPLAY_STRICT_INPUT_CONTRACT=1). When INPUT_CONTRACT is unset, tier 2 if
  * STRICT_INPUT_CONTRACT is non-zero, else tier 0. Cached per match in syNetInputRefreshCachedNetplayEnvForNewMatch.
- * Tiers 1 and 2: exec, skew, catch-up do not gate FuncRead admission; scVSBattleFuncUpdate bypasses syNetPeerCheckBattleExecutionReady while VS plus contract.
+ * Tiers 1 and 2: wire-keyed admission + partial publish on miss unchanged. Exec-ready (`syNetPeerCheckBattleExecutionReady`) gates
+ * FuncRead and battle/rollback together via `syNetTickCommitEvaluate` (unified tick-commit); skew/catch-up remain tiered as before.
  * Partial local publish on remote miss; prediction and stuck bypass unchanged for tier 2; tier 1 uses prediction when enabled.
  */
 extern int syNetInputGetInputContractTier(void);
@@ -139,6 +140,30 @@ extern int syNetInputGetInputContractTier(void);
 extern sb32 syNetInputAuthoritativeWireContractEnabled(void);
 /* Tier >= 2: full strict (match buffer B, lead_b, starvation V when handler enabled). */
 extern sb32 syNetInputStrictInputContractEnabled(void);
+/*
+ * Unified tick-commit (PORT VS): single admission policy for FuncRead wire/skew/stall vs battle sim / rollback scan.
+ * FuncRead updates the FuncRead-phase cache each VS pass; consumers use `syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate`.
+ */
+typedef enum SYNetTickCommitPhase
+{
+	nSYNetTickCommitPhase_FuncReadExecGate,     /* Exec/bind/exec-sync only (before HID latch on E-hold). */
+	nSYNetTickCommitPhase_FuncReadWireAdmission, /* Strict wire + legacy S/K; caller must have passed exec gate. */
+	nSYNetTickCommitPhase_NetSlice              /* Skew net slice: exec only (no wire re-check). */
+
+} SYNetTickCommitPhase;
+
+typedef struct SYNetTickCommitVerdict
+{
+	sb32 allow_full_input_publish;
+	sb32 allow_battle_sim_step;
+	sb32 suppress_scene_update;
+	sb32 strict_partial_publish_local; /* TRUE: FuncRead must partial-publish local from latch (R/V paths). */
+	char admission_letter;             /* P / E / R / V / S / K */
+
+} SYNetTickCommitVerdict;
+
+extern void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickCommitVerdict *out);
+extern sb32 syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate(void);
 /* Direct remote-ring presence check by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets). */
 extern sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick);
 /*
