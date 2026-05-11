@@ -10,10 +10,11 @@
  *
  * Layers you must mentally separate:
  *   1) Bootstrap control plane (READY / START …) enters both processes into identical VS metadata.
- *   2) Battle barrier + post-barrier gates (`syNetPeerCheckBattleExecutionReady`): wall-clock deadline release,
- *      optional strict INPUT_BIND, then host-led BATTLE_EXEC_SYNC (frozen sim tick + VI phase bucket)
- *      before the first `syNetInput` tick increment (Linux UDP). When exec-sync is in use, `both_sides_latched_startup`
- *      may be set from the exec-sync completion path (not from generic VS start).
+ *   2) Ordered sync pipeline (see `syNetPeerGetSyncPipelinePhase`): UDP link → bootstrap → **clock barrier**
+ *      (BATTLE_READY + TIME_PING/TIME_PONG NTP samples + `BATTLE_START_TIME` deadline; advanced from
+ *      `syNetPeerUpdateBattleGate` via `syNetPeerUpdateStartBarrier`) → optional strict **INPUT_BIND** → host-led
+ *      **BATTLE_EXEC_SYNC** → `syNetPeerCheckBattleExecutionReady` true → **Running** (steady INPUT + optional
+ *      rate-limited running clock sync on Linux UDP).
  *      Optional `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1` additionally requires `syNetTickGridLockIsLocked()` for guests
  *      until tick-grid calibration completes.
  *      Taskman + PortPushFrame counters resync at barrier release.
@@ -236,6 +237,9 @@ extern void syNetPeerSetAutomatchLocalOffer(u16 ban_mask_le, u8 fkind, u8 costum
 extern s32 syNetPeerGetUdpSocketFd(void); /* Requires bound socket (-1 otherwise). */
 extern sb32 syNetPeerOpenSocket(void);
 extern sb32 syNetPeerRunBootstrap(void);
+/* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
+extern sb32 syNetPeerBeginStageSceneRendezvous(void);
+extern sb32 syNetPeerUpdateStageSceneRendezvous(void);
 
 #endif
 

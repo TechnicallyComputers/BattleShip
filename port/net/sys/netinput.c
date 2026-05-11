@@ -150,12 +150,31 @@ static int sSYNetInputIngressExtraPumpsEnvCache = -999;
 static int sSYNetInputDelaySyncDiagLevelCache = -999;
 static u32 sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 static int sSYNetInputStrictRemoteLeadBufferEnvCache = -999;
+static int sSYNetInputSoftStrictMissResolveEnvCache = -1;
+static u32 sSYNetInputSoftStrictMissResolveLastLogTick = ~(u32)0;
 static SYNetInputStrictCache sSYNetInputStrictCache;
 
 /* Remote ring cells are not part of `syNetInputStrictReadyCached` keys — invalidate on every remote write. */
 static void syNetInputStrictReadyCacheInvalidate(void)
 {
 	sSYNetInputStrictCache.is_valid = FALSE;
+}
+
+/*
+ * `SSB64_NETPLAY_SOFT_STRICT_MISS_RESOLVE`: when strict remote readiness misses, still run full resolve/publish
+ * in this FuncRead if input prediction can fill wire gaps (see `syNetInputResolveFrame` contract path).
+ */
+static sb32 syNetInputSoftStrictMissResolveEnabled(void)
+{
+	const char *e;
+
+	if (sSYNetInputSoftStrictMissResolveEnvCache < 0)
+	{
+		e = getenv("SSB64_NETPLAY_SOFT_STRICT_MISS_RESOLVE");
+		sSYNetInputSoftStrictMissResolveEnvCache =
+		    ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	return (sSYNetInputSoftStrictMissResolveEnvCache != 0) ? TRUE : FALSE;
 }
 
 int g_NetInputDelayFrames = 0;
@@ -406,6 +425,8 @@ void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetInputStrictCache.is_valid = FALSE;
 	sSYNetInputInputContractTierEnvCache = -1;
 	sSYNetInputIngressExtraPumpsEnvCache = -999;
+	sSYNetInputSoftStrictMissResolveEnvCache = -1;
+	sSYNetInputSoftStrictMissResolveLastLogTick = ~(u32)0;
 	syNetPeerResetStrictRingFuzzEnvCacheForNewMatch();
 }
 #endif
@@ -1943,6 +1964,200 @@ static void syNetInputMaybeIngressExtraPumpsOnStall(void)
 		syNetPeerPumpIngressTransport("stall_extra");
 	}
 }
+
+static SYNetTickCommitVerdict sSYNetTickCommitFuncReadVerdict;
+static u32 sSYNetTickCommitFuncReadVerdictTick = ~(u32)0U;
+
+static void syNetTickCommitVerdictAllowAll(SYNetTickCommitVerdict *o)
+{
+	o->allow_full_input_publish = TRUE;
+	o->allow_battle_sim_step = TRUE;
+	o->suppress_scene_update = FALSE;
+	o->strict_partial_publish_local = FALSE;
+	o->admission_letter = 'P';
+}
+
+static void syNetTickCommitStoreFuncReadCache(const SYNetTickCommitVerdict *v, u32 tick)
+{
+	sSYNetTickCommitFuncReadVerdict = *v;
+	sSYNetTickCommitFuncReadVerdictTick = tick;
+}
+
+void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickCommitVerdict *out)
+{
+	if (out == NULL)
+	{
+		return;
+	}
+	syNetTickCommitVerdictAllowAll(out);
+	if (phase == nSYNetTickCommitPhase_NetSlice)
+	{
+		if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+		{
+			return;
+		}
+		if (syNetPeerCheckBattleExecutionReady() == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'E';
+		}
+		return;
+	}
+	if (phase == nSYNetTickCommitPhase_FuncReadExecGate)
+	{
+		if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+		{
+			return;
+		}
+		if (syNetPeerCheckBattleExecutionReady() == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'E';
+		}
+		return;
+	}
+	/* nSYNetTickCommitPhase_FuncReadWireAdmission */
+	if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	{
+		return;
+	}
+	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
+	{
+		sb32 remote_miss;
+		sb32 force_advance;
+		char *fe;
+		u32 required_wire;
+		u32 d_wire;
+		u32 strict_slack;
+		u32 hr;
+		sb32 soft_resolve;
+
+		syNetInputMaybeLogDelaySyncDiag(tick);
+		remote_miss = (syNetInputStrictReadyCached(tick, &required_wire, &d_wire, &strict_slack, &hr) == FALSE) ? TRUE : FALSE;
+		if ((syNetInputStrictInputContractEnabled() != FALSE) &&
+		    (syNetPeerMatchDelayStarvationUpdateAndShouldHold(tick, required_wire, hr) != FALSE))
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->suppress_scene_update = TRUE;
+			out->strict_partial_publish_local = TRUE;
+			out->admission_letter = 'V';
+			return;
+		}
+		if (remote_miss != FALSE)
+		{
+			syNetInputLogStrictDecision(tick, required_wire, d_wire, strict_slack, hr, remote_miss);
+		}
+		if (remote_miss == FALSE)
+		{
+			sSYNetInputStrictRStuckSimTick = ~(u32)0;
+			sSYNetInputStrictRStuckFrames = 0U;
+		}
+		force_advance = FALSE;
+		fe = getenv("SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG");
+		if ((remote_miss != FALSE) && (syNetInputGetStrictExtraSlack() == 0) && (fe != NULL) && (fe[0] != '\0') &&
+		    (atoi(fe) != 0))
+		{
+			if (tick == sSYNetInputStrictRStuckSimTick)
+			{
+				sSYNetInputStrictRStuckFrames++;
+			}
+			else
+			{
+				sSYNetInputStrictRStuckSimTick = tick;
+				sSYNetInputStrictRStuckFrames = 1U;
+			}
+			if (sSYNetInputStrictRStuckFrames > 60U)
+			{
+				port_log("[NET] FORCE ADVANCE on stuck tick %u (delay=0)\n", (unsigned)tick);
+				sSYNetInputStrictRStuckSimTick = ~(u32)0;
+				sSYNetInputStrictRStuckFrames = 0U;
+				force_advance = TRUE;
+			}
+		}
+		if ((remote_miss != FALSE) && (force_advance == FALSE))
+		{
+			soft_resolve = FALSE;
+			if ((syNetInputSoftStrictMissResolveEnabled() != FALSE) && (syNetInputGetUseInputPrediction() != FALSE) &&
+			    (syNetPeerCheckBattleExecutionReady() != FALSE))
+			{
+				soft_resolve = TRUE;
+			}
+			if (soft_resolve == FALSE)
+			{
+				out->allow_full_input_publish = FALSE;
+				out->allow_battle_sim_step = FALSE;
+				out->suppress_scene_update = TRUE;
+				out->strict_partial_publish_local = TRUE;
+				out->admission_letter = 'R';
+				return;
+			}
+			sSYNetInputStrictRStuckSimTick = ~(u32)0;
+			sSYNetInputStrictRStuckFrames = 0U;
+			syNetInputStrictReadyCacheInvalidate();
+			if ((sSYNetInputSoftStrictMissResolveLastLogTick == ~(u32)0U) ||
+			    (tick - sSYNetInputSoftStrictMissResolveLastLogTick >= 60U))
+			{
+				port_log(
+				    "SSB64 NetInput: soft_strict_miss_resolve tick=%u required_wire=%u hr=%u D=%u (full resolve/publish)\n",
+				    (unsigned int)tick, (unsigned int)required_wire, (unsigned int)hr, (unsigned int)d_wire);
+				sSYNetInputSoftStrictMissResolveLastLogTick = tick;
+			}
+			syNetInputMaybeIngressExtraPumpsOnStall();
+		}
+		return;
+	}
+#if !defined(_WIN32)
+	(void)syNetPeerRunCatchUpBehindBeforeInputStall(tick);
+#endif
+	if (syNetInputEnvStallUntilRemoteEnabled() != FALSE)
+	{
+		if (syNetInputRemoteSlotsMissingRingFrameForTick(tick) != FALSE)
+		{
+#if !defined(_WIN32)
+			if (syNetPeerShouldRelaxStallUntilRemoteForCatchUp(tick) == FALSE)
+#else
+			if (TRUE)
+#endif
+			{
+				out->allow_full_input_publish = FALSE;
+				out->allow_battle_sim_step = FALSE;
+				out->suppress_scene_update = TRUE;
+				out->strict_partial_publish_local = FALSE;
+				out->admission_letter = 'S';
+				return;
+			}
+		}
+	}
+	if (syNetPeerShouldHoldSimTickForSkewPacing(tick, NULL) != FALSE)
+	{
+		out->allow_full_input_publish = FALSE;
+		out->allow_battle_sim_step = FALSE;
+		out->suppress_scene_update = TRUE;
+		out->strict_partial_publish_local = FALSE;
+		out->admission_letter = 'K';
+		return;
+	}
+}
+
+sb32 syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate(void)
+{
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return TRUE;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return TRUE;
+	}
+	if (sSYNetTickCommitFuncReadVerdictTick != syNetInputGetTick())
+	{
+		return FALSE;
+	}
+	return sSYNetTickCommitFuncReadVerdict.allow_battle_sim_step;
+}
 #endif
 
 /*
@@ -1950,8 +2165,8 @@ static void syNetInputMaybeIngressExtraPumpsOnStall(void)
  * so local capture is indexed only by `sSYNetInputTick`, then synchronize all slots, publish to globals + rings,
  * optional replay capture. Tick advances only after a full `scVSBattleFuncUpdate` (`syNetInputAdvanceAuthoritativeSimTick`).
  *
- * Linux UDP VS: `syNetPeerUpdateBattleGate` + execution / stall / skew admission run **before** resolve+publish so a frame
- * cycle cannot publish authoritative inputs and then fail to sim for execution-revocation reasons in the same step.
+ * Linux UDP VS: `syNetPeerUpdateBattleGate` + `syNetTickCommitEvaluate` (exec gate then wire admission) run **before**
+ * resolve+publish so a frame cycle cannot publish authoritative inputs and then fail to sim for execution-revocation reasons.
  */
 void syNetInputFuncRead(void)
 {
@@ -1966,19 +2181,21 @@ void syNetInputFuncRead(void)
 	{
 		if (syNetPeerIsVSSessionActive() != FALSE)
 		{
-			sb32 block_on_exec;
+			SYNetTickCommitVerdict tcv;
 
 			syNetPeerUpdateBattleGate();
-			block_on_exec = (syNetPeerCheckBattleExecutionReady() == FALSE) ? TRUE : FALSE;
-			if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
+			tick = syNetInputGetTick();
+			syNetTickCommitEvaluate(tick, nSYNetTickCommitPhase_FuncReadExecGate, &tcv);
+			if ((tcv.allow_full_input_publish == FALSE) && (tcv.admission_letter == 'E'))
 			{
-				block_on_exec = FALSE;
-			}
-			if (block_on_exec != FALSE)
-			{
-				tick = syNetInputGetTick();
+				syNetTickCommitStoreFuncReadCache(&tcv, tick);
 				syNetInputAdmissionBump('E');
 				syNetInputMaybeLogFrameCommitDiag(tick, 'E', FALSE, FALSE);
+				/*
+				 * Exec-hold must still pump the peer loop so INPUT_BIND / BATTLE_EXEC_SYNC can complete; battle
+				 * update may not run this task iteration (decouple suppress, or early return on same verdict).
+				 */
+				syNetPeerUpdate();
 				return;
 			}
 		}
@@ -2007,107 +2224,28 @@ void syNetInputFuncRead(void)
 		}
 		if (syNetPeerIsVSSessionActive() != FALSE)
 		{
-			if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
-			{
-				sb32 remote_miss;
-				sb32 force_advance;
-				char *fe;
-				u32 required_wire;
-				u32 d_wire;
-				u32 strict_slack;
-				u32 hr;
+			SYNetTickCommitVerdict tcv;
 
-				syNetInputMaybeLogDelaySyncDiag(tick);
-				remote_miss =
-				    (syNetInputStrictReadyCached(tick, &required_wire, &d_wire, &strict_slack, &hr) == FALSE) ? TRUE : FALSE;
-				if ((syNetInputStrictInputContractEnabled() != FALSE) &&
-				    (syNetPeerMatchDelayStarvationUpdateAndShouldHold(tick, required_wire, hr) != FALSE))
-				{
-					syNetInputStrictContractPartialPublishLocalFromLatch(tick);
-					sSYNetInputStrictContractSkippedPublish = TRUE;
-					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
-					syNetInputAdmissionBump('V');
-					syNetInputMaybeLogFrameCommitDiag(tick, 'V', TRUE, FALSE);
-					syNetInputMaybeIngressExtraPumpsOnStall();
-					return;
-				}
-				if (remote_miss != FALSE)
-				{
-					syNetInputLogStrictDecision(tick, required_wire, d_wire, strict_slack, hr, remote_miss);
-				}
-				if (remote_miss == FALSE)
-				{
-					sSYNetInputStrictRStuckSimTick = ~(u32)0;
-					sSYNetInputStrictRStuckFrames = 0U;
-				}
-				force_advance = FALSE;
-				fe = getenv("SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG");
-				if ((remote_miss != FALSE) && (syNetInputGetStrictExtraSlack() == 0) && (fe != NULL) &&
-				    (fe[0] != '\0') && (atoi(fe) != 0))
-				{
-					if (tick == sSYNetInputStrictRStuckSimTick)
-					{
-						sSYNetInputStrictRStuckFrames++;
-					}
-					else
-					{
-						sSYNetInputStrictRStuckSimTick = tick;
-						sSYNetInputStrictRStuckFrames = 1U;
-					}
-					if (sSYNetInputStrictRStuckFrames > 60U)
-					{
-						port_log("[NET] FORCE ADVANCE on stuck tick %u (delay=0)\n", (unsigned)tick);
-						sSYNetInputStrictRStuckSimTick = ~(u32)0;
-						sSYNetInputStrictRStuckFrames = 0U;
-						force_advance = TRUE;
-					}
-				}
-				if ((remote_miss != FALSE) && (force_advance == FALSE))
-				{
-					/*
-					 * Partial publish for GatherHistoryBundle / wire INPUT; same sim tick must not run a full
-					 * `ifCommonBattleUpdateInterfaceAll` until the next FuncRead can full-publish (S/K skew/stall
-					 * paths already use scene suppress for this — strict R must match or inputs/physics apply twice).
-					 */
-					syNetInputStrictContractPartialPublishLocalFromLatch(tick);
-					sSYNetInputStrictContractSkippedPublish = TRUE;
-					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
-					syNetInputAdmissionBump('R');
-					syNetInputMaybeLogFrameCommitDiag(tick, 'R', TRUE, FALSE);
-					syNetInputMaybeIngressExtraPumpsOnStall();
-					return;
-				}
-			}
-			else
+			syNetTickCommitEvaluate(tick, nSYNetTickCommitPhase_FuncReadWireAdmission, &tcv);
+			syNetTickCommitStoreFuncReadCache(&tcv, tick);
+			if (tcv.allow_full_input_publish == FALSE)
 			{
-#if !defined(_WIN32)
-				(void)syNetPeerRunCatchUpBehindBeforeInputStall(tick);
-#endif
-				if (syNetInputEnvStallUntilRemoteEnabled() != FALSE)
+				if (tcv.strict_partial_publish_local != FALSE)
 				{
-					if (syNetInputRemoteSlotsMissingRingFrameForTick(tick) != FALSE)
-					{
-#if !defined(_WIN32)
-						if (syNetPeerShouldRelaxStallUntilRemoteForCatchUp(tick) == FALSE)
-#else
-						if (TRUE)
-#endif
-						{
-							sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
-							syNetInputAdmissionBump('S');
-							syNetInputMaybeLogFrameCommitDiag(tick, 'S', TRUE, FALSE);
-							return;
-						}
-						/* Catch-up behind: proceed without strict stall for this FuncRead (experimental). */
-					}
+					syNetInputStrictContractPartialPublishLocalFromLatch(tick);
+					sSYNetInputStrictContractSkippedPublish = TRUE;
 				}
-				if (syNetPeerShouldHoldSimTickForSkewPacing(tick, NULL) != FALSE)
+				if (tcv.suppress_scene_update != FALSE)
 				{
 					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
-					syNetInputAdmissionBump('K');
-					syNetInputMaybeLogFrameCommitDiag(tick, 'K', TRUE, FALSE);
-					return;
 				}
+				syNetInputAdmissionBump(tcv.admission_letter);
+				syNetInputMaybeLogFrameCommitDiag(tick, tcv.admission_letter, TRUE, FALSE);
+				if ((tcv.admission_letter == 'R') || (tcv.admission_letter == 'V'))
+				{
+					syNetInputMaybeIngressExtraPumpsOnStall();
+				}
+				return;
 			}
 		}
 	}

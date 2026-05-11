@@ -87,18 +87,28 @@ SYTaskmanSetup dSCVSBattleTaskmanSetup =
 // 0x8018D0C0
 void scVSBattleFuncUpdate(void)
 {
-	sb32 strict_vs_exec_bypass = FALSE;
 #ifdef PORT
-	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
+	/* Unified tick-commit: FuncRead caches verdict; battle sim matches same admission as wire/exec gates. */
+	if (syNetPeerIsVSSessionActive() != FALSE)
 	{
-		strict_vs_exec_bypass = TRUE;
+		if ((syNetRollbackIsResimulating() == FALSE) &&
+		    (syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate() == FALSE))
+		{
+			/* Same as exec-hold FuncRead path: keep ingress alive so battle_exec_sync can finish. */
+			syNetPeerUpdate();
+			return;
+		}
 	}
-#endif
-	/* Ingress + barrier were advanced in `syNetInputFuncRead` for active Linux UDP VS before publish (admission freeze). */
-	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
+	else if (syNetPeerCheckBattleExecutionReady() == FALSE)
 	{
 		return;
 	}
+#else
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		return;
+	}
+#endif
 #if defined(PORT) && !defined(_WIN32)
 	/*
 	 * Belt-and-suspenders: strict R should set taskman scene suppress (skew net slice). If full `scene_update`
@@ -132,19 +142,23 @@ void scVSBattleFuncUpdate(void)
  */
 void scVSBattleFuncUpdateSkewPacingNetSlice(void)
 {
-	sb32 strict_vs_exec_bypass = FALSE;
 #ifdef PORT
-	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
-	{
-		strict_vs_exec_bypass = TRUE;
-	}
+	SYNetTickCommitVerdict tcv;
 #endif
 	syNetPeerUpdateBattleGate();
 
-	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
+#ifdef PORT
+	syNetTickCommitEvaluate(syNetInputGetTick(), nSYNetTickCommitPhase_NetSlice, &tcv);
+	if (tcv.allow_battle_sim_step == FALSE)
 	{
 		return;
 	}
+#else
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		return;
+	}
+#endif
 	syNetPeerUpdate();
 }
 

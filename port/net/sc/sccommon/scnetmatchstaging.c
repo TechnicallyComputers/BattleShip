@@ -40,8 +40,7 @@ static void mnVSNetMatchStagingFuncRun(GObj *gobj)
 
 	if (mnVSNetAutomatchAMConsumeStagingHandshake() != FALSE)
 	{
-		syNetPeerStartVSSession();
-		/* Always transition to VS immediately; barrier/bind/exec-sync run under VSBattle + taskman freeze. */
+		/* Stage rendezvous now gates visible VS transition to a synchronized go moment. */
 		mnVSNetAutomatchAMFinalizeVsLoad();
 		return;
 	}

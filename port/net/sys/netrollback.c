@@ -508,19 +508,8 @@ sb32 syNetRollbackLoadSnapshotAfterCompletedTick(u32 completed_sim_tick)
 void syNetRollbackAfterBattleUpdate(void)
 {
 	u32 completed_tick;
-	sb32 strict_vs_exec_bypass = FALSE;
 
 	if (syNetRollbackIsActive() == FALSE)
-	{
-		return;
-	}
-#ifdef PORT
-	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
-	{
-		strict_vs_exec_bypass = TRUE;
-	}
-#endif
-	if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
@@ -809,23 +798,21 @@ void syNetRollbackUpdate(void)
 	{
 		return;
 	}
-	{
-		sb32 strict_vs_exec_bypass = FALSE;
-#ifdef PORT
-		if ((syNetInputAuthoritativeWireContractEnabled() != FALSE))
-		{
-			strict_vs_exec_bypass = TRUE;
-		}
-#endif
-		if ((strict_vs_exec_bypass == FALSE) && (syNetPeerCheckBattleExecutionReady() == FALSE))
-		{
-			return;
-		}
-	}
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
 		return;
 	}
+#ifdef PORT
+	if (syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate() == FALSE)
+	{
+		return;
+	}
+#else
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		return;
+	}
+#endif
 #ifdef PORT
 	syNetRollbackDebugTryApplyPendingForceMismatch();
 #endif

@@ -3827,6 +3827,7 @@ static char sMnAMBindSpec[96];
 static sb32 sMnAMStagingP2PReady = FALSE;
 /* Advances once per MatchmakingTick while MN_AM_POLL (staging drives MatchmakingTick; CSS tics do not). */
 static u32 sMnAMPollPeriodTics;
+static sb32 sMnAMStagingRendezvousStarted = FALSE;
 
 void mnVSNetAutomatchAMReset(void)
 {
@@ -3836,6 +3837,7 @@ void mnVSNetAutomatchAMReset(void)
 	sMnAMBindSpec[0] = '\0';
 	sMnAMStagingP2PReady = FALSE;
 	sMnAMPollPeriodTics = 0;
+	sMnAMStagingRendezvousStarted = FALSE;
 }
 
 static void mnVSNetAutomatchAMErr(void)
@@ -3925,7 +3927,22 @@ sb32 mnVSNetAutomatchAMConsumeStagingHandshake(void)
 	{
 		return FALSE;
 	}
+	if (sMnAMStagingRendezvousStarted == FALSE)
+	{
+		syNetPeerStartVSSession();
+		if (syNetPeerBeginStageSceneRendezvous() == FALSE)
+		{
+			mnVSNetAutomatchAMErr();
+			return FALSE;
+		}
+		sMnAMStagingRendezvousStarted = TRUE;
+	}
+	if (syNetPeerUpdateStageSceneRendezvous() == FALSE)
+	{
+		return FALSE;
+	}
 	sMnAMStagingP2PReady = FALSE;
+	sMnAMStagingRendezvousStarted = FALSE;
 	return TRUE;
 }
 
@@ -4042,6 +4059,13 @@ void mnVSNetAutomatchMatchmakingTick(void)
 		}
 		if (ev.kind == MM_POLL_MATCHED)
 		{
+			if (sMnAMState != MN_AM_POLL)
+			{
+				port_log(
+				    "SSB64 Automatch: ignoring MM_POLL_MATCHED while state=%d session=%u host=%d ticket=%.36s\n",
+				    (int)sMnAMState, (unsigned int)ev.session_id, (int)ev.you_are_host, sMnAMTicket);
+				continue;
+			}
 			port_log(
 			    "SSB64 Automatch: MM_POLL_MATCHED poll_phase_tics=%u session=%u host=%d ticket=%.36s\n",
 			    (unsigned int)sMnAMPollPeriodTics, (unsigned int)ev.session_id, (int)ev.you_are_host, sMnAMTicket);
