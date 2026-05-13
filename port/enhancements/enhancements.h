@@ -2,6 +2,7 @@
 #define PORT_ENHANCEMENTS_H
 
 #ifdef __cplusplus
+#include <string> // needed for the built-in updater
 extern "C" {
 #endif
 
@@ -15,12 +16,6 @@ int port_enhancement_tap_jump_disabled(int player_index);
 // existing fighters/items/weapons flip to hitbox view immediately without a
 // match restart.
 int port_enhancement_hitbox_display_override(int current_mode);
-
-// 1P stage-clear "frozen frame" wallpaper. Default on. When off, the stage-
-// clear bonus screen reverts to the asset's stored solid-black background
-// (matches the pre-#57 behaviour). Provides an escape hatch for backends
-// where the GPU-readback bridge is unavailable or unreliable.
-int port_enhancement_stage_clear_frozen_wallpaper_enabled(void);
 
 void port_enhancement_stage_hazards_tick(void);
 
@@ -59,13 +54,23 @@ namespace ssb64 {
 namespace enhancements {
 const char* TapJumpCVarName(int playerIndex);
 const char* HitboxViewCVarName();
-const char* StageClearFrozenWallpaperCVarName();
 const char* StageHazardsDisabledCVarName();
 const char* CStickSmashCVarName(int playerIndex);
 const char* DPadJumpCVarName(int playerIndex);
 const char* AnalogRemapCVarName(int playerIndex);
 const char* AnalogRemapDeadzoneCVarName(int playerIndex);
 const char* AnalogRemapRangeCVarName(int playerIndex);
+const char* WidescreenCVarName();
+
+// Updater functions
+void CheckForUpdatesAsync(bool force = false);
+void StartGameUpdate();
+bool IsUpdateAvailable();
+bool IsDownloading();
+bool IsDownloadComplete();
+bool IsCheckingForUpdates();
+std::string GetDownloadStatus();
+std::string GetLatestVersion();
 }
 }
 #endif
