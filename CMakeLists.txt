@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
 project(ssb64 LANGUAGES C CXX)
 
 include(ExternalProject)
+include(FetchContent) # pull discord-rpc from GitHub
 
 # Version string for the built-in updater. String-compared exactly against
 # the name returned by GitHub's /tags API, so it must match the release tag
@@ -462,6 +463,23 @@ if (NOT MSVC)
 endif()
 
 ################################################################################
+# Fetch Discord RPC
+################################################################################
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    discord_rpc
+    GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
+    GIT_TAG        v3.4.0
+    PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
+)
+FetchContent_MakeAvailable(discord_rpc)
+
+# Suppress GCC 14 strict template errors in discord-rpc's bundled RapidJSON
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
+    target_compile_options(discord-rpc PRIVATE -Wno-template-body)
+endif()
+
+################################################################################
 # Executable target — port C++ code + decomp object library
 ################################################################################
 
@@ -500,15 +518,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
     ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
+    ${discord_rpc_SOURCE_DIR}/include             # Discord Rich Presence
 )
 
 ################################################################################
 # Link libultraship and Torch
 ################################################################################
 
-add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
+add_dependencies(${PROJECT_NAME} libultraship TorchExternal discord-rpc)
 add_dependencies(ssb64_game GenerateCreditsAssets)
-target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
 
 ################################################################################
 # Platform-specific settings
