@@ -8,6 +8,8 @@ Rollback still resolves prediction mismatches; pacing reduces how often **tick**
 
 For how **sim tick** relates to taskman / host frames and why skew holds interact with `gcRunAll`, see [`netplay_taskman_simtick.md`](netplay_taskman_simtick.md).
 
+For **which clocks are authoritative vs advisory** (avoid confusing `hr` with wall time, and how VI/exec-sync gates relate to `syNetInputGetTick`), see [`netplay_timebase_authority.md`](netplay_timebase_authority.md).
+
 For a **fixed-delay + strict** lab preset (before tuning skew or adaptive delay), see **Delay Sync Test Preset** in [`netplay_environment_variables.md`](netplay_environment_variables.md).
 
 For **`wire_base`**, **`wire_eff` / `required_wire`**, committed **`D`**, strict **`R`** vs starvation **`V`**, and how **`hr`** ties them together, see **Runtime concepts (tuning & under the hood)** in [`netplay_environment_variables.md`](netplay_environment_variables.md).
@@ -30,7 +32,23 @@ If **skew** (`tick - HighestRemoteTick`) exceeds the **lead cap**, `syNetInputFu
 |---------|---------|
 | **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** | Max allowed **positive** skew before holding tick advance. **`0`** disables skew pacing. **Unset** uses compile-time default (**4** — `SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT` in [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c)). Parsed once per `syNetPeerStartVSSession` (including idempotent VS activation). Values above **10000** are clamped. |
 
-**Optional debug logging:** `SSB64_NETPLAY_PACING_LOG=1` enables rate-limited lines when a hold occurs (logs effective **`lead_max`**).
+**Optional debug logging:** `SSB64_NETPLAY_PACING_LOG=1` enables rate-limited lines when a hold occurs (logs effective **`lead_max`**, and when gap EWMA is on: **`eff_lead`** + **`ewma`**).
+
+## Gap EWMA (adaptive effective lead)
+
+After the first inbound wire (`hr > 0`, same milestone as `remote_frontier_init` logging), each skew check updates an **EMA** of **`skew = sim_tick - syNetPeerDelaySimTickFromWire(hr)`** (same units as tier‑0 **`K`** skew; with **`D=0`** this matches **`tick - hr`**). When enabled, the **effective** positive skew cap is:
+
+**`eff_lead = clamp( max(min_lead, lead_max - min(cap, ema)), …, lead_max )`**
+
+so a peer that **persistently** runs a few sim ticks ahead of the mapped remote frontier tightens skew holds **without** changing committed **`D`**.
+
+| Setting | Meaning |
+|---------|---------|
+| **`SSB64_NETPLAY_SKEW_GAP_EWMA_PACING`** | **`1`**: enable EMA-based tightening. **`0`** / unset: off (stock skew cap only). Refreshed each **`syNetPeerStartVSSession`** (idempotent re-entry too). |
+| **`SSB64_NETPLAY_SKEW_GAP_EWMA_CAP_TICKS`** | Max ticks subtracted from **`lead_max`** (default **4**, clamp **1…32**). |
+| **`SSB64_NETPLAY_SKEW_GAP_EWMA_MIN_LEAD_TICKS`** | Floor for **`eff_lead`** when **`lead_max > 0`** (default **1**, clamp **0…32**). |
+
+EMA update: **`ema += (skew - ema) / 8`**, clamped to **`0…48`**. While **`hr == 0`**, the estimate is not updated and **`eff_lead = lead_max`**.
 
 **Lag side (`skew << 0`)**
 
@@ -75,6 +93,9 @@ If tick does not advance for several controller passes, `syNetPeerUpdate` may em
 | Variable | Role |
 |----------|------|
 | `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS` | Positive skew lead cap before suppressing full `scVSBattleFuncUpdate` (see Skew hold section). |
+| `SSB64_NETPLAY_SKEW_GAP_EWMA_PACING` | **`1`**: tighten effective lead from EMA of `sim - DelaySimTickFromWire(hr)` after `hr > 0` (see **Gap EWMA**). |
+| `SSB64_NETPLAY_SKEW_GAP_EWMA_CAP_TICKS` | Max subtraction from `lead_max` (default **4**). |
+| `SSB64_NETPLAY_SKEW_GAP_EWMA_MIN_LEAD_TICKS` | Floor for effective lead (default **1**). |
 | `SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS` | When **> 0**, catch-up behind `hr` (extra gate pump + relax strict stall-until-remote for that read). See **Experimental catch-up behind** above. |
 | `SSB64_NETPLAY_SKEW_BEHIND_LOG` | Log `catch_up_behind` when catch-up triggers (rate-limited). |
 | `SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM` | Decouple host refresh rate from sim stepping (`port/gameloop.cpp`). |
@@ -180,7 +201,7 @@ Use **short** matches first; watch for stall storms.
 
 When skew pacing **suppresses `scene_update()`**, taskman still runs **`scVSBattleFuncUpdateSkewPacingNetSlice`** ([`port/net/sc/sccommon/scvsbattle.c`](../port/net/sc/sccommon/scvsbattle.c)): **`syNetPeerUpdateBattleGate`** + **`syNetPeerUpdate`** (ingress was already pumped in **`syNetInputFuncRead`**). This omits **`ifCommonBattleUpdateInterfaceAll`** (**`gcRunAll`**), **`syNetReplayUpdate`**, and **`syNetRollbackAfterBattleUpdate`** — no sim step completed for that task iteration, so no snapshot.
 
-**Barrier phase alignment:** When **`syNetPeerReleaseBattleBarrier`** runs on the VS battle scene, **`port_reset_vs_decouple_pacing_for_net_barrier`** ([`port/gameloop.cpp`](../port/gameloop.cpp)) still re-latches decouple sim stepping (**`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`**) from wall-clock “now” on the first post-go frames, plus **`syNetTickGridLockOnBarrierReleased`**, and clears the **running clock** ring for post-go drift samples. **`dSYTaskman*`** and **`port_reset_push_frame_count_for_net_barrier`** no longer reset there (peers could release the barrier on different local frames); VS **`syTaskmanLoadScene`** zeros taskman counters and resets push-frame when **`scene_curr == nSCKindVSBattle`** so the epoch matches local scene load.
+**Barrier phase alignment:** When **`syNetPeerReleaseBattleBarrier`** runs on the VS battle scene, **`port_reset_vs_decouple_pacing_for_net_barrier`** ([`port/gameloop.cpp`](../port/gameloop.cpp)) still re-latches decouple sim stepping (**`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`**) from wall-clock “now” on the first post-go frames, plus **`syNetTickGridLockOnBarrierReleased`**. **`dSYTaskman*`** and **`port_reset_push_frame_count_for_net_barrier`** no longer reset there (peers could release the barrier on different local frames); VS **`syTaskmanLoadScene`** zeros taskman counters and resets push-frame when **`scene_curr == nSCKindVSBattle`** so the epoch matches local scene load.
 
 **Clock barrier driver:** While the battle barrier is enabled and not released, **`syNetPeerUpdateBattleGate`** advances **`syNetPeerUpdateStartBarrier`** (BATTLE_READY, TIME_PING/PONG NTP loop, **`BATTLE_START_TIME`** deadline) after ingress and wall-timeout polling so clock sync cannot stall waiting only on **`syNetPeerUpdate`**.
 
