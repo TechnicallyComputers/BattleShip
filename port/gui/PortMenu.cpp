@@ -8,7 +8,6 @@
 #include "PortMenu.h"
 
 #include "Compat.h"
-#include "../bridge/framebuffer_capture.h"
 #include "../enhancements/enhancements.h"
 
 #include <fast/backends/gfx_rendering_api.h>
@@ -51,6 +50,26 @@ static const std::map<int32_t, const char*> kTextureFilteringMap = {
     { Fast::FILTER_THREE_POINT, "Three-Point" },
     { Fast::FILTER_LINEAR, "Linear" },
     { Fast::FILTER_NONE, "None" },
+};
+
+// Mirrors the LowResMode switch in libultraship Gui::CalculateGameViewport /
+// Gui::DrawGame. 0 keeps the framebuffer at the window resolution; 1 forces a
+// 320x240 4:3 framebuffer centered with side strips; 2/3 keep the window's
+// aspect but lock vertical pixel count.
+// Keys 0..3 hand off to libultraship's gLowResMode (Gui.cpp LowResMode switch);
+// keys 4..7 take the PixelPerfectMode path of gAdvancedResolution and ignore
+// gLowResMode. port.cpp's boot latch translates the pending menu value into
+// the right combination of LUS cvars so libultraship sees a stable state for
+// the whole session.
+static const std::map<int32_t, const char*> kLowResModeMap = {
+    { 0, "Off (window resolution)" },
+    { 1, "N64 (320x240, stretched 4:3)" },
+    { 2, "240p (window aspect, stretched)" },
+    { 3, "480p (window aspect, stretched)" },
+    { 4, "N64 integer-scaled (auto-fit, pixel-perfect)" },
+    { 5, "N64 integer-scaled (2x, pixel-perfect)" },
+    { 6, "N64 integer-scaled (3x, pixel-perfect)" },
+    { 7, "N64 integer-scaled (4x, pixel-perfect)" },
 };
 
 // Mirrors dbObjectDisplayMode (src/sys/develop.h). 0 disables the override and
@@ -206,11 +225,6 @@ void PortMenu::AddMenuSettings() {
         })
         .Options(ButtonOptions().Tooltip("Opens the folder that contains the save, config, and asset files."));
 
-    path.column = SECTION_COLUMN_2;
-    AddWidget(path, "About", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "BattleShip", WIDGET_TEXT);
-    AddWidget(path, "Native Smash 64 PC port powered by libultraship", WIDGET_TEXT);
-
     path.sidebarName = "Graphics";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Graphics", 2);
@@ -243,6 +257,21 @@ void PortMenu::AddMenuSettings() {
                      .IsPercentage()
                      .Min(0.5f)
                      .Max(2.0f));
+
+    AddWidget(path, "Low Resolution Mode (Needs reload)", WIDGET_CVAR_COMBOBOX)
+        .CVar("gLowResModePending")
+        .RaceDisable(false)
+        .Options(ComboboxOptions()
+                     .Tooltip("Forces the internal framebuffer to a low resolution. "
+                              "Stretched modes scale the framebuffer to fill the game viewport. "
+                              "Pixel-perfect modes render N64-native 320x240 and draw it at an integer "
+                              "factor, centred with black borders — sharper retro look, no sub-pixel blur. "
+                              "Auto-fit picks the largest factor that still fits in the window. "
+                              "Overrides Internal Resolution while active. "
+                              "Latched at startup — changes take effect on next launch (toggling mid-session "
+                              "would resize the framebuffer and race the Metal renderer).")
+                     .ComboMap(kLowResModeMap)
+                     .DefaultIndex(0));
 
 #ifndef __WIIU__
     AddWidget(path, "Anti-aliasing (MSAA)", WIDGET_CVAR_SLIDER_INT)
@@ -289,27 +318,22 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(ComboboxOptions().Tooltip("Sets the active texture filtering mode.").ComboMap(kTextureFilteringMap));
 
+    AddWidget(path, "Widescreen (Needs reload)", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::WidescreenCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip(
+                         "Renders battle scenes with a wider field of view to fill widescreen "
+                         "windows. Title screen, menus, and intros stretch to fill the window "
+                         "(no widescreen art). Some stages may show authored background edges "
+                         "that were never visible in 4:3. Experimental — restart required for "
+                         "the toggle to take effect.")
+                     .DefaultValue(true));
+
     path.sidebarName = "Gameplay";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Gameplay", 1);
 
-    AddWidget(path, "1P Stage Clear: Frozen Frame Background", WIDGET_CVAR_CHECKBOX)
-        .CVar(enhancements::StageClearFrozenWallpaperCVarName())
-        .RaceDisable(false)
-        .Callback([](WidgetInfo&) {
-            // When this flips on we need LUS to start rendering off-screen so
-            // mGameFb is populated by the time the next stage-clear scene
-            // transition fires. When it flips off we drop the per-frame blit.
-            port_capture_set_force_render_to_fb(
-                port_enhancement_stage_clear_frozen_wallpaper_enabled());
-        })
-        .Options(CheckboxOptions().Tooltip(
-            "On real hardware the 1P stage-clear bonus screen freezes the last gameplay frame "
-            "as the background. The port reproduces this via a GPU readback when the scene "
-            "loads. While enabled, the renderer draws each frame to an off-screen buffer "
-            "(sub-millisecond cost) so the prior gameplay frame is preserved across the "
-            "scene transition. Disable to revert to a solid black background.")
-                     .DefaultValue(true));
     AddWidget(path, "Disable Stage Hazards", WIDGET_CVAR_CHECKBOX)
         .CVar(enhancements::StageHazardsDisabledCVarName())
         .RaceDisable(false)
@@ -484,12 +508,85 @@ void PortMenu::AddMenuAssets() {
 void PortMenu::AddMenuAbout() {
     AddMenuEntry("About", CVAR_SETTING("Menu.AboutSidebarSection"));
 
+    // revamped credits menu
     WidgetPath path = { "About", "Build", SECTION_COLUMN_1 };
     AddSidebarEntry("About", "Build", 1);
-    AddWidget(path, "Build", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "About", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "BattleShip", WIDGET_TEXT);
+    AddWidget(path, "Native Smash 64 PC port powered by libultraship", WIDGET_TEXT);
     AddWidget(path, "Built from the ssb-decomp-re decompilation", WIDGET_TEXT);
-    AddWidget(path, "Powered by libultraship", WIDGET_TEXT);
+
+    AddWidget(path, "Credits", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "JRickey: Lead Developer", WIDGET_TEXT);
+    AddWidget(path, "Jameriquiah: Developer", WIDGET_TEXT);
+    AddWidget(path, "the-outcaster: Developer", WIDGET_TEXT);
+    AddWidget(path, "TechnicallyComputers and NyxTheShield: Netcode Developers", WIDGET_TEXT);
+    AddWidget(path, "VetriTheRetri: Former Decompilation Lead", WIDGET_TEXT);
+    AddWidget(path, "MarioReincarnate: Decompilation Lead", WIDGET_TEXT);
+    AddWidget(path, "Krix08: Playtesting", WIDGET_TEXT);
+    AddWidget(path, "Bleee: Playtesting", WIDGET_TEXT);
+    AddWidget(path, "Fray: Nrage Control Advising", WIDGET_TEXT);
+    AddWidget(path, "ElBateSoli: Raphnet Playtesting", WIDGET_TEXT);
+
+    // BUILT-IN UPDATER
+    // The background check still fires when the menu loads
+    ssb64::enhancements::CheckForUpdatesAsync(false);
+
+    AddWidget(path, "Updates", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Version: " + std::string(BATTLESHIP_CURRENT_VERSION), WIDGET_TEXT);
+
+    // 1. "Checking for updates..." Text
+    AddWidget(path, "Checking for updates...", WIDGET_TEXT)
+    .PreFunc([](WidgetInfo& info) {
+        info.isHidden = !ssb64::enhancements::IsCheckingForUpdates();
+    });
+
+    // 2. "Download Update" Button
+    AddWidget(path, "Download Update", WIDGET_BUTTON)
+    .RaceDisable(false)
+    .PreFunc([](WidgetInfo& info) {
+        info.isHidden = ssb64::enhancements::IsCheckingForUpdates() ||
+        ssb64::enhancements::IsDownloading() ||
+        ssb64::enhancements::IsDownloadComplete() ||
+        !ssb64::enhancements::IsUpdateAvailable();
+
+        if (!info.isHidden) {
+            info.name = "Download Update: " + ssb64::enhancements::GetLatestVersion();
+        }
+    })
+    .Callback([](WidgetInfo&) {
+        ssb64::enhancements::StartGameUpdate();
+    });
+
+    // 3. "Downloading... XX%" Text (Also handles the "Complete" text)
+    AddWidget(path, "Download Status", WIDGET_TEXT)
+    .PreFunc([](WidgetInfo& info) {
+        info.isHidden = !ssb64::enhancements::IsDownloading() && !ssb64::enhancements::IsDownloadComplete();
+        if (!info.isHidden) {
+            // Pipe the curl progress bar or completion string straight to the UI
+            info.name = ssb64::enhancements::GetDownloadStatus();
+        }
+    });
+
+    // 4. "Up to date" Text
+    AddWidget(path, "Up to date", WIDGET_TEXT)
+    .PreFunc([](WidgetInfo& info) {
+        info.isHidden = ssb64::enhancements::IsCheckingForUpdates() || ssb64::enhancements::IsUpdateAvailable();
+    });
+
+    // 5. "Check for Updates" Manual Button
+    AddWidget(path, "Check for Updates", WIDGET_BUTTON)
+    .RaceDisable(false)
+    .PreFunc([](WidgetInfo& info) {
+        // Hide this button while checking or downloading so they can't spam it
+        info.isHidden = ssb64::enhancements::IsCheckingForUpdates() ||
+        ssb64::enhancements::IsDownloading() ||
+        ssb64::enhancements::IsDownloadComplete();
+    })
+    .Callback([](WidgetInfo&) {
+        // Pass true to bypass the single-session lock
+        ssb64::enhancements::CheckForUpdatesAsync(true);
+    });
 }
 
 void PortMenu::AddMenuElements() {

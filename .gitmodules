@@ -10,6 +10,3 @@
 	path = decomp
 	url = https://github.com/TechnicallyComputers/ssb-decomp-re.git
 	branch = port-patches
-[submodule "Battle-ShipYard"]
-	path = Battle-ShipYard
-	url = https://github.com/TechnicallyComputers/Battle-ShipYard.git
