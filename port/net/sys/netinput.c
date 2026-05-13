@@ -124,6 +124,7 @@ void syNetInputAdvanceAuthoritativeSimTick(void)
 #ifdef PORT
 static u64 sSYNetInputAdmissionP;
 static u64 sSYNetInputAdmissionE;
+static u64 sSYNetInputAdmissionW;
 static u64 sSYNetInputAdmissionS;
 static u64 sSYNetInputAdmissionK;
 static u64 sSYNetInputAdmissionR;
@@ -212,6 +213,8 @@ static void syNetInputLoadExecutionDelayAndPredictionFromEnv(void)
 	 * Strict extra slack (`wire_cap = sim + D + slack`): **only** `SSB64_NETPLAY_STRICT_SLACK_FRAMES` (legacy aliases).
 	 * Match-linked `SSB64_NETPLAY_MATCH_INPUT_DELAY` sets committed wire delay `D` in netpeer but does **not** copy
 	 * into `g_NetInputDelayFrames` here — tune slack independently from match delay.
+	 * When match delay is **unset**, netpeer enforces online **minimum `D` = 1** unless `SSB64_NETPLAY_ALLOW_INPUT_DELAY_ZERO=1`;
+	 * explicit **`MATCH_INPUT_DELAY=0`** still allows **`D=0`**.
 	 */
 	g_NetInputDelayFrames = 0;
 	e = getenv("SSB64_NETPLAY_STRICT_SLACK_FRAMES");
@@ -269,6 +272,7 @@ static void syNetInputResetAdmissionStatsInternal(void)
 {
 	sSYNetInputAdmissionP = 0ULL;
 	sSYNetInputAdmissionE = 0ULL;
+	sSYNetInputAdmissionW = 0ULL;
 	sSYNetInputAdmissionS = 0ULL;
 	sSYNetInputAdmissionK = 0ULL;
 	sSYNetInputAdmissionR = 0ULL;
@@ -292,6 +296,9 @@ static void syNetInputAdmissionBump(char path)
 	case 'E':
 		sSYNetInputAdmissionE++;
 		break;
+	case 'W':
+		sSYNetInputAdmissionW++;
+		break;
 	case 'S':
 		sSYNetInputAdmissionS++;
 		break;
@@ -312,7 +319,8 @@ void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after
 	u64 tot;
 	double dtot;
 
-	tot = sSYNetInputAdmissionP + sSYNetInputAdmissionE + sSYNetInputAdmissionS + sSYNetInputAdmissionK + sSYNetInputAdmissionR;
+	tot = sSYNetInputAdmissionP + sSYNetInputAdmissionE + sSYNetInputAdmissionW + sSYNetInputAdmissionS +
+	      sSYNetInputAdmissionK + sSYNetInputAdmissionR;
 	if (tot == 0ULL)
 	{
 		if (reset_counts_after != FALSE)
@@ -323,16 +331,18 @@ void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after
 	}
 	dtot = (double)tot;
 	port_log(
-	    "SSB64 NetInput: admission_summary tag=%s P=%llu E=%llu S=%llu K=%llu R=%llu total=%llu pct_P=%.2f pct_E=%.2f pct_S=%.2f pct_K=%.2f pct_R=%.2f\n",
+	    "SSB64 NetInput: admission_summary tag=%s P=%llu E=%llu W=%llu S=%llu K=%llu R=%llu total=%llu pct_P=%.2f pct_E=%.2f pct_W=%.2f pct_S=%.2f pct_K=%.2f pct_R=%.2f\n",
 	    (tag != NULL) ? tag : "?",
 	    (unsigned long long)sSYNetInputAdmissionP,
 	    (unsigned long long)sSYNetInputAdmissionE,
+	    (unsigned long long)sSYNetInputAdmissionW,
 	    (unsigned long long)sSYNetInputAdmissionS,
 	    (unsigned long long)sSYNetInputAdmissionK,
 	    (unsigned long long)sSYNetInputAdmissionR,
 	    (unsigned long long)tot,
 	    100.0 * (double)sSYNetInputAdmissionP / dtot,
 	    100.0 * (double)sSYNetInputAdmissionE / dtot,
+	    100.0 * (double)sSYNetInputAdmissionW / dtot,
 	    100.0 * (double)sSYNetInputAdmissionS / dtot,
 	    100.0 * (double)sSYNetInputAdmissionK / dtot,
 	    100.0 * (double)sSYNetInputAdmissionR / dtot);
@@ -706,19 +716,17 @@ void syNetInputMakePredictedFrame(s32 player, u32 tick, SYNetInputFrame *out_fra
 /*
  * Remote ingress stores `SYNetInputFrame.tick` as the **wire** label (`sim + committed_input_delay`, see
  * `syNetPeerGatherHistoryBundle`). Published history and rollback use **sim** tick as the frame key; map sim→wire for ring
- * lookup, then normalize `out_frame->tick` to `sim_tick` on success.
+ * lookup through `syNetPeerDelayWireLookupTickFromSim` (bias-aware for receive-side admission), then normalize
+ * `out_frame->tick` to `sim_tick` on success.
  */
 #if defined(PORT)
 static u32 syNetInputRemoteHistoryWireLookupTick(u32 sim_tick)
 {
-	u32 ring_tick;
-	u32 d;
-
 	if (syNetPeerIsVSSessionActive() == FALSE)
 	{
 		return sim_tick;
 	}
-	return syNetPeerDelayWireTickFromSim(sim_tick);
+	return syNetPeerDelayWireLookupTickFromSim(sim_tick);
 }
 #else
 static u32 syNetInputRemoteHistoryWireLookupTick(u32 sim_tick)
@@ -2001,6 +2009,22 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			out->allow_full_input_publish = FALSE;
 			out->allow_battle_sim_step = FALSE;
 			out->admission_letter = 'E';
+			return;
+		}
+#if defined(PORT) && !defined(_WIN32)
+		if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'E';
+			return;
+		}
+#endif
+		if (syNetPeerIsClockReadyForSimTick(tick) == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'W';
 		}
 		return;
 	}
@@ -2015,12 +2039,35 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			out->allow_full_input_publish = FALSE;
 			out->allow_battle_sim_step = FALSE;
 			out->admission_letter = 'E';
+			return;
+		}
+#if defined(PORT) && !defined(_WIN32)
+		if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'E';
+			return;
+		}
+#endif
+		if (syNetPeerIsClockReadyForSimTick(tick) == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->admission_letter = 'W';
 		}
 		return;
 	}
 	/* nSYNetTickCommitPhase_FuncReadWireAdmission */
 	if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
 	{
+		return;
+	}
+	if (syNetPeerIsClockReadyForSimTick(tick) == FALSE)
+	{
+		out->allow_full_input_publish = FALSE;
+		out->allow_battle_sim_step = FALSE;
+		out->admission_letter = 'W';
 		return;
 	}
 	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
@@ -2186,11 +2233,12 @@ void syNetInputFuncRead(void)
 			syNetPeerUpdateBattleGate();
 			tick = syNetInputGetTick();
 			syNetTickCommitEvaluate(tick, nSYNetTickCommitPhase_FuncReadExecGate, &tcv);
-			if ((tcv.allow_full_input_publish == FALSE) && (tcv.admission_letter == 'E'))
+			if ((tcv.allow_full_input_publish == FALSE) &&
+			    ((tcv.admission_letter == 'E') || (tcv.admission_letter == 'W')))
 			{
 				syNetTickCommitStoreFuncReadCache(&tcv, tick);
-				syNetInputAdmissionBump('E');
-				syNetInputMaybeLogFrameCommitDiag(tick, 'E', FALSE, FALSE);
+				syNetInputAdmissionBump(tcv.admission_letter);
+				syNetInputMaybeLogFrameCommitDiag(tick, tcv.admission_letter, FALSE, FALSE);
 				/*
 				 * Exec-hold must still pump the peer loop so INPUT_BIND / BATTLE_EXEC_SYNC can complete; battle
 				 * update may not run this task iteration (decouple suppress, or early return on same verdict).
