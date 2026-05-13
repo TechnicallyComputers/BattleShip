@@ -13,8 +13,7 @@
  *   2) Ordered sync pipeline (see `syNetPeerGetSyncPipelinePhase`): UDP link → bootstrap → **clock barrier**
  *      (BATTLE_READY + TIME_PING/TIME_PONG NTP samples + `BATTLE_START_TIME` deadline; advanced from
  *      `syNetPeerUpdateBattleGate` via `syNetPeerUpdateStartBarrier`) → optional strict **INPUT_BIND** → host-led
- *      **BATTLE_EXEC_SYNC** → `syNetPeerCheckBattleExecutionReady` true → **Running** (steady INPUT + optional
- *      rate-limited running clock sync on Linux UDP).
+ *      **BATTLE_EXEC_SYNC** → `syNetPeerCheckBattleExecutionReady` true → **Running** (steady INPUT).
  *      Optional `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1` additionally requires `syNetTickGridLockIsLocked()` for guests
  *      until tick-grid calibration completes.
  *      Taskman + PortPushFrame counters resync at barrier release.
@@ -42,8 +41,15 @@ extern void syNetPeerInitDebugEnv(void);
 extern void syNetPeerStartVSSession(void);
 /* FALSE while VS gameplay must remain frozen waiting on barrier handshake or rollback warmup gate inside peer. */
 extern sb32 syNetPeerCheckBattleExecutionReady(void);
+/* When SSB64_NETPLAY_BOOTSTRAP_INGRESS_SYMMETRY is set (Linux UDP), require outbound INPUT + inbound hr before first sim publish (see docs/netplay_timebase_authority.md). */
+extern sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void);
 /* Alias semantic: identical to execution-ready for legacy callsites verifying barrier release semantics. */
 extern sb32 syNetPeerCheckStartBarrierReleased(void);
+/*
+ * Hard lockstep clock gate (running VS): TRUE only when wall-clock schedule authorizes executing `sim_tick`.
+ * Returns TRUE outside active VS / non-running phases so menus and non-netplay scenes are unaffected.
+ */
+extern sb32 syNetPeerIsClockReadyForSimTick(u32 sim_tick);
 /*
  * Ingress + barrier driver invoked from VS scenes before input publish.
  * Receives queued packets, emits BATTLE_READY, advances clock-aligned barrier bookkeeping, retries INPUT_BIND.
@@ -121,6 +127,11 @@ extern u32 syNetPeerGetCommittedInputDelay(void);
 extern u32 syNetPeerGetInputDelay(void);
 /* Authoritative wire index: `sim_tick + committed_delay` (saturating add). Inverse clamps to 0. */
 extern u32 syNetPeerDelayWireTickFromSim(u32 sim_tick);
+/*
+ * Receive-side lookup wire index for strict admission / remote ring reads.
+ * In VS, this applies bounded admission bias to sim->wire indexing; outside VS it matches `sim_tick + D`.
+ */
+extern u32 syNetPeerDelayWireLookupTickFromSim(u32 sim_tick);
 extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
 /* `sim_tick + D` with saturating add (base strict frontier; no extra slack). */
 extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);
@@ -168,8 +179,10 @@ extern sb32 syNetPeerMatchDelayStarvationUpdateAndShouldHold(u32 sim_tick, u32 r
 #endif
 #ifdef PORT
 /*
- * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads `HighestRemoteTick` by
- * more than the configured lead cap (`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`, default 4 — see netpeer.c). See docs/netplay_pacing.md.
+ * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads the
+ * remote sim frontier (`DelaySimTickFromWire(hr)`, `hr = HighestRemoteTick`) by more than the configured lead cap
+ * (`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`, default 4). Optional `SSB64_NETPLAY_SKEW_GAP_EWMA_PACING` tightens the effective cap from a
+ * per-session EMA of that gap after `hr > 0`. See docs/netplay_pacing.md.
  */
 extern sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
 extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);

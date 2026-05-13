@@ -146,9 +146,9 @@ extern sb32 syNetInputStrictInputContractEnabled(void);
  */
 typedef enum SYNetTickCommitPhase
 {
-	nSYNetTickCommitPhase_FuncReadExecGate,     /* Exec/bind/exec-sync only (before HID latch on E-hold). */
+	nSYNetTickCommitPhase_FuncReadExecGate,     /* Exec/bind/exec-sync + hard clock gate (before HID latch on E/W-hold). */
 	nSYNetTickCommitPhase_FuncReadWireAdmission, /* Strict wire + legacy S/K; caller must have passed exec gate. */
-	nSYNetTickCommitPhase_NetSlice              /* Skew net slice: exec only (no wire re-check). */
+	nSYNetTickCommitPhase_NetSlice              /* Skew net slice: exec+clock only (no wire re-check). */
 
 } SYNetTickCommitPhase;
 
@@ -158,7 +158,7 @@ typedef struct SYNetTickCommitVerdict
 	sb32 allow_battle_sim_step;
 	sb32 suppress_scene_update;
 	sb32 strict_partial_publish_local; /* TRUE: FuncRead must partial-publish local from latch (R/V paths). */
-	char admission_letter;             /* P / E / R / V / S / K */
+	char admission_letter;             /* P / E / W / R / V / S / K */
 
 } SYNetTickCommitVerdict;
 
@@ -177,7 +177,7 @@ extern u32 syNetInputGetStrictRemoteLeadBufferTicks(void);
  * `syNetPeerUpdate` so the battle sim is not executed twice for the same tick.
  */
 extern sb32 syNetInputStrictContractSkippedPublishThisPass(void);
-/* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=!execution, S=stall, K=skew, R=strict remote missing. */
+/* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=exec hold, W=clock hold, S=stall, K=skew, R=strict remote missing. */
 extern void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after);
 #endif
 #ifdef PORT
