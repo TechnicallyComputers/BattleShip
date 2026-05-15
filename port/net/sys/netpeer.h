@@ -201,7 +201,7 @@ extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);
 extern sb32 syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
 #endif
 
-#if defined(PORT) && !defined(_WIN32)
+#if defined(PORT)
 /*
  * Netplay sync pipeline (bootstrap UDP probe → MATCH_CONFIG → barrier → INPUT_BIND → battle_exec_sync → running).
  * Use for UX/debug logging; `syNetPeerGetSyncPipelineProgress` reports coarse steps (UDP rounds count precisely).
@@ -235,7 +235,7 @@ extern void syNetPeerRefreshCachedNetplayEnvForNewMatch(void);
 extern sb32 syNetPeerGetMergedMinConfirmedSimTick(s32 *out_min_tick);
 #endif
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 /* Automatch UX wants HTTPS bootstrap to stall scene transitions until metadata is intentionally applied. */
 extern sb32 gSYNetPeerSuppressBootstrapSceneAdvance;

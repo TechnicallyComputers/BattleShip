@@ -4,8 +4,13 @@
 
 #include "port_log.h"
 
-#if !defined(_WIN32)
+#include <stdlib.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <time.h>
+#endif
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -24,6 +29,9 @@ static u32 s_cal_budget_ms;
 
 static u64 syNetPhaseNowUnixMs(void)
 {
+#if defined(_WIN32)
+	return (u64)GetTickCount64();
+#else
 	struct timespec ts;
 
 	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
@@ -31,6 +39,7 @@ static u64 syNetPhaseNowUnixMs(void)
 		return 0ULL;
 	}
 	return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000L);
+#endif
 }
 
 void syNetPhaseReset(void)
@@ -166,47 +175,3 @@ void syNetPhaseEnterRunning(void)
 	s_cal_budget_ms = 0U;
 	s_cal_start_unix_ms = 0ULL;
 }
-
-#else /* _WIN32 */
-
-void syNetPhaseReset(void)
-{
-}
-
-void syNetPhaseOnVSSessionStart(sb32 barrier_enabled)
-{
-	(void)barrier_enabled;
-}
-
-void syNetPhaseOnBattleBarrierReleased(void)
-{
-}
-
-void syNetPhaseBeginOptionalWallCalibrationFromRunning(void)
-{
-}
-
-void syNetPhaseTickWallClock(void)
-{
-}
-
-sb32 syNetPhaseIsRunning(void)
-{
-	return TRUE;
-}
-
-sb32 syNetPhaseIsCalibrating(void)
-{
-	return FALSE;
-}
-
-sb32 syNetPhaseAllowsTickGridFeedDeviation(void)
-{
-	return FALSE;
-}
-
-void syNetPhaseEnterRunning(void)
-{
-}
-
-#endif /* _WIN32 */
