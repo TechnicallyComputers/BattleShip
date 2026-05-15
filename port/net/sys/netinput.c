@@ -7,9 +7,9 @@
  * resolve/publish so sim globals are never read for gameplay between raw HID and publish. At most one HID snapshot is taken per
  * `sSYNetInputTick` (taskman may call FuncRead several times while skew pacing holds sim without advancing the tick).
  *
- * GGPO-shaped contract: live VS feeds resolve from raw HID (add_local_input) then publishes — battle must use published frames.
- * During rollback resim, local HID is ignored; `syNetInputMakeLocalFrame` replays from published history for that tick (like
- * ggpo_synchronize_inputs replacing local samples during rewind).
+ * GGPO-shaped contract: live phase-locked VS samples raw HID at sim `t` into a local delay ring owned by `t + D`; battle
+ * resolves local slots from that owned sim row, so committed `D` is felt locally and sent to the peer ahead of use. During
+ * rollback resim, local HID is ignored; `syNetInputMakeLocalFrame` replays from published history for that tick.
  */
 
 #include <sys/controller.h>
@@ -28,6 +28,7 @@ extern int atoi(const char *s);
 extern void port_log(const char *fmt, ...);
 static sb32 sSYNetInputPredictNeutral;
 static SYController sSYNetInputHardwareLatch[MAXCONTROLLERS];
+static SYNetInputFrame sSYNetInputLocalDelayHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 /* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
 static u32 sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
 static sb32 sSYNetInputSuppressSceneUpdateAfterRead;
@@ -455,6 +456,92 @@ sb32 syNetInputGetStoredFrame(SYNetInputFrame history[][SYNETINPUT_HISTORY_LENGT
 	return TRUE;
 }
 
+#ifdef PORT
+static sb32 syNetInputIsLocalDelaySlot(s32 player)
+{
+	s32 local_slot;
+	s32 extra_slot;
+
+	if (syNetInputCheckPlayer(player) == FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return FALSE;
+	}
+	local_slot = syNetPeerGetLocalSimSlot();
+	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
+	return ((player == local_slot) || (player == extra_slot)) ? TRUE : FALSE;
+}
+
+static u32 syNetInputLocalDelayOwnerTick(u32 sample_tick)
+{
+	u32 d;
+
+	d = syNetPeerGetCommittedInputDelay();
+	if ((~(u32)0 - sample_tick) < d)
+	{
+		return ~(u32)0;
+	}
+	return sample_tick + d;
+}
+
+static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
+{
+	SYNetInputFrame frame;
+	SYController *controller;
+	s32 hw_player;
+
+	if (syNetInputIsLocalDelaySlot(player) == FALSE)
+	{
+		return;
+	}
+	hw_player = syNetPeerResolveLocalHardwareDevice(player);
+	if (syNetInputCheckPlayer(hw_player) == FALSE)
+	{
+		return;
+	}
+	controller = &sSYNetInputHardwareLatch[hw_player];
+	syNetInputMakeFrame(&frame, owner_tick, controller->button_hold, controller->stick_range.x, controller->stick_range.y,
+	                   nSYNetInputSourceLocal, FALSE);
+	syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
+}
+
+static void syNetInputStageLocalDelayFramesFromLatch(u32 sample_tick)
+{
+	u32 owner_tick;
+	s32 local_slot;
+	s32 extra_slot;
+
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (syNetInputAuthoritativeWireContractEnabled() == FALSE)
+	{
+		return;
+	}
+	owner_tick = syNetInputLocalDelayOwnerTick(sample_tick);
+	local_slot = syNetPeerGetLocalSimSlot();
+	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
+	syNetInputStoreLocalDelayFrameFromLatch(local_slot, owner_tick);
+	if (extra_slot != local_slot)
+	{
+		syNetInputStoreLocalDelayFrameFromLatch(extra_slot, owner_tick);
+	}
+}
+
+sb32 syNetInputGetLocalDelayedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	if (syNetInputIsLocalDelaySlot(player) == FALSE)
+	{
+		return FALSE;
+	}
+	return syNetInputGetStoredFrame(sSYNetInputLocalDelayHistory, player, tick, out_frame);
+}
+#endif
+
 void syNetInputReset(void)
 {
 	s32 player;
@@ -516,6 +603,9 @@ void syNetInputReset(void)
 			syNetInputClearFrame(&sSYNetInputHistory[player][i]);
 			syNetInputClearFrame(&sSYNetInputRemoteHistory[player][i]);
 			syNetInputClearFrame(&sSYNetInputSavedHistory[player][i]);
+#ifdef PORT
+			syNetInputClearFrame(&sSYNetInputLocalDelayHistory[player][i]);
+#endif
 		}
 		for (i = 0; i < SYNETINPUT_REPLAY_MAX_FRAMES; i++)
 		{
@@ -593,7 +683,7 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 
 	if (syNetPeerIsOnlineP2PHardwareDecoupleActive() != FALSE)
 	{
-		if (player != syNetPeerGetLocalSimSlot())
+		if ((player != syNetPeerGetLocalSimSlot()) && (player != syNetPeerGetExtraLocalSenderSimSlot()))
 		{
 			syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
 			return;
@@ -607,6 +697,17 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 		if ((syNetInputGetHistoryFrame(player, tick, &hist) != FALSE) && (hist.tick == tick))
 		{
 			*out_frame = hist;
+			out_frame->source = nSYNetInputSourceLocal;
+			out_frame->is_predicted = FALSE;
+			return;
+		}
+		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
+		return;
+	}
+	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (syNetInputIsLocalDelaySlot(player) != FALSE))
+	{
+		if (syNetInputGetLocalDelayedFrame(player, tick, out_frame) != FALSE)
+		{
 			out_frame->source = nSYNetInputSourceLocal;
 			out_frame->is_predicted = FALSE;
 			return;
@@ -2023,6 +2124,7 @@ void syNetInputFuncRead(void)
 		{
 			syControllerFuncRead();
 			memcpy(sSYNetInputHardwareLatch, gSYControllerDevices, sizeof(SYController) * (size_t)MAXCONTROLLERS);
+			syNetInputStageLocalDelayFramesFromLatch(tick);
 			syNetInputNeutralizeAllControllerDevices();
 			sSYNetInputPortHwLatchTick = tick;
 		}

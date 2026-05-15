@@ -6,8 +6,10 @@
  *
  * Pipeline (normal VS): scenes call `syNetInputFuncRead` once per sim step. On PORT it snapshots HID into an internal
  * latch (once per `sSYNetInputTick`; **before** stall-until-remote / skew pacing so the sample is keyed to the local sim
- * tick, not wall/network timing) and clears `gSYControllerDevices[]` before resolve. It resolves each player’s frame for the current tick
- * (local HID from the latch, replay, remote-confirmed ring, or prediction), publishes into `gSYControllerDevices[]`,
+ * tick, not wall/network timing) and clears `gSYControllerDevices[]` before resolve. In phase-locked VS, local HID sampled
+ * at sim `t` is staged as the owned local row for `t + D`; resolve consumes the staged row for the current sim tick
+ * (neutral until the buffer is primed). Replay, remote-confirmed rings, and prediction fill the other sources, then publish
+ * into `gSYControllerDevices[]`,
  * snapshots `SYNETINPUT_HISTORY_LENGTH` rings. `sSYNetInputTick` advances only after a full `scVSBattleFuncUpdate`
  * (`syNetInputAdvanceAuthoritativeSimTick`). Active UDP VS (PORT): `syNetTickCommitEvaluate` unifies exec-ready
  * (`syNetPeerCheckBattleExecutionReady`) with wire/stall/skew admission so FuncRead and battle sim agree on tick commit.
@@ -232,6 +234,8 @@ extern sb32 syNetInputGetReplayMetadata(SYNetInputReplayMetadata *out_metadata);
 extern void syNetInputFuncRead(void); /* HID latch → synchronize all slots → publish → replay capture (tick++ is post-sim). */
 #ifdef PORT
 extern void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+/* Live phase-locked VS: local hardware sampled at sim `t` is owned by future sim `t + D`; senders expose that ring here. */
+extern sb32 syNetInputGetLocalDelayedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
 /*
  * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`
