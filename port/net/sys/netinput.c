@@ -1977,7 +1977,7 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			out->admission_letter = 'E';
 			return;
 		}
-#if defined(PORT) && !defined(_WIN32)
+#ifdef PORT
 		if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
 		{
 			out->allow_full_input_publish = FALSE;
@@ -2001,7 +2001,7 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			out->admission_letter = 'E';
 			return;
 		}
-#if defined(PORT) && !defined(_WIN32)
+#ifdef PORT
 		if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
 		{
 			out->allow_full_input_publish = FALSE;

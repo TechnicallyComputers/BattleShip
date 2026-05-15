@@ -19,9 +19,7 @@ extern void syTaskmanSetIntervals(u16 update, u16 framedraw);
 
 #ifdef PORT
 #include <stdlib.h>
-#if !defined(_WIN32)
 #include <sys/netdesyncclassifier.h>
-#endif
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -488,9 +486,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 			    h_live,
 			    slot->net_checksum_mph,
 			    m_live);
-#if !defined(_WIN32)
 			syNetDesyncClassifierOnLoadHashDrift(tick);
-#endif
 		}
 	}
 #endif
@@ -859,9 +855,7 @@ void syNetRollbackUpdate(void)
 	    frontier,
 	    (int)mismatch_player,
 	    sSYNetRollbackRollbackCount + 1);
-#if !defined(_WIN32)
 	syNetDesyncClassifierOnRollbackInputMismatch(mismatch);
-#endif
 	if ((mismatch_player >= 0) && (mismatch_player < MAXCONTROLLERS))
 	{
 		if ((syNetInputGetHistoryFrame(mismatch_player, mismatch, &mismatch_hist) != FALSE) &&
@@ -905,7 +899,6 @@ void syNetRollbackUpdate(void)
 			    (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
 			        ? "hard-abort (SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL)"
 			        : "soft (unset mask or set SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL=1 to abort)");
-#if !defined(_WIN32)
 			if (syNetPeerShouldHardAbortOnNetplayInputMismatch() != FALSE)
 			{
 				abort();
@@ -917,12 +910,6 @@ void syNetRollbackUpdate(void)
 				    "in Running)\n",
 				    (int)syNetPeerGetSyncPipelinePhase());
 			}
-#else
-			if (syNetInputGetAbortOnInputMismatchFatal() != FALSE)
-			{
-				abort();
-			}
-#endif
 		}
 #endif
 	syNetRollbackRunResim(mismatch, frontier);
