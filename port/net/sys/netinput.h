@@ -126,22 +126,16 @@ extern sb32 syNetInputGetUseInputPrediction(void);
  */
 extern int syNetInputEnvGetMatchInputDelayOrNeg1(void);
 /*
- * Authoritative wire admission (PORT): SSB64_NETPLAY_INPUT_CONTRACT 0 = legacy (exec, stall-until-remote, skew gate FuncRead).
- * 1 = delay-sync lite: same remote-ring plus effective-wire readiness as tier 2, but no match buffer-min-slack B,
- * no STRICT_REMOTE_LEAD_BUFFER_TICKS hr folding in syNetPeerIsRemoteInputReadyForSimTickEx; no delay-sync starvation V hold.
- * 2 = full strict (same as legacy SSB64_NETPLAY_STRICT_INPUT_CONTRACT=1). When INPUT_CONTRACT is unset, tier 2 if
- * STRICT_INPUT_CONTRACT is non-zero, else tier 0. Cached per match in syNetInputRefreshCachedNetplayEnvForNewMatch.
- * Tiers 1 and 2: wire-keyed admission + partial publish on miss unchanged. Exec-ready (`syNetPeerCheckBattleExecutionReady`) gates
- * FuncRead and battle/rollback together via `syNetTickCommitEvaluate` (unified tick-commit); skew/catch-up remain tiered as before.
- * Partial local publish on remote miss; prediction and stuck bypass unchanged for tier 2; tier 1 uses prediction when enabled.
+ * Authoritative wire admission (PORT): phase-locked wire admission is now the live VS path: exact `sim + D` remote-ring ownership, bounded
+ * prediction from `syNetPeerEvaluateSharedCommitStep`, and partial local publish on stalls so outbound INPUT keeps flowing.
  */
 extern int syNetInputGetInputContractTier(void);
 /* Tier >= 1: wire-keyed authoritative admission + partial publish on miss. */
 extern sb32 syNetInputAuthoritativeWireContractEnabled(void);
-/* Tier >= 2: full strict (match buffer B, lead_b, starvation V when handler enabled). */
+/* Always TRUE for live phase-locked VS. */
 extern sb32 syNetInputStrictInputContractEnabled(void);
 /*
- * Unified tick-commit (PORT VS): single admission policy for FuncRead wire/skew/stall vs battle sim / rollback scan.
+ * Unified tick-commit (PORT VS): single admission policy for FuncRead wire admission vs battle sim / rollback scan.
  * FuncRead updates the FuncRead-phase cache each VS pass; consumers use `syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate`.
  */
 typedef enum SYNetTickCommitPhase

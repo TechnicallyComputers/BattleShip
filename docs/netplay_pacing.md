@@ -1,8 +1,12 @@
 # Netplay sim pacing (skew vs `HighestRemoteTick`)
 
-## Purpose
+## Status
 
-Reduce **scheduling-induced desync** when one peer’s OS stalls, the UDP stack delivers a burst of packets, or display versus simulation cadence diverges. This layer **does not replace rollback**; it limits how far **local sim tick** (`syNetInputGetTick`) can run ahead of the highest tick label seen on inbound INPUT bundles (`sSYNetPeerHighestRemoteTick`, exposed as `syNetPeerGetHighestRemoteTick()`).
+Phase-locked VS no longer uses skew pacing as an authoritative tick-commit gate. The live commit path is described in [`netplay_phase_lock.md`](netplay_phase_lock.md): exact `sim + D` placement, bounded prediction, and stalls when the shared frontier cannot cover the tick. This document remains useful for historical context and for understanding old diagnostics such as `skew_pace_frames`.
+
+## Historical Purpose
+
+The retired hybrid layer reduced **scheduling-induced desync** when one peer’s OS stalled, the UDP stack delivered a burst of packets, or display versus simulation cadence diverged. It limited how far **local sim tick** (`syNetInputGetTick`) could run ahead of the highest tick label seen on inbound INPUT bundles (`sSYNetPeerHighestRemoteTick`, exposed as `syNetPeerGetHighestRemoteTick()`).
 
 Rollback still resolves prediction mismatches; pacing reduces how often **tick** and **ingress timelines** diverge before rollback must correct.
 

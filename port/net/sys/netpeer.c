@@ -363,6 +363,8 @@ static int sSYNetPeerBootstrapIngressSymEnv = -999;
 static sb32 sSYNetPeerBootstrapIngressWarmupOutboundSent;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedStart;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedDone;
+static u32 sSYNetPeerGlobalCommitGen;
+static int sSYNetPeerPhaseLockPredictionWindowEnv = -999;
 
 static int syNetPeerGetDelaySyncDiagLevel(void)
 {
@@ -628,10 +630,6 @@ static sb32 syNetPeerInputBindIsComplete(void);
 static void syNetPeerMaybeApplyStartupDelaySkewAlignment(void)
 {
 	u32 local_sim_tick;
-	u32 hr_wire;
-	u32 remote_sim_frontier;
-	s32 skew;
-	u32 target_delay;
 	u32 eff_tick;
 
 	if (sSYNetPeerStartupDelayAlignDone != FALSE)
@@ -651,26 +649,12 @@ static void syNetPeerMaybeApplyStartupDelaySkewAlignment(void)
 	{
 		return;
 	}
-	if (local_sim_tick < 2U)
-	{
-		if ((syNetPeerRequireInputBindStrict() != FALSE) && (syNetPeerInputBindIsComplete() == FALSE))
-		{
-			return;
-		}
-	}
-	hr_wire = sSYNetPeerHighestRemoteTick;
-	if (hr_wire == 0U)
+	if ((syNetPeerRequireInputBindStrict() != FALSE) && (syNetPeerInputBindIsComplete() == FALSE))
 	{
 		return;
 	}
-	remote_sim_frontier = syNetPeerDelaySimTickFromWire(hr_wire);
-	skew = (s32)local_sim_tick - (s32)remote_sim_frontier;
 	if (sSYNetPeerStartupMatchDelayPendingValid != FALSE)
 	{
-		if ((skew < -1) || (skew > 1))
-		{
-			return;
-		}
 		eff_tick = syNetPeerSaturatingAddU32(local_sim_tick, syNetPeerDelaySyncCommitLeadTicks());
 		sSYNetPeerDelaySyncPending = sSYNetPeerStartupMatchDelayTarget;
 		sSYNetPeerDelaySyncEffectiveTick = eff_tick;
@@ -685,42 +669,11 @@ static void syNetPeerMaybeApplyStartupDelaySkewAlignment(void)
 		}
 		syNetPeerApplyOnlineCommittedInputDelayMinToFloorAndDelay();
 		port_log(
-		    "SSB64 NetPeer: startup_delay_align matched skew=%d local_sim=%u remote_frontier=%u apply_match_D=%u eff_tick=%u\n",
-		    (int)skew, (unsigned int)local_sim_tick, (unsigned int)remote_sim_frontier,
-		    (unsigned int)sSYNetPeerStartupMatchDelayTarget, (unsigned int)eff_tick);
+		    "SSB64 NetPeer: phase_lock_startup_delay apply_match_D=%u local_sim=%u eff_tick=%u\n",
+		    (unsigned int)sSYNetPeerStartupMatchDelayTarget, (unsigned int)local_sim_tick, (unsigned int)eff_tick);
 		return;
 	}
-	if ((skew >= -1) && (skew <= 1))
-	{
-		sSYNetPeerStartupDelayAlignDone = TRUE;
-		return;
-	}
-	target_delay = sSYNetPeerInputDelay;
-	if (skew > 1)
-	{
-		target_delay = syNetPeerClampInputDelayToContract(sSYNetPeerInputDelay + (u32)(skew - 1));
-	}
-	else
-	{
-		/* One-shot startup correction only raises delay; floor invariants reject decreases. */
-		sSYNetPeerStartupDelayAlignDone = TRUE;
-		return;
-	}
-	if (target_delay == sSYNetPeerInputDelay)
-	{
-		sSYNetPeerStartupDelayAlignDone = TRUE;
-		return;
-	}
-	eff_tick = syNetPeerSaturatingAddU32(local_sim_tick, syNetPeerDelaySyncCommitLeadTicks());
-	sSYNetPeerDelaySyncPending = target_delay;
-	sSYNetPeerDelaySyncEffectiveTick = eff_tick;
-	sSYNetPeerDelaySyncPendingValid = TRUE;
-	syNetPeerSendInputDelaySyncPacket(target_delay, eff_tick);
 	sSYNetPeerStartupDelayAlignDone = TRUE;
-	port_log(
-	    "SSB64 NetPeer: startup_delay_align skew=%d local_sim=%u remote_frontier=%u prev_D=%u new_D=%u eff_tick=%u\n",
-	    (int)skew, (unsigned int)local_sim_tick, (unsigned int)remote_sim_frontier, (unsigned int)sSYNetPeerInputDelay,
-	    (unsigned int)target_delay, (unsigned int)eff_tick);
 }
 
 #if !defined(_WIN32)
@@ -2618,6 +2571,8 @@ static void syNetPeerMaybeAutoRunwayDelayBump(u32 tick_now)
 	u32 proposed;
 	u32 eff_tick;
 
+	(void)tick_now;
+	return;
 	if ((sSYNetPeerIsActive == FALSE) || (sSYNetPeerBootstrapIsHost == FALSE))
 	{
 		return;
@@ -3564,6 +3519,188 @@ sb32 syNetPeerGetMergedMinConfirmedSimTick(s32 *out_min_tick)
 	*out_min_tick = best;
 	return TRUE;
 }
+
+#if defined(PORT) && !defined(_WIN32)
+u32 syNetPeerGetPhaseLockPredictionWindowTicks(void)
+{
+	const char *e;
+	int v;
+
+	if (sSYNetPeerPhaseLockPredictionWindowEnv != -999)
+	{
+		return (u32)sSYNetPeerPhaseLockPredictionWindowEnv;
+	}
+	v = 2;
+	e = getenv("SSB64_NETPLAY_PHASE_LOCK_PREDICTION_TICKS");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	if (v > 8)
+	{
+		v = 8;
+	}
+	sSYNetPeerPhaseLockPredictionWindowEnv = v;
+	return (u32)v;
+}
+
+u32 syNetPeerGetGlobalCommitGen(void)
+{
+	return sSYNetPeerGlobalCommitGen;
+}
+
+void syNetPeerNoteSharedCommitAdvanced(u32 completed_sim_tick)
+{
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	sSYNetPeerGlobalCommitGen++;
+	if (syNetPeerTickDiagLevel() >= 1)
+	{
+		port_log("SSB64 NetPeer: phase_lock_commit gen=%u completed_sim=%u next_sim=%u hr=%u D=%u\n",
+		         (unsigned int)sSYNetPeerGlobalCommitGen,
+		         (unsigned int)completed_sim_tick,
+		         (unsigned int)syNetInputGetTick(),
+		         (unsigned int)sSYNetPeerHighestRemoteTick,
+		         (unsigned int)syNetPeerGetCommittedInputDelay());
+	}
+}
+
+static sb32 syNetPeerGetSharedConfirmedSimFrontier(u32 *out_tick)
+{
+	s32 best;
+	s32 v;
+	u32 remote_frontier;
+
+	if (out_tick == NULL)
+	{
+		return FALSE;
+	}
+	best = 0x7FFFFFFF;
+	if (sSYNetPeerHighestRemoteTick != 0U)
+	{
+		remote_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+		if ((s32)remote_frontier < best)
+		{
+			best = (s32)remote_frontier;
+		}
+	}
+	if ((sSYNetPeerLocalPlayer >= 0) && (sSYNetPeerLocalPlayer < MAXCONTROLLERS) &&
+	    (sSYNetPeerMergedConnectDisc[sSYNetPeerLocalPlayer] == 0U))
+	{
+		v = sSYNetPeerMergedConnectLastTick[sSYNetPeerLocalPlayer];
+		if ((v >= 0) && (v < best))
+		{
+			best = v;
+		}
+	}
+	if ((sSYNetPeerExtraLocalSenderSlot >= 0) && (sSYNetPeerExtraLocalSenderSlot < MAXCONTROLLERS) &&
+	    (sSYNetPeerMergedConnectDisc[sSYNetPeerExtraLocalSenderSlot] == 0U))
+	{
+		v = sSYNetPeerMergedConnectLastTick[sSYNetPeerExtraLocalSenderSlot];
+		if ((v >= 0) && (v < best))
+		{
+			best = v;
+		}
+	}
+	if (best == 0x7FFFFFFF)
+	{
+		return FALSE;
+	}
+	*out_tick = (u32)best;
+	return TRUE;
+}
+
+static sb32 syNetPeerRemoteInputsPresentForWireTick(u32 wire_tick)
+{
+	s32 i;
+	s32 n;
+	s32 slot;
+
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputHasRemoteInputForWireTick(slot, wire_tick) == FALSE)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *out)
+{
+	u32 shared_confirmed;
+	u32 prediction_window;
+	u32 required_wire;
+	sb32 have_shared_frontier;
+	sb32 ring_ready;
+
+	if (out == NULL)
+	{
+		return;
+	}
+	out->advance = TRUE;
+	out->uses_prediction = FALSE;
+	out->hold_reason = 'P';
+	out->sim_tick = sim_tick;
+	out->required_wire = syNetPeerGetBaseRequiredWireTick(sim_tick);
+	out->shared_confirmed_sim = 0U;
+	out->prediction_window = syNetPeerGetPhaseLockPredictionWindowTicks();
+	out->commit_gen = sSYNetPeerGlobalCommitGen;
+
+	if ((sSYNetPeerIsActive == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	{
+		return;
+	}
+	if (syNetPeerCheckBattleExecutionReady() == FALSE)
+	{
+		out->advance = FALSE;
+		out->hold_reason = 'E';
+		return;
+	}
+	if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
+	{
+		out->advance = FALSE;
+		out->hold_reason = 'E';
+		return;
+	}
+	required_wire = out->required_wire;
+	ring_ready = syNetPeerRemoteInputsPresentForWireTick(required_wire);
+	if (ring_ready != FALSE)
+	{
+		return;
+	}
+	prediction_window = out->prediction_window;
+	have_shared_frontier = syNetPeerGetSharedConfirmedSimFrontier(&shared_confirmed);
+	if (have_shared_frontier != FALSE)
+	{
+		out->shared_confirmed_sim = shared_confirmed;
+	}
+	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U) &&
+	    (have_shared_frontier != FALSE) &&
+	    ((u64)sim_tick <= ((u64)shared_confirmed + (u64)prediction_window)))
+	{
+		out->uses_prediction = TRUE;
+		return;
+	}
+	out->advance = FALSE;
+	out->hold_reason = 'R';
+}
+#endif
 
 static u32 syNetPeerExecSyncComputeViPhaseBucket(void)
 {
@@ -4561,6 +4698,7 @@ void syNetPeerStartVSSession(void)
 		return;
 	}
 	sSYNetPeerHighestRemoteTick = 0;
+	sSYNetPeerGlobalCommitGen = 0U;
 	sSYNetPeerPacketsSent = 0;
 	sSYNetPeerPacketsReceived = 0;
 	sSYNetPeerPacketsDropped = 0;
@@ -4826,6 +4964,10 @@ sb32 syNetPeerCheckBattleExecutionReady(void)
 		return FALSE;
 	}
 	if ((syNetPeerRequireBattleExecSync() != FALSE) && (syNetPeerBattleExecSyncIsComplete() == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetPeerBootstrapIngressSymmetrySatisfied() == FALSE)
 	{
 		return FALSE;
 	}
@@ -5515,7 +5657,7 @@ static sb32 syNetPeerBootstrapIngressSymmetryEnvEnabled(void)
 		const char *e;
 
 		e = getenv("SSB64_NETPLAY_BOOTSTRAP_INGRESS_SYMMETRY");
-		sSYNetPeerBootstrapIngressSymEnv = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+		sSYNetPeerBootstrapIngressSymEnv = ((e == NULL) || (e[0] == '\0') || (atoi(e) != 0)) ? 1 : 0;
 	}
 	return (sSYNetPeerBootstrapIngressSymEnv != 0) ? TRUE : FALSE;
 }
@@ -6610,6 +6752,7 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	syNetPeerResetMatchBufferMinSlackEnv();
 	syNetPeerResetDelaySyncCommitLeadEnv();
 	sSYNetPeerIngressDiagEnvCache = -999;
+	sSYNetPeerPhaseLockPredictionWindowEnv = -999;
 }
 #endif
 
@@ -6700,7 +6843,7 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 #endif
 
 	port_log(
-		"SSB64 NetSync: role=%s lp=%d rp=%d tick=%u hist_win=[%u,%u) all=0x%08X p0=0x%08X p1=0x%08X p2=0x%08X p3=0x%08X figh=0x%08X mph=0x%08X snd_next=%u rcv_hw=%u gap=%u dup=%u ooo=%u puck=%u pko=%u pkn=%u sent=%u recv=%u dropped=%u stg=%u hr=%u late=%u inpchk=0x%08X pkt_valid=%d rb=%u lf=%u delay=%u ring=%u rscan=%u\n",
+		"SSB64 NetSync: role=%s lp=%d rp=%d tick=%u hist_win=[%u,%u) all=0x%08X p0=0x%08X p1=0x%08X p2=0x%08X p3=0x%08X figh=0x%08X mph=0x%08X snd_next=%u rcv_hw=%u gap=%u dup=%u ooo=%u puck=%u pko=%u pkn=%u sent=%u recv=%u dropped=%u stg=%u hr=%u commit_gen=%u late=%u inpchk=0x%08X pkt_valid=%d rb=%u lf=%u delay=%u ring=%u rscan=%u\n",
 		(sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 		sSYNetPeerLocalPlayer,
 		sSYNetPeerRemotePlayer,
@@ -6727,6 +6870,7 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 		sSYNetPeerPacketsDropped,
 		sSYNetPeerFramesStaged,
 		sSYNetPeerHighestRemoteTick,
+		sSYNetPeerGlobalCommitGen,
 		sSYNetPeerLateFrames,
 		sSYNetPeerInputChecksum,
 		sSYNetPeerLastPacketTicksValid,
@@ -6861,9 +7005,9 @@ void syNetPeerLogStats(void)
 	sSYNetPeerLastLogTick = tick;
 
 	port_log(
-	    "SSB64 NetPeer: role=%s local=%d remote=%d barrier=%d execution_ready=%d tick=%u sent=%u recv=%u dropped=%u staged=%u highest_remote=%u late=%u snd_next=%u rcv_hw=%u seq_gap=%u seq_dup=%u seq_ooo=%u peer_ack=%u inpchk=0x%08X delay=%u push=%d tm_up=%u tm_fr=%u scene=%u skew_pace_frames=%u\n",
+	    "SSB64 NetPeer: role=%s local=%d remote=%d barrier=%d execution_ready=%d tick=%u commit_gen=%u sent=%u recv=%u dropped=%u staged=%u highest_remote=%u late=%u snd_next=%u rcv_hw=%u seq_gap=%u seq_dup=%u seq_ooo=%u peer_ack=%u inpchk=0x%08X delay=%u push=%d tm_up=%u tm_fr=%u scene=%u skew_pace_frames=%u\n",
 	    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client", sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer,
-	    sSYNetPeerBattleBarrierReleased, syNetPeerCheckBattleExecutionReady(), tick, sSYNetPeerPacketsSent,
+	    sSYNetPeerBattleBarrierReleased, syNetPeerCheckBattleExecutionReady(), tick, sSYNetPeerGlobalCommitGen, sSYNetPeerPacketsSent,
 	    sSYNetPeerPacketsReceived, sSYNetPeerPacketsDropped, sSYNetPeerFramesStaged, sSYNetPeerHighestRemoteTick,
 	    sSYNetPeerLateFrames, sSYNetPeerSendSeq, sSYNetPeerRecvSeqHighWater, sSYNetPeerSeqGaps,
 	    sSYNetPeerSeqDuplicates, sSYNetPeerSeqOutOfOrder, sSYNetPeerLastPeerAckTick, sSYNetPeerInputChecksum,
@@ -7792,8 +7936,7 @@ static u32 syNetPeerAdmissionAdjustedSimTickForWireLookup(u32 sim_tick)
 
 u32 syNetPeerGetEffectiveWireFrontierForAdmission(u32 sim_tick)
 {
-	return syNetPeerEffectiveWireFrontierFromHr(
-	    syNetPeerAdmissionAdjustedSimTickForWireLookup(sim_tick), syNetPeerGetHighestRemoteTick());
+	return syNetPeerGetBaseRequiredWireTick(sim_tick);
 }
 
 static u32 sSYNetPeerMatchBufferMinSlackTicksB;
@@ -8321,11 +8464,7 @@ u32 syNetPeerDelayWireTickFromSim(u32 sim_tick)
 
 u32 syNetPeerDelayWireLookupTickFromSim(u32 sim_tick)
 {
-#ifdef PORT
-	return syNetPeerGetBaseRequiredWireTick(syNetPeerAdmissionAdjustedSimTickForWireLookup(sim_tick));
-#else
 	return syNetPeerDelayWireTickFromSim(sim_tick);
-#endif
 }
 
 u32 syNetPeerDelaySimTickFromWire(u32 wire_tick)

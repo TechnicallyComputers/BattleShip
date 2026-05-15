@@ -129,7 +129,7 @@ extern u32 syNetPeerGetInputDelay(void);
 extern u32 syNetPeerDelayWireTickFromSim(u32 sim_tick);
 /*
  * Receive-side lookup wire index for strict admission / remote ring reads.
- * In VS, this applies bounded admission bias to sim->wire indexing; outside VS it matches `sim_tick + D`.
+ * Phase-locked VS keeps this as the same pure `sim_tick + D` mapping used by senders.
  */
 extern u32 syNetPeerDelayWireLookupTickFromSim(u32 sim_tick);
 extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
@@ -138,10 +138,24 @@ extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);
 /* `sim_tick + D + strict_extra_slack` with saturating add (strict-only frontier). */
 extern u32 syNetPeerGetStrictRequiredWireTick(u32 sim_tick);
 #ifdef PORT
-/*
- * Effective wire row for strict ring checks before lead-B: `min(max(sim+D, hr), sim+D+slack)`.
- * Matches `syNetPeerIsRemoteInputReadyForSimTick` after startup grace.
- */
+typedef struct SYNetPeerSharedCommitStep
+{
+	sb32 advance;
+	sb32 uses_prediction;
+	char hold_reason; /* P / E / R */
+	u32 sim_tick;
+	u32 required_wire;
+	u32 shared_confirmed_sim;
+	u32 prediction_window;
+	u32 commit_gen;
+
+} SYNetPeerSharedCommitStep;
+
+extern void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *out);
+extern void syNetPeerNoteSharedCommitAdvanced(u32 completed_sim_tick);
+extern u32 syNetPeerGetGlobalCommitGen(void);
+extern u32 syNetPeerGetPhaseLockPredictionWindowTicks(void);
+/* Phase-locked effective wire row: exact `sim_tick + D`; `hr` no longer reinterprets placement. */
 extern u32 syNetPeerGetEffectiveWireFrontierForAdmission(u32 sim_tick);
 /*
  * Match-linked delay only: buffer slack B (0 = off). When `hr > sim+D`, require `(hr - (sim+D)) >= B`;
@@ -178,24 +192,8 @@ extern u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void);
 extern sb32 syNetPeerMatchDelayStarvationUpdateAndShouldHold(u32 sim_tick, u32 required_wire, u32 hr);
 #endif
 #ifdef PORT
-/*
- * Skew pacing: returns TRUE when the following full `scVSBattleFuncUpdate` should be skipped because local sim tick leads the
- * remote sim frontier (`DelaySimTickFromWire(hr)`, `hr = HighestRemoteTick`) by more than the configured lead cap
- * (`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`, default 4). Optional `SSB64_NETPLAY_SKEW_GAP_EWMA_PACING` tightens the effective cap from a
- * per-session EMA of that gap after `hr > 0`. See docs/netplay_pacing.md.
- */
-extern sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
+/* Historical counter retained in periodic logs; phase-locked commit no longer uses skew to hold sim ticks. */
 extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);
-#if !defined(_WIN32)
-/*
- * Catch-up when **behind** the remote tick frontier: `HighestRemoteTick - local_sim_tick >= threshold`.
- * `SSB64_NETPLAY_SKEW_BEHIND_MAX_TICKS` (default **0** = off): extra `syNetPeerUpdateBattleGate` before
- * `SSB64_NETPLAY_STALL_UNTIL_REMOTE`, and bypass strict stall for that `syNetInputFuncRead` pass (experimental).
- * Optional: `SSB64_NETPLAY_SKEW_BEHIND_LOG=1` for rate-limited `catch_up_behind` lines. See docs/netplay_pacing.md.
- */
-extern sb32 syNetPeerRunCatchUpBehindBeforeInputStall(u32 local_sim_tick);
-extern sb32 syNetPeerShouldRelaxStallUntilRemoteForCatchUp(u32 local_sim_tick);
-#endif
 /*
  * When tick-grid exec gate is enabled (SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1) and the grid is locked, PortPushFrame
  * skips decouple deadline holds for sim-tick indexing (Linux UDP).
