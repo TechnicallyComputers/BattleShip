@@ -6,7 +6,7 @@
 
 Companion handoff notes for future agent sessions live in `docs/netcode_agent_rules.md`.
 
-Sim pacing vs remote tick labels (`HighestRemoteTick`) and environment knobs are documented in [`docs/netplay_pacing.md`](netplay_pacing.md).
+Phase-locked execution, shared frontier admission, and the fixed `sim + D` wire mapping are documented in [`docs/netplay_phase_lock.md`](netplay_phase_lock.md). Historical sim pacing vs remote tick labels (`HighestRemoteTick`) is documented in [`docs/netplay_pacing.md`](netplay_pacing.md).
 
 Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authoritative battle state to sim ticks, are documented in [`docs/netplay_taskman_simtick.md`](netplay_taskman_simtick.md) — including **simulation authority** (only the rollback frame index; not Taskman or VI as clocks), an **execution trace**, and **sim-tick phase skew** risks for cross-peer input timing.
 
@@ -29,11 +29,11 @@ Useful flags for the **frame-commit + desync-classification + input-edge** phase
 | High | `SSB64_NETPLAY_INPUT_EDGE_DIAG` | `≥1`: first A-button 0→1 per sim slot + `rollback_prepare` lines (`port/net/sys/netinput.c`). |
 | Testing | `SSB64_NETPLAY_FRAME_COMMIT_STARVATION` | Integer threshold (default **4**): validations without a peer commit token before INPUT starvation latch. Set **2** or **3** to surface hidden “no peer token” gaps earlier. |
 
-**Execution / skew (names differ from generic “_DEBUG” placeholders):**
+**Execution / commit visibility (names differ from generic “_DEBUG” placeholders):**
 
 - **Tick-grid execution gate (guest):** `SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1` — battle sim waits on tick-grid lock when phase is RUNNING (`netpeer.c`).
-- **Skew pacing holds:** `SSB64_NETPLAY_PACING_LOG=1` — rate-limited logs when skew pacing defers tick advance (`netpeer.c`). Cap / tuning: `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`.
-- **Admission / tick visibility:** `SSB64_NETPLAY_TICK_DIAG` (level; VS session has a floor so tick_diag is not silent). Stall path: `SSB64_NETPLAY_STALL_UNTIL_REMOTE`. Frame-commit cadence: `SSB64_NETPLAY_FRAME_COMMIT_DIAG` (`netinput.c`). Taskman: `SSB64_NETPLAY_TASKMAN_DEBUG` (`taskman.c`).
+- **Phase-lock commit:** `SSB64_NETPLAY_FRAME_COMMIT_DIAG` logs `wire`, `commit_gen`, and prediction window for the current admission path (`netinput.c`).
+- **Admission / tick visibility:** `SSB64_NETPLAY_TICK_DIAG` (level; VS session has a floor so tick_diag is not silent). Taskman: `SSB64_NETPLAY_TASKMAN_DEBUG` (`taskman.c`).
 
 There is **no** `SSB64_NETPLAY_EXECUTION_GATE_DEBUG` or `SSB64_NETPLAY_SKEW_DEBUG` string in this tree; use the rows above.
 
@@ -64,7 +64,7 @@ VS scene start
 taskman game tick during VS
   -> scene controller callback (`syNetInputFuncRead`)
   -> **Active Linux UDP:** `syNetPeerUpdateBattleGate` (recv + delays + barrier + bind/exec) then execution-ready gate **before** HID latch / resolve / publish; **inactive:** `PumpIngressBeforeInputRead` only
-  -> publish synchronized frames into `gSYControllerDevices` only when admission passes; advance netinput tick only after each full `scVSBattleFuncUpdate` (`syNetInputAdvanceAuthoritativeSimTick`), unless skew/stall suppresses scene_update (no tick advance that iteration)
+  -> publish synchronized frames into `gSYControllerDevices` only when the phase-locked shared commit gate passes; advance netinput tick only after each full `scVSBattleFuncUpdate` (`syNetInputAdvanceAuthoritativeSimTick`)
   -> `scene_update()` (`scVSBattleFuncUpdate` or skew net slice)
   -> fighter input derivation
 ```
@@ -75,7 +75,7 @@ taskman game tick during VS
 
 The P2P start barrier and VS execution gate are debug-only and only active when both `SSB64_NETPLAY=1` and `SSB64_NETPLAY_BOOTSTRAP=1` are set. Local VS, replay playback/recording, and manual P2P input injection without bootstrap continue advancing netinput and VS updates immediately.
 
-**GGPO battle frame:** `syNetGgpoBattleFrameGet()` mirrors `syNetInputGetTick()` (same counter, advanced only in `syNetInputAdvanceAuthoritativeSimTick` after each full `scVSBattleFuncUpdate`). Skew pacing may run `scVSBattleFuncUpdateSkewPacingNetSlice` instead of a full update — neither advances. Deterministic `syUtilsRandTime*` (when `SSB64_NETPLAY_DETERMINISTIC_RANDTIME=1`) mixes that sim tick into RandTime, not wall time. Rollback resim rewinds via `syNetInputSetTick` each replayed tick (which keeps the frame counter aligned).
+**GGPO battle frame:** `syNetGgpoBattleFrameGet()` mirrors `syNetInputGetTick()` (same counter, advanced only in `syNetInputAdvanceAuthoritativeSimTick` after each full `scVSBattleFuncUpdate`). Phase-locked stalls may pump ingress without advancing; they do not reinterpret input ownership. Deterministic `syUtilsRandTime*` (when `SSB64_NETPLAY_DETERMINISTIC_RANDTIME=1`) mixes that sim tick into RandTime, not wall time. Rollback resim rewinds via `syNetInputSetTick` each replayed tick (which keeps the frame counter aligned).
 
 ## Canonical Input Frame
 
