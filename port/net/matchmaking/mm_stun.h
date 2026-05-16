@@ -1,22 +1,14 @@
-#ifndef _MM_STUN_H_
-#define _MM_STUN_H_
-
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#ifndef MM_STUN_H
+#define MM_STUN_H
 
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
 
-/* RFC 5389 STUN binding — query XOR-MAPPED-ADDRESS via an already-bound UDP sock.
- * Writes "host:port" IPv4 reflexive endpoint into buf (ASCII, NUL-terminated). */
+#if defined(PORT) && defined(SSB64_NETMENU)
+
+/* STUN Binding on the game UDP socket; Winsock on Windows, POSIX on Linux. */
 extern sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize);
-
-#else
-
-#include <PR/ultratypes.h>
-#include <ssb_types.h>
-
-#define mmStunGetReflexiveIpv4Endpoint(fd, buf, bufsize) FALSE
 
 #endif
 
-#endif /* _MM_STUN_H_ */
+#endif /* MM_STUN_H */

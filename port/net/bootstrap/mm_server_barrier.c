@@ -1,4 +1,4 @@
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 #include "bootstrap/mm_server_barrier.h"
 
@@ -44,4 +44,4 @@ sb32 mmServerBarrierTryApplyHostSchedule(u64 *io_start_ms_raw, u64 *io_quantized
 	return FALSE;
 }
 
-#endif /* PORT && SSB64_NETMENU && !_WIN32 */
+#endif /* PORT && SSB64_NETMENU */

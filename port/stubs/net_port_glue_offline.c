@@ -31,6 +31,11 @@ void syNetPeerPumpBattleGateOnHostFrame(void)
 {
 }
 
+void syNetPeerPumpIngressTransport(const char *caller_tag)
+{
+	(void)caller_tag;
+}
+
 sb32 syNetPeerWantsSyncPresentHold(void)
 {
 	return FALSE;

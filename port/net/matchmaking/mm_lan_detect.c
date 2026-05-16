@@ -2,14 +2,26 @@
 
 #include "mm_lan_detect.h"
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Platform-specific interface enumeration; shared RFC1918 scoring below. */
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/socket.h>
+#endif
 
 #ifdef PORT
 extern void port_log(const char *fmt, ...);
@@ -90,6 +102,121 @@ static sb32 parse_bind_port(const char *spec, u16 *out_port)
 	return TRUE;
 }
 
+#ifdef _WIN32
+static sb32 udp_port_from_fd(s32 udp_fd, u16 *out_port)
+{
+	struct sockaddr_storage ss;
+	int len = (int)sizeof(ss);
+	SOCKET sock = (SOCKET)(intptr_t)udp_fd;
+
+	if (udp_fd < 0)
+	{
+		return FALSE;
+	}
+	if (getsockname(sock, (struct sockaddr *)&ss, &len) != 0)
+	{
+		return FALSE;
+	}
+	if (ss.ss_family != AF_INET)
+	{
+		return FALSE;
+	}
+	*out_port = ntohs(((struct sockaddr_in *)&ss)->sin_port);
+	return TRUE;
+}
+
+static sb32 mmLanDetectBestRfc1918(u16 port, const char *want_if, char *best_ip, size_t best_ip_cap)
+{
+	(void)port;
+	ULONG buf_len = 15000;
+	PIP_ADAPTER_ADDRESSES addrs;
+	ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+	PIP_ADAPTER_ADDRESSES cur;
+	int best_score;
+	sb32 ok;
+
+	best_ip[0] = '\0';
+	best_score = -1000;
+	ok = FALSE;
+
+	for (;;)
+	{
+		addrs = (PIP_ADAPTER_ADDRESSES)malloc(buf_len);
+		if (addrs == NULL)
+		{
+			return FALSE;
+		}
+		if (GetAdaptersAddresses(AF_INET, flags, NULL, addrs, &buf_len) == ERROR_SUCCESS)
+		{
+			break;
+		}
+		free(addrs);
+		if (GetLastError() != ERROR_BUFFER_OVERFLOW)
+		{
+#ifdef PORT
+			port_log("SSB64 Automatch LAN detect: GetAdaptersAddresses failed\n");
+#endif
+			return FALSE;
+		}
+	}
+
+	for (cur = addrs; cur != NULL; cur = cur->Next)
+	{
+		PIP_ADAPTER_UNICAST_ADDRESS ua;
+		int sc;
+		char ip_str[INET_ADDRSTRLEN];
+		struct sockaddr_in *sin;
+
+		if ((cur->IfType == IF_TYPE_SOFTWARE_LOOPBACK) || (cur->FriendlyName == NULL))
+		{
+			continue;
+		}
+		if ((want_if != NULL) && (want_if[0] != '\0'))
+		{
+			char ifname[64];
+			int nw;
+
+			nw = WideCharToMultiByte(CP_UTF8, 0, cur->FriendlyName, -1, ifname, (int)sizeof(ifname), NULL, NULL);
+			if ((nw <= 0) || (strcmp(ifname, want_if) != 0))
+			{
+				continue;
+			}
+		}
+
+		for (ua = cur->FirstUnicastAddress; ua != NULL; ua = ua->Next)
+		{
+			if ((ua->Address.lpSockaddr == NULL) || (ua->Address.lpSockaddr->sa_family != AF_INET))
+			{
+				continue;
+			}
+			sin = (struct sockaddr_in *)ua->Address.lpSockaddr;
+			if (addr_is_rfc1918(&sin->sin_addr) == FALSE)
+			{
+				continue;
+			}
+			if (inet_ntop(AF_INET, &sin->sin_addr, ip_str, sizeof(ip_str)) == NULL)
+			{
+				continue;
+			}
+			sc = ifname_score("eth");
+			if (sc > best_score)
+			{
+				best_score = sc;
+				snprintf(best_ip, best_ip_cap, "%s", ip_str);
+				ok = TRUE;
+			}
+			else if ((sc == best_score) && (best_ip[0] != '\0') && (strcmp(ip_str, best_ip) < 0))
+			{
+				snprintf(best_ip, best_ip_cap, "%s", ip_str);
+				ok = TRUE;
+			}
+		}
+	}
+
+	free(addrs);
+	return ok;
+}
+#else
 static sb32 udp_port_from_fd(s32 udp_fd, u16 *out_port)
 {
 	struct sockaddr_storage ss;
@@ -111,30 +238,17 @@ static sb32 udp_port_from_fd(s32 udp_fd, u16 *out_port)
 	return TRUE;
 }
 
-sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_spec_opt)
+static sb32 mmLanDetectBestRfc1918(u16 port, const char *want_if, char *best_ip, size_t best_ip_cap)
 {
+	(void)port;
 	struct ifaddrs *ifa_head;
 	struct ifaddrs *ifa;
-	const char *want_if;
 	int best_score;
-	char best_ip[INET_ADDRSTRLEN];
-	u16 port;
+	sb32 ok;
 
 	best_ip[0] = '\0';
 	best_score = -1000;
-	want_if = getenv("SSB64_MATCHMAKING_LAN_INTERFACE");
-
-	if (udp_port_from_fd(udp_fd, &port) == FALSE)
-	{
-		if ((bind_spec_opt == NULL) || (bind_spec_opt[0] == '\0') ||
-		    (parse_bind_port(bind_spec_opt, &port) == FALSE))
-		{
-#ifdef PORT
-			port_log("SSB64 Automatch LAN detect: no UDP port (getsockname/bind parse failed)\n");
-#endif
-			return FALSE;
-		}
-	}
+	ok = FALSE;
 
 	if (getifaddrs(&ifa_head) != 0)
 	{
@@ -175,17 +289,42 @@ sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_sp
 		if (sc > best_score)
 		{
 			best_score = sc;
-			snprintf(best_ip, sizeof(best_ip), "%s", ip_str);
+			snprintf(best_ip, best_ip_cap, "%s", ip_str);
+			ok = TRUE;
 		}
 		else if ((sc == best_score) && (best_ip[0] != '\0') && (strcmp(ip_str, best_ip) < 0))
 		{
-			snprintf(best_ip, sizeof(best_ip), "%s", ip_str);
+			snprintf(best_ip, best_ip_cap, "%s", ip_str);
+			ok = TRUE;
 		}
 	}
 
 	freeifaddrs(ifa_head);
+	return ok;
+}
+#endif
 
-	if (best_ip[0] == '\0')
+sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_spec_opt)
+{
+	const char *want_if;
+	char best_ip[INET_ADDRSTRLEN];
+	u16 port;
+
+	want_if = getenv("SSB64_MATCHMAKING_LAN_INTERFACE");
+
+	if (udp_port_from_fd(udp_fd, &port) == FALSE)
+	{
+		if ((bind_spec_opt == NULL) || (bind_spec_opt[0] == '\0') ||
+		    (parse_bind_port(bind_spec_opt, &port) == FALSE))
+		{
+#ifdef PORT
+			port_log("SSB64 Automatch LAN detect: no UDP port (getsockname/bind parse failed)\n");
+#endif
+			return FALSE;
+		}
+	}
+
+	if (mmLanDetectBestRfc1918(port, want_if, best_ip, sizeof(best_ip)) == FALSE)
 	{
 #ifdef PORT
 		port_log("SSB64 Automatch LAN detect: no RFC1918 IPv4 candidate (override with SSB64_MATCHMAKING_LAN_ENDPOINT)\n");
@@ -208,4 +347,4 @@ sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_sp
 	return TRUE;
 }
 
-#endif /* PORT && SSB64_NETMENU && !_WIN32 */
+#endif /* PORT && SSB64_NETMENU */

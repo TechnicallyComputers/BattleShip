@@ -1,6 +1,6 @@
 #include "mm_matchmaking.h"
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 #include <macros.h>
 
@@ -10,8 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <errno.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #ifdef PORT
 extern void port_log(const char *fmt, ...);
@@ -144,8 +149,21 @@ static void mmBaseUrlSetup(void)
 	}
 }
 
+/* Persist matchmaking API token outside the install dir (port/net/stdlib.h shadows <stdlib.h>). */
 static void mmCredPath(char *out, size_t cap)
 {
+#ifdef _WIN32
+	const char *appdata = getenv("APPDATA");
+
+	if ((appdata != NULL) && (appdata[0] != '\0'))
+	{
+		snprintf(out, cap, "%s\\ssb64\\%s", appdata, MM_CRED_FILENAME);
+	}
+	else
+	{
+		snprintf(out, cap, ".\\%s", MM_CRED_FILENAME);
+	}
+#else
 	const char *xdg = getenv("XDG_CONFIG_HOME");
 	const char *home = getenv("HOME");
 
@@ -161,6 +179,7 @@ static void mmCredPath(char *out, size_t cap)
 	{
 		snprintf(out, cap, "./%s", MM_CRED_FILENAME);
 	}
+#endif
 }
 
 static sb32 mmEnsureCredDir(const char *fullpath)
@@ -170,6 +189,16 @@ static sb32 mmEnsureCredDir(const char *fullpath)
 	size_t i;
 
 	slash = strrchr(fullpath, '/');
+#ifdef _WIN32
+	{
+		const char *bslash = strrchr(fullpath, '\\');
+
+		if ((bslash != NULL) && ((slash == NULL) || (bslash > slash)))
+		{
+			slash = bslash;
+		}
+	}
+#endif
 	if (slash == NULL)
 	{
 		return TRUE;
@@ -182,14 +211,28 @@ static sb32 mmEnsureCredDir(const char *fullpath)
 	dir[slash - fullpath] = '\0';
 	for (i = 1; dir[i] != '\0'; i++)
 	{
-		if (dir[i] == '/')
+		if ((dir[i] == '/') || (dir[i] == '\\'))
 		{
 			dir[i] = '\0';
+#ifdef _WIN32
+			if (_mkdir(dir) != 0)
+			{
+				if (errno != EEXIST)
+				{
+					/* continue — parent may exist */
+				}
+			}
+#else
 			(void)mkdir(dir, 0700);
-			dir[i] = '/';
+#endif
+			dir[i] = slash[0];
 		}
 	}
+#ifdef _WIN32
+	if (_mkdir(dir) != 0)
+#else
 	if (mkdir(dir, 0700) != 0)
+#endif
 	{
 		if (errno != EEXIST)
 		{
@@ -961,4 +1004,4 @@ sb32 mmMatchmakingDrainCompleted(MmMatchResult *out)
 	return ok;
 }
 
-#endif /* PORT && SSB64_NETMENU && !_WIN32 */
+#endif /* PORT && SSB64_NETMENU */

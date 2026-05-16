@@ -49,7 +49,7 @@ sequenceDiagram
 
 ## Client integration (current tree)
 
-1. **Module:** `port/net/bootstrap/mm_server_barrier.{c,h}` — gated by `PORT` + `SSB64_NETMENU`; on non-Windows builds it links with the game. It uses the same HTTPS/curl patterns as `mm_matchmaking.c` when fully implemented.
+1. **Module:** `port/net/bootstrap/mm_server_barrier.{c,h}` — gated by `PORT` + `SSB64_NETMENU` (all host OSes when netmenu is enabled, including Windows MSVC and Linux→MinGW cross). It uses the same HTTPS/curl patterns as `mm_matchmaking.c` when fully implemented.
 
 2. **Netpeer fork:** After local clock sync computes `start_ms_raw` and quantized `start_ms` in `syNetPeerHostFinishClockSyncAndSendStart`, **`mmServerBarrierTryApplyHostSchedule`** may replace those values when a server contract is present. Increment `sSYNetPeerBarrierEpoch` when adopting a server epoch so peers discard stale negotiations (see netpeer sources).
 
