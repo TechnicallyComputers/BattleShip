@@ -29,6 +29,7 @@
 #include "resource/RelocFileTable.h"
 #include "resource/RelocPointerTable.h"
 #include "bridge/lbreloc_byteswap.h"
+#include "port_scene_heap.h"
 
 extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long size);
 
@@ -1001,8 +1002,6 @@ extern "C" int portRelocFindFileIdAndBase(const void *ptr, uintptr_t *out_base)
  * (libultraship interpreter.cpp diagDumpAll) to identify the upstream
  * holder behind a stale-pointer crash in gfx_step. Never derefs ptr —
  * uses only registered range metadata. */
-extern void *gPortSceneHeap;
-extern const size_t gPortSceneHeapSize;
 extern "C" void port_classify_dl_ptr(uintptr_t addr, char *buf, size_t buf_size)
 {
 	if (buf == nullptr || buf_size == 0) return;

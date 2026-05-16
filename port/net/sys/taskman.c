@@ -31,6 +31,7 @@ extern SCCommonData gSCManagerSceneData;
 
 #ifdef PORT
 #include "port_log.h"
+#include "port_scene_heap.h"
 #include <sys/netpeer.h>
 #include <sys/netinput.h>
 _Static_assert(sizeof(uintptr_t) == 8, "PORT build requires 64-bit uintptr_t");
@@ -1416,6 +1417,7 @@ void syTaskmanStartTask(SYTaskmanSetup *tsetup)
 		sPrevHeap = heap;
 		tsetup->scene_setup.arena_start = heap;
 		tsetup->scene_setup.arena_size = (u32)kPortHeapSize;
+		gPortSceneHeap = heap;
 		port_log("SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=%p arena_size=0x%llx\n",
 		         heap, (unsigned long long)kPortHeapSize);
 	}
