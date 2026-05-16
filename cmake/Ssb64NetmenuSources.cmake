@@ -5,6 +5,9 @@
 # - This module removes decomp TUs that have a port/net replacement and adds every
 #   port/net/*.c to the link (mirror swap, rename aliases, then a completeness sweep
 #   so port-only files like netinput.c/netpeer.c are never omitted).
+# - matchmaking/* and bootstrap/mm_server_barrier.c are included on all platforms when
+#   SSB64_NETMENU=ON (including MinGW Windows). Automatch parity with Linux; CMake links
+#   curl + iphlpapi on Windows via the parent CMakeLists.txt.
 #
 # Inputs:  CMAKE_CURRENT_SOURCE_DIR, SSB64_DECOMP_SOURCES (list, modified in place)
 # Outputs: SSB64_PORT_NETMENU_SOURCES (list of absolute .c paths under port/net)
@@ -63,12 +66,6 @@ foreach(_p IN LISTS _ssb64_port_net_c)
     file(RELATIVE_PATH _rel "${_ssb64_port_net_root}" "${_p}")
     if("${_rel}" IN_LIST _SSB64_PORT_NET_MIRROR_DENYLIST)
         continue()
-    endif()
-    if(WIN32)
-        # POSIX/curl matchmaking and server barrier are omitted on Windows (sources are stubbed).
-        if(_rel MATCHES "^matchmaking/" OR _rel STREQUAL "bootstrap/mm_server_barrier.c")
-            continue()
-        endif()
     endif()
     list(FIND SSB64_PORT_NETMENU_SOURCES "${_p}" _ssb64_port_net_sweep_fi)
     if(_ssb64_port_net_sweep_fi EQUAL -1)

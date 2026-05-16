@@ -1,8 +1,10 @@
 #include "common.h"
 
+/*
+ * Post-CSS staging: mm_matchmaking poll + syNetPeer rendezvous before VS battle.
+ * Linked only when SSB64_NETMENU=ON (offline builds use decomp VS flow without this scene).
+ */
 #if defined(PORT) && defined(SSB64_NETMENU)
-
-#if !defined(_WIN32)
 
 #include <reloc_data.h>
 #include <sc/scene.h>
@@ -119,13 +121,5 @@ void mnVSNetMatchStagingStartScene(void)
 	dMNVSNetMatchStagingTaskmanSetup.scene_setup.arena_size = (size_t)((uintptr_t)&ovl1_VRAM - (uintptr_t)&ovl27_BSS_END);
 	syTaskmanStartTask(&dMNVSNetMatchStagingTaskmanSetup);
 }
-
-#else /* _WIN32 */
-
-void mnVSNetMatchStagingStartScene(void)
-{
-}
-
-#endif /* _WIN32 */
 
 #endif /* PORT && SSB64_NETMENU */

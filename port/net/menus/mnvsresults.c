@@ -7,7 +7,8 @@
 #include <sys/audio.h>
 #include <sys/rdp.h>
 #include <reloc_data.h>
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+/* Automatch post-battle routing back to CSS (all platforms when SSB64_NETMENU=ON). */
+#if defined(PORT) && defined(SSB64_NETMENU)
 #include <sc/scmanager.h>
 #endif
 extern void func_800266A0_272A0(void);
@@ -3322,7 +3323,7 @@ void mnVSResultsFuncRun(GObj *gobj)
 		}
 		else
 		{
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 			u8 automatch_scene;
 
 			automatch_scene = (u8)((gSCManagerSceneData.is_vs_automatch_battle != FALSE)

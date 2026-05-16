@@ -59,7 +59,10 @@ option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for r
 option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
 option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstrap for debugging" OFF)
 
-if(SSB64_NETMENU AND NOT WIN32)
+# Automatch HTTP (mm_matchmaking) uses libcurl on Linux and MinGW Windows netmenu builds.
+# Offline builds (SSB64_NETMENU=OFF) do not link curl. MinGW: install mingw-w64-curl and pass
+# CMAKE_FIND_ROOT_PATH when cross-compiling (see scripts/package-mingw-windows.sh).
+if(SSB64_NETMENU)
     find_package(CURL REQUIRED)
     find_package(Threads REQUIRED)
 endif()
@@ -92,21 +95,47 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
+# ExternalProject does not inherit the parent toolchain; forward MinGW cross args
+# so torch.exe matches BattleShip.exe when cross-compiling on Linux.
+set(_SSB64_TORCH_EP_CMAKE_ARGS
+    -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
+    -DUSE_STANDALONE=ON
+    -DBUILD_STORMLIB=OFF
+    -DBUILD_SM64=OFF
+    -DBUILD_MK64=OFF
+    -DBUILD_SF64=OFF
+    -DBUILD_PM64=OFF
+    -DBUILD_FZERO=OFF
+    -DBUILD_MARIO_ARTIST=OFF
+    -DBUILD_NAUDIO=ON
+    -DBUILD_SSB64=ON
+)
+# Parent CMAKE_FIND_ROOT_PATH (MinGW sysroot) is not inherited by ExternalProject; forward it
+# so torch.exe is built with the same cross toolchain as BattleShip.exe.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND (MINGW OR CMAKE_CROSSCOMPILING))
+    list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS
+        -DCMAKE_SYSTEM_NAME=Windows
+        -DCMAKE_CROSSCOMPILING=TRUE
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    )
+    if(CMAKE_RC_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_RC_COMPILER=${CMAKE_RC_COMPILER})
+    endif()
+    if(CMAKE_FIND_ROOT_PATH)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS
+            -DCMAKE_FIND_ROOT_PATH=${CMAKE_FIND_ROOT_PATH}
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+        )
+    endif()
+endif()
+
 ExternalProject_Add(TorchExternal
     PREFIX TorchExternal
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
-    CMAKE_ARGS
-        -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
-        -DUSE_STANDALONE=ON
-        -DBUILD_STORMLIB=OFF
-        -DBUILD_SM64=OFF
-        -DBUILD_MK64=OFF
-        -DBUILD_SF64=OFF
-        -DBUILD_PM64=OFF
-        -DBUILD_FZERO=OFF
-        -DBUILD_MARIO_ARTIST=OFF
-        -DBUILD_NAUDIO=ON
-        -DBUILD_SSB64=ON
+    CMAKE_ARGS ${_SSB64_TORCH_EP_CMAKE_ARGS}
 )
 
 ExternalProject_Get_Property(TorchExternal install_dir)
@@ -476,8 +505,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
-if(SSB64_NETMENU AND NOT WIN32)
+if(SSB64_NETMENU)
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
+    # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi)
+    endif()
 endif()
 
 ################################################################################
@@ -485,16 +518,29 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_options(${PROJECT_NAME} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    # UDP netpeer / automatch P2P (syNetPeer socket platform uses Winsock).
     if (SSB64_NETMENU)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
     endif()
-    # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
-    # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
-    # Embed the application icon (Explorer / taskbar / window).
-    target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
+    if (MSVC)
+        target_link_options(${PROJECT_NAME} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
+        # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
+        # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
+        target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+        # Embed the application icon (Explorer / taskbar / window).
+        target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
+    elseif (MINGW)
+        # Linux -> MinGW cross: /utf-8 and /SUBSYSTEM are MSVC-only and break g++.
+        target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
+        # SDL_MAIN_HANDLED + main() in port.cpp; SDL2_NO_MWINDOWS in libultraship avoids -mwindows.
+        target_link_options(${PROJECT_NAME} PRIVATE -mconsole "LINKER:--subsystem,console")
+        # port/port.cpp minidump + symbol resolution (MSVC uses #pragma comment).
+        target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp psapi)
+        if (CMAKE_RC_COMPILER)
+            target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
+        endif()
+    endif()
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
 endif()
@@ -541,9 +587,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/yamls/us
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/us
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${TORCH_EXECUTABLE}
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=${TORCH_EXECUTABLE}
+        -DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
+        -P ${CMAKE_SOURCE_DIR}/cmake/CopyIfExists.cmake
 )
 
 if(SSB64_NETMENU)

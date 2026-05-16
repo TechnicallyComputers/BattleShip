@@ -4,7 +4,7 @@
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 typedef enum MmPollKind
 {
@@ -34,7 +34,10 @@ typedef struct MmMatchResult
 extern void mmMatchmakingStartup(void);
 extern void mmMatchmakingShutdown(void);
 
-/* Credentials: load/store under XDG_CONFIG_HOME/ssb64/ (see mm_matchmaking.c). */
+/*
+ * Credentials: load/store under XDG_CONFIG_HOME/ssb64/ (Linux) or %APPDATA%\\ssb64\\
+ * (Windows). Worker thread + libcurl; compiled for all SSB64_NETMENU builds (incl. MinGW).
+ */
 extern sb32 mmMatchmakingLoadCredentials(sb32 verbose);
 
 extern void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose);

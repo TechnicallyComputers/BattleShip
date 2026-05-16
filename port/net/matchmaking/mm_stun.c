@@ -2,16 +2,27 @@
 
 #include "mm_stun.h"
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
+#include <stdio.h>
+#include <stdlib.h>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <stdio.h>
 #include <sys/random.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #ifdef PORT
 extern void port_log(const char *fmt, ...);
@@ -27,6 +38,27 @@ static const struct
 };
 
 #define STUN_MAGIC 0x2112A442U
+
+static void mmStunFillTxId(u8 *pkt)
+{
+	s32 i;
+
+#ifdef _WIN32
+	/* No rand(): port/net/stdlib.h shadows system <stdlib.h> under netmenu include order. */
+	for (i = 0; i < 12; i++)
+	{
+		pkt[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 7919U));
+	}
+#else
+	if (getrandom(pkt, 12U, 0) != 12)
+	{
+		for (i = 0; i < 12; i++)
+		{
+			pkt[i] = (u8)((u32)getpid() ^ ((u32)i * 7919U));
+		}
+	}
+#endif
+}
 
 /* Parse XOR-MAPPED-ADDRESS (RFC 5389) inside a STUN Binding success response. */
 static void mmStunParseXorMapped(const u8 *pkt, ssize_t total_len, struct sockaddr_in *out)
@@ -79,7 +111,11 @@ sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 	struct sockaddr_in stun_serv;
 	u8 pkt[512];
 	u8 tx_id[12];
-	s32 i;
+#ifdef _WIN32
+	SOCKET sock = (SOCKET)(intptr_t)udp_fd;
+#else
+	s32 sock = udp_fd;
+#endif
 
 	if ((udp_fd < 0) || (buf == NULL) || (bufsize < 20U))
 	{
@@ -105,15 +141,9 @@ sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 		pkt[5] = (STUN_MAGIC >> 16) & 0xFF;
 		pkt[6] = (STUN_MAGIC >> 8) & 0xFF;
 		pkt[7] = STUN_MAGIC & 0xFF;
-		if (getrandom(pkt + 8, 12U, 0) != 12)
-		{
-			for (i = 0; i < 12; i++)
-			{
-				pkt[(s32)(8 + i)] = (u8)((u32)getpid() ^ ((u32)i * 7919U));
-			}
-		}
+		mmStunFillTxId(pkt + 8);
 		memcpy(tx_id, pkt + 8, 12);
-		if (sendto(udp_fd, pkt, 20U, 0, (struct sockaddr*)&stun_serv, sizeof(stun_serv)) != 20)
+		if (sendto(sock, (const char *)pkt, 20, 0, (struct sockaddr *)&stun_serv, sizeof(stun_serv)) != 20)
 		{
 			continue;
 		}
@@ -122,14 +152,22 @@ sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 			tv.tv_sec = 0;
 			tv.tv_usec = 400000;
 			FD_ZERO(&rfds);
-			FD_SET(udp_fd, &rfds);
-			n = select(udp_fd + 1, &rfds, NULL, NULL, &tv);
-			if ((n <= 0) || !FD_ISSET(udp_fd, &rfds))
+			FD_SET(sock, &rfds);
+#ifdef _WIN32
+			n = select(0, &rfds, NULL, NULL, &tv);
+#else
+			n = select(sock + 1, &rfds, NULL, NULL, &tv);
+#endif
+			if ((n <= 0) || !FD_ISSET(sock, &rfds))
 			{
 				break;
 			}
 			memset(pkt, 0, sizeof(pkt));
-			n = recvfrom(udp_fd, pkt, sizeof(pkt), MSG_DONTWAIT, NULL, NULL);
+#ifdef _WIN32
+			n = recvfrom(sock, (char *)pkt, sizeof(pkt), 0, NULL, NULL);
+#else
+			n = recvfrom(sock, pkt, sizeof(pkt), MSG_DONTWAIT, NULL, NULL);
+#endif
 			if ((n < 24) || (n >= (ssize_t)sizeof(pkt)))
 			{
 				continue;
@@ -173,4 +211,4 @@ sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 
 #undef STUN_MAGIC
 
-#endif /* PORT && SSB64_NETMENU && !_WIN32 */
+#endif /* PORT && SSB64_NETMENU */

@@ -33,15 +33,19 @@
 #include <system_error>
 
 #ifdef _WIN32
+/* MinGW cross: dbghelp/psapi linked from CMakeLists.txt; MSVC uses #pragma comment below. */
 #include <windows.h>
 #include <dbghelp.h>
 #include <psapi.h>
-#include <crtdbg.h>
 #include <signal.h>
 #include <exception>
 #include <ctime>
+#ifdef _MSC_VER
+#include <crtdbg.h>
 #pragma comment(lib, "dbghelp.lib")
+#endif
 
+#ifdef _MSC_VER
 static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
                                     const wchar_t* file, unsigned line, uintptr_t)
 {
@@ -51,6 +55,7 @@ static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
 	if (file) port_log("    file: %ls:%u\n", file, line);
 	port_log_close();
 }
+#endif
 
 static void portTerminateHandler()
 {
@@ -188,14 +193,16 @@ static void portLogMsvcCxxThrow(EXCEPTION_POINTERS* info)
 	// safe per CatchableType properties.
 	const char* what = nullptr;
 	if (thrownObj && (ct->properties & 0x4) == 0) {
-		// Try as std::exception. Catch any access violation just in case
-		// the layout differs — vectored handlers must not throw.
+		// Try as std::exception. MSVC SEH guards against bad layout; MinGW
+		// has no __try/__except — log type name only to avoid AV in-handler.
+#if defined(_MSC_VER)
 		__try {
 			const std::exception* ex = (const std::exception*)thrownObj;
 			what = ex->what();
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			what = nullptr;
 		}
+#endif
 	}
 	port_log("    C++ throw: type=\"%s\" thrown=%p%s%s\n",
 	         tname, thrownObj,
@@ -746,6 +753,7 @@ int main(int argc, char* argv[]) {
 		port_log("\n*** atexit reached — process is shutting down voluntarily ***\n");
 		port_log_close();
 	});
+#ifdef _MSC_VER
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 	_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
 	_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
@@ -754,6 +762,7 @@ int main(int argc, char* argv[]) {
 	_CrtSetReportMode(_CRT_WARN,   _CRTDBG_MODE_FILE);
 	_CrtSetReportFile(_CRT_WARN,   _CRTDBG_FILE_STDERR);
 	_set_invalid_parameter_handler(portCrtInvalidParameter);
+#endif
 	std::set_terminate(portTerminateHandler);
 	signal(SIGABRT, portSignalHandler);
 	signal(SIGFPE,  portSignalHandler);

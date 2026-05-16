@@ -9,11 +9,11 @@
  * When `SSB64_NETPLAY_SERVER_BOOTSTRAP=1`, the host may replace locally computed
  * `start_ms_raw` / VI-quantized `start_ms` with a server contract.
  *
- * Non-Windows netmenu builds link the translation unit; Windows netmenu uses the
- * no-op macro until curl-backed bootstrap is ported.
+ * Linked on Linux and Windows netmenu builds; implementation is still a local-schedule
+ * stub until HTTPS barrier is wired (see mm_server_barrier.c).
  */
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 extern sb32 mmServerBarrierTryApplyHostSchedule(u64 *io_start_ms_raw, u64 *io_quantized_start_ms);
 

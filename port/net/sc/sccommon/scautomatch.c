@@ -13,7 +13,11 @@
 extern char *getenv(const char *name);
 extern int atoi(const char *str);
 #endif
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+/*
+ * Automatch state machine (HTTPS queue + STUN/LAN + P2P bootstrap). Same path on Linux and
+ * MinGW Windows when SSB64_NETMENU=ON; requires curl at link time (see CMakeLists.txt).
+ */
+#if defined(PORT) && defined(SSB64_NETMENU)
 #include <sc/scmanager.h>
 #include <sys/taskman.h>
 #include <stdio.h>
@@ -3549,7 +3553,7 @@ void mnVSNetAutomatchFuncRun(GObj *gobj)
 
 			if (sMNVSNetAutomatchStartProceedWait == 0)
 			{
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 				mnVSNetAutomatchSetSceneData();
 				gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
 				gSCManagerSceneData.scene_curr = nSCKindVSNetMatchStaging;
@@ -3561,7 +3565,7 @@ void mnVSNetAutomatchFuncRun(GObj *gobj)
 
 				mnVSNetAutomatchSetSceneData();
 				syTaskmanSetLoadScene();
-#endif /* automatch HTTPS + P2P */
+#endif
 			}
 		}
 		else if ((scSubsysControllerGetPlayerTapButtons(START_BUTTON)) && (sMNVSNetAutomatchTotalTimeTics > 60))
@@ -3664,7 +3668,7 @@ void mnVSNetAutomatchInitVars(void)
 	sMNVSNetAutomatchSlot.recall_end_tic = 0;
 	sMNVSNetAutomatchFighterMask = gSCManagerBackupData.fighter_mask;
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 	gSCManagerSceneData.is_vs_automatch_battle = (ub8)FALSE;
 	gSCManagerSceneData.vs_net_automatch_post_battle_scene = (u8)(0);
 	mnVSNetAutomatchAMReset();
@@ -3799,7 +3803,7 @@ SYTaskmanSetup dMNVSNetAutomatchTaskmanSetup =
 };
 
 
-#if defined(PORT) && defined(SSB64_NETMENU) && !defined(_WIN32)
+#if defined(PORT) && defined(SSB64_NETMENU)
 
 #define MN_AM_BIND_DEFAULT "0.0.0.0:7778"
 #define MN_AM_STUB_PEER "127.0.0.1:9"
@@ -4096,7 +4100,7 @@ void mnVSNetAutomatchMatchmakingTick(void)
 		}
 	}
 }
-#endif /* PORT && SSB64_NETMENU && !_WIN32 */
+#endif /* PORT && SSB64_NETMENU */
 
 // 0x80138558
 void mnVSNetAutomatchStartScene(void)

@@ -1,0 +1,535 @@
+#!/usr/bin/env bash
+# Package a MinGW-w64 cross-compiled Windows build into a portable release zip.
+#
+# Usage:
+#   ./scripts/package-mingw-windows.sh                    # package existing build-mingw-windows
+#   ./scripts/package-mingw-windows.sh --build            # configure + cross-compile + package
+#   ./scripts/package-mingw-windows.sh --netplay          # netmenu build (SSB64_NETMENU=ON)
+#   ./scripts/package-mingw-windows.sh --build --netplay
+#   ./scripts/package-mingw-windows.sh --build-dir /path/to/custom  # discouraged; see below
+#
+# Build directories (default, kept separate to avoid CMake cache clashes):
+#   build-mingw-windows          offline (SSB64_NETMENU=OFF)
+#   build-mingw-windows-netplay  netmenu + automatch (SSB64_NETMENU=ON, needs mingw-w64-curl)
+#
+# Extra CMake cache variables may be passed through (forwarded to configure when --build).
+# SSB64_NETMENU is always set by this script (--netplay => ON, default => OFF); do not pass -DSSB64_NETMENU=*.
+# If a build tree previously had the wrong NETMENU value cached, configure runs clean + verifies cache.
+#
+# Output:
+#   dist/BattleShip-windows-mingw.zip
+#   dist/BattleShip-Netplay-windows-mingw.zip   (--netplay or -DSSB64_NETMENU=ON)
+#
+# Extracted layout (portable — run BattleShip.exe from this folder):
+#   BattleShip/
+#     BattleShip.exe
+#     torch.exe              (cross-built via TorchExternal when missing)
+#     f3d.o2r, config.yml, gamecontrollerdb.txt, yamls/us/*.yml
+#     assets/custom/fonts/
+#     *.dll                  (MinGW runtime deps from the cross toolchain)
+#     port/net/assets/       (netmenu / --netplay only)
+#
+# BattleShip.o2r is NOT bundled; users extract via torch + their own ROM (see package-windows.ps1).
+#
+# Requires (Linux host):
+#   x86_64-w64-mingw32-gcc/g++, windres, objdump
+#   zip, cmake, ninja (or make)
+#   MinGW packages: SDL2, glew, libzip, spdlog, fmt, tinyxml2, curl (--netplay), etc.
+#     (see bootstrap-mingw-w64-toolchain.sh)
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DIST_DIR="$ROOT/dist"
+APP_NAME="BattleShip"
+JOBS="${JOBS:-4}"
+MINGW_BIN="${MINGW_BIN:-/usr/x86_64-w64-mingw32/bin}"
+MINGW_PREFIX="${MINGW_PREFIX:-/usr/x86_64-w64-mingw32}"
+OBJDUMP="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
+
+DO_BUILD=0
+NETPLAY_PACKAGE=0
+BUILD_DIR=""
+EXTRA_CMAKE_ARGS=()
+
+usage() {
+	cat <<'EOF'
+Usage: package-mingw-windows.sh [OPTIONS] [CMAKE_CACHE_ARGS...]
+
+Options:
+  --build              Configure and cross-compile before packaging
+  --netplay            Netmenu / netplay build (SSB64_NETMENU=ON, separate build dir)
+  --build-dir PATH     Build tree (default: build-mingw-windows or build-mingw-windows-netplay)
+  -h, --help           Show this help
+
+Environment:
+  MINGW_BIN            Directory with SDL2.dll, etc. (default: /usr/x86_64-w64-mingw32/bin)
+  JOBS                 Parallel build jobs (default: 4)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--build) DO_BUILD=1; shift ;;
+		--netplay) NETPLAY_PACKAGE=1; shift ;;
+		--build-dir)
+			BUILD_DIR="${2:-}"
+			[[ -n "$BUILD_DIR" ]] || { echo "ERROR: --build-dir requires a path" >&2; exit 1; }
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		-*)
+			EXTRA_CMAKE_ARGS+=("$1")
+			shift
+			;;
+		*)
+			EXTRA_CMAKE_ARGS+=("$1")
+			shift
+			;;
+	esac
+done
+
+# Offline vs netplay: separate default BUILD_DIR trees + forced -DSSB64_NETMENU=OFF|ON (see header).
+IS_NETPLAY=$NETPLAY_PACKAGE
+NETMENU_FILTERED=()
+for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+	case "$a" in
+		-DSSB64_NETMENU=* | -DSSB64_NETMENU:BOOL=*)
+			warn "Ignoring $a — use --netplay for netmenu; offline builds force SSB64_NETMENU=OFF"
+			;;
+		*)
+			NETMENU_FILTERED+=("$a")
+			;;
+	esac
+done
+EXTRA_CMAKE_ARGS=("${NETMENU_FILTERED[@]}")
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=ON")
+else
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=OFF")
+fi
+
+if [[ -z "$BUILD_DIR" ]]; then
+	if [[ "$IS_NETPLAY" -eq 1 ]]; then
+		BUILD_DIR="$ROOT/build-mingw-windows-netplay"
+	else
+		BUILD_DIR="$ROOT/build-mingw-windows"
+	fi
+fi
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	STAGE_LABEL="BattleShip-Netplay"
+	ZIP_NAME="BattleShip-Netplay-windows-mingw.zip"
+else
+	STAGE_LABEL="$APP_NAME"
+	ZIP_NAME="BattleShip-windows-mingw.zip"
+fi
+
+STAGE_DIR="$DIST_DIR/$STAGE_LABEL"
+ZIP_PATH="$DIST_DIR/$ZIP_NAME"
+
+step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
+fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mWARN: %s\033[0m\n' "$1" >&2; }
+
+require_cmd() {
+	command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+# Netplay / automatch needs MinGW libcurl (and typical curl runtime DLLs get bundled below).
+require_mingw_netplay_deps() {
+	local pc="${MINGW_PREFIX}/bin/pkg-config"
+	[[ -x "$pc" ]] || pc="x86_64-w64-mingw32-pkg-config"
+	require_cmd "$pc"
+	if ! "$pc" --exists libcurl; then
+		fail "SSB64_NETMENU requires mingw-w64-curl (libcurl). Install: paru -S mingw-w64-curl  or  ./scripts/mingw-w64-build-one.sh mingw-w64-curl"
+	fi
+	if ! pacman -Q mingw-w64-curl &>/dev/null; then
+		warn "mingw-w64-curl not installed via pacman; ensure libcurl is in $MINGW_PREFIX"
+	fi
+}
+
+# True if $1 is a Windows system DLL we do not bundle (ships with Windows / UCRT).
+is_system_dll() {
+	local name="${1,,}"
+	case "$name" in
+		kernel32.dll | user32.dll | gdi32.dll | shell32.dll | ole32.dll | oleaut32.dll)
+			return 0
+			;;
+		opengl32.dll | ws2_32.dll | advapi32.dll | comdlg32.dll | winmm.dll)
+			return 0
+			;;
+		d3dcompiler_47.dll | dbghelp.dll | hid.dll | dwmapi.dll | setupapi.dll)
+			return 0
+			;;
+		version.dll | imm32.dll | bcrypt.dll | psapi.dll)
+			return 0
+			;;
+		api-ms-win-*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# Copy MinGW DLLs required by $1 (recursive). Uses OBJDUMP + MINGW_BIN.
+bundle_mingw_dlls() {
+	local binary="$1"
+	local dest="$2"
+	[[ -f "$binary" ]] || fail "bundle_mingw_dlls: not a file: $binary"
+	[[ -d "$dest" ]] || fail "bundle_mingw_dlls: not a directory: $dest"
+
+	declare -A seen=()
+	declare -a queue=()
+	queue+=("$binary")
+
+	while ((${#queue[@]} > 0)); do
+		local current="${queue[0]}"
+		queue=("${queue[@]:1}")
+
+		while IFS= read -r dll; do
+			[[ -n "$dll" ]] || continue
+			local key="${dll,,}"
+			if is_system_dll "$key"; then
+				continue
+			fi
+			if [[ -n "${seen[$key]:-}" ]]; then
+				continue
+			fi
+			seen[$key]=1
+
+			local src="$MINGW_BIN/$dll"
+			if [[ ! -f "$src" ]]; then
+				# Match case-insensitive filenames (e.g. HID.DLL vs hid.dll).
+				local match
+				match="$(find "$MINGW_BIN" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+				[[ -n "$match" ]] && src="$match"
+			fi
+			if [[ ! -f "$src" ]]; then
+				warn "imported $dll but not found under $MINGW_BIN (skipped)"
+				continue
+			fi
+
+			cp -f "$src" "$dest/"
+			queue+=("$src")
+		done < <("$OBJDUMP" -p "$current" 2>/dev/null | awk '/DLL Name:/ {print $3}')
+	done
+
+	printf 'Bundled %d MinGW DLL(s) into %s\n' "${#seen[@]}" "$dest"
+}
+
+netmenu_want_value() {
+	if [[ "$IS_NETPLAY" -eq 1 ]]; then
+		printf '%s' ON
+	else
+		printf '%s' OFF
+	fi
+}
+
+netmenu_cache_value() {
+	local cache="$BUILD_DIR/CMakeCache.txt"
+	[[ -f "$cache" ]] || return 1
+	grep -m1 '^SSB64_NETMENU:BOOL=' "$cache" 2>/dev/null | sed 's/^SSB64_NETMENU:BOOL=//'
+}
+
+maybe_clean_on_netmenu_flip() {
+	local want got cache="$BUILD_DIR/CMakeCache.txt"
+
+	[[ -f "$cache" ]] || return 0
+	want="$(netmenu_want_value)"
+	got="$(netmenu_cache_value)" || return 0
+	if [[ "$got" != "$want" ]]; then
+		warn "CMake cache had SSB64_NETMENU=$got; switching to $want — cleaning build tree"
+		cmake --build "$BUILD_DIR" --target clean
+	fi
+}
+
+verify_netmenu_configured() {
+	local want got
+
+	want="$(netmenu_want_value)"
+	got="$(netmenu_cache_value)" || fail "CMakeCache.txt missing SSB64_NETMENU after configure"
+	if [[ "$got" != "$want" ]]; then
+		fail "Expected SSB64_NETMENU=$want in $BUILD_DIR/CMakeCache.txt but got $got"
+	fi
+	printf 'Verified SSB64_NETMENU=%s in %s\n' "$got" "$BUILD_DIR/CMakeCache.txt"
+}
+
+configure_mingw_build() {
+	local netmenu_label
+
+	netmenu_label="$(netmenu_want_value)"
+	step "Configuring MinGW cross build (SSB64_NETMENU=$netmenu_label)"
+	require_cmd cmake
+	require_cmd x86_64-w64-mingw32-gcc
+	require_cmd x86_64-w64-mingw32-g++
+	if [[ "$IS_NETPLAY" -eq 1 ]]; then
+		require_mingw_netplay_deps
+	else
+		if [[ "$BUILD_DIR" == *netplay* ]]; then
+			warn "Offline build (SSB64_NETMENU=OFF) using build dir named like netplay: $BUILD_DIR"
+		fi
+	fi
+
+	maybe_clean_on_netmenu_flip
+
+	cmake -B "$BUILD_DIR" "$ROOT" \
+		-DCMAKE_SYSTEM_NAME=Windows \
+		-DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+		-DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+		-DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+		-DCMAKE_FIND_ROOT_PATH="$MINGW_PREFIX" \
+		-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
+		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+		-DUSE_AUTO_VCPKG=OFF \
+		"${EXTRA_CMAKE_ARGS[@]}"
+
+	verify_netmenu_configured
+}
+
+build_mingw() {
+	step "Building torch.exe + BattleShip (MinGW cross)"
+	cmake --build "$BUILD_DIR" --target TorchExternal ssb64 -j"$JOBS"
+}
+
+# True when a prior configure built host Linux torch instead of Windows torch.exe.
+torch_external_is_stale_host_build() {
+	local tb="$BUILD_DIR/TorchExternal/src/TorchExternal-build"
+	[[ -x "$tb/torch" && ! -f "$tb/torch.exe" ]]
+}
+
+# Wipe ExternalProject output so the next configure uses MinGW toolchain args.
+reset_torch_external() {
+	if [[ -d "$BUILD_DIR/TorchExternal" ]]; then
+		warn "Removing stale TorchExternal tree (host torch or outdated cache)"
+		rm -rf "$BUILD_DIR/TorchExternal"
+	fi
+}
+
+ensure_torch_exe_cross() {
+	if torch_path="$(find_torch_exe)"; then
+		step "Using torch.exe: $torch_path"
+		return 0
+	fi
+
+	if torch_external_is_stale_host_build; then
+		reset_torch_external
+	fi
+
+	# Parent CMake must be (re)configured so TorchExternal CMAKE_ARGS include MinGW.
+	if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+		configure_mingw_build
+	elif ! grep -q 'CMAKE_SYSTEM_NAME:STRING=Windows' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+		fail "Build dir $BUILD_DIR is not a MinGW Windows cross build — use --build or a Windows cross CMake cache"
+	fi
+
+	step "Cross-building torch.exe (TorchExternal)"
+	cmake --build "$BUILD_DIR" --target TorchExternal -j"$JOBS"
+
+	if ! torch_path="$(find_torch_exe)"; then
+		fail "torch.exe not found after TorchExternal build (check build log under $BUILD_DIR/TorchExternal)"
+	fi
+	step "Built torch.exe: $torch_path"
+}
+
+ensure_f3d_o2r() {
+	local dest="$1"
+	if [[ -f "$dest/f3d.o2r" ]]; then
+		return 0
+	fi
+	step "Packaging f3d.o2r (Fast3D shaders)"
+	require_cmd zip
+	local f3d="$dest/f3d.o2r"
+	rm -f "$f3d"
+	( cd "$ROOT/libultraship/src/fast" && zip -rq "$f3d" shaders )
+	[[ -f "$f3d" ]] || fail "f3d.o2r was not created"
+}
+
+find_torch_exe() {
+	local candidates=(
+		"$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch.exe"
+		"$BUILD_DIR/TorchExternal/src/TorchExternal-build/Release/torch.exe"
+		"$BUILD_DIR/torch.exe"
+		"$BUILD_DIR/torch-install/bin/torch.exe"
+	)
+	local c
+	for c in "${candidates[@]}"; do
+		if [[ -f "$c" ]]; then
+			printf '%s\n' "$c"
+			return 0
+		fi
+	done
+	return 1
+}
+
+encode_credits_if_needed() {
+	step "Encoding credits text (if needed)"
+	(
+		cd "$ROOT/decomp/src/credits"
+		for f in staff.credits.us.txt titles.credits.us.txt; do
+			python3 "$ROOT/tools/creditsTextConverter.py" "$f" >/dev/null
+		done
+		for f in info.credits.us.txt companies.credits.us.txt; do
+			python3 "$ROOT/tools/creditsTextConverter.py" -paragraphFont "$f" >/dev/null
+		done
+	)
+}
+
+# ── Main ──
+require_cmd zip
+require_cmd "$OBJDUMP"
+
+if [[ "$DO_BUILD" -eq 1 ]]; then
+	encode_credits_if_needed
+	if torch_external_is_stale_host_build; then
+		reset_torch_external
+	fi
+	configure_mingw_build
+	build_mingw
+else
+	if ! find_torch_exe >/dev/null 2>&1; then
+		if torch_external_is_stale_host_build; then
+			reset_torch_external
+		fi
+		# Refresh parent cache so TorchExternal picks up MinGW CMAKE_ARGS.
+		configure_mingw_build
+	fi
+fi
+
+GAME_EXE="$BUILD_DIR/BattleShip.exe"
+[[ -f "$GAME_EXE" ]] || fail "BattleShip.exe not found at $GAME_EXE (run with --build or set --build-dir)"
+
+if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+	want="$(netmenu_want_value)"
+	got="$(netmenu_cache_value)" || got="(unset)"
+	if [[ "$got" != "$want" ]]; then
+		fail "Build tree $BUILD_DIR has SSB64_NETMENU=$got but this package requires $want — re-run with --build"
+	fi
+fi
+
+ensure_torch_exe_cross
+
+step "Staging $STAGE_DIR"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR/yamls/us" "$STAGE_DIR/assets/custom/fonts"
+
+# Offline packages must not ship netmenu runtime paths even if the build tree had leftovers.
+if [[ "$IS_NETPLAY" -eq 0 ]]; then
+	rm -rf "$STAGE_DIR/port"
+fi
+
+cp -f "$GAME_EXE" "$STAGE_DIR/$APP_NAME.exe"
+
+torch_path="$(find_torch_exe)"
+cp -f "$torch_path" "$STAGE_DIR/torch.exe"
+
+ensure_f3d_o2r "$BUILD_DIR"
+cp -f "$BUILD_DIR/f3d.o2r" "$STAGE_DIR/f3d.o2r"
+
+for f in gamecontrollerdb.txt config.yml; do
+	if [[ -f "$BUILD_DIR/$f" ]]; then
+		cp -f "$BUILD_DIR/$f" "$STAGE_DIR/$f"
+	elif [[ -f "$ROOT/$f" ]]; then
+		cp -f "$ROOT/$f" "$STAGE_DIR/$f"
+	else
+		fail "missing $f (not in build dir or repo root)"
+	fi
+done
+
+if [[ -d "$BUILD_DIR/yamls/us" ]]; then
+	cp -f "$BUILD_DIR/yamls/us/"*.yml "$STAGE_DIR/yamls/us/"
+elif [[ -d "$ROOT/yamls/us" ]]; then
+	cp -f "$ROOT/yamls/us/"*.yml "$STAGE_DIR/yamls/us/"
+else
+	fail "missing yamls/us"
+fi
+
+# Menu fonts + OFL license texts (required for redistribution).
+FONTS_SRC="$ROOT/assets/custom/fonts"
+for ttf in Montserrat-Regular.ttf Inconsolata-Regular.ttf; do
+	if [[ -f "$BUILD_DIR/assets/custom/fonts/$ttf" ]]; then
+		cp -f "$BUILD_DIR/assets/custom/fonts/$ttf" "$STAGE_DIR/assets/custom/fonts/"
+	elif [[ -f "$FONTS_SRC/$ttf" ]]; then
+		cp -f "$FONTS_SRC/$ttf" "$STAGE_DIR/assets/custom/fonts/"
+	else
+		fail "missing font $ttf"
+	fi
+done
+for ofl in Montserrat-OFL.txt Inconsolata-OFL.txt; do
+	if [[ -f "$FONTS_SRC/$ofl" ]]; then
+		cp -f "$FONTS_SRC/$ofl" "$STAGE_DIR/assets/custom/fonts/"
+	fi
+done
+
+if [[ -f "$ROOT/assets/icon.ico" ]]; then
+	cp -f "$ROOT/assets/icon.ico" "$STAGE_DIR/$APP_NAME.ico"
+fi
+
+if [[ -f "$ROOT/LICENSE" ]]; then
+	cp -f "$ROOT/LICENSE" "$STAGE_DIR/LICENSE.txt"
+	mkdir -p "$STAGE_DIR/licenses"
+	[[ -f "$ROOT/libultraship/LICENSE" ]] || fail "libultraship/LICENSE missing — init submodules"
+	[[ -f "$ROOT/torch/LICENSE" ]] || fail "torch/LICENSE missing — init submodules"
+	cp -f "$ROOT/libultraship/LICENSE" "$STAGE_DIR/licenses/libultraship-LICENSE.txt"
+	cp -f "$ROOT/torch/LICENSE" "$STAGE_DIR/licenses/torch-LICENSE.txt"
+	cat >"$STAGE_DIR/licenses/README.txt" <<'EOF'
+This directory contains license texts for third-party components whose
+compiled code is included in this BattleShip distribution:
+
+  - libultraship-LICENSE.txt  (MIT, Copyright (c) 2022 kenix3)
+  - torch-LICENSE.txt         (MIT, Copyright (c) 2023 Lywx)
+
+Bundled font licenses (SIL Open Font License 1.1) live alongside the
+font files at assets/custom/fonts/.
+
+The BattleShip project's own MIT license is in ../LICENSE.txt.
+
+MinGW runtime DLLs (SDL2, GLEW, libzip, spdlog, fmt, tinyxml2, etc.) are
+distributed under their respective upstream licenses. Refer to those
+packages for full license texts.
+EOF
+fi
+
+if [[ -f "$ROOT/tools/save_editor.py" ]]; then
+	cp -f "$ROOT/tools/save_editor.py" "$STAGE_DIR/"
+fi
+
+# Netmenu PNGs (VS submenu). Prefer build POST_BUILD tree, fall back to source.
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	net_assets=""
+	if [[ -d "$BUILD_DIR/port/net/assets" ]]; then
+		net_assets="$BUILD_DIR/port/net/assets"
+	elif [[ -d "$ROOT/port/net/assets" ]]; then
+		net_assets="$ROOT/port/net/assets"
+	fi
+	if [[ -n "$net_assets" ]]; then
+		mkdir -p "$STAGE_DIR/port/net/assets"
+		cp -a "$net_assets/." "$STAGE_DIR/port/net/assets/"
+	else
+		warn "netmenu build but port/net/assets not found — VS menu PNGs may be missing"
+	fi
+fi
+
+step "Bundling MinGW runtime DLLs"
+[[ -d "$MINGW_BIN" ]] || fail "MINGW_BIN not found: $MINGW_BIN"
+bundle_mingw_dlls "$GAME_EXE" "$STAGE_DIR"
+bundle_mingw_dlls "$STAGE_DIR/torch.exe" "$STAGE_DIR"
+
+step "Compressing $ZIP_PATH"
+mkdir -p "$DIST_DIR"
+rm -f "$ZIP_PATH"
+(
+	cd "$DIST_DIR"
+	zip -rq "$ZIP_NAME" "$STAGE_LABEL"
+)
+[[ -f "$ZIP_PATH" ]] || fail "zip was not created"
+
+ZIP_KB=$(( $(stat -c%s "$ZIP_PATH" 2>/dev/null || stat -f%z "$ZIP_PATH") / 1024 ))
+printf '\n\033[32m✓ Release zip ready: %s (%s KB)\033[0m\n' "$ZIP_PATH" "$ZIP_KB"
+printf '   Variant: %s\n' "$([[ "$IS_NETPLAY" -eq 1 ]] && echo netmenu/netplay || echo offline)"
+printf '   Portable: extract anywhere; save data lives next to BattleShip.exe.\n'
+printf '   First launch prompts for a ROM unless BattleShip.o2r is already present.\n'
