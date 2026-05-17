@@ -360,7 +360,7 @@ static GObj *syNetRbSnapResolveGobj(u32 id)
 	{
 		return NULL;
 	}
-	return gcGetGObjByID(NULL, id);
+	return gcFindGObjByID(id);
 }
 
 static u32 syNetRbSnapGobjId(const GObj *gobj)

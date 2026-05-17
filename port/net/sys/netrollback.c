@@ -331,15 +331,16 @@ void syNetRollbackAfterBattleUpdate(void)
  * not taskman update/frame counts. `frontier_tick` is exclusive: `syNetInputGetTick() + 1` after the latest completed sim step
  * (`syNetRollbackUpdate`), so tick `frontier_tick - 1` is the newest completed index included in the scan.
  *
- * Compares full `SYNetInputFrame` fields (tick, buttons, sticks, source, predicted, valid) when both rows exist, and
- * treats **remote ring present without published history** as a mismatch (wire ahead of local commit).
+ * Compares gameplay fields only (tick, buttons, sticks) when both rows exist — same contract as
+ * `syNetInputGetHistoryInputChecksum` / replay validation. `source`, `is_predicted`, and `is_valid` are
+ * diagnostic metadata; predicted-vs-confirmed tags must not trigger resim when buttons/sticks match.
+ * Treats **remote ring present without published history** as a mismatch (wire ahead of local commit).
  */
-/* TRUE when both rows exist and disagree on any committed field (aligned with NetInput desync diag value checks). */
+/* TRUE when both rows exist and disagree on gameplay input used during sim. */
 static sb32 syNetRollbackHistRemoteValueMismatch(const SYNetInputFrame *hist, const SYNetInputFrame *remote)
 {
 	if ((hist->tick != remote->tick) || (hist->buttons != remote->buttons) || (hist->stick_x != remote->stick_x) ||
-	    (hist->stick_y != remote->stick_y) || (hist->source != remote->source) ||
-	    (hist->is_predicted != remote->is_predicted) || (hist->is_valid != remote->is_valid))
+	    (hist->stick_y != remote->stick_y))
 	{
 		return TRUE;
 	}
