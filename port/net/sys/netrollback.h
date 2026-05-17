@@ -4,7 +4,8 @@
 /*
  * NetRollback — optional input-based rewind for P2P VS (PORT; enable with `SSB64_NETPLAY_ROLLBACK`).
  *
- * After gameplay finishes each sim tick it stores a **partial** world snapshot in a fixed-size ring. During the
+ * After gameplay finishes each sim tick it stores a **typed** world snapshot in a configurable ring
+ * (`SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES`, default 32). During the
  * NetPeer transport phase, if published local history disagrees with confirmed remote frames inside
  * `SYNETROLLBACK_SCAN_WINDOW`, we load the snapshot immediately before the divergence and fast-forward resimulate
  * (`syNetInputFuncRead` + `scVSBattleFuncUpdate`) to the live frontier.

@@ -6,6 +6,8 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-17 | [netplay_rematch_bootstrap_state](netplay_rematch_bootstrap_state_2026-05-17.md) | **RESOLVED** — Automatch rematches could stick in staging because stale bootstrap `START` / metadata flags survived the first VS session and the staging peer session started at the previous battle tick. Bootstrap attempt state is now reset before each automatch run and on VS stop, and staging resets netinput before starting the peer session. |
+| 2026-05-16 | [netrollback_snapshot_guards](netrollback_snapshot_guards_2026-05-16.md) | **RESOLVED — defensive** — Rollback snapshot save could SIGSEGV under `tc netem` when an active fighter/item/weapon `GObj` had a NULL typed payload during capture or the post-capture NetSync hash pass. Snapshot save/load/relink and NetSync hashes now skip NULL payloads, item/weapon restore loops cache `next_gobj` before ejection, and throttled snapshot guard logs identify any future skipped object by phase/kind/tick/id. |
 <<<<<<< HEAD
 <<<<<<< HEAD
 | 2026-05-09 | [netplay_delay_sync_starvation_wire_mismatch](netplay_delay_sync_starvation_wire_mismatch_2026-05-09.md) | **RESOLVED** — Delay-sync starvation handler latched on `GetStrictRequiredWireTick` while admission used `min(max(sim+D, hr), sim+D+slack)`, so `hr` could never clear the latch; early-tick starvation also fought startup grace. Aligned `required_wire`, diagnostics, and grace skip to the effective admission frontier. |

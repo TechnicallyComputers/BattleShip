@@ -21,6 +21,7 @@ extern int atoi(const char *str);
 #include <sc/scmanager.h>
 #include <sys/taskman.h>
 #include <stdio.h>
+#include <sys/netinput.h>
 #include <sys/netpeer.h>
 #include <mm_matchmaking.h>
 #include <mm_lan_detect.h>
@@ -3858,12 +3859,16 @@ static sb32 mnVSNetAutomatchAMTryBootstrap(const MmMatchResult *mr, const char *
 	                                (u8)sMNVSNetAutomatchSlot.fkind, (u8)sMNVSNetAutomatchSlot.costume, 0U);
 	if (syNetPeerConfigureUdpForAutomatch(bind, peer_hp, mr->session_id, mr->you_are_host, 2U) == FALSE)
 	{
+		port_log("SSB64 Automatch: bootstrap configure failed peer=%s\n", peer_hp);
+		syNetPeerCancelAutomatchBootstrap();
 		gSYNetPeerSuppressBootstrapSceneAdvance = FALSE;
 		(void)syNetPeerSetAutomatchNegotiation(FALSE);
 		return FALSE;
 	}
 	if (syNetPeerRunBootstrap() == FALSE)
 	{
+		port_log("SSB64 Automatch: bootstrap run failed peer=%s\n", peer_hp);
+		syNetPeerCancelAutomatchBootstrap();
 		gSYNetPeerSuppressBootstrapSceneAdvance = FALSE;
 		(void)syNetPeerSetAutomatchNegotiation(FALSE);
 		return FALSE;
@@ -3892,6 +3897,11 @@ static void mnVSNetAutomatchAMEnterVs(const MmMatchResult *mr)
 		port_log("SSB64 NetPeer automatch: reachability candidate=lan ok peer=%s\n", mr->peer_lan_hostport);
 		sMnAMStagingP2PReady = TRUE;
 		return;
+	}
+	if (mr->peer_lan_hostport[0] != '\0')
+	{
+		port_log("SSB64 Automatch: LAN bootstrap failed, trying reflexive peer=%s\n", mr->peer_hostport);
+		syNetPeerPauseBetweenBootstrapAttempts();
 	}
 	if ((mr->peer_lan_hostport[0] != '\0') &&
 	    (mnVSNetAutomatchAMTryBootstrap(mr, bind, mr->peer_hostport) != FALSE))
@@ -3933,6 +3943,7 @@ sb32 mnVSNetAutomatchAMConsumeStagingHandshake(void)
 	}
 	if (sMnAMStagingRendezvousStarted == FALSE)
 	{
+		syNetInputStartVSSession();
 		syNetPeerStartVSSession();
 		if (syNetPeerBeginStageSceneRendezvous() == FALSE)
 		{
