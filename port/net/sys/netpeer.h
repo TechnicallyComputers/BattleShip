@@ -248,6 +248,13 @@ extern void syNetPeerSetAutomatchLocalOffer(u16 ban_mask_le, u8 fkind, u8 costum
 extern s32 syNetPeerGetUdpSocketFd(void); /* Requires bound socket (-1 otherwise). */
 extern sb32 syNetPeerOpenSocket(void);
 extern sb32 syNetPeerRunBootstrap(void);
+/*
+ * Tear down socket + automatch bootstrap transport after failure or before another peer candidate.
+ * Does not clear `syNetPeerConfigureUdpForAutomatch` session/bind settings.
+ */
+extern void syNetPeerCancelAutomatchBootstrap(void);
+/* Brief cooperative pause between LAN/reflexive bootstrap attempts (frame pump + audio). */
+extern void syNetPeerPauseBetweenBootstrapAttempts(void);
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
 extern sb32 syNetPeerBeginStageSceneRendezvous(void);
 extern sb32 syNetPeerUpdateStageSceneRendezvous(void);

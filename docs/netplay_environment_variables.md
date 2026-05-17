@@ -163,6 +163,8 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_NETPLAY_ROLLBACK_INJECT_TICK`**, **`SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH`**, **`SSB64_NETPLAY_ROLLBACK_MISMATCH_DEBUG`**
 - **`SSB64_NETPLAY_ROLLBACK_VERIFY_STRICT`**, **`SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY`**
 - **`SSB64_NETPLAY_ROLLBACK_MISMATCH_REMOTE_WITHOUT_PUBLISHED`**, **`SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH_PLAYER`**
+- **`SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES`** — Rollback snapshot ring depth (default **32**, clamp **1–64**). Independent of input history length.
+- **`SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME`** — Max authoritative sim ticks to replay per NetPeer update during catch-up (default **4**, max **32**).
 - **`SSB64_NETPLAY_RESIM_TICK_TRACE`**, **`SSB64_NETPLAY_ROLLBACK_SCAN_DIAG`**
 - **`SSB64_NETPLAY_SIM_HZ`** — Sim Hz hint for rollback-related timing.
 

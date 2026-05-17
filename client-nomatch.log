@@ -1,0 +1,1578 @@
+SSB64: PortInit entered
+SSB64: Context instance created
+SSB64: Logging OK
+SSB64: Config + CVars OK
+SSB64: CrashHandler + Console OK
+SSB64: ControlDeck OK
+SSB64: locating f3d.o2r ...
+SSB64: bootstrap archive (shaders) -> ./f3d.o2r
+SSB64: calling InitResourceManager (bootstrap) ...
+SSB64: bootstrap ResourceManager OK
+SSB64: constructing Fast3dWindow ...
+SSB64: calling InitWindow ...
+SSB64: Window OK
+SSB64: attaching Port menu ...
+SSB64: Port menu attached
+SSB64: FileDropMgr OK
+SSB64: adding game archive -> /home/alex/.local/share/BattleShip/BattleShip.o2r
+SSB64: game archive registered
+SSB64: Audio initialized at 32000 Hz
+SSB64: All subsystems initialized
+SSB64: Resource factories registered — init complete
+SSB64: PortGameInit — initializing coroutine system
+SSB64: Starting game coroutine (boot sequence)
+SSB64: Game coroutine started — entering syMainLoop
+SSB64: osCreateThread id=1 entry=0x5609b254b200 (registered=1 total)
+SSB64: osCreateThread id=8 entry=0x5609b2545a30 (registered=2 total)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55ea0 (valid=0 cap=1) — yielding
+SSB64: osCreateThread id=5 entry=0x5609b254aff0 (registered=3 total)
+SSB64: Thread5 — start
+SSB64: Thread5 — DMA queue created, reading ROM
+SSB64: Thread5 — creating scheduler thread
+SSB64: osCreateThread id=3 entry=0x5609b256f460 (registered=4 total)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+SSB64: Thread5 — scheduler started, waiting for ready
+SSB64: Thread5 — scheduler ready, creating audio
+SSB64: osCreateThread id=4 entry=0x5609b253dd70 (registered=5 total)
+SSB64 Audio: thread entering synthesis loop (freq=552)
+SSB64 Audio: port pacing target=32000 high=552 low=368
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+SSB64: Thread5 — audio started, waiting for ready
+SSB64: Thread5 — audio ready, creating controller
+SSB64: osCreateThread id=6 entry=0x5609b25409e0 (registered=6 total)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+SSB64: Thread5 — controller started, waiting for ready
+SSB64: Thread5 — all threads ready, loading overlays
+SSB64: Thread5 — entering scManagerRunLoop
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9f70 (valid=0 cap=1) — yielding
+SSB64: syMainLoop returned — boot chain complete
+SSB64: Boot sequence yielded — entering frame loop
+SSB64: watchdog started (hang threshold=3000ms)
+SSB64: port_resume_service_threads: 6 threads registered
+  Thread 1: state=1 coroutine=0x5609b634ba00 finished=1
+  Thread 8: state=8 coroutine=0x5609b634c1c0 finished=0
+  Thread 5: state=8 coroutine=0x5609b634c980 finished=0
+  Thread 3: state=8 coroutine=0x5609b634d140 finished=0
+  Thread 4: state=8 coroutine=0x5609b634d900 finished=0
+  Thread 6: state=8 coroutine=0x5609b631c020 finished=0
+SSB64: GAME_THREAD_CAP_RESUMES=0 (0=disabled)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64 Audio: first n_alAudioFrame (tic=1 samples=552)
+SSB64 Audio: first synth frame submitted (sampleCount=552 bytes=2208)
+SSB64 Audio: output low-pass enabled (set SSB64_AUDIO_OUTPUT_FILTER=0 to disable)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=2)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9f70 — woke up (valid=1)
+SSB64: osCreateThread id=8 entry=0x5609b2546a30 (registered=7 total)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+SSB64: scManagerRunLoop — past audio/FB setup
+SSB64 NetRbSnapshot: ring_frames=32 (env SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES)
+SSB64: scManagerRunLoop — controllers=4 scene=27
+SSB64: scManagerRunLoop — entering scene 27
+SSB64: mnStartupStartScene — entered
+SSB64: mnStartupStartScene — past syAudioStopBGMAll
+SSB64: mnStartupStartScene — past syVideoInit
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136218 arena_size=0x1038 (ignored on PORT)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x7ff50423b010 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b010 end=0x7ff50523b010)
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanMalloc(size=160 align=8) = 0x7ff50423b010 (heap ptr=0x7ff50423b0b0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=144 align=8) = 0x7ff50423b0b0 (heap ptr=0x7ff50423b140 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=432 align=8) = 0x7ff50423b140 (heap ptr=0x7ff50423b2f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0x7ff50423b2f0 (heap ptr=0x7ff5042402f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0x7ff5042402f0 (heap ptr=0x7ff5042452f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff5042452f0 (heap ptr=0x7ff5042452f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff5042452f0 (heap ptr=0x7ff5042452f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0x7ff5042452f0 (heap ptr=0x7ff50424a2f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0x7ff50424a2f0 (heap ptr=0x7ff50424f2f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50424f2f0 (heap ptr=0x7ff50424f2f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0x7ff50424f2f0 (heap ptr=0x7ff50424f2f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=10240 align=8) = 0x7ff50424f2f0 (heap ptr=0x7ff504251af0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=10240 align=8) = 0x7ff504251af0 (heap ptr=0x7ff5042542f0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=49152 align=16) = 0x7ff5042542f0 (heap ptr=0x7ff5042602f0 end=0x7ff50523b010)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d20 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d20 — woke up (valid=1)
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b24b2b90
+SSB64: syTaskmanMalloc(size=232 align=8) = 0x7ff5042602f0 (heap ptr=0x7ff5042603d8 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0x7ff5042603d8 (heap ptr=0x7ff5042604c0 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=200 align=8) = 0x7ff5042604c0 (heap ptr=0x7ff504260588 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0x7ff504260588 (heap ptr=0x7ff504260670 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=200 align=8) = 0x7ff504260670 (heap ptr=0x7ff504260738 end=0x7ff50523b010)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0x7ff504260738 (heap ptr=0x7ff504260820 end=0x7ff50523b010)
+SSB64: osCreateThread id=10000000 entry=0x5609b24b2ab0 (registered=7 total)
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 1 complete (t=0.00s)
+SSB64: port_resume_service_threads: 7 threads registered
+  Thread 1: state=1 coroutine=0x5609b634ba00 finished=1
+  Thread 8: state=8 coroutine=0x5609b634c1c0 finished=0
+  Thread 5: state=8 coroutine=0x5609b634c980 finished=0
+  Thread 3: state=8 coroutine=0x5609b634d140 finished=0
+  Thread 4: state=8 coroutine=0x5609b634d900 finished=0
+  Thread 6: state=8 coroutine=0x5609b631c020 finished=0
+  Thread 8: state=8 coroutine=0x5609b6486500 finished=0
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=2)
+SSB64: osSpTaskStartGo #1 type=1 data_ptr=0x7ff50423bb60
+SSB64: RCP cost model — budget=400000 cycles/VI, force_n=0 (0=cost-model, >=1=fixed), rect_gate=200000
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 2 complete (t=0.06s)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=2)
+SSB64: osSpTaskStartGo #2 type=1 data_ptr=0x7ff50423bb60
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 3 complete (t=0.07s)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=2)
+SSB64: osSpTaskStartGo #3 type=1 data_ptr=0x7ff50423bb60
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 4 complete (t=0.09s)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 (valid=0 cap=4) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=2)
+SSB64: osSpTaskStartGo #4 type=1 data_ptr=0x7ff50423bb60
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+SSB64: Frame 5 complete (t=0.11s)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bc9560 (valid=0 cap=8) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2a54e80 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55e40 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2bee120 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x7ff5066f9d60 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x5609b2b55380 (valid=0 cap=7) — yielding
+SSB64: osSpTaskStartGo #5 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 6 complete (t=0.12s)
+SSB64: osSpTaskStartGo #6 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 7 complete (t=0.14s)
+SSB64: osSpTaskStartGo #7 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 8 complete (t=0.16s)
+SSB64: osSpTaskStartGo #8 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 9 complete (t=0.17s)
+SSB64: osSpTaskStartGo #9 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 10 complete (t=0.19s)
+SSB64: osSpTaskStartGo #10 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 11 complete (t=0.21s)
+SSB64: osSpTaskStartGo #11 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 12 complete (t=0.22s)
+SSB64: osSpTaskStartGo #12 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 13 complete (t=0.24s)
+SSB64: osSpTaskStartGo #13 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 14 complete (t=0.26s)
+SSB64: osSpTaskStartGo #14 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 15 complete (t=0.27s)
+SSB64: osSpTaskStartGo #15 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 16 complete (t=0.29s)
+SSB64: osSpTaskStartGo #16 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 17 complete (t=0.31s)
+SSB64: osSpTaskStartGo #17 type=1 data_ptr=0x7ff50423bb60
+SSB64: Frame 18 complete (t=0.32s)
+SSB64: gcEjectGObj ENTER gobj=0x7ff504268518 id=1021 kind=0 link_id=13 dl_link_id=64 gpr_head=0x7ff504268600 obj=(nil) link_next=(nil) link_prev=0x7ff504260738
+SSB64: gcEjectGObj EXIT gobj=0x7ff504268518
+SSB64: osSpTaskStartGo #18 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 19 complete (t=0.34s)
+SSB64: osSpTaskStartGo #19 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 20 complete (t=0.36s)
+SSB64: osSpTaskStartGo #20 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 21 complete (t=0.37s)
+SSB64: osSpTaskStartGo #21 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 22 complete (t=0.39s)
+SSB64: osSpTaskStartGo #22 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 23 complete (t=0.41s)
+SSB64: osSpTaskStartGo #23 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 24 complete (t=0.42s)
+SSB64: osSpTaskStartGo #24 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 25 complete (t=0.44s)
+SSB64: osSpTaskStartGo #25 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 26 complete (t=0.46s)
+SSB64: osSpTaskStartGo #26 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 27 complete (t=0.47s)
+SSB64: osSpTaskStartGo #27 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 28 complete (t=0.49s)
+SSB64: osSpTaskStartGo #28 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 29 complete (t=0.51s)
+SSB64: osSpTaskStartGo #29 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 30 complete (t=0.52s)
+SSB64: osSpTaskStartGo #30 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 31 complete (t=0.54s)
+SSB64: osSpTaskStartGo #31 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 32 complete (t=0.56s)
+SSB64: osSpTaskStartGo #32 type=1 data_ptr=0x7ff50423baf0
+SSB64: Frame 33 complete (t=0.57s)
+SSB64: gcEjectGObj ENTER gobj=0x7ff5042602f0 id=0 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x7ff5042603d8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff5042602f0
+SSB64: gcEjectGObj ENTER gobj=0x7ff5042603d8 id=4294967295 kind=3 link_id=0 dl_link_id=64 gpr_head=(nil) obj=0x7ff5042604c0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff5042603d8
+SSB64: gcEjectGObj ENTER gobj=0x7ff504260588 id=1003 kind=3 link_id=9 dl_link_id=64 gpr_head=(nil) obj=0x7ff504260670 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff504260588
+SSB64: gcEjectGObj ENTER gobj=0x7ff504260738 id=1008 kind=2 link_id=13 dl_link_id=0 gpr_head=0x7ff504260820 obj=0x7ff504268490 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff504260738
+SSB64: mnStartupStartScene — past syTaskmanStartTask (should not reach here)
+SSB64: scManagerRunLoop — entering scene 1
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136f98 arena_size=0x78 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x7ff50423b010 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x7ff4bebff010 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b24b5a90
+particle_bank[MNTitle]: bank_id=0 scripts=3 (288 bytes) textures=2 (19072 bytes)
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: Frame 34 complete (t=0.59s)
+SSB64: osSpTaskStartGo #33 type=1 data_ptr=0x7ff4bec002e0
+SSB64: Frame 35 complete (t=0.61s)
+SSB64: osSpTaskStartGo #34 type=1 data_ptr=0x7ff4bec002e0
+SSB64: Frame 36 complete (t=0.62s)
+SSB64: osSpTaskStartGo #35 type=1 data_ptr=0x7ff4bec002e0
+SSB64: Frame 37 complete (t=0.64s)
+SSB64: osSpTaskStartGo #36 type=1 data_ptr=0x7ff4bec002e0
+SSB64: Frame 38 complete (t=0.66s)
+SSB64: osSpTaskStartGo #37 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 39 complete (t=0.67s)
+SSB64: osSpTaskStartGo #38 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 40 complete (t=0.69s)
+SSB64: osSpTaskStartGo #39 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 41 complete (t=0.71s)
+SSB64: osSpTaskStartGo #40 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 42 complete (t=0.72s)
+SSB64: osSpTaskStartGo #41 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 43 complete (t=0.74s)
+SSB64: osSpTaskStartGo #42 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 44 complete (t=0.76s)
+SSB64: osSpTaskStartGo #43 type=1 data_ptr=0x7ff4bec00390
+SSB64: Frame 45 complete (t=0.77s)
+SSB64: osSpTaskStartGo #44 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 46 complete (t=0.79s)
+SSB64: osSpTaskStartGo #45 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 47 complete (t=0.81s)
+SSB64: osSpTaskStartGo #46 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 48 complete (t=0.82s)
+SSB64: osSpTaskStartGo #47 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 49 complete (t=0.84s)
+SSB64: osSpTaskStartGo #48 type=1 data_ptr=0x7ff4bec01360
+SSB64: Frame 50 complete (t=0.86s)
+SSB64: osSpTaskStartGo #49 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 51 complete (t=0.87s)
+SSB64: osSpTaskStartGo #50 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 52 complete (t=0.89s)
+SSB64: osSpTaskStartGo #51 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 53 complete (t=0.91s)
+SSB64: osSpTaskStartGo #52 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 54 complete (t=0.92s)
+SSB64: osSpTaskStartGo #53 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 55 complete (t=0.94s)
+SSB64: osSpTaskStartGo #54 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 56 complete (t=0.96s)
+SSB64: osSpTaskStartGo #55 type=1 data_ptr=0x7ff4bec01410
+SSB64: Frame 57 complete (t=0.97s)
+SSB64: osSpTaskStartGo #56 type=1 data_ptr=0x7ff4bec012b0
+SSB64: Frame 58 complete (t=0.99s)
+SSB64: osSpTaskStartGo #57 type=1 data_ptr=0x7ff4bec012b0
+SSB64: Frame 59 complete (t=1.01s)
+SSB64: osSpTaskStartGo #58 type=1 data_ptr=0x7ff4bec01200
+SSB64: Frame 60 complete (t=1.02s)
+SSB64: osSpTaskStartGo #59 type=1 data_ptr=0x7ff4bec012b0
+SSB64: osSpTaskStartGo #60 type=1 data_ptr=0x7ff4bec012b0
+SSB64: Frame 120 complete (t=2.02s)
+SSB64: osSpTaskStartGo #120 type=1 data_ptr=0x7ff4bec014c0
+SSB64: Frame 180 complete (t=3.02s)
+SSB64: osSpTaskStartGo #180 type=1 data_ptr=0x7ff4bec014f0
+SSB64 Audio: first non-zero sample detected (idx=8 v=1)
+SSB64 Audio: WAV dump opened /tmp/ssb64_dump.wav (will capture 2048000 bytes ~ 16 s)
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec731a0 id=4294967290 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x7ff4bec73dc8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec731a0
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec73dc8 id=4294967289 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec73dc8
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec6fed0 id=0 kind=0 link_id=1 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec6fed0
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78098 id=4294967295 kind=3 link_id=2 dl_link_id=64 gpr_head=0x7ff4bec78248 obj=0x7ff4bec78180 link_next=0x7ff4bec7a978 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78098
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec7a978 id=4294967295 kind=3 link_id=2 dl_link_id=64 gpr_head=(nil) obj=0x7ff4bec7aa60 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec7a978
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78288 id=2 kind=3 link_id=3 dl_link_id=64 gpr_head=(nil) obj=0x7ff4bec78370 link_next=0x7ff4bec78438 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78288
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78438 id=3 kind=3 link_id=3 dl_link_id=64 gpr_head=(nil) obj=0x7ff4bec78520 link_next=0x7ff4bec78688 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78438
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78688 id=3 kind=3 link_id=3 dl_link_id=64 gpr_head=(nil) obj=0x7ff4bec78770 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78688
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec77fb0 id=15 kind=0 link_id=4 dl_link_id=3 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec77fb0
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec788d8 id=5 kind=2 link_id=6 dl_link_id=0 gpr_head=0x7ff4bec789c0 obj=0x7ff4bec78a00 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec788d8
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78c80 id=10 kind=1 link_id=8 dl_link_id=65 gpr_head=(nil) obj=0x7ff4bec78d68 link_next=0x7ff4bec79d68 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78c80
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec79d68 id=8 kind=2 link_id=8 dl_link_id=1 gpr_head=(nil) obj=0x7ff4bec79e90 link_next=0x7ff4bec7a138 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec79d68
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec7a138 id=9 kind=2 link_id=8 dl_link_id=1 gpr_head=0x7ff4bec7a220 obj=0x7ff4bec7a260 link_next=0x7ff4bec7a370 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec7a138
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec7a370 id=10 kind=1 link_id=8 dl_link_id=65 gpr_head=(nil) obj=0x7ff4bec7a458 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec7a370
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec7a7c8 id=8 kind=2 link_id=9 dl_link_id=1 gpr_head=0x7ff4bec7a8b0 obj=0x7ff4bec7a8f0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec7a7c8
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec78b10 id=11 kind=2 link_id=10 dl_link_id=0 gpr_head=(nil) obj=0x7ff4bec78bf8 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec78b10
+SSB64: gcEjectGObj ENTER gobj=0x7ff4bec6ffb8 id=0 kind=0 link_id=15 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x7ff4bec6ffb8
+SSB64: scManagerRunLoop — entering scene 7
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136da0 arena_size=0x4b0 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x7ff4bebff010 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x5609b6933240 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b24b23b0
+SSB64 Audio: first syAudioPlayBGM sngplayer=0 bgm=44 seqCount=47
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: Frame 240 complete (t=4.02s)
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: osSpTaskStartGo #240 type=1 data_ptr=0x5609b6936100
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: Frame 300 complete (t=5.02s)
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: osSpTaskStartGo #300 type=1 data_ptr=0x5609b6936100
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: Frame 360 complete (t=6.02s)
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: osSpTaskStartGo #360 type=1 data_ptr=0x5609b6936100
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d8f8 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698d9e0 link_next=0x5609b698da68 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d8f8
+SSB64: gcEjectGObj ENTER gobj=0x5609b698da68 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698db50 link_next=0x5609b698dbd8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698da68
+SSB64: gcEjectGObj ENTER gobj=0x5609b698dbd8 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698dcc0 link_next=0x5609b698dd48 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698dbd8
+SSB64: gcEjectGObj ENTER gobj=0x5609b698dd48 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698de30 link_next=0x5609b698deb8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698dd48
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b6984700 req=0x20 fileBase=0x5609b696c9e0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b696c9e0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: gcEjectGObj ENTER gobj=0x5609b698cf70 id=0 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x5609b698d058 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698cf70
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d058 id=4294967295 kind=3 link_id=0 dl_link_id=64 gpr_head=(nil) obj=0x5609b698d140 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d058
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d208 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b698d2f0 link_next=0x5609b698d3b8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d208
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d3b8 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b698d4a0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d3b8
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d568 id=0 kind=2 link_id=2 dl_link_id=0 gpr_head=(nil) obj=0x5609b698d650 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d568
+SSB64: gcEjectGObj ENTER gobj=0x5609b698deb8 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698dfa0 link_next=0x5609b698dd48 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698deb8
+SSB64: gcEjectGObj ENTER gobj=0x5609b698dd48 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698de30 link_next=0x5609b698dbd8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698dd48
+SSB64: gcEjectGObj ENTER gobj=0x5609b698dbd8 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698dcc0 link_next=0x5609b698da68 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698dbd8
+SSB64: gcEjectGObj ENTER gobj=0x5609b698da68 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698db50 link_next=0x5609b698d8f8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698da68
+SSB64: gcEjectGObj ENTER gobj=0x5609b698d8f8 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b698d9e0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b698d8f8
+SSB64: scManagerRunLoop — entering scene 9
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136d10 arena_size=0x540 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x5609b6933240 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x5609b795ff50 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b258d000
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b79ce8d0 req=0x20 fileBase=0x5609b79b6bb0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b79b6bb0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d4d60 id=0 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x5609b79d4e48 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d4d60
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d4e48 id=4294967295 kind=3 link_id=0 dl_link_id=64 gpr_head=(nil) obj=0x5609b79d4f30 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d4e48
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d4ff8 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b79d50e0 link_next=0x5609b79d51a8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d4ff8
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d51a8 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b79d5290 link_next=0x5609b79d5358 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d51a8
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d5358 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b79d5440 link_next=0x5609b79d5508 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d5358
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d5508 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b79d55f0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d5508
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d56b8 id=0 kind=2 link_id=2 dl_link_id=0 gpr_head=(nil) obj=0x5609b79d57a0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d56b8
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d59c0 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b79d5aa8 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d59c0
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d5c40 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b79d5d28 link_next=0x5609b79d5f48 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d5c40
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d5f48 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b79d6030 link_next=0x5609b79d6250 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d5f48
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d6250 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b79d6338 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d6250
+SSB64: scManagerRunLoop — entering scene 63
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136d10 arena_size=0x540 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x5609b795ff50 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x5609b895ff60 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b25a04c0
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: runtimeTexFix addr=0x5609b89ce8e0 req=0x20 fileBase=0x5609b89b6bc0 fileSize=0x18050 off=0x17d20 num=0x20 desc=1 file=0 descBase=0x5609b89b6bc0 descSize=0x18050 path=reloc_menus/MNCommon
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d4d70 id=0 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x5609b89d4e58 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d4d70
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d4e58 id=4294967295 kind=3 link_id=0 dl_link_id=64 gpr_head=(nil) obj=0x5609b89d4f40 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d4e58
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d5008 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b89d50f0 link_next=0x5609b89d51b8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d5008
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d51b8 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b89d52a0 link_next=0x5609b89d5368 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d51b8
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d5368 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b89d5450 link_next=0x5609b89d5518 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d5368
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d5518 id=1 kind=3 link_id=1 dl_link_id=64 gpr_head=(nil) obj=0x5609b89d5600 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d5518
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d56c8 id=0 kind=2 link_id=2 dl_link_id=0 gpr_head=(nil) obj=0x5609b89d57b0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d56c8
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d59d0 id=0 kind=2 link_id=3 dl_link_id=1 gpr_head=(nil) obj=0x5609b89d5ab8 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d59d0
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d5c50 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b89d5d38 link_next=0x5609b89d5f58 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d5c50
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d5f58 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b89d6040 link_next=0x5609b89d6260 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d5f58
+SSB64: gcEjectGObj ENTER gobj=0x5609b89d6260 id=0 kind=2 link_id=4 dl_link_id=2 gpr_head=(nil) obj=0x5609b89d6348 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b89d6260
+SSB64: scManagerRunLoop — entering scene 64
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136ad0 arena_size=0x780 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x5609b895ff60 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x5609b795ff50 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b25ca160
+particle_bank[EFCommon]: bank_id=0 scripts=119 (10928 bytes) textures=47 (315056 bytes)
+particle_bank[unk2]: bank_id=1 scripts=4 (352 bytes) textures=2 (9312 bytes)
+particle_bank[unk0]: bank_id=2 scripts=13 (1008 bytes) textures=3 (1104 bytes)
+particle_bank[unk1]: bank_id=3 scripts=4 (528 bytes) textures=2 (8304 bytes)
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: Frame 420 complete (t=7.02s)
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: osSpTaskStartGo #420 type=1 data_ptr=0x5609b79649a0
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: ATTR fkind=8 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=8
+SSB64: ftManagerMakeFighter - before parts setup fkind=8 commonparts=0x5609b7aa093c setup_parts=0x5609b7aa0524
+SSB64: ftManagerMakeFighter - after parts setup fkind=8
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=8
+SSB64: ftManagerMakeFighter - fighter init complete fkind=8 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=8
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b08548 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: ATTR fkind=8 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=8
+SSB64: ftManagerMakeFighter - before parts setup fkind=8 commonparts=0x5609b7aa093c setup_parts=0x5609b7aa0524
+SSB64: ftManagerMakeFighter - after parts setup fkind=8
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=8
+SSB64: ftManagerMakeFighter - fighter init complete fkind=8 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=8
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7ac2e28 req=0x20 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf38 num=0x20 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: runtimeTexFix addr=0x5609b7ac2e50 req=0x200 fileBase=0x5609b7aa5ef0 fileSize=0x1d820 off=0x1cf60 num=0x200 desc=1 file=328 descBase=0x5609b7aa5ef0 descSize=0x1d820 path=reloc_fighters_main/KirbyModel
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b096c8 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: ATTR fkind=1 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=1
+SSB64: ftManagerMakeFighter - before parts setup fkind=1 commonparts=0x5609b79fd2ac setup_parts=0x5609b79fd128
+SSB64: ftManagerMakeFighter - after parts setup fkind=1
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=1
+SSB64: ftManagerMakeFighter - fighter init complete fkind=1 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=1
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b08548 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: ATTR fkind=1 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=1
+SSB64: ftManagerMakeFighter - before parts setup fkind=1 commonparts=0x5609b79fd2ac setup_parts=0x5609b79fd128
+SSB64: ftManagerMakeFighter - after parts setup fkind=1
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=1
+SSB64: ftManagerMakeFighter - fighter init complete fkind=1 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=1
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a163b0 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79b0 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a163d8 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79d8 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fa8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75a8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fd0 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75d0 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16208 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7808 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16230 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7830 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15cd8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x72d8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15d00 req=0x200 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7300 num=0x200 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a163b0 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79b0 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a163d8 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79d8 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fa8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75a8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fd0 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75d0 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16208 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7808 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16230 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7830 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15cd8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x72d8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15d00 req=0x200 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7300 num=0x200 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a163b0 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79b0 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a163d8 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79d8 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fa8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75a8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fd0 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75d0 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16208 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7808 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16230 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7830 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15cd8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x72d8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15d00 req=0x200 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7300 num=0x200 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a163b0 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79b0 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a163d8 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79d8 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fa8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75a8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fd0 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75d0 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16208 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7808 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16230 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7830 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15cd8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x72d8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15d00 req=0x200 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7300 num=0x200 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a163b0 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79b0 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a163d8 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x79d8 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fa8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75a8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15fd0 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x75d0 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16208 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7808 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a16230 req=0x100 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7830 num=0x100 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15cd8 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x72d8 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15d00 req=0x200 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7300 num=0x200 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a15f08 req=0x20 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7508 num=0x20 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b7a164e0 req=0x40 fileBase=0x5609b7a0ea00 fileSize=0x7e50 off=0x7ae0 num=0x40 desc=1 file=313 descBase=0x5609b7a0ea00 descSize=0x7e50 path=reloc_fighters_main/FoxModel
+SSB64: runtimeTexFix addr=0x5609b79cbb18 req=0x400 fileBase=0x5609b79cbb10 fileSize=0x5f0 off=0x8 num=0x400 desc=1 file=22 descBase=0x5609b79cbb10 descSize=0x5f0 path=reloc_menus/MNPlayersSpotlight
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b096c8 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: ATTR fkind=5 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=5
+SSB64: ftManagerMakeFighter - before parts setup fkind=5 commonparts=0x5609b7a4b2b0 setup_parts=0x5609b7a4af68
+SSB64: ftManagerMakeFighter - after parts setup fkind=5
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=5
+SSB64: ftManagerMakeFighter - fighter init complete fkind=5 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=5
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b08548 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: ATTR fkind=5 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00000000 000000FF FFFFFC00 00000005 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=5
+SSB64: ftManagerMakeFighter - before parts setup fkind=5 commonparts=0x5609b7a4b2b0 setup_parts=0x5609b7a4af68
+SSB64: ftManagerMakeFighter - after parts setup fkind=5
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=5
+SSB64: ftManagerMakeFighter - fighter init complete fkind=5 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0x5609b7b06198
+SSB64: ftManagerMakeFighter - return fkind=5
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c630 req=0x200 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcd10 num=0x200 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5cf80 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd660 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d520 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdc00 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d548 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdc28 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c4a0 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcb80 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c5a8 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcc88 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ca68 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd148 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ca68 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd148 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5aaa8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb188 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5aad0 req=0x40 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb1b0 num=0x40 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d520 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdc00 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5dc58 req=0x40 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xe338 num=0x40 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c210 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc8f0 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c5a8 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcc88 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ca68 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd148 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ca68 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd148 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d678 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd58 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d6a0 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd80 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d7a8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xde88 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d7d0 req=0x480 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdeb0 num=0x480 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d088 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd768 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c418 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcaf8 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5bfe0 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc6c0 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5cd78 req=0x200 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd458 num=0x200 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5bfe0 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc6c0 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c008 req=0x200 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc6e8 num=0x200 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c368 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xca48 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c390 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xca70 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d190 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd870 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d1b8 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd898 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5bfe0 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc6c0 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c320 req=0x40 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xca00 num=0x40 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c418 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcaf8 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c8e8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcfc8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c910 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcff0 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ae00 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4e0 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c838 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcf18 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c8e8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcfc8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c910 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcff0 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5ae00 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4e0 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c838 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcf18 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b79a0cf0 req=0x20 fileBase=0x5609b79a08e0 fileSize=0x490 off=0x410 num=0x20 desc=1 file=21 descBase=0x5609b79a08e0 descSize=0x490 path=reloc_menus/MNSelectCommon
+SSB64: runtimeTexFix addr=0x5609b799c8a8 req=0x20 fileBase=0x5609b798b310 fileSize=0x11610 off=0x11598 num=0x20 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b799b708 req=0x200 fileBase=0x5609b798b310 fileSize=0x11610 off=0x103f8 num=0x200 desc=1 file=17 descBase=0x5609b798b310 descSize=0x11610 path=reloc_menus/MNPlayersCommon
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c630 req=0x200 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xcd10 num=0x200 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5cf80 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xd660 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d520 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdc00 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d548 req=0x100 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdc28 num=0x100 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5add8 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xb4b8 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5c298 req=0x80 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xc978 num=0x80 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: runtimeTexFix addr=0x5609b7a5d650 req=0x20 fileBase=0x5609b7a4f920 fileSize=0x11f70 off=0xdd30 num=0x20 desc=1 file=324 descBase=0x5609b7a4f920 descSize=0x11f70 path=reloc_fighters_main/LinkModel
+SSB64: osCreateThread id=10000001 entry=0x5609b25c3710 (registered=7 total)
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b0a6a0 id=0 kind=2 link_id=26 dl_link_id=33 gpr_head=0x5609b7b0a788 obj=0x5609b7b0aae0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b0a6a0
+SSB64: scSubsysFighterSetStatus - begin status=0x10001 gobj=0x5609b7b06198
+SSB64: ftMainSetStatus - status=0x10001 motion=1 figatree=0x5609b7afd670 anim_flags=0x00000000
+SSB64: ftMainSetStatus - before figatree attach status=0x10001 motion=1
+SSB64: ftMainSetStatus - after figatree attach status=0x10001 motion=1
+SSB64: ftMainSetStatus - before play all events status=0x10001 motion=1
+SSB64: ftMainSetStatus - after play all events status=0x10001 motion=1
+SSB64: scSubsysFighterSetStatus - end status=0x10001 gobj=0x5609b7b06198
+SSB64: Frame 480 complete (t=8.02s)
+SSB64: osSpTaskStartGo #480 type=1 data_ptr=0x5609b7965830
+SSB64: gcEjectGObj ENTER gobj=0x5609b79cf498 id=4294967290 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=0x5609b79d00c0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79cf498
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d00c0 id=4294967289 kind=0 link_id=0 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d00c0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b06198 id=1000 kind=1 link_id=3 dl_link_id=9 gpr_head=0x5609b7b096c8 obj=0x5609b7b06280 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b06198
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d50e8 id=1011 kind=0 link_id=6 dl_link_id=15 gpr_head=(nil) obj=(nil) link_next=0x5609b79d51d0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d50e8
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d51d0 id=1011 kind=0 link_id=6 dl_link_id=18 gpr_head=(nil) obj=(nil) link_next=0x5609b79d52b8 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d51d0
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d52b8 id=1011 kind=0 link_id=6 dl_link_id=15 gpr_head=(nil) obj=(nil) link_next=0x5609b79d53a0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d52b8
+SSB64: gcEjectGObj ENTER gobj=0x5609b79d53a0 id=1011 kind=0 link_id=6 dl_link_id=18 gpr_head=(nil) obj=(nil) link_next=0x5609b79ec680 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79d53a0
+SSB64: gcEjectGObj ENTER gobj=0x5609b79ec680 id=1011 kind=0 link_id=6 dl_link_id=18 gpr_head=(nil) obj=(nil) link_next=0x5609b79ec768 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79ec680
+SSB64: gcEjectGObj ENTER gobj=0x5609b79ec768 id=1011 kind=0 link_id=6 dl_link_id=15 gpr_head=(nil) obj=(nil) link_next=0x5609b79ec938 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79ec768
+SSB64: gcEjectGObj ENTER gobj=0x5609b79ec938 id=1011 kind=0 link_id=6 dl_link_id=10 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79ec938
+SSB64: gcEjectGObj ENTER gobj=0x5609b79ec850 id=1016 kind=0 link_id=11 dl_link_id=25 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79ec850
+SSB64: gcEjectGObj ENTER gobj=0x5609b79cc100 id=1024 kind=0 link_id=15 dl_link_id=65 gpr_head=(nil) obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79cc100
+SSB64: gcEjectGObj ENTER gobj=0x5609b79cc1e8 id=4294967295 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b79cc2d0 link_next=0x5609b7b00ca0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b79cc1e8
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b00ca0 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b00d88 link_next=0x5609b7b00e50 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b00ca0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b00e50 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b00f38 link_next=0x5609b7b01000 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b00e50
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01000 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b010e8 link_next=0x5609b7b011b0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01000
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b011b0 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b01298 link_next=0x5609b7b01360 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b011b0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01360 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b01448 link_next=0x5609b7b015b0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01360
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b015b0 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b01698 link_next=0x5609b7b01760 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b015b0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01760 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b01848 link_next=0x5609b7b01910 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01760
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01910 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b019f8 link_next=0x5609b7b01ac0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01910
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01ac0 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b01ba8 link_next=0x5609b7b05b78 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01ac0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05b78 id=1025 kind=3 link_id=16 dl_link_id=64 gpr_head=(nil) obj=0x5609b7b05c60 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05b78
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01c70 id=0 kind=2 link_id=17 dl_link_id=26 gpr_head=(nil) obj=0x5609b7b01d58 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01c70
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01de0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b01ec8 obj=0x5609b7b01f08 link_next=0x5609b7b01f90 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01de0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b01f90 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b02078 obj=0x5609b7b020b8 link_next=0x5609b7b02140 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b01f90
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02140 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b02228 obj=0x5609b7b02268 link_next=0x5609b7b024a0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02140
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b024a0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b02588 obj=0x5609b7b025c8 link_next=0x5609b7b02800 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b024a0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02800 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b028e8 obj=0x5609b7b02928 link_next=0x5609b7b02b60 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02800
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02b60 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b02c48 obj=0x5609b7b02c88 link_next=0x5609b7b02ec0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02b60
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02ec0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b02fa8 obj=0x5609b7b02fe8 link_next=0x5609b7b03070 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02ec0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03070 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b03158 obj=0x5609b7b03198 link_next=0x5609b7b03220 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03070
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03220 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b03308 obj=0x5609b7b03348 link_next=0x5609b7b033d0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03220
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b033d0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b034b8 obj=0x5609b7b034f8 link_next=0x5609b7b03580 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b033d0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03580 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b03668 obj=0x5609b7b036a8 link_next=0x5609b7b03730 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03580
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03730 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b03818 obj=0x5609b7b03858 link_next=0x5609b7b038e0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03730
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b038e0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b039c8 obj=0x5609b7b03a08 link_next=0x5609b7b03c40 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b038e0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03c40 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b03d28 obj=0x5609b7b03d68 link_next=0x5609b7b03fa0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03c40
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03fa0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b04088 obj=0x5609b7b040c8 link_next=0x5609b7b04300 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03fa0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04300 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b043e8 obj=0x5609b7b04428 link_next=0x5609b7b04660 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04300
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04660 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b04748 obj=0x5609b7b04788 link_next=0x5609b7b04810 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04660
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04810 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b048f8 obj=0x5609b7b04938 link_next=0x5609b7b049c0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04810
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b049c0 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b04aa8 obj=0x5609b7b04ae8 link_next=0x5609b7b04b70 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b049c0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04b70 id=0 kind=2 link_id=18 dl_link_id=27 gpr_head=0x5609b7b04c58 obj=0x5609b7b04c98 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04b70
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04d20 id=0 kind=2 link_id=19 dl_link_id=30 gpr_head=0x5609b7b04e90 obj=0x5609b7b04e08 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04d20
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04f58 id=0 kind=2 link_id=20 dl_link_id=31 gpr_head=0x5609b7b050c8 obj=0x5609b7b05040 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04f58
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05510 id=0 kind=1 link_id=21 dl_link_id=9 gpr_head=0x5609b7b059c8 obj=0x5609b7b055f8 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05510
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05108 id=0 kind=2 link_id=22 dl_link_id=28 gpr_head=(nil) obj=0x5609b7b051f0 link_next=0x5609b7b05300 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05108
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05300 id=0 kind=2 link_id=22 dl_link_id=28 gpr_head=(nil) obj=0x5609b7b09708 link_next=0x5609b7b05f60 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05300
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05f60 id=0 kind=2 link_id=22 dl_link_id=28 gpr_head=0x5609b7b06048 obj=0x5609b7b06088 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05f60
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05a08 id=0 kind=2 link_id=23 dl_link_id=34 gpr_head=(nil) obj=0x5609b7b05af0 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05a08
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b053e8 id=0 kind=0 link_id=24 dl_link_id=65 gpr_head=0x5609b7b054d0 obj=(nil) link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b053e8
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b022f0 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b023d8 obj=0x5609b7b02418 link_next=0x5609b7b02650 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b022f0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02650 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b02738 obj=0x5609b7b02778 link_next=0x5609b7b029b0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02650
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b029b0 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b02a98 obj=0x5609b7b02ad8 link_next=0x5609b7b02d10 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b029b0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b02d10 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b02df8 obj=0x5609b7b02e38 link_next=0x5609b7b03a90 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b02d10
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03a90 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b03b78 obj=0x5609b7b03bb8 link_next=0x5609b7b03df0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03a90
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b03df0 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b03ed8 obj=0x5609b7b03f18 link_next=0x5609b7b04150 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b03df0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b04150 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b04238 obj=0x5609b7b04278 link_next=0x5609b7b044b0 link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b04150
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b044b0 id=0 kind=2 link_id=25 dl_link_id=32 gpr_head=0x5609b7b04598 obj=0x5609b7b045d8 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b044b0
+SSB64: gcEjectGObj ENTER gobj=0x5609b7b05d28 id=0 kind=2 link_id=28 dl_link_id=35 gpr_head=0x5609b7b05e10 obj=0x5609b7b05e50 link_next=(nil) link_prev=(nil)
+SSB64: gcEjectGObj EXIT gobj=0x5609b7b05d28
+SSB64: scManagerRunLoop — entering scene 66
+SSB64: syTaskmanStartTask — decomp arena_start=0x5609b3136ad0 arena_size=0x780 (ignored on PORT)
+SSB64: syTaskmanStartTask — freeing prev PORT heap=0x5609b795ff50 (16MiB)
+SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=0x5609b895ff60 arena_size=0x1000000
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x5609b25cb240
+particle_bank[EFCommon]: bank_id=0 scripts=119 (10928 bytes) textures=47 (315056 bytes)
+SSB64 Matchmaking: worker thread online base=http://216.154.76.149:8899
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64 NetPeer automatch: SSB64_NETPLAY_DELAY=2 overrides caller input_delay=2
+SSB64 NetPeer: committed_input_delay tag=automatch_config D=2 source=env requested=2 caller=2 floor=2 ceil=12
+SSB64 NetPeer automatch: configured bind=0.0.0.0:7778 peer=127.0.0.1:9 session=1 host=0 delay=2
+SSB64 Automatch LAN detect: using 192.168.66.3:7778 (env overrides: SSB64_MATCHMAKING_LAN_ENDPOINT, SSB64_MATCHMAKING_LAN_INTERFACE)
+SSB64 Automatch: MM_POLL_MATCHED poll_phase_tics=12 session=16147373 host=0 ticket=bba7fffb-29bf-4dc8-a7f7-b8ecae1c0e13
+SSB64 NetPeer automatch: match enter session=16147373 host=0 peer=216.154.76.149:7778 peer_lan=192.168.66.18:7778 public_endpoint_env=unset
+SSB64 NetPeer automatch: SSB64_NETPLAY_DELAY=2 overrides caller input_delay=2
+SSB64 NetPeer: committed_input_delay tag=automatch_config D=2 source=env requested=2 caller=2 floor=2 ceil=12
+SSB64 NetPeer automatch: configured bind=0.0.0.0:7778 peer=192.168.66.18:7778 session=16147373 host=0 delay=2
+SSB64 NetPeer: UDP link sync OK (5 echo rounds)
+SSB64: Frame 540 complete (t=9.04s)
+SSB64 NetPeer: input binding metadata meta_host_sim=0 meta_guest_sim=1 role=client -> local_sim=1 remote_sim=0
+SSB64 NetPeer: input binding metadata meta_host_sim=0 meta_guest_sim=1 role=client -> local_sim=1 remote_sim=0
+SSB64 NetPeer: bootstrap client received START stage=3 seed=1141903022
+SSB64 NetPeer automatch: reachability candidate=lan ok peer=192.168.66.18:7778
+SSB64 NetPeer: committed_input_delay tag=vs_start D=2 source=env requested=2 caller=2 floor=2 ceil=12
+SSB64 NetPeer: local_hardware local_sim=1 samples_gSYControllerDevices[0] source=default(device_0) (unset = device 0 = settings player 1; override if your pad is on another port)
+SSB64 NetPeer: VS session start role=client local=1 remote=0 delay=2 barrier=0 tick=0 recv_n=1 recv=0,255,255,255 peer_snd_n=1 peer_snd=0,255,255,255 extra_local=-1
+SSB64 NetPeer: slot_map role=client local_sim=1 remote_sim=0 meta_host_sim=0 meta_guest_sim=1 primary_dev=0 src0=RPred src1=Loc recv=0,255,255,255 recv_n=1 snd=0,255,255,255 snd_n=1
+SSB64 NetPeer: battle_gate_wait role=client sim=0 scene=66 bind=0 execsync_req=1 execsync_done=0 hr=0 recv=0 drop=0 ingress_sym=0 warmup_out=0
+SSB64 NetPeer: exec_gate_hold tick=0 both_latched=0 latched_agreed=-1 monotonic_ok=1
+SSB64 NetPeer: execution hold role=client local=1 remote=0 tick=0 hold=1 barrier_wait=0 peer_ready=0 start_sent=0 start_recv=0 highest_remote=0 late=0 bind=0 execsync_req=1 execsync_done=0 host_sent=0 host_echo=0 client_got=0 client_echo=0
+SSB64: osSpTaskStartGo #540 type=1 data_ptr=0x5609b8969eb0
+SSB64 NetPeer: execution hold role=client local=1 remote=0 tick=0 hold=30 barrier_wait=0 peer_ready=0 start_sent=0 start_recv=0 highest_remote=0 late=0 bind=0 execsync_req=1 execsync_done=0 host_sent=0 host_echo=0 client_got=0 client_echo=0
+SSB64: Frame 600 complete (t=10.04s)
+SSB64 NetPeer: execution hold role=client local=1 remote=0 tick=0 hold=60 barrier_wait=0 peer_ready=0 start_sent=0 start_recv=0 highest_remote=0 late=0 bind=0 execsync_req=1 execsync_done=0 host_sent=0 host_echo=0 client_got=0 client_echo=0
+SSB64 NetPeer: battle_gate_wait role=client sim=0 scene=66 bind=0 execsync_req=1 execsync_done=0 hr=0 recv=0 drop=0 ingress_sym=0 warmup_out=0
+SSB64: osSpTaskStartGo #600 type=1 data_ptr=0x5609b8969eb0
+SSB64 NetPeer: input_bind_ack session=16147373 host_sim=0 guest_sim=1 primary_dev=0 role=client ok=1 peer_primary_dev=0
+SSB64 NetPeer: bootstrap_ingress_warmup start role=client sim=0 exec_rdy=0 primary_hist_empty=1
+SSB64 NetPeer: execution hold role=client local=1 remote=0 tick=0 hold=90 barrier_wait=0 peer_ready=0 start_sent=0 start_recv=0 highest_remote=0 late=0 bind=1 execsync_req=1 execsync_done=0 host_sent=0 host_echo=0 client_got=0 client_echo=0
+SSB64 NetPeer: battle_exec_sync recv role=client agreed_tick=0 peer_push=723 vi_phase=1567190665 sim=0 host_sent=0 host_echo=0 client_got=0 client_echo=0
+SSB64 NetPeer: battle_exec_sync client WARN host_vi_phase=1567190665 local_vi_phase=1567190666 tick=0 (deadline bucket mismatch)
+SSB64 NetPeer: battle_exec_sync client latched tick=0 host_vi_phase=1567190665 local_vi_phase=1567190666 host_push_diag=723 local_push=637 local_tm=106
+SSB64 NetPeer: INPUT recv seq=0 wire=4 peer_primary_sender_slot=0 frames=1 header_peer_targets_us=1 dual=0 secondary_sender_slot=-1 sec_frames=0 -> apply_remote_inputs_to_sim_slots 0
+SSB64 NetPeer: remote_frontier_init role=client target_slot=0 first_hr=2 from_pkt_tick=2 local_sim=0
+SSB64 NetPeer: battle_exec_sync send_ok role=client bytes=28 peer=192.168.66.18:7778 tick=0 vi_phase=1567190665 push=638
+SSB64 NetPeer: battle_exec_sync client echo tick=0 vi_phase=1567190665 local_push=638 taskman=107
+SSB64 NetPeer: both_sides_latched_startup agreed_tick=0 role=client (push+decouple epoch reset)
+SSB64 NetPeer: bootstrap_ingress_warmup complete role=client outbound=1 hr=2 sim=0
+SSB64: Frame 1 complete (t=10.69s)
+SSB64: Frame 1 complete (t=10.71s)
+SSB64: Frame 2 complete (t=10.72s)
+SSB64: Frame 3 complete (t=10.74s)
+SSB64: Frame 4 complete (t=10.76s)
+SSB64: Frame 5 complete (t=10.77s)
+SSB64: Frame 6 complete (t=10.79s)
+SSB64: Frame 7 complete (t=10.81s)
+SSB64: Frame 8 complete (t=10.82s)
+SSB64: Frame 9 complete (t=10.84s)
+SSB64: Frame 10 complete (t=10.86s)
+SSB64: Frame 11 complete (t=10.87s)
+SSB64: Frame 12 complete (t=10.89s)
+SSB64: Frame 12 complete (t=10.91s)
+SSB64: Frame 13 complete (t=10.92s)
+SSB64: Frame 14 complete (t=10.94s)
+SSB64: Frame 15 complete (t=10.96s)
+SSB64: Frame 16 complete (t=10.97s)
+SSB64: Frame 17 complete (t=10.99s)
+SSB64: Frame 18 complete (t=11.01s)
+SSB64: Frame 19 complete (t=11.02s)
+SSB64: Frame 20 complete (t=11.04s)
+SSB64: Frame 21 complete (t=11.06s)
+SSB64: Frame 22 complete (t=11.07s)
+SSB64: Frame 22 complete (t=11.09s)
+SSB64: Frame 23 complete (t=11.11s)
+SSB64: Frame 24 complete (t=11.12s)
+SSB64: Frame 25 complete (t=11.14s)
+SSB64: Frame 26 complete (t=11.16s)
+SSB64: Frame 27 complete (t=11.17s)
+SSB64: Frame 28 complete (t=11.19s)
+SSB64: Frame 29 complete (t=11.21s)
+SSB64: Frame 30 complete (t=11.22s)
+SSB64: Frame 31 complete (t=11.24s)
+SSB64: Frame 32 complete (t=11.26s)
+SSB64: Frame 32 complete (t=11.27s)
+SSB64: Frame 33 complete (t=11.29s)
+SSB64: Frame 34 complete (t=11.31s)
+SSB64: Frame 35 complete (t=11.32s)
+SSB64: Frame 36 complete (t=11.34s)
+SSB64: Frame 37 complete (t=11.36s)
+SSB64: Frame 38 complete (t=11.37s)
+SSB64: Frame 39 complete (t=11.39s)
+SSB64: Frame 40 complete (t=11.41s)
+SSB64: Frame 41 complete (t=11.42s)
+SSB64: Frame 42 complete (t=11.44s)
+SSB64: Frame 43 complete (t=11.46s)
+SSB64: Frame 44 complete (t=11.47s)
+SSB64: Frame 45 complete (t=11.49s)
+SSB64: osSpTaskStartGo #660 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 46 complete (t=11.51s)
+SSB64: Frame 47 complete (t=11.52s)
+SSB64: Frame 47 complete (t=11.54s)
+SSB64: Frame 48 complete (t=11.56s)
+SSB64: Frame 49 complete (t=11.57s)
+SSB64: Frame 50 complete (t=11.59s)
+SSB64: Frame 51 complete (t=11.61s)
+SSB64: Frame 52 complete (t=11.62s)
+SSB64: Frame 53 complete (t=11.64s)
+SSB64: Frame 54 complete (t=11.66s)
+SSB64: Frame 55 complete (t=11.67s)
+SSB64: Frame 56 complete (t=11.69s)
+SSB64: Frame 57 complete (t=11.71s)
+SSB64: Frame 58 complete (t=11.72s)
+SSB64: Frame 59 complete (t=11.74s)
+SSB64: Frame 60 complete (t=11.76s)
+SSB64: osSpTaskStartGo #720 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 120 complete (t=12.84s)
+SSB64: osSpTaskStartGo #780 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 180 complete (t=13.84s)
+SSB64: osSpTaskStartGo #840 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 240 complete (t=14.84s)
+SSB64: osSpTaskStartGo #900 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 300 complete (t=15.84s)
+SSB64: osSpTaskStartGo #960 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 360 complete (t=16.84s)
+SSB64: osSpTaskStartGo #1020 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 420 complete (t=17.87s)
+SSB64: osSpTaskStartGo #1080 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 480 complete (t=18.87s)
+SSB64 Audio: WAV dump finalized (2048000 bytes captured)
+SSB64: osSpTaskStartGo #1140 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 540 complete (t=19.87s)
+SSB64: osSpTaskStartGo #1200 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 600 complete (t=20.89s)
+SSB64: osSpTaskStartGo #1260 type=1 data_ptr=0x5609b8969eb0
+SSB64: Frame 660 complete (t=21.89s)
+SSB64: main loop exited cleanly at frame=1316 (WindowIsRunning=0)
+SSB64: Game coroutine destroyed
+SSB64: PortGameShutdown returned

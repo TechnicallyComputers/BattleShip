@@ -2,6 +2,7 @@
 
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netrollbacksnapshot.h>
 #include <sys/netsync.h>
 #include <sys/objdef.h>
 #include <sys/objman.h>
@@ -29,59 +30,10 @@ extern void port_log(const char *fmt, ...);
 extern void scVSBattleFuncUpdate(void);
 
 /*
- * Ring storage: one `SYNetRollbackRingSlot` per `tick % SYNETROLLBACK_RING_LENGTH` (same span as input history).
- * Save runs **after** sim completes netinput tick T (`syNetRollbackAfterBattleUpdate`); load restores fighters + a subset of map
- * yakumono state so resim can diverge from an exact prior world point.
+ * Rollback control: input mismatch detection + resim pacing.
+ * Typed world snapshots live in netrollbacksnapshot.c (ring sized by
+ * SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES, independent of input history).
  */
-
-#define SYNETROLLBACK_RING_LENGTH SYNETINPUT_HISTORY_LENGTH
-#define SYNETROLLBACK_MAX_MP_YAKU 32
-
-typedef struct SYNetRollbackYakuBlob
-{
-	Vec3f translate;
-	Vec3f speed;
-	s32 user_data_s;
-
-} SYNetRollbackYakuBlob;
-
-typedef struct SYNetRollbackFighterBlob
-{
-	sb32 is_valid;
-	s32 player;
-	s32 fkind;
-	s32 status_id;
-	s32 motion_id;
-	s32 percent_damage;
-	s32 stock_count;
-	s32 lr;
-	sb32 ga;
-	Vec3f vel_air;
-	Vec3f vel_ground;
-	f32 vel_damage_ground;
-	Vec3f pos_prev;
-	Vec3f vel_damage_air;
-	u32 hitlag_tics;
-	Vec3f topn_translate;
-	u32 status_total_tics;
-
-} SYNetRollbackFighterBlob;
-
-typedef struct SYNetRollbackRingSlot
-{
-	u32 tick;
-	sb32 is_valid;
-	u32 net_checksum_figh;
-	u32 net_checksum_mph;
-	u16 mp_collision_tic;
-	s32 mp_yakumono_count;
-	sb32 mp_yaku_captured;
-	SYNetRollbackYakuBlob mp_yaku[SYNETROLLBACK_MAX_MP_YAKU];
-	SYNetRollbackFighterBlob fighters[GMCOMMON_PLAYERS_MAX];
-
-} SYNetRollbackRingSlot;
-
-static SYNetRollbackRingSlot sSYNetRollbackRing[SYNETROLLBACK_RING_LENGTH];
 static sb32 sSYNetRollbackModuleEnabled;
 static sb32 sSYNetRollbackSessionActive;
 static u32 sSYNetRollbackResimDepth;
@@ -99,6 +51,11 @@ static sb32 sSYNetRollbackLoadHashVerify;
 static u32 sSYNetRollbackLoadFailCount;
 static u32 sMismatchAsymLogsRemaining;
 static s32 sSYNetRollbackForceMismatchPlayerSlot;
+static u32 sSYNetRollbackResimTicksPerFrame;
+static sb32 sSYNetRollbackResimPending;
+static u32 sSYNetRollbackResimMismatchTick;
+static u32 sSYNetRollbackResimTargetTick;
+static u32 sSYNetRollbackResimNextTick;
 #endif
 
 void syNetRollbackInit(void)
@@ -184,6 +141,30 @@ void syNetRollbackInit(void)
 	sSYNetRollbackLoadFailCount = 0;
 	sMismatchAsymLogsRemaining = 16;
 	sSYNetRollbackForceMismatchPlayerSlot = -1;
+	sSYNetRollbackResimTicksPerFrame = 4U;
+	{
+		const char *env_rt;
+
+		env_rt = getenv("SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME");
+		if ((env_rt != NULL) && (env_rt[0] != '\0'))
+		{
+			s32 v = atoi(env_rt);
+
+			if (v >= 1)
+			{
+				sSYNetRollbackResimTicksPerFrame = (u32)v;
+			}
+		}
+		if (sSYNetRollbackResimTicksPerFrame > 32U)
+		{
+			sSYNetRollbackResimTicksPerFrame = 32U;
+		}
+	}
+	sSYNetRollbackResimPending = FALSE;
+	sSYNetRollbackResimMismatchTick = ~(u32)0;
+	sSYNetRollbackResimTargetTick = ~(u32)0;
+	sSYNetRollbackResimNextTick = ~(u32)0;
+	syNetRbSnapshotInit();
 	env_fmp = getenv("SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH_PLAYER");
 	if ((env_fmp != NULL) && (env_fmp[0] != '\0'))
 	{
@@ -213,24 +194,22 @@ sb32 syNetRollbackIsActive(void)
 
 sb32 syNetRollbackIsResimulating(void)
 {
+#ifdef PORT
+	if (sSYNetRollbackResimPending != FALSE)
+	{
+		return TRUE;
+	}
+#endif
 	return sSYNetRollbackResimDepth != 0;
 }
 
 void syNetRollbackStartVSSession(void)
 {
-	u32 i;
-
 	if (sSYNetRollbackModuleEnabled == FALSE)
 	{
 		return;
 	}
-	for (i = 0; i < SYNETROLLBACK_RING_LENGTH; i++)
-	{
-		sSYNetRollbackRing[i].is_valid = FALSE;
-		sSYNetRollbackRing[i].tick = ~(u32)0;
-		sSYNetRollbackRing[i].net_checksum_figh = 0U;
-		sSYNetRollbackRing[i].net_checksum_mph = 0U;
-	}
+	syNetRbSnapshotResetSession();
 	sSYNetRollbackSessionActive = TRUE;
 	sSYNetRollbackResimDepth = 0;
 	sSYNetRollbackRollbackCount = 0;
@@ -239,6 +218,7 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackForceMismatchPendingTick = ~(u32)0;
 	sSYNetRollbackLoadFailCount = 0;
 	sMismatchAsymLogsRemaining = 16;
+	sSYNetRollbackResimPending = FALSE;
 #endif
 }
 
@@ -246,250 +226,83 @@ void syNetRollbackStopVSSession(void)
 {
 	sSYNetRollbackSessionActive = FALSE;
 	sSYNetRollbackResimDepth = 0;
+#ifdef PORT
+	sSYNetRollbackResimPending = FALSE;
+#endif
 }
 
-static SYNetRollbackRingSlot *syNetRollbackRingSlotForTick(u32 tick)
-{
-	return &sSYNetRollbackRing[tick % SYNETROLLBACK_RING_LENGTH];
-}
-
-/* Serialize live fighter fields we need to rebuild motion/damage continuity after a rewind. */
-static void syNetRollbackCaptureFighters(SYNetRollbackRingSlot *slot)
-{
-	GObj *fighter_gobj;
-	s32 si;
-
-	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
-	{
-		slot->fighters[si].is_valid = FALSE;
-	}
-	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
-	     fighter_gobj = fighter_gobj->link_next)
-	{
-		FTStruct *fp;
-		s32 slot_index;
-
-		fp = ftGetStruct(fighter_gobj);
-		slot_index = fp->player;
-
-		if ((slot_index >= 0) && (slot_index < GMCOMMON_PLAYERS_MAX))
-		{
-			SYNetRollbackFighterBlob *blob = &slot->fighters[slot_index];
-
-			blob->is_valid = TRUE;
-			blob->player = fp->player;
-			blob->fkind = fp->fkind;
-			blob->status_id = fp->status_id;
-			blob->motion_id = fp->motion_id;
-			blob->percent_damage = fp->percent_damage;
-			blob->stock_count = fp->stock_count;
-			blob->lr = fp->lr;
-			blob->ga = fp->ga;
-			blob->vel_air = fp->physics.vel_air;
-			blob->vel_ground = fp->physics.vel_ground;
-			blob->vel_damage_ground = fp->physics.vel_damage_ground;
-			blob->pos_prev = fp->coll_data.pos_prev;
-			blob->vel_damage_air = fp->physics.vel_damage_air;
-			blob->hitlag_tics = fp->hitlag_tics;
-			blob->status_total_tics = fp->status_total_tics;
-			if (fp->joints[nFTPartsJointTopN] != NULL)
-			{
-				blob->topn_translate = fp->joints[nFTPartsJointTopN]->translate.vec.f;
-			}
-			else
-			{
-				blob->topn_translate.x = blob->topn_translate.y = blob->topn_translate.z = 0.0F;
-			}
-		}
-	}
-}
-
-/* Overwrite currently loaded fighters with blob data; skips entries whose kind/slot no longer match (stale pointer guard). */
-static void syNetRollbackApplyFighters(const SYNetRollbackRingSlot *slot)
-{
-	GObj *fighter_gobj;
-
-	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
-	     fighter_gobj = fighter_gobj->link_next)
-	{
-		FTStruct *fp;
-		s32 slot_index;
-		const SYNetRollbackFighterBlob *blob;
-
-		fp = ftGetStruct(fighter_gobj);
-		slot_index = fp->player;
-
-		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
-		{
-			continue;
-		}
-		blob = &slot->fighters[slot_index];
-
-		if ((blob->is_valid == FALSE) || (blob->player != fp->player) || (blob->fkind != fp->fkind))
-		{
-			continue;
-		}
-		fp->status_id = blob->status_id;
-		fp->motion_id = blob->motion_id;
-		fp->percent_damage = blob->percent_damage;
-		fp->stock_count = blob->stock_count;
-		fp->lr = blob->lr;
-		fp->ga = blob->ga;
-		fp->physics.vel_air = blob->vel_air;
-		fp->physics.vel_ground = blob->vel_ground;
-		fp->physics.vel_damage_ground = blob->vel_damage_ground;
-		fp->coll_data.pos_prev = blob->pos_prev;
-		fp->physics.vel_damage_air = blob->vel_damage_air;
-		fp->hitlag_tics = blob->hitlag_tics;
-		fp->status_total_tics = blob->status_total_tics;
-		if (fp->joints[nFTPartsJointTopN] != NULL)
-		{
-			fp->joints[nFTPartsJointTopN]->translate.vec.f = blob->topn_translate;
-		}
-	}
-}
-
-static void syNetRollbackCaptureMap(SYNetRollbackRingSlot *slot)
-{
-	s32 i;
-	s32 n;
-	s32 cap;
-	DObj *dobj;
-
-	slot->mp_yaku_captured = FALSE;
-	slot->mp_collision_tic = 0;
-	slot->mp_yakumono_count = 0;
-	if ((gMPCollisionYakumonoDObjs == NULL) || (gMPCollisionSpeeds == NULL))
-	{
-		return;
-	}
-	n = gMPCollisionYakumonosNum;
-	if (n < 0)
-	{
-		n = 0;
-	}
-	cap = (n > SYNETROLLBACK_MAX_MP_YAKU) ? SYNETROLLBACK_MAX_MP_YAKU : n;
-	slot->mp_collision_tic = gMPCollisionUpdateTic;
-	slot->mp_yakumono_count = cap;
-	for (i = 0; i < cap; i++)
-	{
-		dobj = gMPCollisionYakumonoDObjs->dobjs[i];
-		if (dobj == NULL)
-		{
-			slot->mp_yaku[i].translate.x = slot->mp_yaku[i].translate.y = slot->mp_yaku[i].translate.z = 0.0F;
-			slot->mp_yaku[i].speed.x = slot->mp_yaku[i].speed.y = slot->mp_yaku[i].speed.z = 0.0F;
-			slot->mp_yaku[i].user_data_s = 0;
-			continue;
-		}
-		slot->mp_yaku[i].translate = dobj->translate.vec.f;
-		slot->mp_yaku[i].speed = gMPCollisionSpeeds[i];
-		slot->mp_yaku[i].user_data_s = dobj->user_data.s;
-	}
-	slot->mp_yaku_captured = TRUE;
-}
-
-static void syNetRollbackApplyMap(const SYNetRollbackRingSlot *slot)
-{
-	s32 i;
-	s32 cap;
-	s32 live_n;
-	DObj *dobj;
-
-	if (slot->mp_yaku_captured == FALSE)
-	{
-		return;
-	}
-	gMPCollisionUpdateTic = slot->mp_collision_tic;
-	if ((gMPCollisionYakumonoDObjs == NULL) || (gMPCollisionSpeeds == NULL))
-	{
-		return;
-	}
-	live_n = gMPCollisionYakumonosNum;
-	if (live_n < 0)
-	{
-		live_n = 0;
-	}
-	cap = slot->mp_yakumono_count;
-	if (cap > live_n)
-	{
-		cap = live_n;
-	}
-	if (cap > SYNETROLLBACK_MAX_MP_YAKU)
-	{
-		cap = SYNETROLLBACK_MAX_MP_YAKU;
-	}
-	for (i = 0; i < cap; i++)
-	{
-		dobj = gMPCollisionYakumonoDObjs->dobjs[i];
-		if (dobj == NULL)
-		{
-			continue;
-		}
-		dobj->translate.vec.f = slot->mp_yaku[i].translate;
-		dobj->user_data.s = slot->mp_yaku[i].user_data_s;
-		gMPCollisionSpeeds[i] = slot->mp_yaku[i].speed;
-	}
-}
-
-/* Mark ring slot for completed sim tick `tick` and snapshot fighters + yakumono subset. */
 static sb32 syNetRollbackSavePostTick(u32 tick)
 {
-	SYNetRollbackRingSlot *slot;
-
 	if (syNetRollbackIsActive() == FALSE)
 	{
 		return FALSE;
 	}
-	slot = syNetRollbackRingSlotForTick(tick);
-	slot->tick = tick;
-	slot->is_valid = TRUE;
-	syNetRollbackCaptureFighters(slot);
-	syNetRollbackCaptureMap(slot);
-#ifdef PORT
-	slot->net_checksum_figh = syNetSyncHashBattleFighters();
-	slot->net_checksum_mph = syNetSyncHashMapCollisionKinematics();
-#else
-	slot->net_checksum_figh = 0U;
-	slot->net_checksum_mph = 0U;
-#endif
-	return TRUE;
+	return syNetRbSnapshotSave(tick);
 }
 
-/* Reconstruct world at end of tick `tick` (used when rewinding to just before mismatch). */
+static void syNetRollbackVerifyLoadedSlot(u32 tick)
+{
+#ifdef PORT
+	u32 live_f;
+	u32 live_w;
+	u32 live_i;
+	u32 live_wp;
+	u32 live_m;
+	u32 live_r;
+	u32 live_c;
+	u32 live_a;
+
+	if (sSYNetRollbackLoadHashVerify == FALSE)
+	{
+		return;
+	}
+	live_f = syNetSyncHashBattleFightersFull();
+	live_w = syNetSyncHashRollbackWorld();
+	live_i = syNetSyncHashActiveItems();
+	live_wp = syNetSyncHashActiveWeapons();
+	live_m = syNetSyncHashMapCollisionKinematics();
+	live_r = syNetSyncHashRNGSeed();
+	live_c = syNetSyncHashGMCamera();
+	live_a = syNetSyncHashFighterAnimationState();
+	if ((live_f != syNetRbSnapshotGetSlotHashFighter(tick)) || (live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
+	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) ||
+	    (live_m != syNetRbSnapshotGetSlotHashMap(tick)) || (live_r != syNetRbSnapshotGetSlotHashRng(tick)) ||
+	    (live_c != syNetRbSnapshotGetSlotHashCamera(tick)) || (live_a != syNetRbSnapshotGetSlotHashAnimation(tick)))
+	{
+		port_log(
+		    "SSB64 NetRollback: LOAD_HASH_DRIFT tick=%u figh=0x%08X/0x%08X world=0x%08X/0x%08X item=0x%08X/0x%08X "
+		    "wpn=0x%08X/0x%08X map=0x%08X/0x%08X rng=0x%08X/0x%08X cam=0x%08X/0x%08X anim=0x%08X/0x%08X\n",
+		    tick,
+		    syNetRbSnapshotGetSlotHashFighter(tick),
+		    live_f,
+		    syNetRbSnapshotGetSlotHashWorld(tick),
+		    live_w,
+		    syNetRbSnapshotGetSlotHashItem(tick),
+		    live_i,
+		    syNetRbSnapshotGetSlotHashWeapon(tick),
+		    live_wp,
+		    syNetRbSnapshotGetSlotHashMap(tick),
+		    live_m,
+		    syNetRbSnapshotGetSlotHashRng(tick),
+		    live_r,
+		    syNetRbSnapshotGetSlotHashCamera(tick),
+		    live_c,
+		    syNetRbSnapshotGetSlotHashAnimation(tick),
+		    live_a);
+		syNetDesyncClassifierOnLoadHashDrift(tick);
+	}
+#else
+	(void)tick;
+#endif
+}
+
 static sb32 syNetRollbackLoadPostTick(u32 tick)
 {
-	SYNetRollbackRingSlot *slot;
-
-	slot = syNetRollbackRingSlotForTick(tick);
-
-	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	if (syNetRbSnapshotLoad(tick) == FALSE)
 	{
 		return FALSE;
 	}
-	syNetRollbackApplyMap(slot);
-	syNetRollbackApplyFighters(slot);
-#ifdef PORT
-	if (sSYNetRollbackLoadHashVerify != FALSE)
-	{
-		u32 h_live;
-		u32 m_live;
-
-		h_live = syNetSyncHashBattleFighters();
-		m_live = syNetSyncHashMapCollisionKinematics();
-		if ((h_live != slot->net_checksum_figh) || (m_live != slot->net_checksum_mph))
-		{
-			port_log(
-			    "SSB64 NetRollback: LOAD_HASH_DRIFT tick=%u saved_figh=0x%08X live_figh=0x%08X saved_mph=0x%08X live_mph=0x%08X "
-			    "(apply+partial snapshot vs NetSync canaries)\n",
-			    tick,
-			    slot->net_checksum_figh,
-			    h_live,
-			    slot->net_checksum_mph,
-			    m_live);
-			syNetDesyncClassifierOnLoadHashDrift(tick);
-		}
-	}
-#endif
+	syNetRollbackVerifyLoadedSlot(tick);
 	return TRUE;
 }
 
@@ -717,60 +530,82 @@ static void syNetRollbackDebugTryApplyPendingForceMismatch(void)
 }
 #endif
 
-/* Load snapshot at `mismatch_tick-1`, reseed netinput, then replay frames until we reach the live `target_tick`. */
-static void syNetRollbackRunResim(u32 mismatch_tick, u32 target_tick)
+static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick)
 {
-	u32 t;
-
 	if ((mismatch_tick >= target_tick) || (mismatch_tick == 0))
 	{
-		return;
+		return FALSE;
 	}
 	if (syNetRollbackLoadPostTick(mismatch_tick - 1) == FALSE)
 	{
 #ifdef PORT
 		port_log(
-		    "SSB64 NetRollback: load post tick %u failed (need earlier snapshots; check delay/loss vs ring=%u scan=%u)\n",
+		    "SSB64 NetRollback: load post tick %u failed (need earlier snapshots; ring=%u scan=%u)\n",
 		    mismatch_tick - 1,
-		    (unsigned int)SYNETINPUT_HISTORY_LENGTH,
+		    (unsigned int)syNetRbSnapshotRingCapacity(),
 		    (unsigned int)SYNETROLLBACK_SCAN_WINDOW);
 		sSYNetRollbackLoadFailCount++;
 #endif
-		return;
+		return FALSE;
 	}
 	syNetInputRollbackPrepareForResim(mismatch_tick);
-
 #ifdef PORT
 	port_log(
-	    "SSB64 NetRollback: resim begin mismatch_tick=%u target_tick=%u outer_depth=%u span=%u\n",
+	    "SSB64 NetRollback: resim begin mismatch_tick=%u target_tick=%u span=%u budget=%u/frame\n",
 	    mismatch_tick,
 	    target_tick,
-	    (unsigned int)sSYNetRollbackResimDepth,
-	    (unsigned int)(target_tick - mismatch_tick));
+	    (unsigned int)(target_tick - mismatch_tick),
+	    (unsigned int)sSYNetRollbackResimTicksPerFrame);
+	sSYNetRollbackResimPending = TRUE;
+	sSYNetRollbackResimMismatchTick = mismatch_tick;
+	sSYNetRollbackResimTargetTick = target_tick;
+	sSYNetRollbackResimNextTick = mismatch_tick;
+	sSYNetRollbackResimDepth = 1U;
 #endif
-	sSYNetRollbackResimDepth++;
-	for (t = mismatch_tick; t < target_tick; t++)
+	return TRUE;
+}
+
+static void syNetRollbackAdvanceResimBudget(void)
+{
+#ifdef PORT
+	u32 ran;
+	u32 t;
+
+	if (sSYNetRollbackResimPending == FALSE)
+	{
+		return;
+	}
+	ran = 0;
+	t = sSYNetRollbackResimNextTick;
+	while ((t < sSYNetRollbackResimTargetTick) && (ran < sSYNetRollbackResimTicksPerFrame))
 	{
 		syNetInputSetTick(t);
 		syNetInputFuncRead();
 		scVSBattleFuncUpdate();
-#ifdef PORT
 		{
 			char *rt = getenv("SSB64_NETPLAY_RESIM_TICK_TRACE");
 
 			if ((rt != NULL) && (rt[0] != '\0') && (atoi(rt) != 0))
 			{
 				port_log(
-				    "SSB64 NetRollback: resim_tick t=%u figh=0x%08X mph=0x%08X nest_depth=%u\n",
+				    "SSB64 NetRollback: resim_tick t=%u figh=0x%08X mph=0x%08X\n",
 				    t,
-				    syNetSyncHashBattleFighters(),
-				    syNetSyncHashMapCollisionKinematics(),
-				    (unsigned int)sSYNetRollbackResimDepth);
+				    syNetSyncHashBattleFightersFull(),
+				    syNetSyncHashMapCollisionKinematics());
 			}
 		}
-#endif
+		t++;
+		ran++;
 	}
-	sSYNetRollbackResimDepth--;
+	sSYNetRollbackResimNextTick = t;
+	if (t >= sSYNetRollbackResimTargetTick)
+	{
+		sSYNetRollbackResimPending = FALSE;
+		sSYNetRollbackResimDepth = 0;
+	}
+#else
+	(void)0;
+#endif
 }
 
 /* Transport-time hook: if inputs diverge, resim (nested calls short-circuit via `IsResimulating`). */
@@ -794,6 +629,13 @@ void syNetRollbackUpdate(void)
 	{
 		return;
 	}
+#ifdef PORT
+	if (sSYNetRollbackResimPending != FALSE)
+	{
+		syNetRollbackAdvanceResimBudget();
+		return;
+	}
+#endif
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
 		return;
@@ -848,7 +690,7 @@ void syNetRollbackUpdate(void)
 		return;
 	}
 #ifdef PORT
-	hash_pre = syNetSyncHashBattleFighters();
+	hash_pre = syNetSyncHashBattleFightersFull();
 	port_log(
 	    "SSB64 NetRollback: input mismatch at tick %u frontier=%u sim_slot=%d rollbacks=%u\n",
 	    mismatch,
@@ -912,10 +754,18 @@ void syNetRollbackUpdate(void)
 			}
 		}
 #endif
-	syNetRollbackRunResim(mismatch, frontier);
+	if (syNetRollbackBeginResim(mismatch, frontier) == FALSE)
+	{
+		return;
+	}
 	sSYNetRollbackRollbackCount++;
+	syNetRollbackAdvanceResimBudget();
+	if (sSYNetRollbackResimPending != FALSE)
+	{
+		return;
+	}
 
-	hash_after = syNetSyncHashBattleFighters();
+	hash_after = syNetSyncHashBattleFightersFull();
 #ifdef PORT
 	port_log(
 	    "SSB64 NetRollback: resim complete figh=0x%08X (pre_resim=0x%08X) mismatch_tick=%u rollbacks=%u\n",

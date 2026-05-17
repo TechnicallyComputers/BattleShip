@@ -24,4 +24,13 @@ extern u32 syNetSyncHashGcRunAllTraversalFingerprint(void);
 /* Narrow per-fighter fingerprint for phase tracing (subset of battle fighter hash). */
 extern u32 syNetSyncHashFighterStructLight(const struct FTStruct *fp);
 
+/* Rollback CSI subsystem hashes (canonical field sampling; PORT). */
+extern u32 syNetSyncHashBattleFightersFull(void);
+extern u32 syNetSyncHashRollbackWorld(void);
+extern u32 syNetSyncHashActiveItems(void);
+extern u32 syNetSyncHashActiveWeapons(void);
+extern u32 syNetSyncHashRNGSeed(void);
+extern u32 syNetSyncHashGMCamera(void);
+extern u32 syNetSyncHashFighterAnimationState(void);
+
 #endif /* _SYNETSYNC_H_ */
