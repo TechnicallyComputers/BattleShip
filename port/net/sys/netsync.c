@@ -17,7 +17,12 @@
 #include <it/itmanager.h>
 
 #ifdef PORT
+#include <sys/netinput.h>
+#include <sys/netpeer.h>
+
 extern void port_log(const char *fmt, ...);
+
+static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
 #endif
 
 /*
@@ -322,6 +327,51 @@ u32 syNetSyncHashBattleFightersFull(void)
 		return merged;
 	}
 }
+
+#ifdef PORT
+void syNetSyncResetNetplayBattleClock(void)
+{
+	sSYNetSyncBattleGoSimTick = ~(u32)0;
+}
+
+void syNetSyncOnNetplayBattleGo(void)
+{
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (sSYNetSyncBattleGoSimTick != ~(u32)0)
+	{
+		return;
+	}
+	sSYNetSyncBattleGoSimTick = syNetInputGetTick();
+}
+
+void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
+{
+	u32 derived;
+
+	if ((gSCManagerBattleState == NULL) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	if (gSCManagerBattleState->game_status != nSCBattleGameStatusGo)
+	{
+		return;
+	}
+	if (sSYNetSyncBattleGoSimTick == ~(u32)0)
+	{
+		sSYNetSyncBattleGoSimTick = sim_tick;
+	}
+	derived = (sim_tick > sSYNetSyncBattleGoSimTick) ? (sim_tick - sSYNetSyncBattleGoSimTick) : 0U;
+	gSCManagerBattleState->time_passed = derived;
+}
+
+void syNetSyncReconcileBattleTimePassedFromSimTick(void)
+{
+	syNetSyncReconcileBattleTimePassedForSimTick(syNetInputGetTick());
+}
+#endif
 
 u32 syNetSyncHashRollbackWorld(void)
 {

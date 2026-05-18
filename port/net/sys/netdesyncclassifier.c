@@ -43,6 +43,7 @@ typedef struct SYNetDesyncTrace {
 	sb32 commit_token_starvation;
 	u32 commit_token_starvation_tick;
 	u32 first_load_hash_drift_tick;
+	u32 first_peer_snapshot_diverge_tick;
 	u32 first_verify_strict_tick;
 	u32 last_validation_tick;
 	u32 last_inp_all;
@@ -192,7 +193,7 @@ static SYNetDesyncCat syNetDesyncClassify(void)
 	{
 		return SYNET_DESYNC_CAT_COMMIT;
 	}
-	B_snap = (s_trace.first_load_hash_drift_tick != 0U);
+	B_snap = (s_trace.first_load_hash_drift_tick != 0U) || (s_trace.first_peer_snapshot_diverge_tick != 0U);
 	if (B_snap != FALSE)
 	{
 		return SYNET_DESYNC_CAT_SNAPSHOT;
@@ -421,6 +422,17 @@ void syNetDesyncClassifierOnLoadHashDrift(u32 tick)
 	}
 	s_trace.any_evidence = TRUE;
 	syNetDesyncClassifierMarkFirstU32(&s_trace.first_load_hash_drift_tick, tick);
+	syNetDesyncMaybeLogLeadingChange();
+}
+
+void syNetDesyncClassifierOnPeerSnapshotDiverge(u32 load_tick)
+{
+	if (syNetDesyncClassifierActive() == FALSE)
+	{
+		return;
+	}
+	s_trace.any_evidence = TRUE;
+	syNetDesyncClassifierMarkFirstU32(&s_trace.first_peer_snapshot_diverge_tick, load_tick);
 	syNetDesyncMaybeLogLeadingChange();
 }
 

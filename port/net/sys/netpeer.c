@@ -269,6 +269,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_FRAME_COMMIT 17
 #define SYNETPEER_PACKET_STAGE_SCENE_READY 18
 #define SYNETPEER_PACKET_STAGE_SCENE_GO 19
+#define SYNETPEER_PACKET_ROLLBACK_BASELINE 20
 #define SYNETPEER_UDP_SYNC_PACKET_BYTES (4 + 2 + 2 + 4 + 2 + 2 + 4)
 #define SYNETPEER_UDP_LINK_SYNC_ROUNDS 5
 /* INPUT layout predicates (peer_connect_status introduced at wire 4/5). */
@@ -285,6 +286,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
 /* Frame commit token (NetSync validation cadence). */
 #define SYNETPEER_FRAME_COMMIT_BYTES (40)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES (40)
 #define SYNETPEER_BARRIER_SKEW_RETRY_MAX 3U
 
 typedef struct SYNetPeerPacketFrame
@@ -6136,6 +6138,7 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 
 #if defined(PORT)
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size);
+static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size);
 #endif
 
 void syNetPeerHandlePacket(const u8 *buffer, s32 size)
@@ -6255,6 +6258,14 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				if (size == (s32)SYNETPEER_FRAME_COMMIT_BYTES)
 				{
 					syNetPeerHandleFrameCommitPacket(buffer, size);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_ROLLBACK_BASELINE:
+				if (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES)
+				{
+					syNetPeerHandleRollbackBaselinePacket(buffer, size);
 					return;
 				}
 				break;
@@ -6898,6 +6909,88 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	{
 		syNetPeerFrameCommitStorePeerPending(validation_tick, &peer);
 	}
+}
+
+void syNetPeerTrySendRollbackBaselineDigest(void)
+{
+	u8 buf[SYNETPEER_ROLLBACK_BASELINE_BYTES];
+	u8 *cursor;
+	u32 load_tick;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 chk;
+
+	if (syNetRollbackTakePeerBaselineDigestForSend(&load_tick, &figh, &world, &item, &rng) == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
+	{
+		return;
+	}
+	cursor = buf;
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_ROLLBACK_BASELINE);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, load_tick);
+	syNetPeerWriteU32(&cursor, figh);
+	syNetPeerWriteU32(&cursor, world);
+	syNetPeerWriteU32(&cursor, item);
+	syNetPeerWriteU32(&cursor, rng);
+	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+	syNetPeerWriteU32(&cursor, chk);
+	if (syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress) != (int)sizeof(buf))
+	{
+		return;
+	}
+	sSYNetPeerPacketsSent++;
+	syNetRollbackNotePeerBaselineDigestSent();
+}
+
+static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
+{
+	const u8 *c;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 load_tick;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 checksum;
+	u32 expected;
+
+	if (size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	c = buffer;
+	magic = syNetPeerReadU32(&c);
+	wire_version = syNetPeerReadU16(&c);
+	packet_type = syNetPeerReadU16(&c);
+	session_id = syNetPeerReadU32(&c);
+	load_tick = syNetPeerReadU32(&c);
+	figh = syNetPeerReadU32(&c);
+	world = syNetPeerReadU32(&c);
+	item = syNetPeerReadU32(&c);
+	rng = syNetPeerReadU32(&c);
+	checksum = syNetPeerReadU32(&c);
+	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
+	    (packet_type != (u16)SYNETPEER_PACKET_ROLLBACK_BASELINE) || (session_id != sSYNetPeerSessionID) ||
+	    (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	sSYNetPeerPacketsReceived++;
+	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng);
 }
 
 static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_begin, u32 win_len)

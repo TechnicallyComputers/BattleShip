@@ -27,6 +27,7 @@ void syNetDesyncClassifierOnFrameCommitTokenMismatch(u32 validation_tick, const 
 void syNetDesyncClassifierOnFrameCommitValidationSent(u32 validation_tick, u32 validations_since_peer_reset);
 void syNetDesyncClassifierOnFrameCommitPeerTokenReceived(u32 validation_tick);
 void syNetDesyncClassifierOnLoadHashDrift(u32 tick);
+void syNetDesyncClassifierOnPeerSnapshotDiverge(u32 load_tick);
 void syNetDesyncClassifierOnRollbackInputMismatch(u32 mismatch_tick);
 void syNetDesyncClassifierOnVerifyStrictUnchanged(u32 mismatch_tick);
 void syNetDesyncClassifierEmitFrameCommitReportOnVsStop(void);
@@ -40,6 +41,7 @@ void syNetDesyncClassifierEmitReportOnVsStop(void);
 #define syNetDesyncClassifierOnFrameCommitValidationSent(a, b) ((void)0)
 #define syNetDesyncClassifierOnFrameCommitPeerTokenReceived(a) ((void)0)
 #define syNetDesyncClassifierOnLoadHashDrift(a) ((void)0)
+#define syNetDesyncClassifierOnPeerSnapshotDiverge(a) ((void)0)
 #define syNetDesyncClassifierOnRollbackInputMismatch(a) ((void)0)
 #define syNetDesyncClassifierOnVerifyStrictUnchanged(a) ((void)0)
 #define syNetDesyncClassifierEmitFrameCommitReportOnVsStop() ((void)0)
