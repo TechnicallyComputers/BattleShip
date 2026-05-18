@@ -299,6 +299,32 @@ def parse_reloc_data_header(header_path):
 
     return id_to_name
 
+# Maps this ROM version's actual file_id -> the US ordinal embedded in its
+# numeric `ll_<N>_FileID` symbol name. SUPPLEMENTAL_NAMES / SUBMOTION_NAMES /
+# MAIN_MOTION_RANGES below are all hand-keyed by US ordinals; JP shifts every
+# file_id (US 2132 vs JP 2107 files), so those tables must be looked up by the
+# US ordinal, not the raw version file_id. Without this, JP submotion files
+# (US 357-498) land at JP ids 332-473 and fall through to "file_NNNN" — which
+# the port's portRelocIsFighterFigatreeFile() then misclassifies as non-
+# figatree (it keys on the "reloc_submotions/FT" path prefix), skipping the
+# AObj halfswap fixup and leaving CSS/opening fighters T-posing.
+#
+# Built from the header itself: the decomp emits `ll_<N>_FileID` for every
+# file the pretty-name tables don't cover, where <N> is the US ordinal and the
+# value is the per-version file_id. parse_reloc_data_header() captures these
+# with clean name "_<N>_". For US this map is the identity (ll_357 == 357), so
+# US yaml output is byte-for-byte unchanged.
+_VERID_TO_USORD = {}
+
+def build_verid_to_usord(id_to_name):
+    """{version_file_id: us_ordinal} from the header's ll_<N>_FileID symbols."""
+    m = {}
+    for fid, (_sym, clean) in id_to_name.items():
+        mo = re.match(r'^_(\d+)_$', clean)
+        if mo:
+            m[fid] = int(mo.group(1))
+    return m
+
 def resolve_name(file_id, id_to_name):
     """Resolve a file ID to (name, category_override_or_None).
 
@@ -310,18 +336,22 @@ def resolve_name(file_id, id_to_name):
         if not re.match(r'^_\d+_$', clean):
             return clean, None  # Named in header, no category override
 
+    # The US-ordinal-keyed tables below are version-agnostic only when looked
+    # up by US ordinal; identity for US, the -25-ish shift undone for JP.
+    usord = _VERID_TO_USORD.get(file_id, file_id)
+
     # Supplemental names (stage wallpapers, extern data banks, etc.)
-    if file_id in SUPPLEMENTAL_NAMES:
-        name, cat = SUPPLEMENTAL_NAMES[file_id]
+    if usord in SUPPLEMENTAL_NAMES:
+        name, cat = SUPPLEMENTAL_NAMES[usord]
         return name, cat
 
-    # Sub-motion animations (357-498)
-    if file_id in SUBMOTION_NAMES:
-        name, cat = SUBMOTION_NAMES[file_id]
+    # Sub-motion animations (US ordinals 357-498)
+    if usord in SUBMOTION_NAMES:
+        name, cat = SUBMOTION_NAMES[usord]
         return name, cat
 
-    # Main motion animations (499-2131)
-    name, cat = get_main_motion_name(file_id)
+    # Main motion animations (US ordinals 499-2131)
+    name, cat = get_main_motion_name(usord)
     if name:
         return name, cat
 
@@ -544,7 +574,10 @@ def main():
     # Parse file ID names from header
     print("Parsing reloc_data.h...")
     id_to_name = parse_reloc_data_header(header_path)
-    print(f"  Found {len(id_to_name)} named file IDs")
+    global _VERID_TO_USORD
+    _VERID_TO_USORD = build_verid_to_usord(id_to_name)
+    print(f"  Found {len(id_to_name)} named file IDs"
+          f" ({len(_VERID_TO_USORD)} numeric ll_<N> ordinal remaps)")
     print()
 
     # Read ROM file table
