@@ -11,6 +11,9 @@
 #include <sc/scdef.h>
 
 extern void scVSBattleFuncUpdate(void);
+#ifdef PORT
+extern void scVSBattleFuncUpdateBattleSimOnly(void); /* Deterministic sim step for rollback resim (no peer/replay). */
+#endif
 extern s32 scVSBattleGetStartPlayerLR(s32 this_player);
 extern void scVSBattleStartBattle(void);
 extern sb32 scVSBattleSetScoreCheckSuddenDeath(void);

@@ -13,6 +13,12 @@ extern "C" {
 extern void *gPortSceneHeap;
 extern const size_t gPortSceneHeapSize;
 
+/* Terminator list_id in DObjDLLink chains (= ARRAY_COUNT(gSYTaskmanDLHeads)). */
+#define PORT_DOBJ_DLLINK_TERMINATOR 4
+
+/* Returns 1 if chain looks like a valid reloc DObjDLLink list, 0 if stale/corrupt. */
+int portDObjDLLinkChainLooksValid(const void *chain);
+
 #ifdef __cplusplus
 }
 #endif

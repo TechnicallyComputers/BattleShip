@@ -121,9 +121,9 @@ void scVSBattleFuncUpdate(void)
 		return;
 	}
 #endif
+	ifCommonBattleUpdateInterfaceAll();
 	if (syNetRollbackIsResimulating() == FALSE)
 	{
-		ifCommonBattleUpdateInterfaceAll();
 		syNetReplayUpdate();
 	}
 	syNetPeerUpdate();
@@ -135,6 +135,15 @@ void scVSBattleFuncUpdate(void)
 		syNetInputAdvanceAuthoritativeSimTick();
 	}
 }
+
+#ifdef PORT
+void scVSBattleFuncUpdateBattleSimOnly(void)
+{
+	ifCommonBattleUpdateInterfaceAll();
+	syNetRollbackAfterBattleUpdate();
+	syNetInputAdvanceAuthoritativeSimTick();
+}
+#endif
 
 /*
  * When skew pacing holds sim (no `syNetInputAdvanceAuthoritativeSimTick`), taskman skips scene_update — run gate + wire + rollback

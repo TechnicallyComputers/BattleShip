@@ -22,8 +22,13 @@ extern u32 syNetRbSnapshotRingCapacity(void);
 
 extern sb32 syNetRbSnapshotSave(u32 completed_sim_tick);
 extern sb32 syNetRbSnapshotLoad(u32 completed_sim_tick);
+#ifdef PORT
+/* All-or-nothing load safety: capture live world before rollback load, restore on verify failure. */
+extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
+extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
+#endif
 
-/* After load+apply: drop cosmetic AObj/MObj leftovers on fighters/items/weapons. */
+/* After load+apply hook; animation AObj/MObj chains stay live so figatree playback survives rollback. */
 extern void syNetRbSnapshotAfterApplyCleanup(void);
 
 #ifdef PORT

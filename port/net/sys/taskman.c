@@ -1377,49 +1377,45 @@ void syTaskmanStartTask(SYTaskmanSetup *tsetup)
 	GCSetup gcsetup;
 
 #ifdef PORT
-	/* The original arena_start / arena_size values come from N64 linker
-	 * symbols. In the host port those symbols are ordinary globals, so their
-	 * relative addresses are not a valid heap on any platform. Use a fresh
-	 * scene heap instead; this keeps scene memory ownership explicit instead
-	 * of relying on host linker layout or allocator reuse.
+	/* PORT scene arena: the decomp arena_start / arena_size come from N64
+	 * linker symbols and are not usable as a host heap. Allocate a fixed
+	 * 16 MiB block once, reuse it across every scene transition, and zero
+	 * it between scenes via memset. We also evict port-side caches that
+	 * hold pointers into the arena (DL widening, texture upload, struct
+	 * fixup, reloc file ranges) so prior-scene resolutions don't resurface.
 	 *
-	 * Free the previous scene's arena before allocating a new one. Without
-	 * this each scene transition leaks 16MB to libc and old arenas stay
-	 * mapped (and READABLE) for the rest of the process lifetime — which
-	 * means stale pointers from prior scenes still resolve to plausible-
-	 * looking memory instead of segfaulting at the moment of misuse.
-	 *
-	 * Suspected root cause for issue #103-family crashes: a long-lived
-	 * structure (CSS slot, fighter persistence) holds a pointer or token
-	 * referring to scene-N's arena; scene N+1 reads through it and gets
-	 * stale GBI command bytes or a bogus vertex pointer instead of a clean
-	 * NULL/SIGSEGV that we could trace. Freeing the prev arena turns
-	 * dangling-reference reads into hard faults at the dangling site,
-	 * which is far easier to triage. */
+	 * Why recycle (vs. free + malloc per scene): on Linux/glibc, freed
+	 * scene heaps get madvise(MADV_DONTNEED)'d, so any latent stale
+	 * pointer (issue #128 family — see docs/bugs/) SIGSEGVs on the next
+	 * read. Recycling keeps the VA mapped and zero-fills it, matching the
+	 * silently-returns-zero behaviour macOS Magazine and Windows LFH have
+	 * on freed pages. The defensive dl_link guards in objdisplay.c catch
+	 * the symptom universally; this band-aid prevents the crash on Linux
+	 * where the allocator is unforgiving. */
 	{
-		static const size_t kPortHeapSize = 16 * 1024 * 1024;
-		static void *sPrevHeap = NULL;
-		void *heap = malloc(kPortHeapSize);
-		if (heap == NULL)
+		if (gPortSceneHeap == NULL)
 		{
-			port_log("SSB64: syTaskmanStartTask — failed to allocate PORT heap size=0x%llx\n",
-			         (unsigned long long)kPortHeapSize);
-			while (TRUE);
+			gPortSceneHeap = malloc(gPortSceneHeapSize);
+			if (gPortSceneHeap == NULL)
+			{
+				port_log("SSB64: syTaskmanStartTask — failed to allocate PORT heap size=0x%llx\n",
+				         (unsigned long long)gPortSceneHeapSize);
+				while (TRUE);
+			}
+			/* Register the scene arena range with the DL-range registry so
+			 * gfx_step can detect walks that escape the arena. Once-only
+			 * because the arena is recycled, never freed. */
+			extern void port_dl_range_register(const void *base, size_t size, const char *label);
+			port_dl_range_register(gPortSceneHeap, gPortSceneHeapSize, "scene_arena");
 		}
-		port_log("SSB64: syTaskmanStartTask — decomp arena_start=%p arena_size=0x%llx (ignored on PORT)\n",
-		         tsetup->scene_setup.arena_start,
-		         (unsigned long long)tsetup->scene_setup.arena_size);
-		if (sPrevHeap != NULL)
+		else
 		{
-			port_log("SSB64: syTaskmanStartTask — freeing prev PORT heap=%p (16MiB)\n", sPrevHeap);
-			free(sPrevHeap);
+			extern void port_taskman_evict_arena_caches(const void *base, size_t size);
+			port_taskman_evict_arena_caches(gPortSceneHeap, gPortSceneHeapSize);
 		}
-		sPrevHeap = heap;
-		tsetup->scene_setup.arena_start = heap;
-		tsetup->scene_setup.arena_size = (u32)kPortHeapSize;
-		gPortSceneHeap = heap;
-		port_log("SSB64: syTaskmanStartTask — using fresh PORT heap arena_start=%p arena_size=0x%llx\n",
-		         heap, (unsigned long long)kPortHeapSize);
+		memset(gPortSceneHeap, 0, gPortSceneHeapSize);
+		tsetup->scene_setup.arena_start = gPortSceneHeap;
+		tsetup->scene_setup.arena_size = (u32)gPortSceneHeapSize;
 	}
 #endif
 	syTaskmanInitGeneralHeap(tsetup->scene_setup.arena_start, tsetup->scene_setup.arena_size);

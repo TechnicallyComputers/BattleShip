@@ -39,6 +39,12 @@ void portRelocByteSwapBlob(void *data, size_t size, unsigned int file_id);
 void portFixupStructU16(void *base, unsigned int byte_offset, unsigned int num_words);
 
 /**
+ * Undo pass-1 blanket u32 BSWAP32 for a u32-aligned struct region.
+ * Used for u8/s8 fields stored in the low byte of a BE u32 word (see layer_mask fix).
+ */
+void portFixupStructU32(void *base, unsigned int byte_offset, unsigned int num_words);
+
+/**
  * Clear the u16 fixup tracking set. Call when file heaps are freed
  * (e.g. on scene change) to prevent stale entries.
  */
