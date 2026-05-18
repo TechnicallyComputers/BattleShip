@@ -1,6 +1,7 @@
 #include <sys/netpeer_frame_commit.h>
 
 #include <sys/netinput.h>
+#include <sys/netsync.h>
 
 #include <string.h>
 
@@ -56,6 +57,10 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	out->slot_binding_hash = syNetFrameCommitHashSlotBindings(local_sim_slot, remote_sim_slot, extra_local_sim_slot,
 								  peer_sender_count, peer_sender_slots);
 	out->tick_anchor = syNetInputGetTick();
+	out->fighter_digest = syNetSyncHashBattleFighters();
+	out->world_digest = syNetSyncHashRollbackWorld();
+	out->item_digest = syNetSyncHashActiveItemsForRollback();
+	out->rng_digest = syNetSyncHashRNGSeed();
 }
 
 sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b,
@@ -89,4 +94,14 @@ sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFra
 		*out_delta_tick_anchor = dt;
 	}
 	return ((df != FALSE) || (di != FALSE) || (ds != FALSE)) ? TRUE : FALSE;
+}
+
+sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b)
+{
+	if ((a->fighter_digest != b->fighter_digest) || (a->world_digest != b->world_digest) ||
+	    (a->item_digest != b->item_digest) || (a->rng_digest != b->rng_digest))
+	{
+		return TRUE;
+	}
+	return FALSE;
 }

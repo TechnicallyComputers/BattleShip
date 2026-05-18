@@ -67,6 +67,7 @@ static void syNetPeerFrameCommitReset(void);
 #if defined(PORT)
 static void syNetPeerResetMatchBufferMinSlackEnv(void);
 static void syNetPeerResetMatchDelayStarvationSession(void);
+sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
 #endif
 static u32 sSYNetPeerDesyncTracePrevFigh;
 static sb32 sSYNetPeerDesyncTracePrevValid;
@@ -246,6 +247,10 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_AUTO_RUNWAY_DEFICIT_MIN_TICKS 3U
 #define SYNETPEER_AUTO_RUNWAY_DEFICIT_EMERGENCY_TICKS 6U
 #define SYNETPEER_AUTO_RUNWAY_SUSTAIN_SIM_TICKS 8U
+/* Max sim - remote_sim_frontier while predicting without ring at wire_base (see EvaluateSharedCommitStep). */
+#define SYNETPEER_RUNWAY_PREDICT_MAX_SIM_DEFICIT_DEFAULT 2U
+/* Max expansion of prediction window when hr lags required_wire (replaces unbounded 2× phase_lock bump). */
+#define SYNETPEER_RUNWAY_PREDICT_INGRESS_SLACK_DEFAULT 2U
 #endif
 /* Bootstrap pacing defaults sized for ~200–400 ms RTT (override via env). */
 #define SYNETPEER_BOOTSTRAP_RETRY_COUNT_DEFAULT 360U
@@ -305,7 +310,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
 /* Frame commit token (NetSync validation cadence). */
-#define SYNETPEER_FRAME_COMMIT_BYTES (40)
+#define SYNETPEER_FRAME_COMMIT_BYTES (56)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (56)
 #define SYNETPEER_BARRIER_SKEW_RETRY_MAX 3U
 
@@ -4339,6 +4344,120 @@ static sb32 syNetPeerRemoteInputsPresentForWireTick(u32 wire_tick)
 	return TRUE;
 }
 
+static u32 sSYNetPeerRunwayPredictMaxSimDeficit = SYNETPEER_RUNWAY_PREDICT_MAX_SIM_DEFICIT_DEFAULT;
+static u32 sSYNetPeerRunwayPredictIngressSlack = SYNETPEER_RUNWAY_PREDICT_INGRESS_SLACK_DEFAULT;
+static u32 sSYNetPeerRunwayPredictHoldLogsRemaining = 8U;
+
+static void syNetPeerRefreshRunwayPredictLimitsFromEnv(void)
+{
+	const char *e;
+	s32 v;
+
+	sSYNetPeerRunwayPredictMaxSimDeficit = SYNETPEER_RUNWAY_PREDICT_MAX_SIM_DEFICIT_DEFAULT;
+	e = getenv("SSB64_NETPLAY_RUNWAY_PREDICT_MAX_SIM_DEFICIT");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+		if (v >= 0)
+		{
+			sSYNetPeerRunwayPredictMaxSimDeficit = (u32)v;
+		}
+	}
+	if (sSYNetPeerRunwayPredictMaxSimDeficit > 16U)
+	{
+		sSYNetPeerRunwayPredictMaxSimDeficit = 16U;
+	}
+	sSYNetPeerRunwayPredictIngressSlack = SYNETPEER_RUNWAY_PREDICT_INGRESS_SLACK_DEFAULT;
+	e = getenv("SSB64_NETPLAY_RUNWAY_PREDICT_INGRESS_SLACK");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+		if (v >= 0)
+		{
+			sSYNetPeerRunwayPredictIngressSlack = (u32)v;
+		}
+	}
+	if (sSYNetPeerRunwayPredictIngressSlack > 16U)
+	{
+		sSYNetPeerRunwayPredictIngressSlack = 16U;
+	}
+}
+
+static u32 syNetPeerRunwaySimDeficitFromHr(u32 sim_tick, u32 hr)
+{
+	u32 remote_sim_frontier;
+
+	if (hr == 0U)
+	{
+		return 0U;
+	}
+	remote_sim_frontier = syNetPeerDelaySimTickFromWire(hr);
+	if (sim_tick <= remote_sim_frontier)
+	{
+		return 0U;
+	}
+	return sim_tick - remote_sim_frontier;
+}
+
+static sb32 syNetPeerShouldHoldCommitForRunwayDeficit(u32 sim_tick, u32 hr, u32 *out_deficit)
+{
+	u32 deficit;
+
+	deficit = syNetPeerRunwaySimDeficitFromHr(sim_tick, hr);
+	if (out_deficit != NULL)
+	{
+		*out_deficit = deficit;
+	}
+	if (deficit > sSYNetPeerRunwayPredictMaxSimDeficit)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static void syNetPeerMaybeLogRunwayPredictHold(u32 sim_tick, u32 hr, u32 deficit, const char *reason)
+{
+	if (sSYNetPeerRunwayPredictHoldLogsRemaining == 0U)
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetPeer: runway_predict_hold sim=%u hr=%u deficit=%u max_deficit=%u ingress_slack=%u reason=%s\n",
+	    sim_tick,
+	    hr,
+	    deficit,
+	    (unsigned int)sSYNetPeerRunwayPredictMaxSimDeficit,
+	    (unsigned int)sSYNetPeerRunwayPredictIngressSlack,
+	    reason);
+	sSYNetPeerRunwayPredictHoldLogsRemaining--;
+}
+
+static u32 syNetPeerRollbackEffectivePredictionWindow(u32 sim_tick, u32 base_window)
+{
+	u32 hr;
+	u32 required_wire;
+	u32 ingress_deficit;
+	u32 slack;
+
+	if ((base_window == 0U) || (sSYNetPeerHighestRemoteTick == 0U))
+	{
+		return base_window;
+	}
+	required_wire = syNetPeerGetBaseRequiredWireTick(sim_tick);
+	hr = sSYNetPeerHighestRemoteTick;
+	if (hr >= required_wire)
+	{
+		return base_window;
+	}
+	ingress_deficit = required_wire - hr;
+	slack = sSYNetPeerRunwayPredictIngressSlack;
+	if (ingress_deficit > slack)
+	{
+		ingress_deficit = slack;
+	}
+	return base_window + ingress_deficit;
+}
+
 void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *out)
 {
 	u32 shared_confirmed;
@@ -4382,17 +4501,35 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	{
 		return;
 	}
-	if (syNetRollbackPredictionRecoveryRequiresConfirmed(sim_tick) != FALSE)
-	{
-		out->advance = FALSE;
-		out->hold_reason = 'R';
-		return;
-	}
 	prediction_window = out->prediction_window;
 	have_shared_frontier = syNetPeerGetSharedConfirmedSimFrontier(&shared_confirmed);
 	if (have_shared_frontier != FALSE)
 	{
 		out->shared_confirmed_sim = shared_confirmed;
+	}
+	if (sSYNetPeerHighestRemoteTick != 0U)
+	{
+		u32 hr;
+		u32 runway_deficit;
+
+		hr = sSYNetPeerHighestRemoteTick;
+		if (syNetPeerShouldHoldCommitForRunwayDeficit(sim_tick, hr, &runway_deficit) != FALSE)
+		{
+			syNetPeerMaybeLogRunwayPredictHold(sim_tick, hr, runway_deficit, "sim_deficit");
+			syNetPeerPumpIngressTransport("runway_hold");
+			out->advance = FALSE;
+			out->hold_reason = 'R';
+			return;
+		}
+		if (syNetPeerShouldHoldSimTickForSkewPacing(sim_tick, NULL) != FALSE)
+		{
+			runway_deficit = syNetPeerRunwaySimDeficitFromHr(sim_tick, hr);
+			syNetPeerMaybeLogRunwayPredictHold(sim_tick, hr, runway_deficit, "skew_lead");
+			syNetPeerPumpIngressTransport("runway_hold");
+			out->advance = FALSE;
+			out->hold_reason = 'R';
+			return;
+		}
 	}
 	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U))
 	{
@@ -4405,10 +4542,12 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 		if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
 		{
 			u32 remote_sim_frontier;
+			u32 effective_window;
 
 			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
 			out->shared_confirmed_sim = remote_sim_frontier;
-			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)prediction_window))
+			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
+			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)effective_window))
 			{
 				predict_ok = TRUE;
 			}
@@ -5542,6 +5681,7 @@ void syNetPeerStartVSSession(void)
 		syNetPeerRefreshSkewPacingLeadMaxFromEnv();
 		syNetPeerRefreshSkewBehindMaxFromEnv();
 		syNetPeerRefreshSkewGapEwmaPacingFromEnv();
+		syNetPeerRefreshRunwayPredictLimitsFromEnv();
 		syNetPeerRefreshTickGridExecGateFromEnv();
 		return;
 	}
@@ -5623,6 +5763,8 @@ void syNetPeerStartVSSession(void)
 	syNetPeerRefreshSkewPacingLeadMaxFromEnv();
 	syNetPeerRefreshSkewBehindMaxFromEnv();
 	syNetPeerRefreshSkewGapEwmaPacingFromEnv();
+	syNetPeerRefreshRunwayPredictLimitsFromEnv();
+	sSYNetPeerRunwayPredictHoldLogsRemaining = 8U;
 	syNetPeerResetDesyncTraceSession();
 	syNetPeerFrameCommitReset();
 	syNetPeerRefreshTickGridExecGateFromEnv();
@@ -6142,7 +6284,8 @@ static sb32 syNetPeerBundleHasWireTick(SYNetPeerPacketFrame *frames, s32 frame_c
 	return FALSE;
 }
 
-static void syNetPeerAppendInputFrameToBundle(SYNetPeerPacketFrame *frames, s32 *frame_count, SYNetInputFrame *input_frame)
+static void syNetPeerAppendInputFrameToBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *frame_count,
+                                            SYNetInputFrame *input_frame)
 {
 	u32 wire_tick;
 
@@ -6160,6 +6303,7 @@ static void syNetPeerAppendInputFrameToBundle(SYNetPeerPacketFrame *frames, s32 
 	frames[*frame_count].stick_x = input_frame->stick_x;
 	frames[*frame_count].stick_y = input_frame->stick_y;
 	(*frame_count)++;
+	syNetInputNoteTransmittedSimFrame(slot, input_frame);
 }
 
 #ifdef PORT
@@ -6187,7 +6331,7 @@ static void syNetPeerAppendDelayedLocalRowsToBundle(s32 slot, SYNetPeerPacketFra
 	{
 		if (syNetInputGetLocalDelayedFrame(slot, t, &delayed_frame) != FALSE)
 		{
-			syNetPeerAppendInputFrameToBundle(frames, frame_count, &delayed_frame);
+			syNetPeerAppendInputFrameToBundle(slot, frames, frame_count, &delayed_frame);
 		}
 		if ((t == last_tick) || (*frame_count >= SYNETPEER_MAX_PACKET_FRAMES))
 		{
@@ -6234,7 +6378,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 
 		sim_tick = syNetInputGetTick();
 		syNetInputMakeLocalFrame(slot, sim_tick, &lf);
-		syNetPeerAppendInputFrameToBundle(frames, &frame_count, &lf);
+		syNetPeerAppendInputFrameToBundle(slot, frames, &frame_count, &lf);
 		*out_frame_count = frame_count;
 		return TRUE;
 	}
@@ -6249,7 +6393,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 			(syNetInputGetHistoryFrame(slot, latest_tick - back, &history_frame) != FALSE))
 		{
 			/* committed delay only — host adaptive ramps commit in ApplyHostDelayRampPending at effective_tick */
-			syNetPeerAppendInputFrameToBundle(frames, &frame_count, &history_frame);
+			syNetPeerAppendInputFrameToBundle(slot, frames, &frame_count, &history_frame);
 		}
 	}
 	*out_frame_count = frame_count;
@@ -7609,6 +7753,10 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	{
 		syNetDesyncClassifierOnFrameCommitTokenMismatch(vtick, local, peer);
 	}
+	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
+	{
+		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
+	}
 }
 
 static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrameCommitToken *t)
@@ -7631,6 +7779,10 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	syNetPeerWriteU32(&cursor, t->input_digest);
 	syNetPeerWriteU32(&cursor, t->slot_binding_hash);
 	syNetPeerWriteU32(&cursor, t->tick_anchor);
+	syNetPeerWriteU32(&cursor, t->fighter_digest);
+	syNetPeerWriteU32(&cursor, t->world_digest);
+	syNetPeerWriteU32(&cursor, t->item_digest);
+	syNetPeerWriteU32(&cursor, t->rng_digest);
 	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
 	syNetPeerWriteU32(&cursor, chk);
 	if (syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress) != (int)sizeof(buf))
@@ -7670,6 +7822,10 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	peer.input_digest = syNetPeerReadU32(&c);
 	peer.slot_binding_hash = syNetPeerReadU32(&c);
 	peer.tick_anchor = syNetPeerReadU32(&c);
+	peer.fighter_digest = syNetPeerReadU32(&c);
+	peer.world_digest = syNetPeerReadU32(&c);
+	peer.item_digest = syNetPeerReadU32(&c);
+	peer.rng_digest = syNetPeerReadU32(&c);
 	checksum = syNetPeerReadU32(&c);
 	peer.frame_id = (s32)frame_id_u;
 	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
@@ -8658,6 +8814,16 @@ void syNetPeerUpdate(void)
 	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetInputAuthoritativeWireContractEnabled() != FALSE))
 	{
 		allow_without_exec = TRUE;
+	}
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() != FALSE))
+	{
+		if (sSYNetPeerIsActive != FALSE)
+		{
+			syNetPeerUpdateBattleGate();
+			syNetPeerPumpIngressTransport("resim");
+		}
+		syNetRollbackUpdate();
+		return;
 	}
 #endif
 	if (syNetRollbackIsResimulating() != FALSE)

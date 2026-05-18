@@ -3,7 +3,7 @@
 
 /*
  * GGPO-style per-player input timeline: tracks earliest sim tick where published inputs disagreed with
- * later strict-confirmed remote rows. Rollback consumes this before scanning published vs remote rings.
+ * later strict-confirmed remote rows. Rollback consumes validated timeline entries (re-checked vs rings at scan time).
  */
 
 #include <PR/ultratypes.h>
@@ -12,6 +12,8 @@
 #ifdef PORT
 extern void syNetInputTimelineReset(void);
 extern void syNetInputTimelineClearIncorrectFrom(u32 from_sim_tick);
+extern void syNetInputTimelineReconcilePublishedVsRemote(s32 player, u32 sim_tick);
+extern u32 syNetInputTimelineFindEarliestValidatedMismatch(u32 frontier_tick, s32 *out_player);
 extern u32 syNetInputTimelineGetEarliestIncorrect(void);
 extern s32 syNetInputTimelineGetEarliestIncorrectPlayer(void);
 extern void syNetInputTimelineOnRemoteConfirmedWire(s32 player, u32 wire_tick, const SYNetInputFrame *confirmed);

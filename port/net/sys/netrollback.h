@@ -18,18 +18,23 @@
  * GObj ids when respawn allocates fresh ids). After load+apply,
  * `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY` (default on) recomputes and logs `LOAD_HASH_DRIFT` on mismatch.
  *
- * Rollback is **local input-timeline driven** (`netinput_timeline.c`). Peer symmetric notices default off
- * (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for legacy coupled resim; `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` logs only).
+ * Rollback is **local input-timeline driven** (`netinput_timeline.c`, validated at scan time). Peer symmetric
+ * notices default to diag-only (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for coupled resim;
+ * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` forces log-only). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
+ * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Anim-only drift
+ * (fighter/world/RNG/item/wpn/map/cam match) always soft-continues — figatree can advance during load before verify.
  * Load failure restores a pre-load emergency snapshot and stops the VS session. See
  * `docs/netplay_rollback_refactor_contracts.md`.
  *
- * Ordering: `syNetRollbackAfterBattleUpdate` after battle sim; `syNetRollbackUpdate` from netpeer when not resimulating.
+ * Ordering: `syNetRollbackAfterBattleUpdate` after battle sim; `syNetRollbackUpdate` from netpeer each frame (including
+ * resim-pending slices that pump ingress + `AdvanceResimBudget` only).
  */
 
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
 
 #include <sys/netsession_params.h>
+#include <sys/netpeer_frame_commit.h>
 
 /* Bounded backward search vs remote ring; must stay in sync with `netrollback.c`. */
 #define SYNETROLLBACK_SCAN_WINDOW 256
@@ -57,8 +62,15 @@ extern sb32 syNetRollbackPredictionRecoveryRequiresConfirmed(u32 sim_tick);
 extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_target_tick_per_slot, s32 count);
 /* Peer announced a correction on `slot` at `mismatch_tick` (24-bit wire); queue resim through `target_tick` (24-bit). */
 extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
+/* Queue one resim for a remote input correction that arrived during an active resim span. */
+extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
+/* GGPO-style: confirmed input corrects speculative remote input already simulated at `sim_tick`. */
+extern void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick);
 extern void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
 					      u32 weapon, u32 map, u32 camera);
+/* Cross-peer frame-commit state digest mismatch: queue rollback from start of validation window. */
+extern void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNetFrameCommitToken *local,
+						       const SYNetFrameCommitToken *peer);
 extern void syNetRollbackNotePeerBaselineDigestSent(void);
 extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
 						     u32 *out_rng, u32 *out_anim, u32 *out_weapon, u32 *out_map,
