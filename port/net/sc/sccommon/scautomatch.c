@@ -4100,12 +4100,39 @@ void mnVSNetAutomatchMatchmakingTick(void)
 
 	if (sMnAMState == MN_AM_POLL)
 	{
+		u32 poll_every;
+		u32 hb_every;
+		u32 depth;
+
 		sMnAMPollPeriodTics++;
-		if ((sMnAMPollPeriodTics % MN_AM_POLL_MATCH_INTERVAL) == 0U)
+		poll_every = MN_AM_POLL_MATCH_INTERVAL;
+		depth = mmMatchmakingApproxPendingJobs();
+		if (depth >= 12U)
+		{
+			poll_every = MN_AM_POLL_MATCH_INTERVAL * 8U;
+		}
+		else if (depth >= 8U)
+		{
+			poll_every = MN_AM_POLL_MATCH_INTERVAL * 4U;
+		}
+		else if (depth >= 4U)
+		{
+			poll_every = MN_AM_POLL_MATCH_INTERVAL * 2U;
+		}
+		if ((sMnAMPollPeriodTics % poll_every) == 0U)
 		{
 			mmMatchmakingEnqueuePollMatch(FALSE, sMnAMTicket);
 		}
-		if ((sMnAMPollPeriodTics % MN_AM_POLL_HEARTBEAT_PERIOD) == MN_AM_POLL_HEARTBEAT_PHASE)
+		hb_every = MN_AM_POLL_HEARTBEAT_PERIOD;
+		if (depth >= 12U)
+		{
+			hb_every = MN_AM_POLL_HEARTBEAT_PERIOD * 4U;
+		}
+		else if (depth >= 8U)
+		{
+			hb_every = MN_AM_POLL_HEARTBEAT_PERIOD * 2U;
+		}
+		if ((sMnAMPollPeriodTics % hb_every) == MN_AM_POLL_HEARTBEAT_PHASE)
 		{
 			mmMatchmakingEnqueueHeartbeat(FALSE, sMnAMTicket);
 		}

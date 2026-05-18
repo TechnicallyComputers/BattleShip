@@ -122,6 +122,8 @@ extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 extern void syNetPeerTrySendRollbackBaselineDigest(void);
+/* Best-effort notify before local rollback fatal teardown so peer stops without strict-input stall. */
+extern void syNetPeerSendVsSessionEndNotifyPeer(void);
 /* Committed VS input delay (wire tick = sim tick + delay for GatherHistoryBundle / staged INPUT). */
 extern u32 syNetPeerGetCommittedInputDelay(void);
 /* Alias used by strict-contract callsites: authoritative committed delay D. */
@@ -156,6 +158,14 @@ extern void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommi
 extern void syNetPeerNoteSharedCommitAdvanced(u32 completed_sim_tick);
 extern u32 syNetPeerGetGlobalCommitGen(void);
 extern u32 syNetPeerGetPhaseLockPredictionWindowTicks(void);
+/* Env-only phase-lock window (ignores auto-negotiated session params). */
+extern u32 syNetPeerGetPhaseLockPredictionWindowTicksFromEnv(void);
+extern u32 syNetPeerGetInputDelayCeil(void);
+extern sb32 syNetPeerSessionParamsNegotiationSatisfied(void);
+extern void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const char *tag);
+extern void syNetPeerApplyAutoNegotiatedTransportParams(u32 phase_lock_ticks, u32 bundle_redundancy,
+                                                        u32 ingress_extra_pumps, u32 strict_ring_fuzz_ticks);
+extern u32 syNetPeerGetSessionIngressExtraPumps(void);
 /* Phase-locked effective wire row: exact `sim_tick + D`; `hr` no longer reinterprets placement. */
 extern u32 syNetPeerGetEffectiveWireFrontierForAdmission(u32 sim_tick);
 /*

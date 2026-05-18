@@ -103,6 +103,9 @@ extern void syNetInputStartVSSession(void); /* Calls Reset and reads netplay env
 #ifdef PORT
 /* Resets getenv caches used by netinput helpers; paired with `syNetPeerRefreshCachedNetplayEnvForNewMatch`. */
 extern void syNetInputRefreshCachedNetplayEnvForNewMatch(void);
+extern void syNetInputSetSessionIngressExtraPumpsOverride(s32 pumps);
+extern void syNetInputSetSessionBundleRedundancyOverride(s32 redundancy);
+extern void syNetInputClearSessionTransportOverrides(void);
 #endif
 extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */

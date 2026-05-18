@@ -58,6 +58,13 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 
 ---
 
+## Auto session negotiation ([`port/net/sys/netsession_params.c`](port/net/sys/netsession_params.c))
+
+- **`SSB64_NETPLAY_AUTO_SESSION_PARAMS`** — **`1`** or unset (default): host measures RTT (`TIME_PING` during VS sync, or barrier clock sync when enabled), computes and negotiates **`D`**, **`PHASE_LOCK_PREDICTION_TICKS`**, **`INPUT_BUNDLE_REDUNDANCY`**, **`INGRESS_EXTRA_PUMPS_ON_STALL`**, **`STRICT_RING_FUZZ_TICKS`**, **`ROLLBACK_SNAPSHOT_FRAMES`**, **`ROLLBACK_RESIM_TICKS_PER_FRAME`**, and symmetric rollback enablement, then sends **`SESSION_PARAMS`** (wire type **22**), guest **`SESSION_PARAMS_ACK`** (type **23**). Both peers apply the same contract before battle execution unlocks. High RTT (≥180 ms) caps lockstep **`D`** at **8** and maxes phase-lock at **8** so rollback/prediction carry more of the latency budget. **`0`**: legacy manual env only. **`SSB64_NETPLAY_DELAY`** / **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** still override committed **`D`** when set. **`SSB64_NETPLAY_ROLLBACK=0`** still disables rollback locally even if the host proposal includes it.
+- Example / bisect: [`scripts/netplay-auto-session.env.example`](../scripts/netplay-auto-session.env.example).
+
+---
+
 ## Input, delay, strict contract ([`port/net/sys/netinput.c`](port/net/sys/netinput.c))
 
 - **`SSB64_NETPLAY_BOOTSTRAP_INGRESS_SYMMETRY`** — UDP netmenu (Linux and Windows): bootstrap-phase ingress symmetry (`syNetPeerBootstrapIngressSymmetrySatisfied` + warmup sends in `syNetPeerUpdate`). Default **on** (unset); set **`0`** only for targeted transport debugging. Execution readiness remains false until outbound INPUT warmup and inbound `hr > 0` are satisfied.
@@ -105,6 +112,11 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NETPLAY_SESSION`** — Session id.
 - **`SSB64_NETPLAY_BIND`**, **`SSB64_NETPLAY_PEER`** — IPv4 `host:port` for UDP debug.
 - **`SSB64_NETPLAY_BOOTSTRAP`**, **`SSB64_NETPLAY_HOST`**, **`SSB64_NETPLAY_SEED`** — Bootstrap / host flag / seed.
+- **`SSB64_NETPLAY_BOOTSTRAP_RETRY_COUNT`** — Control-plane retries per bootstrap phase (READY / MATCH_CONFIG / START / offer exchange). Default **360** (~**6 s** at default sleep). Clamped **60–900**.
+- **`SSB64_NETPLAY_BOOTSTRAP_RETRY_SLEEP_US`** — Microseconds between bootstrap pump iterations (default **16666**). Clamped **4000–50000**.
+- **`SSB64_NETPLAY_BOOTSTRAP_START_BURST`** — Host **`START`** packets after guest READY (default **60**). Clamped **10–240**.
+- **`SSB64_NETPLAY_BOOTSTRAP_PAUSE_BETWEEN_MS`** — Wall pause between automatch LAN/reflexive bootstrap attempts (default **500** ms). Clamped **0–5000**.
+- **`SSB64_NETPLAY_STAGE_SCENE_GO_HOLD_MS`** — Post-bootstrap staging rendezvous hold before VS load (default **2500** ms). Clamped **100–8000**. Host repeats **`STAGE_SCENE_GO`** proportionally.
 - **`SSB64_NETPLAY_SYNC_START_MS`** — Sync start timing (debug init block).
 - **`SSB64_NETPLAY_LOCAL_HARDWARE`** — Maps local sim slot to hardware device index (multiple sites).
 
@@ -116,7 +128,9 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 **Automatch / Linux**
 
 - **`SSB64_NETPLAY_AUTOMATCH_NO_ITEMS`** — Item policy for automatch offer path.
-- **`SSB64_NETPLAY_UDP_LINK_SYNC`** — UDP link sync behavior.
+- **`SSB64_NETPLAY_UDP_LINK_SYNC`** — **`1`** or unset (default): run **5** UDP echo rounds (`UDP_SYNC_REQ`/`REP`) at bootstrap to prove the path before `MATCH_CONFIG`. **`0`**: skip the probe entirely. On timeout, bootstrap **continues automatically** (fallback) unless **`SSB64_NETPLAY_UDP_LINK_SYNC_REQUIRED=1`**.
+- **`SSB64_NETPLAY_UDP_LINK_SYNC_REQUIRED`** — Non-zero: **`UDP_LINK_SYNC` timeout aborts bootstrap** (legacy strict). Default off (fallback continue).
+- **`SSB64_NETPLAY_UDP_LINK_SYNC_RETRANSMIT_MS`** — While awaiting each echo `REP`, re-send the **same** challenge token at this interval (default **300** ms). Must exceed one-way+return RTT; increase for heavy `tc netem` (e.g. **400** for 120 ms each way).
 - **`SSB64_NETPLAY_REQUIRE_INPUT_BIND`** — Require input bind.
 - **`SSB64_NETPLAY_BATTLE_EXEC_SYNC`** — Battle execution sync flag.
 

@@ -48,6 +48,8 @@ extern void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id);
 
 extern sb32 mmMatchmakingDrainCompleted(MmMatchResult *out);
+/* Approximate pending MM worker jobs (HTTPS not yet finished); for adaptive client polling. */
+extern u32 mmMatchmakingApproxPendingJobs(void);
 
 #else
 
@@ -70,6 +72,7 @@ typedef struct MmMatchResult
 #define mmMatchmakingEnqueuePollMatch(v, t)
 #define mmMatchmakingEnqueueCancel(v, t)
 #define mmMatchmakingDrainCompleted(out) FALSE
+#define mmMatchmakingApproxPendingJobs() ((u32)0)
 
 #endif
 

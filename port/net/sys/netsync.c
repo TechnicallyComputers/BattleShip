@@ -642,6 +642,45 @@ u32 syNetSyncHashActiveItems(void)
 	return hash;
 }
 
+u32 syNetSyncHashActiveItemsForRollback(void)
+{
+	GObj *gobj;
+	u32 hash = 2166136261U;
+
+	for (gobj = gGCCommonLinks[nGCCommonLinkIDItem]; gobj != NULL; gobj = gobj->link_next)
+	{
+		DObj *dobj;
+		ITStruct *ip = itGetStruct(gobj);
+		u32 fold;
+
+		if (ip == NULL)
+		{
+			continue;
+		}
+		fold = 2166136261U;
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->kind);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->type);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lifetime);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->percent_damage);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lr);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->player);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->team);
+		fold = syNetSyncFnvAccumulateU32(fold, (ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U);
+		dobj = DObjGetStruct(gobj);
+		if (dobj != NULL)
+		{
+			Vec3f pos = dobj->translate.vec.f;
+
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+		}
+		hash ^= fold;
+		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
+	}
+	return hash;
+}
+
 u32 syNetSyncHashActiveWeapons(void)
 {
 	GObj *gobj;
@@ -664,6 +703,44 @@ u32 syNetSyncHashActiveWeapons(void)
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->group_id);
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->lr);
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->player);
+		fold = syNetSyncFnvAccumulateU32(fold, (wp->owner_gobj != NULL) ? (u32)wp->owner_gobj->id : 0U);
+		dobj = DObjGetStruct(gobj);
+		if (dobj != NULL)
+		{
+			Vec3f pos = dobj->translate.vec.f;
+
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+		}
+		hash ^= fold;
+		hash = syNetSyncFnvAccumulateU32(hash, 0x5A5A5A5AU);
+	}
+	return hash;
+}
+
+u32 syNetSyncHashActiveWeaponsForRollback(void)
+{
+	GObj *gobj;
+	u32 hash = 2166136261U;
+
+	for (gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; gobj != NULL; gobj = gobj->link_next)
+	{
+		DObj *dobj;
+		WPStruct *wp = wpGetStruct(gobj);
+		u32 fold;
+
+		if (wp == NULL)
+		{
+			continue;
+		}
+		fold = 2166136261U;
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->kind);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->lifetime);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->group_id);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->lr);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->player);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->team);
 		fold = syNetSyncFnvAccumulateU32(fold, (wp->owner_gobj != NULL) ? (u32)wp->owner_gobj->id : 0U);
 		dobj = DObjGetStruct(gobj);
 		if (dobj != NULL)
@@ -722,9 +799,71 @@ u32 syNetSyncHashFighterAnimationState(void)
 		{
 			if (fp->joints[ji] != NULL)
 			{
+				AObj *aobj;
+
 				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
 				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
 				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
+				for (aobj = fp->joints[ji]->aobj; aobj != NULL; aobj = aobj->next)
+				{
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
+				}
+			}
+		}
+		hash ^= fold;
+		hash = syNetSyncFnvAccumulateU32(hash, (u32)fp->player);
+	}
+	return hash;
+}
+
+u32 syNetSyncHashFighterAnimationStateForRollback(void)
+{
+	GObj *fighter_gobj;
+	u32 hash = 2166136261U;
+	s32 ji;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		u32 fold = 2166136261U;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+		{
+			if (fp->joints[ji] != NULL)
+			{
+				AObj *aobj;
+				u32 aobj_steps;
+
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
+				for (aobj = fp->joints[ji]->aobj, aobj_steps = 0U;
+				     (aobj != NULL) && (aobj_steps < (u32)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
+				     aobj = aobj->next, aobj_steps++)
+				{
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
+				}
 			}
 		}
 		hash ^= fold;

@@ -19,6 +19,8 @@
 extern void syNetRbSnapshotInit(void);
 extern void syNetRbSnapshotResetSession(void);
 extern u32 syNetRbSnapshotRingCapacity(void);
+/* Per-match depth from auto negotiation (clamped 1..SYNETRB_SNAPSHOT_RING_MAX). */
+extern void syNetRbSnapshotSetRingFramesForSession(u32 frames);
 
 extern sb32 syNetRbSnapshotSave(u32 completed_sim_tick);
 extern sb32 syNetRbSnapshotLoad(u32 completed_sim_tick);

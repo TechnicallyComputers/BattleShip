@@ -29,9 +29,22 @@ extern u32 syNetSyncHashBattleFightersFull(void);
 extern u32 syNetSyncHashRollbackWorld(void);
 extern u32 syNetSyncHashActiveItems(void);
 extern u32 syNetSyncHashActiveWeapons(void);
+/*
+ * Item / weapon fingerprints for rollback load-verify: **omit item/weapon GObj id** (respawn after snapshot
+ * allocates fresh ids).Traversal order matches the common link walk. Includes item `type` so the fold aligns
+ * with snapshot blobs better than the diagnostic hash.
+ */
+extern u32 syNetSyncHashActiveItemsForRollback(void);
+extern u32 syNetSyncHashActiveWeaponsForRollback(void);
 extern u32 syNetSyncHashRNGSeed(void);
 extern u32 syNetSyncHashGMCamera(void);
 extern u32 syNetSyncHashFighterAnimationState(void);
+/*
+ * Animation fingerprint constrained to rollback snapshot coverage: first SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX
+ * AObj nodes per joint, same fields as `SYNetRbSnapAObjNodeBlob`. Must match `netrollbacksnapshot.c` capture/apply.
+ */
+#define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 6
+extern u32 syNetSyncHashFighterAnimationStateForRollback(void);
 #ifdef PORT
 extern void syNetSyncLogRollbackWorldDetail(const char *tag, u32 tick);
 extern void syNetSyncLogFighterDetail(const char *tag, u32 tick);
