@@ -75,7 +75,7 @@ Write-Step "Configuring release build (portable)"
 # header for the v0.7.2 crash this avoids.
 cmake -B $BuildDir $Root `
     -DCMAKE_BUILD_TYPE=Release `
-    -DSSB64_VERSION=$Ver `
+    "-DSSB64_VERSION=$Ver" `
     | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
