@@ -584,8 +584,7 @@ add_custom_target(GenerateBattleShipO2R
     COMMENT "Generating BattleShip.o2r"
 )
 
-add_custom_target(GeneratePortO2R
-    DEPENDS TorchExternal PrepareBuildInputs
-    COMMAND ${TORCH_EXECUTABLE} pack ${CMAKE_SOURCE_DIR}/assets ${CMAKE_SOURCE_DIR}/ssb64.o2r o2r
-    COMMENT "Packing port-specific assets into ssb64.o2r"
-)
+# NOTE: there is intentionally no port-asset o2r target. `ssb64.o2r` was an
+# early-development artifact; the runtime loads only BattleShip.o2r
+# (ROM-derived, user-extracted at first run) and f3d.o2r (shaders). No
+# ROM-derived data is ever produced by the build.
