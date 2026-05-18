@@ -57,6 +57,18 @@ option(NON_EQUIVALENT "Build without equivalent decomp constraints" ON)
 option(USE_AUTO_VCPKG "Use automated vcpkg for dependency management" ON)
 option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for rendering regression testing" OFF)
 
+# ROM version to build. The decomp game code is region-conditionally
+# compiled (#if REGION_US / REGION_JP), so US and JP are separate builds —
+# use a dedicated build dir per version. The user still supplies their own
+# ROM (baserom.<version>.{z64,n64,v64}); no assets are shipped.
+set(SSB64_VERSION "us" CACHE STRING "ROM version to build: us or jp")
+set_property(CACHE SSB64_VERSION PROPERTY STRINGS us jp)
+if(NOT SSB64_VERSION MATCHES "^(us|jp)$")
+    message(FATAL_ERROR "SSB64_VERSION must be 'us' or 'jp' (got '${SSB64_VERSION}')")
+endif()
+string(TOUPPER "${SSB64_VERSION}" SSB64_VERSION_UC)
+message(STATUS "SSB64 ROM version: ${SSB64_VERSION}")
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 ################################################################################
@@ -118,23 +130,19 @@ else()
     set(TORCH_SIDECAR_NAME torch)
 endif()
 
-set(SSB64_RELOC_YAML_FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_animations.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_bonus.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_effects.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_extern_data.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_fighters_common.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_fighters_main.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_interface.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_items.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_menus.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_misc_named.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_movies.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_scene.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_stages.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_submotions.yml
-    ${CMAKE_CURRENT_SOURCE_DIR}/yamls/us/reloc_transitions.yml
+# Reloc YAML category files (same category set for every version; the
+# per-version ROM offsets differ inside them). yamls/${SSB64_VERSION}/ is
+# produced by tools/generate_yamls.py --version ${SSB64_VERSION}.
+set(SSB64_RELOC_YAML_CATEGORIES
+    animations bonus effects extern_data fighters_common fighters_main
+    interface items menus misc_named movies scene stages submotions
+    transitions
 )
+set(SSB64_RELOC_YAML_FILES "")
+foreach(_cat ${SSB64_RELOC_YAML_CATEGORIES})
+    list(APPEND SSB64_RELOC_YAML_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/yamls/${SSB64_VERSION}/reloc_${_cat}.yml)
+endforeach()
 
 set(SSB64_CREDITS_GENERATED_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/credits/staff.credits.encoded
@@ -149,29 +157,29 @@ set(SSB64_CREDITS_GENERATED_FILES
 
 add_custom_target(RegenerateRelocYamls
     BYPRODUCTS ${SSB64_RELOC_YAML_FILES}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_yamls.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_yamls.py --version ${SSB64_VERSION}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Regenerating reloc YAML configs"
+    COMMENT "Regenerating reloc YAML configs (${SSB64_VERSION})"
 )
 
 add_custom_target(GenerateRelocArtifacts
     BYPRODUCTS
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/reloc_data.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.cpp
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_reloc_stubs.py
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_reloc_table.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/reloc_data.${SSB64_VERSION}.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_reloc_stubs.py --version ${SSB64_VERSION}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_reloc_table.py --version ${SSB64_VERSION}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generating reloc headers and RelocFileTable.cpp"
+    COMMENT "Generating reloc headers and RelocFileTable (${SSB64_VERSION})"
 )
 
 add_custom_target(GenerateCreditsAssets
     BYPRODUCTS ${SSB64_CREDITS_GENERATED_FILES}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py staff.credits.us.txt
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py titles.credits.us.txt
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py -paragraphFont -multiline info.credits.us.txt
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py -paragraphFont companies.credits.us.txt
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py staff.credits.${SSB64_VERSION}.txt
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py titles.credits.${SSB64_VERSION}.txt
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py -paragraphFont -multiline info.credits.${SSB64_VERSION}.txt
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/creditsTextConverter.py -paragraphFont companies.credits.${SSB64_VERSION}.txt
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/credits
-    COMMENT "Encoding credits text assets"
+    COMMENT "Encoding credits text assets (${SSB64_VERSION})"
 )
 
 add_custom_target(PrepareBuildInputs
@@ -206,6 +214,11 @@ file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h"
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
+# RelocFileTable.{us,jp}.cpp both define gRelocFileTable — compile only the
+# selected version's table (the rest are siblings for the other version).
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
+list(APPEND SSB64_SRC_PORT
+    ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp)
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -233,6 +246,13 @@ set(SSB64_DECOMP_SOURCES
 # Exclude .inc.c files (inline data included by other .c files)
 list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX "\\.inc\\.c$")
 
+# JP build excludes the US-only startup/congratulations menu sources
+# (matches the upstream decomp Makefile's VERSION=jp C_FILES filter-out).
+if(SSB64_VERSION STREQUAL "jp")
+    list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX
+        "decomp/src/mn/mncommon/(mncongra|mnstartup)\\.c$")
+endif()
+
 ################################################################################
 # Excluded directories (not compiled):
 #   src/ovl8/   - Debug overlay
@@ -243,9 +263,9 @@ list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX "\\.inc\\.c$")
 # Shared compile definitions used by both the decomp object library and the
 # main executable.
 set(SSB64_COMPILE_DEFS
-    # Region
-    REGION_US=1
-    VERSION_US=1
+    # Region (REGION_US/VERSION_US or REGION_JP/VERSION_JP per SSB64_VERSION)
+    REGION_${SSB64_VERSION_UC}=1
+    VERSION_${SSB64_VERSION_UC}=1
 
     # Port mode
     NON_MATCHING=1
@@ -461,7 +481,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts
     COMMAND ${CMAKE_COMMAND} -E make_directory
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/us
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/f3d.o2r
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/f3d.o2r
@@ -478,8 +498,8 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/config.yml
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/config.yml
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/yamls/us
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/us
+        ${CMAKE_SOURCE_DIR}/yamls/${SSB64_VERSION}
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${TORCH_EXECUTABLE}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
@@ -493,14 +513,27 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 # Torch's Cartridge::Normalize converts non-z64 byte orders in-memory.
 set(SSB64_BASEROM "")
 foreach(ext z64 n64 v64)
-    if(EXISTS "${CMAKE_SOURCE_DIR}/baserom.us.${ext}")
-        set(SSB64_BASEROM "${CMAKE_SOURCE_DIR}/baserom.us.${ext}")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/baserom.${SSB64_VERSION}.${ext}")
+        set(SSB64_BASEROM "${CMAKE_SOURCE_DIR}/baserom.${SSB64_VERSION}.${ext}")
         break()
     endif()
 endforeach()
 if(NOT SSB64_BASEROM)
-    set(SSB64_BASEROM "${CMAKE_SOURCE_DIR}/baserom.us.z64")
+    set(SSB64_BASEROM "${CMAKE_SOURCE_DIR}/baserom.${SSB64_VERSION}.z64")
 endif()
+
+# BattleShip.o2r is per-ROM-version. The decomp is region-split, so US and
+# JP use separate build dirs — extracting into the SHARED source root made a
+# US build and a JP build clobber each other's archive. Extract into a
+# per-build-dir sink (${CMAKE_BINARY_DIR}/extracted) instead, then stage it
+# next to the binary. Torch writes config.yml's `output.binary`
+# (BattleShip.o2r, identical for both regions) into its `-d` dir,
+# independent of `-s` (where it reads config/yamls). The runtime archive
+# name stays the fixed "BattleShip.o2r"; only the dev-build location is
+# isolated. Packaged-release first-run extraction (sidecar torch +
+# config.yml, its own -d) is unaffected.
+set(SSB64_O2R_DIR ${CMAKE_BINARY_DIR}/extracted)
+set(SSB64_O2R     ${SSB64_O2R_DIR}/BattleShip.o2r)
 
 # Two configurations:
 #
@@ -517,20 +550,21 @@ endif()
 #       explanatory error.
 if(EXISTS "${SSB64_BASEROM}")
     add_custom_command(
-        OUTPUT ${CMAKE_SOURCE_DIR}/BattleShip.o2r
+        OUTPUT ${SSB64_O2R}
         DEPENDS TorchExternal PrepareBuildInputs GenerateF3DO2R ${SSB64_BASEROM}
-        COMMAND ${TORCH_EXECUTABLE} o2r ${SSB64_BASEROM} -s ${CMAKE_SOURCE_DIR} -d ${CMAKE_SOURCE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SSB64_O2R_DIR}
+        COMMAND ${TORCH_EXECUTABLE} o2r ${SSB64_BASEROM} -s ${CMAKE_SOURCE_DIR} -d ${SSB64_O2R_DIR}
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/BattleShip.o2r
+            ${SSB64_O2R}
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/BattleShip.o2r
-        COMMENT "Extracting assets from ${SSB64_BASEROM} into O2R archive"
+        COMMENT "Extracting ${SSB64_VERSION} assets from ${SSB64_BASEROM} -> ${SSB64_O2R}"
     )
-    add_custom_target(ExtractAssets DEPENDS ${CMAKE_SOURCE_DIR}/BattleShip.o2r)
+    add_custom_target(ExtractAssets DEPENDS ${SSB64_O2R})
 else()
     add_custom_target(ExtractAssets
         COMMAND ${CMAKE_COMMAND} -E echo
-            "ERROR: ExtractAssets requires baserom.us.{z64,n64,v64} in source root (${CMAKE_SOURCE_DIR})"
+            "ERROR: ExtractAssets requires baserom.${SSB64_VERSION}.{z64,n64,v64} in source root (${CMAKE_SOURCE_DIR})"
         COMMAND ${CMAKE_COMMAND} -E false
         COMMENT "ExtractAssets stub — baserom missing"
     )

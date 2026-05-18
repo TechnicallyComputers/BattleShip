@@ -21,11 +21,43 @@ git submodule update --init --recursive
 ```
 
 Asset extraction requirements:
-- a legal Super Smash Bros. 64 NTSC-U v1.0 ROM
-- place it at the repo root as one of:
-  - `baserom.us.z64`
-  - `baserom.us.n64`
-  - `baserom.us.v64`
+- a legal Super Smash Bros. 64 ROM, placed at the repo root, matching the
+  build's ROM version (see below):
+  - **US** (default): `baserom.us.{z64,n64,v64}` — NTSC-U v1.0
+  - **JP**: `baserom.jp.{z64,n64,v64}` — Nintendo All-Star! Dairantou
+    Smash Brothers (NALJ)
+
+## ROM Version (US / JP)
+
+The decomp game code is region-conditionally compiled, so US and JP are
+**separate builds** — select the version at configure time with the
+`SSB64_VERSION` cache variable and **use a separate build directory per
+version**:
+
+```bash
+# US (default — identical to omitting the flag)
+cmake -S . -B build-us -GNinja -DSSB64_VERSION=us
+
+# JP
+cmake -S . -B build-jp -GNinja -DSSB64_VERSION=jp
+```
+
+`SSB64_VERSION` accepts `us` (default) or `jp`. It drives the region
+defines, the `yamls/<ver>/` extraction configs, `baserom.<ver>.*`
+selection, the per-version generated reloc artifacts, credits text, and
+the JP-only source exclusions. Asset extraction writes the o2r into the
+**build directory** (not the source root), so US and JP builds never
+clobber each other — run the binary from its own build dir (the runtime
+loads `BattleShip.o2r` relative to the working directory):
+
+```bash
+cmake --build build-jp --target ssb64 -j4
+cmake --build build-jp --target ExtractAssets -j4
+cd build-jp && ./BattleShip
+```
+
+You must supply the ROM matching the selected version
+(`baserom.us.*` for a US build, `baserom.jp.*` for a JP build).
 
 ## Windows
 
