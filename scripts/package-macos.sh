@@ -233,6 +233,33 @@ for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
     fi
 done
 
+# ── 4a. De-duplicate LC_RPATH ──
+# dyld aborts the process at load with "duplicate LC_RPATH '<path>'" if a
+# Mach-O carries the same rpath twice. The libultraship/CMake macOS link
+# already emits `@executable_path/../Frameworks/`, and dylibbundler's
+# rewrite pass adds the same path again → the .app crashes immediately on
+# launch (no main(), just the dyld abort — verified on the JP bundle).
+# Collapse any duplicates to a single entry. install_name_tool
+# -delete_rpath removes one occurrence per call; loop until one remains.
+# Done before codesign so the subsequent `codesign --force` re-seals the
+# final load commands. Version-independent (affects US and JP equally).
+step "De-duplicating LC_RPATH load commands"
+for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
+    rp='@executable_path/../Frameworks/'
+    count_rpath() {
+        otool -l "$1" | awk -v p="$rp" '
+            /^[[:space:]]*cmd LC_RPATH$/ { in_rp=1; next }
+            in_rp && /^[[:space:]]*path / { if ($2 == p) c++; in_rp=0 }
+            END { print c+0 }'
+    }
+    n="$(count_rpath "$bin")"
+    while [[ "${n:-0}" -gt 1 ]]; do
+        install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null || break
+        n=$((n - 1))
+        printf '  %s: removed a duplicate LC_RPATH (%d left)\n' "$(basename "$bin")" "$n"
+    done
+done
+
 # ── 4b. Adhoc-sign the bundle as a unit ──
 # Modern Gatekeeper (Sequoia / 15.x+) flags downloaded adhoc-signed
 # bundles as "damaged" if the signature isn't deep enough to cover
@@ -288,12 +315,6 @@ mkdir -p "$DMG_STAGE" "$DMG_BG_DIR"
 # user should see in the DMG window. The Applications shortcut is
 # injected by --app-drop-link, not staged here.
 cp -R "$APP" "$DMG_STAGE/"
-
-# Bundle the standalone Python save editor next to the .app so users
-# can edit ~/Library/Application Support/BattleShip/ssb64_save.bin
-# (binary save game format documented in the script's docstring).
-# Pure stdlib, no install needed — runs as `python3 save_editor.py …`.
-cp "$ROOT/tools/save_editor.py" "$DMG_STAGE/save_editor.py"
 
 sips -Z $((DMG_BG_LONG * 2)) "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg@2x.png" >/dev/null
 sips -Z $DMG_BG_LONG          "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg.png"    >/dev/null

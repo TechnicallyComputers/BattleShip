@@ -98,7 +98,6 @@ Normally unnecessary (the build does these for you). Append the target to
 | Target | Purpose |
 |--------|---------|
 | `ExtractAssets` | Re-extract `BattleShip.o2r` from the ROM |
-| `GeneratePortO2R` | Repack port-only assets into `ssb64.o2r` |
 | `ExtractAssetHeaders` | Regenerate generated build-input headers |
 | `RegenerateRelocYamls` | Regenerate the checked-in reloc YAMLs |
 
