@@ -256,7 +256,7 @@ extern void syNetInputRollbackPrepareForResim(u32 resim_start_tick); /* Reseed l
 extern void syNetInputPublishSynchronizedTick(u32 tick); /* Resolve+publish only (pure rollback resim; no HID/network). */
 extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick); /* Overwrite published history with confirmed remote rows for [from,to). */
 extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick,
-							      u32 to_tick); /* Follower: local slot uses last transmitted rows. */
+							      u32 to_tick); /* Follower: local slot from transmitted + hold-last (matches peer remote-confirmed). */
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
 extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick,
 						      const SYNetInputFrame *confirmed);
