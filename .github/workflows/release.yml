@@ -4,13 +4,19 @@ name: Release
 #   - Pushing a tag matching v* (e.g. v1.0.0, v0.1-test)
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
-# Three platform jobs build with NON_PORTABLE=ON via the corresponding
-# scripts/package-*.sh|.ps1 helper, then a final `release` job stitches
-# the artifacts into a GitHub Release attached to the tag.
+# Three platform jobs, each matrixed over the two ROM versions (us, jp),
+# build with NON_PORTABLE=ON via the corresponding scripts/package-*.sh|.ps1
+# helper (SSB64_VERSION selects the region). A final `release` job stitches
+# all six artifacts into a GitHub Release attached to the tag.
+#
+# US keeps the historical artifact names (BattleShip.dmg, …-x86_64.AppImage,
+# …-windows.zip) so existing links and the in-app updater are unaffected;
+# JP artifacts get a "-jp" suffix.
 #
 # The build is ROM-independent end-to-end: BattleShip.o2r is NEVER produced
 # by CI. Users extract it from their own ROM via the ImGui first-run
-# wizard at launch.
+# wizard at launch (the JP build bundles yamls/jp + the shared config.yml,
+# which routes by the user's ROM hash).
 
 on:
   push:
@@ -26,6 +32,10 @@ permissions:
 jobs:
   build-macos:
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +62,8 @@ jobs:
             sdl2 glew libzip nlohmann-json tinyxml2 spdlog \
             zip create-dmg dylibbundler
       - name: Package macOS .app + .dmg
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@v4
         # The .dmg is the standard drag-to-Applications installer macOS
@@ -59,8 +71,8 @@ jobs:
         # wanting the bundle alone can pop the .dmg open and drag the
         # .app out. Smaller release surface, friendlier UX.
         with:
-          name: BattleShip-macos
-          path: dist/BattleShip.dmg
+          name: BattleShip-macos-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}.dmg
           if-no-files-found: error
 
   build-linux:
@@ -82,6 +94,10 @@ jobs:
     # fires at find_package() time even though we never invoke the
     # tools — stub them with `touch + chmod +x` to bypass the check.
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -138,15 +154,20 @@ jobs:
         # run without libfuse2 (some runner images ship without it).
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          SSB64_VERSION: ${{ matrix.version }}
         run: bash scripts/package-linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: BattleShip-linux
-          path: dist/BattleShip-x86_64.AppImage
+          name: BattleShip-linux-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}-x86_64.AppImage
           if-no-files-found: error
 
   build-windows:
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -169,12 +190,14 @@ jobs:
           choco install ninja -y
         shell: pwsh
       - name: Package Windows zip
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
         shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
-          name: BattleShip-windows
-          path: dist/BattleShip-windows.zip
+          name: BattleShip-windows-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}-windows.zip
           if-no-files-found: error
 
   release:
@@ -192,8 +215,11 @@ jobs:
         with:
           files: |
             artifacts/BattleShip.dmg
+            artifacts/BattleShip-jp.dmg
             artifacts/BattleShip-x86_64.AppImage
+            artifacts/BattleShip-jp-x86_64.AppImage
             artifacts/BattleShip-windows.zip
+            artifacts/BattleShip-jp-windows.zip
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.

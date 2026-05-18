@@ -36,11 +36,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT/build-bundle-linux"
+# ROM version: us (default) or jp — each is its own region-compiled
+# binary; CI matrixes over both. US keeps the historical artifact name
+# so existing links / the in-app updater are unaffected; JP gets "-jp".
+VER="${SSB64_VERSION:-us}"
+[[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
+[[ "$VER" == "us" ]] && ART_SUFFIX="" || ART_SUFFIX="-$VER"
+BUILD_DIR="$ROOT/build-bundle-linux-$VER"
 DIST_DIR="$ROOT/dist"
 APPDIR="$DIST_DIR/BattleShip.AppDir"
 APP_NAME="BattleShip"
-APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
+APPIMAGE="$DIST_DIR/${APP_NAME}${ART_SUFFIX}-x86_64.AppImage"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
@@ -65,6 +71,7 @@ step "Configuring release build with NON_PORTABLE=ON"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
+    -DSSB64_VERSION="$VER" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -86,14 +93,14 @@ TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 # ── 4. Assemble AppDir ──
 step "Assembling $APPDIR"
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/$APP_NAME/yamls/us"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/$APP_NAME/yamls/$VER"
 
 cp "$GAME_BIN"   "$APPDIR/usr/bin/$APP_NAME"
 cp "$TORCH_BIN"  "$APPDIR/usr/bin/torch"
 cp "$F3D_O2R"    "$APPDIR/usr/share/$APP_NAME/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APPDIR/usr/share/$APP_NAME/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APPDIR/usr/share/$APP_NAME/config.yml"
-cp "$ROOT/yamls/us/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/us/"
+cp "$ROOT/yamls/$VER/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/$VER/"
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
 # RealAppBundlePath() (= /proc/self/exe parent = AppDir/usr/bin inside

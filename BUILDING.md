@@ -1,219 +1,107 @@
 # Building BattleShip
 
-BattleShip uses CMake plus the `libultraship` and `torch` submodules.
+BattleShip builds with CMake and the `libultraship` + `torch` submodules.
+Both the **US** (NTSC-U v1.0, `NALE`) and **JP** (Nintendo All-Star!
+Dairantou Smash Brothers, `NALJ`) versions are supported. The decomp game
+code is region-conditionally compiled, so each version is its own build —
+pick the version at configure time with `-DSSB64_VERSION=us|jp` and use a
+separate build directory per version.
 
-The current asset pipeline is Torch-based:
-- game assets are extracted into `BattleShip.o2r`
-- port-only assets are packed into `ssb64.o2r`
-- generated build inputs are handled by `ExtractAssetHeaders`
-- checked-in reloc YAMLs under `yamls/us/reloc_*.yml` are treated as source inputs, not normal build outputs
+The flow is **three commands per version, per platform**: configure,
+build, run. Asset extraction from your ROM happens automatically as part
+of the build (cached afterwards) — there is no separate extract step.
 
 ## Prerequisites
 
-Common requirements:
-- Git
-- CMake
-- Python 3
-- clone the repo with submodules, or run:
+- Git, CMake, Python 3, Ninja (Linux/macOS), or Visual Studio 2022 +
+  Windows SDK (Windows)
+- Submodules: `git submodule update --init --recursive`
+- A legal ROM at the repo root matching the version you are building:
+  - **US:** `baserom.us.z64` — `cmake -DSSB64_VERSION=us` (default)
+  - **JP:** `baserom.jp.z64` — `cmake -DSSB64_VERSION=jp`
 
-```bash
-git submodule update --init --recursive
-```
+  | Version | Game code | SHA‑1 | MD5 |
+  |---------|-----------|-------|-----|
+  | US (NTSC-U v1.0) | `NALE` | `e2929e10fccc0aa84e5776227e798abc07cedabf` | `f7c52568a31aadf26e14dc2b6416b2ed` |
+  | JP (NALJ v1.0)   | `NALJ` | `4b71f0e01878696733eefa9c80d11c147ecb4984` | `66db457b130d31a286a23d6e4dd9726e` |
 
-Asset extraction requirements:
-- a legal Super Smash Bros. 64 ROM, placed at the repo root, matching the
-  build's ROM version (see below):
-  - **US** (default): `baserom.us.{z64,n64,v64}` — NTSC-U v1.0
-  - **JP**: `baserom.jp.{z64,n64,v64}` — Nintendo All-Star! Dairantou
-    Smash Brothers (NALJ)
+  A dump that doesn't match these hashes will not work.
 
-## ROM Version (US / JP)
-
-The decomp game code is region-conditionally compiled, so US and JP are
-**separate builds** — select the version at configure time with the
-`SSB64_VERSION` cache variable and **use a separate build directory per
-version**:
-
-```bash
-# US (default — identical to omitting the flag)
-cmake -S . -B build-us -GNinja -DSSB64_VERSION=us
-
-# JP
-cmake -S . -B build-jp -GNinja -DSSB64_VERSION=jp
-```
-
-`SSB64_VERSION` accepts `us` (default) or `jp`. It drives the region
-defines, the `yamls/<ver>/` extraction configs, `baserom.<ver>.*`
-selection, the per-version generated reloc artifacts, credits text, and
-the JP-only source exclusions. Asset extraction writes the o2r into the
-**build directory** (not the source root), so US and JP builds never
-clobber each other — run the binary from its own build dir (the runtime
-loads `BattleShip.o2r` relative to the working directory):
-
-```bash
-cmake --build build-jp --target ssb64 -j4
-cmake --build build-jp --target ExtractAssets -j4
-cd build-jp && ./BattleShip
-```
-
-You must supply the ROM matching the selected version
-(`baserom.us.*` for a US build, `baserom.jp.*` for a JP build).
-
-## Windows
-
-Requires:
-- Visual Studio 2022 or newer with Desktop development with C++
-- a Windows SDK
-
-Configure:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' -S . -B "build/x64" -A x64
-```
-
-CMake auto-detects the newest installed Visual Studio and its default toolset. If you need to pin a specific generator/toolset (e.g. on a CI runner with multiple installs), pass `-G "Visual Studio 17 2022" -T v143` explicitly.
-
-Build:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64
-```
-
-Build Release:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --config Release
-```
-
-Run:
-- Debug: `.\build\x64\Debug\BattleShip.exe`
-- Release: `.\build\x64\Release\BattleShip.exe`
+`.z64` is shown above; `.n64`/`.v64` are also accepted.
 
 ## Linux / macOS
 
-BattleShip currently expects a Ninja-style single-config build on these platforms.
-
-Configure:
+Replace `<ver>` with `us` or `jp`.
 
 ```bash
-cmake -S . -B build-cmake -GNinja
+# 1. configure
+cmake -S . -B build-<ver> -GNinja -DSSB64_VERSION=<ver>
+
+# 2. build (compiles the game and extracts your ROM's assets)
+cmake --build build-<ver> -j
+
+# 3. run
+cd build-<ver> && ./BattleShip
 ```
 
-Build:
+For example, to build and run both:
 
 ```bash
-cmake --build build-cmake
+cmake -S . -B build-us -GNinja -DSSB64_VERSION=us && cmake --build build-us -j && (cd build-us && ./BattleShip)
+cmake -S . -B build-jp -GNinja -DSSB64_VERSION=jp && cmake --build build-jp -j && (cd build-jp && ./BattleShip)
 ```
 
-Run:
+Add `-DCMAKE_BUILD_TYPE=Release` to the configure command for an
+optimized build (Ninja is single-config, so the build type is fixed at
+configure time — use a distinct build dir, e.g. `build-<ver>-release`).
 
-```bash
-./build-cmake/BattleShip
-```
+## Windows
 
-Build Release:
-
-Ninja is single-config, so the build type is fixed at configure time. Use a separate build directory:
-
-```bash
-cmake -S . -B build-release -GNinja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release
-```
-
-Run: `./build-release/BattleShip`
-
-## Asset Targets
-
-Generate generated headers / codegen inputs:
-
-Windows:
+From a Developer PowerShell, replace `<ver>` with `us` or `jp`
+(`cmake.exe` is typically at `C:\Program Files\CMake\bin\cmake.exe`):
 
 ```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target ExtractAssetHeaders
+# 1. configure
+cmake -S . -B "build\<ver>" -A x64 -DSSB64_VERSION=<ver>
+
+# 2. build (compiles the game and extracts your ROM's assets)
+cmake --build "build\<ver>" --config Release
+
+# 3. run
+.\build\<ver>\Release\BattleShip.exe
 ```
 
-Linux / macOS:
-
-```bash
-cmake --build build-cmake --target ExtractAssetHeaders
-```
-
-Regenerate the checked-in reloc YAMLs explicitly:
-
-Windows:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target RegenerateRelocYamls
-```
-
-Linux / macOS:
-
-```bash
-cmake --build build-cmake --target RegenerateRelocYamls
-```
-
-Generate `BattleShip.o2r` from the ROM:
-
-Windows:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target GenerateBattleShipO2R
-```
-
-Linux / macOS:
-
-```bash
-cmake --build build-cmake --target GenerateBattleShipO2R
-```
-
-Run the full extraction target directly:
-
-Windows:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target ExtractAssets
-```
-
-Linux / macOS:
-
-```bash
-cmake --build build-cmake --target ExtractAssets
-```
-
-Pack port-only assets into `ssb64.o2r`:
-
-Windows:
-
-```powershell
-& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target GeneratePortO2R
-```
-
-Linux / macOS:
-
-```bash
-cmake --build build-cmake --target GeneratePortO2R
-```
+Use `--config Debug` (and run `.\build\<ver>\Debug\BattleShip.exe`) for a
+debug build. CMake auto-detects the newest installed Visual Studio; pin
+it with `-G "Visual Studio 17 2022" -T v143` if a runner has several.
 
 ## Notes
 
-- A normal `cmake --build` builds `BattleShip` and the standalone `torch` sidecar.
-- Post-build, CMake copies these next to the executable:
-  - `torch`
-  - `config.yml`
-  - `yamls/us`
-  - `f3d.o2r`
-  - `gamecontrollerdb.txt`
-  - menu font files under `assets/custom/fonts`
-- Runtime first-run extraction also uses the sidecar `torch` executable.
-- `ExtractAssetHeaders` no longer rewrites `yamls/us/reloc_*.yml` on every build.
-- `port/resource/RelocFileTable.cpp` is still generated from the checked-in reloc YAMLs.
+- Each version's assets and binary live entirely in that version's build
+  directory; US and JP never clobber each other. Run the binary from its
+  build dir (it loads `BattleShip.o2r` relative to the working
+  directory).
+- Switching versions is just a different build dir + `-DSSB64_VERSION`;
+  both can be built and kept side by side.
+- A normal build also produces the standalone `torch` sidecar and copies
+  `config.yml`, `yamls/<ver>`, `f3d.o2r`, `gamecontrollerdb.txt`, and the
+  menu fonts next to the executable.
+- The checked-in reloc YAMLs (`yamls/<ver>/reloc_*.yml`) and the
+  generated `port/resource/RelocFileTable.<ver>.cpp` are treated as
+  source inputs, not rebuilt on every compile.
 
-## Unsupported In This Repo
+### Advanced / manual targets
 
-The following Shipwright-specific flows do not apply to BattleShip:
-- `GenerateSohOtr`
-- `soh`, `soh_nro`, `soh.wuhb`, or other SoH target names
-- `OTRExporter` / `ZAPDTR` instructions
-- `supportedHashes.json`
+Normally unnecessary (the build does these for you). Append the target to
+`cmake --build build-<ver>`:
 
-BattleShip currently documents and supports the Torch-based workflow above.
+| Target | Purpose |
+|--------|---------|
+| `ExtractAssets` | Re-extract `BattleShip.o2r` from the ROM |
+| `GeneratePortO2R` | Repack port-only assets into `ssb64.o2r` |
+| `ExtractAssetHeaders` | Regenerate generated build-input headers |
+| `RegenerateRelocYamls` | Regenerate the checked-in reloc YAMLs |
+
+Packaged release builds ship no ROM: CMake installs a sidecar `torch` +
+`config.yml`, and the game extracts assets from a user-supplied ROM on
+first run instead of at build time.

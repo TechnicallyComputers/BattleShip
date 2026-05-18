@@ -561,6 +561,14 @@ if(EXISTS "${SSB64_BASEROM}")
         COMMENT "Extracting ${SSB64_VERSION} assets from ${SSB64_BASEROM} -> ${SSB64_O2R}"
     )
     add_custom_target(ExtractAssets DEPENDS ${SSB64_O2R})
+    # Baserom present (dev build): make the normal build also stage the
+    # o2r next to the binary, so the flow is a true 3 commands —
+    # configure, build, run — with no separate ExtractAssets step. The
+    # o2r is an OUTPUT custom command, so it only re-extracts when its
+    # inputs (torch / build inputs / baserom) change; cached otherwise.
+    # The release pipeline ships no baserom and hits the else() branch,
+    # so packaged builds are unaffected (runtime first-run extracts).
+    add_dependencies(${PROJECT_NAME} ExtractAssets)
 else()
     add_custom_target(ExtractAssets
         COMMAND ${CMAKE_COMMAND} -E echo

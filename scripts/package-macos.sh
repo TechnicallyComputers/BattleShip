@@ -30,7 +30,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT/build-bundle"
+# ROM version to build: us (default) or jp. Each is its own
+# region-compiled binary; CI matrixes over both. US keeps the
+# historical artifact name (BattleShip.dmg) so existing links / the
+# in-app updater are unaffected; JP gets a "-jp" suffix.
+VER="${SSB64_VERSION:-us}"
+[[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
+[[ "$VER" == "us" ]] && ART_SUFFIX="" || ART_SUFFIX="-$VER"
+BUILD_DIR="$ROOT/build-bundle-$VER"
 DIST_DIR="$ROOT/dist"
 APP_NAME="BattleShip"
 APP="$DIST_DIR/$APP_NAME.app"
@@ -62,6 +69,7 @@ step "Configuring release build with NON_PORTABLE=ON"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
+    -DSSB64_VERSION="$VER" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -85,14 +93,14 @@ TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 # ── 3. Assemble the bundle ──
 step "Assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/yamls/us"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/yamls/$VER"
 
 cp "$SSB64_BIN"  "$APP/Contents/MacOS/$APP_NAME"
 cp "$TORCH_BIN"  "$APP/Contents/MacOS/torch"
 cp "$F3D_O2R"    "$APP/Contents/Resources/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APP/Contents/Resources/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APP/Contents/Resources/config.yml"
-cp "$ROOT/yamls/us/"*.yml "$APP/Contents/Resources/yamls/us/"
+cp "$ROOT/yamls/$VER/"*.yml "$APP/Contents/Resources/yamls/$VER/"
 cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
@@ -266,7 +274,7 @@ codesign --verify --deep --strict "$APP" \
 DMG_VOLNAME="BattleShip"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
-DMG="$DIST_DIR/$APP_NAME.dmg"
+DMG="$DIST_DIR/$APP_NAME$ART_SUFFIX.dmg"
 DMG_STAGE="$DIST_DIR/dmg-stage"
 DMG_BG_DIR="$DIST_DIR/dmg-bg"
 
