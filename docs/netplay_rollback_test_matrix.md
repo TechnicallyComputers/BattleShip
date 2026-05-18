@@ -11,7 +11,7 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Automatch default | Unset `SSB64_NETPLAY_AUTO_SESSION_PARAMS` (negotiates rollback + transport from RTT); verify `NetSession: apply` and `NetRollback: session_negotiated` logs |
 | Baseline 1v1 | `SSB64_NETPLAY_ROLLBACK=1`, `SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES=32` |
 | Deep rollback | `SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES=64` (or ≥ rollback span under test) |
-| ~200 ms RTT netem | `tc netem delay 95ms 15ms distribution normal loss 0.3%` both peers; expect `rtt_ms≈200`, `D≤8`, `phase_lock=8`, `rb_snap≥32`, `fuzz≥1`; watch `rb=` in NetSync |
+| ~200 ms RTT netem | `tc netem delay 95ms 15ms distribution normal loss 0.3%` both peers; expect `rtt_ms≈200`, `D≈4`, `phase_lock≈9–10`, `rb_snap≥32`, `fuzz≥1`; watch `rb=` in NetSync (prediction + resim, not lockstep-only) |
 | Forced resim | `SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH=1`, `SSB64_NETPLAY_ROLLBACK_INJECT_TICK=<wire_or_sim per inject docs>` |
 | Load verify | `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY=1` (default); `=0` debug-only |
 | Catch-up budget | `SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME=4` |

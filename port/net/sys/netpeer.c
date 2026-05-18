@@ -284,7 +284,8 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_VS_SESSION_END  21
 #define SYNETPEER_PACKET_SESSION_PARAMS 22
 #define SYNETPEER_PACKET_SESSION_PARAMS_ACK 23
-#define SYNETPEER_SESSION_PARAMS_WIRE_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4 + 4)
+/* header(12) + rtt_ms(4) + nine u8 knobs(9) + checksum(4) = 29 (wire v2) */
+#define SYNETPEER_SESSION_PARAMS_WIRE_BYTES (4 + 2 + 2 + 4 + 4 + 9 + 4)
 #define SYNETPEER_UDP_SYNC_PACKET_BYTES (4 + 2 + 2 + 4 + 2 + 2 + 4)
 #define SYNETPEER_UDP_LINK_SYNC_ROUNDS 5
 /* Retransmit the same REQ token at this interval while awaiting REP (must exceed path RTT). */
@@ -418,7 +419,6 @@ static sb32 sSYNetPeerSessionStrictRingFuzzOverrideValid = FALSE;
 static int sSYNetPeerSessionStrictRingFuzzOverride = 0;
 static sb32 sSYNetPeerSessionParamsHostSent;
 static sb32 sSYNetPeerSessionParamsHostGotAck;
-static u32 sSYNetPeerSessionParamsRepeatFrames;
 static SYNetSessionParams sSYNetPeerSessionParamsHostProposal;
 #define SYNETPEER_SESSION_RTT_PROBE_SAMPLES 4U
 static u32 sSYNetPeerSessionRttProbeTarget;
@@ -427,6 +427,7 @@ static u32 sSYNetPeerSessionRttProbeRttMs[SYNETPEER_CLOCK_SYNC_SAMPLES_MAX];
 static sb32 sSYNetPeerSessionRttProbeAwaitingAck;
 static u64 sSYNetPeerSessionRttProbePingT0;
 static void syNetPeerSessionParamsResetTransport(void);
+static void syNetPeerRefreshCachedNetplayEnvCachesOnly(void);
 static void syNetPeerSessionParamsServiceNegotiation(void);
 static void syNetPeerSessionRttProbeOnPong(u32 seq, u64 h0, u32 rtt_ms);
 static u32 sSYNetPeerBootstrapRetryCountCached;
@@ -2525,6 +2526,14 @@ static void syNetPeerMaybeAdaptInputDelay(u32 tick_now)
 	if ((d_lf > 0U) || (d_late > 8U) || ((late >= 24U) && (d_late > 0U)))
 	{
 		sSYNetPeerAdaptiveStableIntervals = 0;
+		/*
+		 * Rollback-first matches: do not ramp committed D on late frames — prediction + resim mask spikes;
+		 * raising D only adds input lag without engaging rollback.
+		 */
+		if ((syNetSessionParamsAreNegotiated() != FALSE) && (syNetSessionParamsRollbackEnabled() != FALSE))
+		{
+			return;
+		}
 		if (sSYNetPeerInputDelay < sSYNetPeerInputDelayCeil)
 		{
 #if defined(PORT)
@@ -2691,7 +2700,6 @@ static void syNetPeerSessionParamsResetTransport(void)
 {
 	sSYNetPeerSessionParamsHostSent = FALSE;
 	sSYNetPeerSessionParamsHostGotAck = FALSE;
-	sSYNetPeerSessionParamsRepeatFrames = 0U;
 	memset(&sSYNetPeerSessionParamsHostProposal, 0, sizeof(sSYNetPeerSessionParamsHostProposal));
 	sSYNetPeerSessionRttProbeTarget = 0U;
 	sSYNetPeerSessionRttProbeSampleCount = 0U;
@@ -2718,7 +2726,6 @@ static void syNetPeerHostFinalizeSessionParamsFromRtt(u32 rtt_ms)
 	sSYNetPeerStartupMatchDelayTarget = (u32)params.input_delay;
 	sSYNetPeerStartupMatchDelayPendingValid = TRUE;
 	sSYNetPeerSessionParamsHostSent = TRUE;
-	sSYNetPeerSessionParamsRepeatFrames = 45U;
 	syNetPeerSendSessionParamsPacket(&params, SYNETPEER_PACKET_SESSION_PARAMS);
 	port_log(
 	    "SSB64 NetPeer: session_params host propose rtt_ms=%u D=%u phase_lock=%u redundancy=%u pumps=%u fuzz=%u "
@@ -2765,6 +2772,7 @@ static void syNetPeerSendSessionParamsPacket(const SYNetSessionParams *params, u
 	{
 		return;
 	}
+	memset(buffer, 0, sizeof(buffer));
 	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
 	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
 	syNetPeerWriteU16(&cursor, packet_type);
@@ -2824,6 +2832,10 @@ static void syNetPeerHandleSessionParamsPacket(const u8 *buffer, s32 size, u16 e
 	    (session_id != sSYNetPeerSessionID) || (checksum != expected_checksum))
 	{
 		sSYNetPeerPacketsDropped++;
+		port_log(
+		    "SSB64 NetPeer: session_params drop type=%u magic_ok=%d ver_ok=%d sess_ok=%d csum_ok=%d\n",
+		    (unsigned int)expected_type, (magic == SYNETPEER_MAGIC) ? 1 : 0, (version == SYNETPEER_VERSION) ? 1 : 0,
+		    (session_id == sSYNetPeerSessionID) ? 1 : 0, (checksum == expected_checksum) ? 1 : 0);
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
@@ -2833,9 +2845,12 @@ static void syNetPeerHandleSessionParamsPacket(const u8 *buffer, s32 size, u16 e
 		{
 			return;
 		}
-		syNetSessionParamsApplyNegotiated(&params, "guest_recv");
-		sSYNetPeerStartupMatchDelayTarget = (u32)params.input_delay;
-		sSYNetPeerStartupMatchDelayPendingValid = TRUE;
+		if (syNetSessionParamsAreNegotiated() == FALSE)
+		{
+			syNetSessionParamsApplyNegotiated(&params, "guest_recv");
+			sSYNetPeerStartupMatchDelayTarget = (u32)params.input_delay;
+			sSYNetPeerStartupMatchDelayPendingValid = TRUE;
+		}
 		syNetPeerSendSessionParamsPacket(&params, SYNETPEER_PACKET_SESSION_PARAMS_ACK);
 		return;
 	}
@@ -2843,8 +2858,12 @@ static void syNetPeerHandleSessionParamsPacket(const u8 *buffer, s32 size, u16 e
 	{
 		return;
 	}
+	if (sSYNetPeerSessionParamsHostGotAck == FALSE)
+	{
+		port_log("SSB64 NetPeer: session_params host_recv_ack rtt_ms=%u D=%u\n", (unsigned int)params.rtt_ms,
+		         (unsigned int)params.input_delay);
+	}
 	sSYNetPeerSessionParamsHostGotAck = TRUE;
-	sSYNetPeerSessionParamsRepeatFrames = 0U;
 }
 
 static void syNetPeerSessionParamsServiceNegotiation(void)
@@ -2854,7 +2873,14 @@ static void syNetPeerSessionParamsServiceNegotiation(void)
 	{
 		return;
 	}
-	if (syNetSessionParamsAreNegotiated() != FALSE)
+	if (sSYNetPeerBootstrapIsHost != FALSE)
+	{
+		if (sSYNetPeerSessionParamsHostGotAck != FALSE)
+		{
+			return;
+		}
+	}
+	else if (syNetSessionParamsAreNegotiated() != FALSE)
 	{
 		return;
 	}
@@ -2886,13 +2912,12 @@ static void syNetPeerSessionParamsServiceNegotiation(void)
 		{
 			syNetPeerHostFinalizeSessionParamsFromRttProbe();
 		}
-		if ((sSYNetPeerSessionParamsHostGotAck == FALSE) && (sSYNetPeerSessionParamsRepeatFrames > 0U))
+		if (sSYNetPeerSessionParamsHostGotAck == FALSE)
 		{
 			if ((dSYTaskmanFrameCount % 10U) == 0U)
 			{
 				syNetPeerSendSessionParamsPacket(&sSYNetPeerSessionParamsHostProposal, SYNETPEER_PACKET_SESSION_PARAMS);
 			}
-			sSYNetPeerSessionParamsRepeatFrames--;
 		}
 		return;
 	}
@@ -2907,6 +2932,14 @@ sb32 syNetPeerSessionParamsNegotiationSatisfied(void)
 	if (sSYNetPeerBootstrapIsEnabled == FALSE)
 	{
 		return TRUE;
+	}
+	if (sSYNetPeerBootstrapIsHost != FALSE)
+	{
+		/*
+		 * Host applies params locally when proposing, but must not open the battle execution gate or
+		 * advance shared sim until the guest has applied the same contract and ACKed.
+		 */
+		return (syNetSessionParamsAreNegotiated() != FALSE) && (sSYNetPeerSessionParamsHostGotAck != FALSE);
 	}
 	return syNetSessionParamsAreNegotiated();
 }
@@ -2930,9 +2963,9 @@ void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const 
 void syNetPeerApplyAutoNegotiatedTransportParams(u32 phase_lock_ticks, u32 bundle_redundancy, u32 ingress_extra_pumps,
                                                u32 strict_ring_fuzz_ticks)
 {
-	if (phase_lock_ticks > 8U)
+	if (phase_lock_ticks > 16U)
 	{
-		phase_lock_ticks = 8U;
+		phase_lock_ticks = 16U;
 	}
 	sSYNetPeerPhaseLockPredictionWindowEnv = (int)phase_lock_ticks;
 	if (bundle_redundancy > 8U)
@@ -4200,9 +4233,9 @@ u32 syNetPeerGetPhaseLockPredictionWindowTicksFromEnv(void)
 	{
 		v = 0;
 	}
-	if (v > 8)
+	if (v > 16)
 	{
-		v = 8;
+		v = 16;
 	}
 	sSYNetPeerPhaseLockPredictionWindowEnv = v;
 	return (u32)v;
@@ -4361,12 +4394,35 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	{
 		out->shared_confirmed_sim = shared_confirmed;
 	}
-	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U) &&
-	    (have_shared_frontier != FALSE) &&
-	    ((u64)sim_tick <= ((u64)shared_confirmed + (u64)prediction_window)))
+	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U))
 	{
-		out->uses_prediction = TRUE;
-		return;
+		sb32 predict_ok = FALSE;
+
+		/*
+		 * Rollback sessions: gate prediction on observed remote wire frontier (hr), not the connect-ack
+		 * min() frontier — connect rows often lag hr by >phase_lock and forced STRICT stalls despite rollback.
+		 */
+		if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
+		{
+			u32 remote_sim_frontier;
+
+			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+			out->shared_confirmed_sim = remote_sim_frontier;
+			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)prediction_window))
+			{
+				predict_ok = TRUE;
+			}
+		}
+		else if ((have_shared_frontier != FALSE) &&
+		         ((u64)sim_tick <= ((u64)shared_confirmed + (u64)prediction_window)))
+		{
+			predict_ok = TRUE;
+		}
+		if (predict_ok != FALSE)
+		{
+			out->uses_prediction = TRUE;
+			return;
+		}
 	}
 	out->advance = FALSE;
 	out->hold_reason = 'R';
@@ -5464,7 +5520,6 @@ void syNetPeerStartVSSession(void)
 	{
 		return;
 	}
-	syNetPeerRefreshCachedNetplayEnvForNewMatch();
 	if (syNetPeerOpenSocket() == FALSE)
 	{
 		return;
@@ -5475,7 +5530,10 @@ void syNetPeerStartVSSession(void)
 		 * Automatch staging may call StartVSSession before VSBattle, then VSBattle calls it again after
 		 * syNetInputStartVSSession resets the match-local sim tick to 0. Keep startup latch monotonic
 		 * relative to current match-local tick so execution-ready cannot deadlock at frame 0 on re-entry.
+		 * Do not reset negotiated session params / RTT-probe transport on this idempotent path — that
+		 * cleared guest negotiation and stopped host retransmit after scVSBattleStartBattle().
 		 */
+		syNetPeerRefreshCachedNetplayEnvCachesOnly();
 		if ((sSYNetPeerLatchedStartupTick != ~(u32)0U) && (syNetInputGetTick() < sSYNetPeerLatchedStartupTick))
 		{
 			sSYNetPeerLatchedStartupTick = syNetInputGetTick();
@@ -5487,6 +5545,7 @@ void syNetPeerStartVSSession(void)
 		syNetPeerRefreshTickGridExecGateFromEnv();
 		return;
 	}
+	syNetPeerRefreshCachedNetplayEnvForNewMatch();
 	sSYNetPeerHighestRemoteTick = 0;
 	sSYNetPeerGlobalCommitGen = 0U;
 	sSYNetPeerPacketsSent = 0;
@@ -7757,12 +7816,9 @@ static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_beg
 		syNetPeerFrameCommitTryCompare(validation_tick, &tok, &pending);
 	}
 }
-void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
+static void syNetPeerRefreshCachedNetplayEnvCachesOnly(void)
 {
 	syNetInputRefreshCachedNetplayEnvForNewMatch();
-	syNetSessionParamsResetForNewMatch();
-	syNetPeerSessionParamsResetTransport();
-	syNetInputClearSessionTransportOverrides();
 	sSYNetPeerTickDiagEnvCache = -999;
 	sSYNetPeerDesyncTraceLevelCache = -999;
 	sSYNetPeerMpTicDiagAssertEnvCache = -999;
@@ -7775,6 +7831,14 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	syNetPeerResetDelaySyncCommitLeadEnv();
 	sSYNetPeerIngressDiagEnvCache = -999;
 	sSYNetPeerPhaseLockPredictionWindowEnv = -999;
+}
+
+void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
+{
+	syNetPeerRefreshCachedNetplayEnvCachesOnly();
+	syNetSessionParamsResetForNewMatch();
+	syNetPeerSessionParamsResetTransport();
+	syNetInputClearSessionTransportOverrides();
 }
 
 void syNetPeerLogNetSyncValidation(u32 tick)
@@ -9312,6 +9376,10 @@ static void syNetPeerMaybeQueueHostDelayBumpForStarvationLatch(u32 sim_tick)
 		return;
 	}
 	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	if ((syNetSessionParamsAreNegotiated() != FALSE) && (syNetSessionParamsRollbackEnabled() != FALSE))
 	{
 		return;
 	}
