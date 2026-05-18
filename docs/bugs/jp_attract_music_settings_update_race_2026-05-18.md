@@ -46,33 +46,39 @@ sub-agent investigation; mechanism then verified directly in
 
 ## Fix
 
-Restore the settings-update / restarting waits in the `#ifdef PORT`
-branch, yielding via `port_coroutine_yield()` instead of the N64
-busy-spin. This is the **established codebase idiom** for PORT
-audio-condition waits — `scautodemo.c` / `scvsbattle.c` already do
-`while (syAudioCheckBGMPlaying(0)) { #ifdef PORT port_coroutine_yield();
-#endif }`; those terminate on PORT, proving the audio restart runs
-independently of the game coroutine. A `> 100000`-iteration cap with a
-`port_log` diagnostic is a hang-proof backstop (directly addresses the
-old comment's documented hang fear): if the flag never clears it logs
-and falls through — no worse than the pre-fix skip, never an infinite
-hang. The N64-only framebuffer clear stays in `#else`.
+The pre-audio-era scaffolding here was a divergent `#ifdef PORT` block
+that *skipped* the waits (stale "audio is stubbed" comment) opposite a
+full N64 `#else`. Now that audio is real, the two paths are **converged**
+to one shared sequence — the only genuine PORT differences remain:
 
+- the spin-wait body injects `port_coroutine_yield()` under `#ifdef
+  PORT` (cooperative scheduler) vs the N64 `continue;` busy-spin — the
+  exact established idiom already used by `scautodemo.c` /
+  `scvsbattle.c` for their `syAudioCheckBGMPlaying` waits (which proves
+  it terminates on PORT: the audio restart runs independently of the
+  game coroutine);
+- the framebuffer clear and its `framebuffer`/`end` locals are
+  `#ifndef PORT` (no physical N64 framebuffers on PC).
+
+No iteration cap / diagnostic log: the established idiom has none, the
+restart reliably clears the flag (measured: 16 yields), and the 3 s
+hang watchdog is the global safety net — a bespoke cap here would be
+exactly the kind of legacy-feeling complexity this change removes.
 `extern void port_coroutine_yield(void);` added to the file's existing
 PORT extern block (same pattern as sc1pgame.c / scvsbattle.c etc.).
 
 ## Verification
 
-JP runtime log:
-`scManagerRunLoop — past audio/FB setup (settings-update cleared after
-16 yields)` — the restart cleared the flag in 16 cooperative yields
-(not the cap; no hang). The game then ran the full attract loop
-(scenes 27→28→29→30→33→31→34→36→32→35→37, incl. mvOpeningRoom) with no
-hang, no crash, watchdog never firing. The documented wipe path is
-structurally eliminated — the flag is clear in `scManagerRunLoop`, long
-before any scene's `syAudioPlayBGM`. **Audible confirmation pending
-user** (logs can't verify sound output). US regression (shared PORT
-branch): rebuild + attract re-run.
+First fix (with cap+log) confirmed the mechanism: JP log
+`settings-update cleared after 16 yields`, full attract loop
+(27→28→29→30→33→31→34→36→32→35→37 incl. mvOpeningRoom), no
+hang/crash/watchdog; **user-confirmed JP attract music now audible**.
+The converged refactor is behaviourally identical for the waits (same
+two waits, same yield idiom; only the cap/log removed) and was
+re-verified: JP reaches scene dispatch (scene 27 → 28 → 29 → 30 → 33,
+i.e. the audio waits cleared — scene dispatch is unreachable if they
+hang) and runs the opening/attract with no hang/crash/watchdog. US
+port regression (shared path): rebuilt + attract re-run, clean.
 
 ## Notes
 
