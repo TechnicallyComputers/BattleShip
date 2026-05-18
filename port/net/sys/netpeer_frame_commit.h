@@ -14,6 +14,11 @@ typedef struct SYNetFrameCommitToken
 	u32 input_digest;
 	u32 slot_binding_hash;
 	u32 tick_anchor;
+	/* Subsystem hashes at validation_tick (same functions as NetSync line). */
+	u32 fighter_digest;
+	u32 world_digest;
+	u32 item_digest;
+	u32 rng_digest;
 
 } SYNetFrameCommitToken;
 
@@ -26,5 +31,7 @@ u32 syNetFrameCommitHashSlotBindings(s32 local_sim_slot, s32 remote_sim_slot, s3
 sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b,
 				  sb32 *out_delta_frame_id, sb32 *out_delta_input_digest, sb32 *out_delta_slot_binding,
 				  sb32 *out_delta_tick_anchor);
+/* TRUE when fighter/world/item/rng digests disagree (sim state desync at validation boundary). */
+sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b);
 
 #endif /* _SYNETPEER_FRAME_COMMIT_H_ */

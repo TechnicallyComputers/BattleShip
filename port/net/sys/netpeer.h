@@ -203,7 +203,8 @@ extern u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void);
 extern sb32 syNetPeerMatchDelayStarvationUpdateAndShouldHold(u32 sim_tick, u32 required_wire, u32 hr);
 #endif
 #ifdef PORT
-/* Historical counter retained in periodic logs; phase-locked commit no longer uses skew to hold sim ticks. */
+/* Suppress sim advance when local tick leads confirmed remote ingress (wired into shared commit + tick commit). */
+extern sb32 syNetPeerShouldHoldSimTickForSkewPacing(u32 tick, s32 *out_skew);
 extern u32 syNetPeerGetSkewPacingHoldFrameCount(void);
 /*
  * When tick-grid exec gate is enabled (SSB64_NETPLAY_TICK_GRID_EXEC_GATE=1) and the grid is locked, PortPushFrame

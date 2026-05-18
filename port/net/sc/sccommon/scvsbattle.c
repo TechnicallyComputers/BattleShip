@@ -121,6 +121,12 @@ void scVSBattleFuncUpdate(void)
 		syNetPeerUpdate();
 		return;
 	}
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() != FALSE))
+	{
+		/* Resim advances only via syNetRollbackUpdate → AdvanceResimBudget → BattleSimOnly. */
+		syNetPeerUpdate();
+		return;
+	}
 #endif
 	ifCommonBattleUpdateInterfaceAll();
 #ifdef PORT
