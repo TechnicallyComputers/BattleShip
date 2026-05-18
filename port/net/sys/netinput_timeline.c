@@ -101,6 +101,29 @@ void syNetInputTimelineClearIncorrectFrom(u32 from_sim_tick)
 	}
 }
 
+void syNetInputTimelineClearResolvedSpan(u32 from_sim_tick, u32 to_sim_tick)
+{
+	s32 player;
+	u32 t;
+
+	if ((from_sim_tick == 0U) || (to_sim_tick <= from_sim_tick))
+	{
+		return;
+	}
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (syNetInputTimelineIsRemoteHumanSlot(player) == FALSE)
+		{
+			continue;
+		}
+		for (t = from_sim_tick; t < to_sim_tick; t++)
+		{
+			syNetInputTimelineReconcilePublishedVsRemote(player, t);
+		}
+		syNetInputTimelineRefreshPlayerEarliest(player, to_sim_tick);
+	}
+}
+
 void syNetInputTimelineReconcilePublishedVsRemote(s32 player, u32 sim_tick)
 {
 	u32 frontier;

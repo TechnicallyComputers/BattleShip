@@ -15,7 +15,11 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Forced resim | `SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH=1`, `SSB64_NETPLAY_ROLLBACK_INJECT_TICK=<wire_or_sim per inject docs>` |
 | Load verify | `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY=1` (default); `=0` debug-only |
 | Catch-up budget | `SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME=4` |
-| Symmetric off (override auto) | `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0` (auto negotiation enables symmetric by default when unset) |
+| Symmetric off (GGPO default) | Unset `SSB64_NETPLAY_ROLLBACK_SYMMETRIC` — phase_lock≥2 enables **diag-only** peer notices; each peer corrects remote inputs independently |
+| Legacy symmetric follower | `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` (coupled peer resim; transitional) |
+| Conservative remote buttons | Default: buttons predict **0** under delay; `SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` restores hold-last (shield-tap churn risk) |
+| Digital tap patch (no resim) | Default on; `SSB64_NETPLAY_GGPO_DIGITAL_TAP_PATCH=0` forces rollback on 1-frame ±85 taps |
+| Symmetric follower off | Default (diag-only notices); `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for legacy coupled resim |
 | State detail | `SSB64_NETPLAY_STATE_DETAIL_DIAG=1` (world); `=2` (+ fighter detail) |
 | Resim trace | `SSB64_NETPLAY_RESIM_TICK_TRACE=1` |
 | Scan clean diag | `SSB64_NETPLAY_ROLLBACK_SCAN_DIAG=1` |

@@ -254,12 +254,27 @@ extern sb32 syNetInputTakeSuppressSceneUpdate(void);
 extern void syNetInputRollbackPrepareForResim(u32 resim_start_tick); /* Reseed last_published + remote prediction seed before resim loop. */
 #ifdef PORT
 extern void syNetInputPublishSynchronizedTick(u32 tick); /* Resolve+publish only (pure rollback resim; no HID/network). */
-extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick); /* Overwrite published history with confirmed remote rows for [from,to). */
+extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick); /* Remote slots: wire-confirmed rows for [from,to). */
+extern sb32 syNetInputIsRemoteHumanSlot(s32 player); /* TRUE for opponent human sim slots (GGPO remote prediction/correction). */
+extern void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick,
+                                                  s32 correction_player); /* GGPO unified resim inputs: remote=wire, local=transmitted/per-tick published. */
 extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick,
-							      u32 to_tick); /* Follower: local slot from transmitted + hold-last (matches peer remote-confirmed). */
+							      u32 to_tick); /* Deprecated wrapper: calls ReconcileResimSpan. */
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
 extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick,
 						      const SYNetInputFrame *confirmed);
+/*
+ * TRUE when confirmed remote input differs enough from `old` to warrant GGPO rollback (buttons any change;
+ * sticks when |delta| > deadband). `correction_is_predicted`: use `SSB64_NETPLAY_GGPO_STICK_DEADBAND_PREDICT`
+ * (default 2) instead of `SSB64_NETPLAY_GGPO_STICK_DEADBAND` (default 4).
+ */
+extern sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
+                                                        sb32 correction_is_predicted);
+extern sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new);
+/* TRUE: patch published row only (skip GGPO resim) for isolated digital keyboard tap/release under delay. */
+extern sb32 syNetInputShouldPatchDigitalTapWithoutRollback(s32 player, u32 sim_tick,
+                                                            const SYNetInputFrame *published,
+                                                            const SYNetInputFrame *remote);
 #endif
 extern sb32 syNetInputGetRemoteHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 /* Post-publish simulation input only: valid after syNetInputPublishFrame for this tick. NULL if player out of range. */
