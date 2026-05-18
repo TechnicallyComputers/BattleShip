@@ -14,11 +14,12 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_SIM_HZ_DEFAULT 60U
 #define SYNETSESSION_PARAMS_DELAY_MIN 1U
 #define SYNETSESSION_PARAMS_DELAY_MAX 32U
-#define SYNETSESSION_PARAMS_DELAY_MARGIN_TICKS 2U
-#define SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT 4U
-#define SYNETSESSION_PARAMS_PHASE_LOCK_MAX 8U
-#define SYNETSESSION_PARAMS_HIGH_RTT_MS 180U
-#define SYNETSESSION_PARAMS_HIGH_RTT_D_CAP 8U
+#define SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT 1U
+#define SYNETSESSION_PARAMS_PHASE_LOCK_MAX 16U
+#define SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS 2U
+#define SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN 4U
+#define SYNETSESSION_PARAMS_ROLLBACK_D_MIN 2U
+#define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 5U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 32U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 64U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
@@ -142,6 +143,7 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	u32 sim_hz;
 	u32 frame_ms_num;
 	u32 half_rtt_ms;
+	u32 one_way_ticks;
 	u32 d_ticks;
 	u32 phase_lock;
 	u32 redundancy;
@@ -164,40 +166,39 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 		frame_ms_num = 16U;
 	}
 	half_rtt_ms = (rtt_ms + 1U) / 2U;
-	d_ticks = syNetSessionParamsCeilDiv(half_rtt_ms, frame_ms_num);
-	d_ticks += SYNETSESSION_PARAMS_DELAY_MARGIN_TICKS;
+	one_way_ticks = syNetSessionParamsCeilDiv(half_rtt_ms, frame_ms_num);
+	/*
+	 * Rollback-first matchmaking: keep committed input delay (wire = sim + D) small and carry RTT in the
+	 * prediction runway + snapshot ring. Peers predict ahead of confirmed remote ingress and resim on mismatch.
+	 */
+	if (rtt_ms < 100U)
+	{
+		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MIN;
+	}
+	else if (rtt_ms < 180U)
+	{
+		d_ticks = 3U;
+	}
+	else
+	{
+		d_ticks = 4U;
+	}
+	if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
+	{
+		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
+	}
 	if (d_ticks < SYNETSESSION_PARAMS_DELAY_MIN)
 	{
 		d_ticks = SYNETSESSION_PARAMS_DELAY_MIN;
 	}
-	if (d_ticks > SYNETSESSION_PARAMS_DELAY_MAX)
+	phase_lock = one_way_ticks + SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS;
+	if (phase_lock < SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN)
 	{
-		d_ticks = SYNETSESSION_PARAMS_DELAY_MAX;
+		phase_lock = SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN;
 	}
-	if (rtt_ms >= SYNETSESSION_PARAMS_HIGH_RTT_MS)
+	if (phase_lock > SYNETSESSION_PARAMS_PHASE_LOCK_MAX)
 	{
-		/* High-latency: favor phase-lock + rollback over extra lockstep D. */
-		if (d_ticks > SYNETSESSION_PARAMS_HIGH_RTT_D_CAP)
-		{
-			d_ticks = SYNETSESSION_PARAMS_HIGH_RTT_D_CAP;
-		}
 		phase_lock = SYNETSESSION_PARAMS_PHASE_LOCK_MAX;
-	}
-	else
-	{
-		phase_lock = d_ticks;
-		if (phase_lock > 4U)
-		{
-			phase_lock = 4U + ((d_ticks - 4U) / 2U);
-		}
-		if (phase_lock < 2U)
-		{
-			phase_lock = 2U;
-		}
-		if (phase_lock > SYNETSESSION_PARAMS_PHASE_LOCK_MAX)
-		{
-			phase_lock = SYNETSESSION_PARAMS_PHASE_LOCK_MAX;
-		}
 	}
 	if (rtt_ms < 80U)
 	{
