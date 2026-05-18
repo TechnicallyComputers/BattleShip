@@ -44,7 +44,26 @@ particle bank pointers (cf. `docs/bugs/segment_0e_gdl_*`,
 `dl_link_stale_pointer_guard_*`, `linux_stale_scene_data_family_*`,
 `npikachu_particlebankid_lp64_overrun_*`).
 
-## Issue B — JP music silent (task #8)
+## Issue B — JP attract/intro music silent (task #8) — OPEN
+
+Clarified (user, 2026-05-18): the JP attract/intro music is **still not
+playing**. The JP ROM is *supposed* to play the **exact same music
+sequence as US** during the intro/attract — this is NOT a JP design
+difference. US plays it correctly, so a JP-specific bug breaks playback
+of the *same* sequence. JP intro visuals + title VO render, and DK's
+fighter-intro name is the correct JP "Donkey Kong" (so JP text/assets
+load fine). Stage music works; SFX works. Only the intro/attract BGM is
+silent, on JP only.
+
+Working theory space: (a) the attract/title BGM trigger sits on a
+region-conditional code path that doesn't fire (or fires wrong) on JP;
+(b) the BGM/sequence id resolves differently in the JP sequence bank;
+(c) `S1_music_sbk` content differs despite matching size (extraction
+offset). Next: runtime trace of `syAudioPlayBGM` / audio_bridge during
+the title→attract phase to see whether the call fires on JP and with
+what id, vs US.
+
+### (historical) original observation
 
 SFX works, music does not. audio_bridge log:
 `parsed sounds1_ctl → sSYAudioSequenceBank2 (music): 43 instruments`,
