@@ -35,6 +35,10 @@ static SYNetInputFrame sSYNetInputTransmittedHistory[MAXCONTROLLERS][SYNETINPUT_
 static u32 sSYNetInputRemotePacketSeqHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 static ub8 sSYNetInputRemotePacketSeqValid[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 static u32 sSYNetInputRemoteConfirmedConflictLogsRemaining;
+#define SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT 4
+#define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 2
+static s32 sSYNetInputGgpoStickDeadband = -1;
+static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
 /* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
 static u32 sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
 static sb32 sSYNetInputSuppressSceneUpdateAfterRead;
@@ -413,6 +417,7 @@ void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetInputIngressExtraPumpsEnvCache = -999;
 	sSYNetInputSessionIngressPumpsOverrideValid = FALSE;
 	sSYNetInputSessionBundleRedundancyOverrideValid = FALSE;
+	sSYNetInputGgpoStickDeadband = -1;
 	syNetPeerResetStrictRingFuzzEnvCacheForNewMatch();
 }
 
@@ -716,6 +721,298 @@ static sb32 syNetInputFrameGameplayEquals(const SYNetInputFrame *a, const SYNetI
 	           : FALSE;
 }
 
+static u32 syNetInputGgpoStickDeadband(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputGgpoStickDeadband >= 0)
+	{
+		return (u32)sSYNetInputGgpoStickDeadband;
+	}
+	parsed = SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT;
+	env = getenv("SSB64_NETPLAY_GGPO_STICK_DEADBAND");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+		if (parsed < 0)
+		{
+			parsed = 0;
+		}
+		if (parsed > 127)
+		{
+			parsed = 127;
+		}
+	}
+	sSYNetInputGgpoStickDeadband = parsed;
+	return (u32)sSYNetInputGgpoStickDeadband;
+}
+
+static u32 syNetInputGgpoStickDeadbandPredict(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputGgpoStickDeadbandPredict >= 0)
+	{
+		return (u32)sSYNetInputGgpoStickDeadbandPredict;
+	}
+	parsed = SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT;
+	env = getenv("SSB64_NETPLAY_GGPO_STICK_DEADBAND_PREDICT");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+		if (parsed < 0)
+		{
+			parsed = 0;
+		}
+		if (parsed > 127)
+		{
+			parsed = 127;
+		}
+	}
+	sSYNetInputGgpoStickDeadbandPredict = parsed;
+	return (u32)sSYNetInputGgpoStickDeadbandPredict;
+}
+
+static s32 syNetInputAbsS8Diff(s8 a, s8 b)
+{
+	s32 d;
+
+	d = (s32)a - (s32)b;
+	if (d < 0)
+	{
+		return -d;
+	}
+	return d;
+}
+
+/* SSB digital keyboard encoding: full stick deflection on one axis. */
+static sb32 syNetInputStickAxisIsDigital(s8 axis)
+{
+	return ((axis == 85) || (axis == -85)) ? TRUE : FALSE;
+}
+
+static sb32 syNetInputFrameIsDigitalKeyboard(const SYNetInputFrame *frame)
+{
+	if (frame == NULL)
+	{
+		return FALSE;
+	}
+	return ((syNetInputStickAxisIsDigital(frame->stick_x) != FALSE) ||
+	        (syNetInputStickAxisIsDigital(frame->stick_y) != FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+#ifdef PORT
+static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame);
+#endif
+
+static sb32 syNetInputFrameSticksNearNeutral(const SYNetInputFrame *frame)
+{
+	if (frame == NULL)
+	{
+		return FALSE;
+	}
+	return ((syNetInputAbsS8Diff(frame->stick_x, 0) <= (s32)syNetInputGgpoStickDeadbandPredict()) &&
+	        (syNetInputAbsS8Diff(frame->stick_y, 0) <= (s32)syNetInputGgpoStickDeadbandPredict()))
+	           ? TRUE
+	           : FALSE;
+}
+
+static sb32 syNetInputDigitalStickSameCardinal(const SYNetInputFrame *a, const SYNetInputFrame *b)
+{
+	if ((a == NULL) || (b == NULL))
+	{
+		return FALSE;
+	}
+	if ((syNetInputStickAxisIsDigital(a->stick_x) != FALSE) && (a->stick_x == b->stick_x))
+	{
+		return TRUE;
+	}
+	if ((syNetInputStickAxisIsDigital(a->stick_y) != FALSE) && (a->stick_y == b->stick_y))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetInputGgpoDigitalTapPatchEnabled(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+
+	if (sCached >= 0)
+	{
+		return (sCached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_GGPO_DIGITAL_TAP_PATCH");
+	if ((env != NULL) && (env[0] != '\0') && (atoi(env) == 0))
+	{
+		sCached = 0;
+	}
+	else
+	{
+		sCached = 1;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
+}
+
+/*
+ * One-frame digital keyboard taps (jump tap, release edge) under delay: patch published row without
+ * a full rollback when neighbors on the wire are neutral and the pulse is not sustained.
+ */
+sb32 syNetInputShouldPatchDigitalTapWithoutRollback(s32 player, u32 sim_tick, const SYNetInputFrame *published,
+                                                    const SYNetInputFrame *remote)
+{
+	SYNetInputFrame adj;
+	u32 t;
+
+	if ((published == NULL) || (remote == NULL) || (sim_tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetInputGgpoDigitalTapPatchEnabled() == FALSE)
+	{
+		return FALSE;
+	}
+	if (published->is_predicted == FALSE)
+	{
+		return FALSE;
+	}
+	/* Predicted neutral, confirmed single-frame cardinal (common jump / tap). */
+	if ((syNetInputFrameSticksNearNeutral(published) != FALSE) &&
+	    (syNetInputFrameIsDigitalKeyboard(remote) != FALSE))
+	{
+		if (sim_tick < ~(u32)0)
+		{
+			t = sim_tick + 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if ((syNetInputFrameIsDigitalKeyboard(&adj) != FALSE) &&
+				    (syNetInputDigitalStickSameCardinal(remote, &adj) != FALSE))
+				{
+					return FALSE;
+				}
+			}
+		}
+		if (sim_tick > 0U)
+		{
+			t = sim_tick - 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if ((syNetInputFrameIsDigitalKeyboard(&adj) != FALSE) &&
+				    (syNetInputDigitalStickSameCardinal(remote, &adj) != FALSE))
+				{
+					return FALSE;
+				}
+			}
+		}
+		if (sim_tick < ~(u32)0)
+		{
+			t = sim_tick + 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if (syNetInputFrameSticksNearNeutral(&adj) != FALSE)
+				{
+					return TRUE;
+				}
+			}
+		}
+		if (sim_tick > 0U)
+		{
+			t = sim_tick - 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if (syNetInputFrameSticksNearNeutral(&adj) != FALSE)
+				{
+					return TRUE;
+				}
+			}
+		}
+		return FALSE;
+	}
+	/* Hold-last predicted cardinal, confirmed release to neutral. */
+	if ((syNetInputFrameIsDigitalKeyboard(published) != FALSE) &&
+	    (syNetInputFrameSticksNearNeutral(remote) != FALSE))
+	{
+		if (sim_tick > 0U)
+		{
+			t = sim_tick - 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if (syNetInputDigitalStickSameCardinal(&adj, published) == FALSE)
+				{
+					return FALSE;
+				}
+			}
+			else
+			{
+				return FALSE;
+			}
+		}
+		else
+		{
+			return FALSE;
+		}
+		if (sim_tick < ~(u32)0)
+		{
+			t = sim_tick + 1U;
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, &adj) != FALSE)
+			{
+				if (syNetInputFrameSticksNearNeutral(&adj) != FALSE)
+				{
+					return TRUE;
+				}
+			}
+		}
+		return FALSE;
+	}
+	return FALSE;
+}
+
+sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
+                                                sb32 correction_is_predicted)
+{
+	u32 deadband;
+
+	if ((old == NULL) || (new == NULL))
+	{
+		return TRUE;
+	}
+	if (old->buttons != new->buttons)
+	{
+		return TRUE;
+	}
+	if (correction_is_predicted != FALSE)
+	{
+		deadband = syNetInputGgpoStickDeadbandPredict();
+	}
+	else
+	{
+		deadband = syNetInputGgpoStickDeadband();
+	}
+	if (deadband == 0U)
+	{
+		return ((old->stick_x != new->stick_x) || (old->stick_y != new->stick_y)) ? TRUE : FALSE;
+	}
+	if (syNetInputAbsS8Diff(old->stick_x, new->stick_x) > (s32)deadband)
+	{
+		return TRUE;
+	}
+	if (syNetInputAbsS8Diff(old->stick_y, new->stick_y) > (s32)deadband)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new)
+{
+	return syNetInputGameplayCorrectionIsSignificantEx(old, new, FALSE);
+}
+
 /* Strict wire authority: real INPUT packets only (not hold-last gap fill). */
 static sb32 syNetInputFrameIsRemoteStrictConfirmed(const SYNetInputFrame *frame)
 {
@@ -747,13 +1044,28 @@ static sb32 syNetInputFrameIsRemoteGapFilled(const SYNetInputFrame *frame)
 void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame)
 {
 	SYNetInputFrame store;
+	SYNetInputFrame prior;
+	sb32 had_prior;
 
 	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (frame->tick == 0U))
 	{
 		return;
 	}
+	had_prior = syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, frame->tick, &prior);
 	store = *frame;
 	syNetInputStoreFrame(sSYNetInputTransmittedHistory, player, &store);
+	if ((had_prior != FALSE) && (syNetInputFrameGameplayEquals(&prior, frame) == FALSE))
+	{
+		SYNetInputFrame patch;
+
+		patch = store;
+		patch.tick = frame->tick;
+		patch.source = nSYNetInputSourceLocal;
+		patch.is_predicted = FALSE;
+		syNetInputStoreFrame(sSYNetInputHistory, player, &patch);
+		syNetInputStrictReadyCacheInvalidate();
+		syNetRollbackNotifyLocalAuthorityTransmitRevision(player, frame->tick);
+	}
 }
 
 void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick, const SYNetInputFrame *confirmed)
@@ -861,6 +1173,37 @@ static void syNetInputStoreRemoteConfirmedFrame(s32 player, const SYNetInputFram
 		sSYNetInputRemoteConfirmedLastWire[player] = (s32)frame->tick;
 	}
 	syNetInputStrictReadyCacheInvalidate();
+}
+
+static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 packet_seq,
+                                                 const SYNetInputFrame *frame,
+                                                 const SYNetInputFrame *prior_ring, sb32 had_prior_ring)
+{
+	u32 sim_tick;
+
+	syNetInputStoreRemoteConfirmedFrame(player, frame);
+	syNetInputStoreRemotePacketSeq(player, wire_tick, packet_seq);
+	syNetInputTimelineOnRemoteConfirmedWire(player, wire_tick, frame);
+	sim_tick = syNetPeerDelaySimTickFromWire(wire_tick);
+	if ((had_prior_ring != FALSE) && (prior_ring != NULL) &&
+	    (syNetInputGameplayCorrectionIsSignificant(prior_ring, frame) == FALSE))
+	{
+		syNetInputPatchPublishedFromRemoteConfirmed(player, wire_tick, frame);
+		return;
+	}
+	if (syNetRollbackShouldQueueGgpoCorrection(sim_tick) == FALSE)
+	{
+		syNetInputPatchPublishedFromRemoteConfirmed(player, wire_tick, frame);
+		return;
+	}
+	if ((had_prior_ring != FALSE) && (prior_ring != NULL) && (prior_ring->is_predicted != FALSE) &&
+	    (syNetInputShouldPatchDigitalTapWithoutRollback(player, sim_tick, prior_ring, frame) != FALSE))
+	{
+		syNetInputPatchPublishedFromRemoteConfirmed(player, wire_tick, frame);
+		return;
+	}
+	syNetRollbackRequestInputCorrection(player, sim_tick);
+	syNetInputPatchPublishedFromRemoteConfirmed(player, wire_tick, frame);
 }
 
 static sb32 syNetInputShouldSuppressRemoteGapFill(s32 player, u32 tick)
@@ -1003,11 +1346,7 @@ sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 st
 					    frame.stick_y);
 					sSYNetInputRemoteConfirmedConflictLogsRemaining--;
 				}
-				syNetInputStoreRemoteConfirmedFrame(player, &frame);
-				syNetInputStoreRemotePacketSeq(player, tick, packet_seq);
-				syNetInputTimelineOnRemoteConfirmedWire(player, tick, &frame);
-				syNetRollbackRequestInputCorrection(player, syNetPeerDelaySimTickFromWire(tick));
-				syNetInputPatchPublishedFromRemoteConfirmed(player, tick, &frame);
+				syNetInputCommitRemoteConfirmedWire(player, tick, packet_seq, &frame, &existing, TRUE);
 				return TRUE;
 			}
 			if (sSYNetInputRemoteConfirmedConflictLogsRemaining > 0U)
@@ -1034,11 +1373,14 @@ sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 st
 			return FALSE;
 		}
 	}
-	syNetInputStoreRemoteConfirmedFrame(player, &frame);
-	syNetInputStoreRemotePacketSeq(player, tick, packet_seq);
-	syNetInputTimelineOnRemoteConfirmedWire(player, tick, &frame);
-	syNetRollbackRequestInputCorrection(player, syNetPeerDelaySimTickFromWire(tick));
-	syNetInputPatchPublishedFromRemoteConfirmed(player, tick, &frame);
+	{
+		sb32 had_prior_ring;
+
+		had_prior_ring =
+		    (syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, tick, &existing) != FALSE) ? TRUE : FALSE;
+		syNetInputCommitRemoteConfirmedWire(player, tick, packet_seq, &frame,
+		                                    had_prior_ring ? &existing : NULL, had_prior_ring);
+	}
 	return TRUE;
 }
 #endif
@@ -1144,6 +1486,87 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 
 #ifdef PORT
 static sb32 syNetInputTryGetPredictionSeedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_stick_x, s8 *out_stick_y);
+static sb32 syNetInputPredictRemoteButtonsHoldLast(void);
+#endif
+
+#ifdef PORT
+/*
+ * Industry default: hold-last sticks under delay, but do not hold-last remote buttons (shield taps
+ * become predicted held L). SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1 restores full hold-last.
+ */
+static sb32 syNetInputPredictRemoteButtonsHoldLast(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+
+	if (sCached >= 0)
+	{
+		return (sCached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD");
+	if ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0))
+	{
+		sCached = 1;
+	}
+	else
+	{
+		sCached = 0;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_stick_x, s8 *out_stick_y)
+{
+	SYNetInputFrame seed;
+
+	if ((out_stick_x == NULL) || (out_stick_y == NULL))
+	{
+		return FALSE;
+	}
+	if (syNetInputTryGetPredictionSeedFrame(player, tick, &seed) == FALSE)
+	{
+		return FALSE;
+	}
+	*out_stick_x = seed.stick_x;
+	*out_stick_y = seed.stick_y;
+	return TRUE;
+}
+
+static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	SYNetInputFrame *last_confirmed = &sSYNetInputSlots[player].last_confirmed;
+	u16 buttons;
+	s8 stick_x;
+	s8 stick_y;
+
+	buttons = 0;
+	stick_x = 0;
+	stick_y = 0;
+	if (last_confirmed->is_valid != FALSE)
+	{
+		if (syNetInputPredictRemoteButtonsHoldLast() != FALSE)
+		{
+			buttons = last_confirmed->buttons;
+		}
+		stick_x = last_confirmed->stick_x;
+		stick_y = last_confirmed->stick_y;
+	}
+	if (syNetInputTryGetPredictionStickSeed(player, tick, &stick_x, &stick_y) == FALSE)
+	{
+		if (last_confirmed->is_valid != FALSE)
+		{
+			stick_x = last_confirmed->stick_x;
+			stick_y = last_confirmed->stick_y;
+		}
+	}
+	if ((sSYNetInputPredictNeutral != FALSE) && (syNetInputFrameIsDigitalKeyboard(last_confirmed) == FALSE))
+	{
+		stick_x = 0;
+		stick_y = 0;
+	}
+	syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemotePredicted, TRUE);
+}
 #endif
 
 void syNetInputMakePredictedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
@@ -1153,8 +1576,20 @@ void syNetInputMakePredictedFrame(s32 player, u32 tick, SYNetInputFrame *out_fra
 #ifdef PORT
 	SYNetInputFrame seed;
 
+	if (syNetInputIsRemoteHumanSlot(player) != FALSE)
+	{
+		syNetInputMakePredictedFrameRemoteHuman(player, tick, out_frame);
+		return;
+	}
 	if (sSYNetInputPredictNeutral != FALSE)
 	{
+		if ((last_confirmed->is_valid != FALSE) &&
+		    (syNetInputFrameIsDigitalKeyboard(last_confirmed) != FALSE))
+		{
+			syNetInputMakeFrame(out_frame, tick, last_confirmed->buttons, last_confirmed->stick_x,
+			                    last_confirmed->stick_y, nSYNetInputSourceRemotePredicted, TRUE);
+			return;
+		}
 		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceRemotePredicted, TRUE);
 		return;
 	}
@@ -1246,7 +1681,7 @@ static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim
 #ifdef PORT
 #define SYNETINPUT_PREDICTION_LOOKBACK 8U
 
-static sb32 syNetInputIsRemoteHumanSlot(s32 player)
+sb32 syNetInputIsRemoteHumanSlot(s32 player)
 {
 	s32 i;
 	s32 slot;
@@ -1289,11 +1724,20 @@ static sb32 syNetInputTryGetPredictionSeedFrame(s32 player, u32 tick, SYNetInput
 	oldest = tick - lookback;
 	for (t = tick - 1U; t >= oldest; t--)
 	{
+		SYNetInputFrame wire_row;
+
 		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, out_frame) != FALSE)
 		{
 			return TRUE;
 		}
-		if (syNetInputGetHistoryFrame(player, t, out_frame) != FALSE)
+		if ((syNetInputTryGetRemoteHistoryForSimTick(player, t, &wire_row) != FALSE) &&
+		    (syNetInputFrameIsRemoteConfirmed(&wire_row) != FALSE))
+		{
+			*out_frame = wire_row;
+			return TRUE;
+		}
+		if ((syNetInputGetHistoryFrame(player, t, out_frame) != FALSE) &&
+		    (out_frame->is_predicted == FALSE))
 		{
 			return TRUE;
 		}
@@ -2889,18 +3333,69 @@ void syNetInputRollbackPrepareForResim(u32 resim_start_tick)
 }
 
 #ifdef PORT
+static void syNetInputRollbackReconcileRemoteSlotFromWire(s32 slot, u32 t)
+{
+	SYNetInputFrame row;
+	SYNetInputFrame wire;
+
+	if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, t, &row) != FALSE)
+	{
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
+		return;
+	}
+	if ((syNetInputTryGetRemoteHistoryForSimTick(slot, t, &wire) != FALSE) &&
+	    (syNetInputFrameIsRemoteConfirmed(&wire) != FALSE))
+	{
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &wire);
+	}
+}
+
+static void syNetInputRollbackReconcileLocalSlotForResim(s32 slot, u32 t)
+{
+	SYNetInputFrame row;
+
+	/*
+	 * GGPO local authority: replay exactly what we put on the wire (peer applies this via remote ring).
+	 * Fall back to non-predicted published only when a tick was not bundled yet — never hold-last fill.
+	 */
+	if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, slot, t, &row) != FALSE)
+	{
+		row.tick = t;
+		row.source = nSYNetInputSourceLocal;
+		row.is_predicted = FALSE;
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
+		return;
+	}
+	if ((syNetInputGetHistoryFrame(slot, t, &row) != FALSE) && (row.is_predicted == FALSE))
+	{
+		row.tick = t;
+		row.source = nSYNetInputSourceLocal;
+		row.is_predicted = FALSE;
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
+	}
+}
+
 void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick)
+{
+	syNetInputRollbackReconcileResimSpan(from_tick, to_tick, -1);
+}
+
+void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick, s32 correction_player)
 {
 	s32 i;
 	s32 n;
 	s32 slot;
+	s32 local_slot;
+	s32 extra_slot;
 	u32 t;
-	SYNetInputFrame confirmed;
 
+	(void)correction_player;
 	if (from_tick >= to_tick)
 	{
 		return;
 	}
+	local_slot = syNetPeerGetLocalSimSlot();
+	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
 	n = syNetPeerGetRemoteHumanSlotCount();
 	for (t = from_tick; t < to_tick; t++)
 	{
@@ -2910,11 +3405,15 @@ void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick)
 			{
 				continue;
 			}
-			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, t, &confirmed) == FALSE)
-			{
-				continue;
-			}
-			syNetInputStoreFrame(sSYNetInputHistory, slot, &confirmed);
+			syNetInputRollbackReconcileRemoteSlotFromWire(slot, t);
+		}
+		if ((local_slot >= 0) && (local_slot < MAXCONTROLLERS))
+		{
+			syNetInputRollbackReconcileLocalSlotForResim(local_slot, t);
+		}
+		if ((extra_slot >= 0) && (extra_slot < MAXCONTROLLERS) && (extra_slot != local_slot))
+		{
+			syNetInputRollbackReconcileLocalSlotForResim(extra_slot, t);
 		}
 	}
 	syNetInputStrictReadyCacheInvalidate();
@@ -2922,72 +3421,7 @@ void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick)
 
 void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick, u32 to_tick)
 {
-	u32 t;
-	u32 scan;
-	SYNetInputFrame row;
-	SYNetInputFrame last_tx;
-	sb32 have_last_tx;
-
-	if ((from_tick >= to_tick) || (authority_slot < 0) || (authority_slot >= MAXCONTROLLERS))
-	{
-		return;
-	}
-	if ((authority_slot != syNetPeerGetLocalSimSlot()) &&
-	    (authority_slot != syNetPeerGetExtraLocalSenderSimSlot()))
-	{
-		return;
-	}
-	/*
-	 * Symmetric follower: replay the same local rows the notifying peer applied from our wire stream.
-	 * Transmitted history is keyed by sim tick (see syNetInputNoteTransmittedSimFrame); when a tick was
-	 * never bundled yet, hold-last transmitted so resim does not reuse speculative published rows the
-	 * peer already replaced via remote-confirmed (GGPO on their side).
-	 */
-	have_last_tx = FALSE;
-	syNetInputClearFrame(&last_tx);
-	for (t = from_tick; t < to_tick; t++)
-	{
-		sb32 have_row;
-
-		have_row = FALSE;
-		if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, authority_slot, t, &row) != FALSE)
-		{
-			have_row = TRUE;
-			have_last_tx = TRUE;
-			last_tx = row;
-		}
-		else if ((syNetInputGetHistoryFrame(authority_slot, t, &row) != FALSE) && (row.is_predicted == FALSE))
-		{
-			have_row = TRUE;
-		}
-		else if (have_last_tx != FALSE)
-		{
-			row = last_tx;
-			have_row = TRUE;
-		}
-		else
-		{
-			for (scan = t; scan > from_tick; scan--)
-			{
-				if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, authority_slot, scan - 1U, &row) !=
-				    FALSE)
-				{
-					have_row = TRUE;
-					have_last_tx = TRUE;
-					last_tx = row;
-					break;
-				}
-			}
-		}
-		if (have_row == FALSE)
-		{
-			continue;
-		}
-		row.tick = t;
-		row.source = nSYNetInputSourceLocal;
-		row.is_predicted = FALSE;
-		syNetInputStoreFrame(sSYNetInputHistory, authority_slot, &row);
-	}
-	syNetInputStrictReadyCacheInvalidate();
+	(void)authority_slot;
+	syNetInputRollbackReconcileResimSpan(from_tick, to_tick, authority_slot);
 }
 #endif

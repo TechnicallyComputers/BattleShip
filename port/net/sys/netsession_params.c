@@ -200,6 +200,11 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	{
 		phase_lock = SYNETSESSION_PARAMS_PHASE_LOCK_MAX;
 	}
+	/* Low RTT: shorter prediction runway reduces tap mispredict rollback churn (D still from RTT table). */
+	if ((rtt_ms < 120U) && (phase_lock > 4U))
+	{
+		phase_lock = 4U;
+	}
 	if (rtt_ms < 80U)
 	{
 		redundancy = 0U;

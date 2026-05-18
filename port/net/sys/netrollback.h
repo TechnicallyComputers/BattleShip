@@ -68,6 +68,10 @@ extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_ti
 extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
 /* GGPO-style: confirmed input corrects speculative remote input already simulated at `sim_tick`. */
 extern void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick);
+/* Host/local authority: retransmit revised gameplay for `sim_tick`; queue symmetric + local resim. */
+extern void syNetRollbackNotifyLocalAuthorityTransmitRevision(s32 player, u32 sim_tick);
+/* FALSE during post-resim debounce for ticks at/after last committed mismatch (quiet OOO patch only). */
+extern sb32 syNetRollbackShouldQueueGgpoCorrection(u32 sim_tick);
 extern void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
 					      u32 weapon, u32 map, u32 camera);
 /* Cross-peer frame-commit state digest mismatch: queue rollback from start of validation window. */

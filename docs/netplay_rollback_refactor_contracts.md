@@ -18,10 +18,16 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 | `confirmed` | Authoritative remote packet stored for this wire/sim row |
 | `incorrect_prediction` | Confirmed input disagreed with what was published; rollback should start here |
 
+**Implemented (2026-05-18):**
+
+- **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`.
+- **Conservative remote button prediction** — remote human slots: hold-last sticks, buttons default 0 (`SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` for legacy hold-last).
+- **Symmetric peer notices** — default **diag-only** when phase_lock prediction window ≥ 2; set `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for legacy follower coupling.
+
 **Transitional / unsafe today:**
 
 - **`nSYNetInputSourceRemoteGapFilled`** — hold-last synthetic wire rows for strict admission. Must **not** be treated as confirmed authority for rollback mismatch or resim seeding once timeline refactor lands.
-- **Published history vs remote ring double-scan** — rollback currently compares `sSYNetInputHistory` to `sSYNetInputRemoteHistory`; target is `incorrect_prediction` markers on the timeline.
+- **Published history vs remote ring double-scan** — rollback compares rings; target is `incorrect_prediction` markers on the timeline.
 
 ## Rollback trigger (target)
 
