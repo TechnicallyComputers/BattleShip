@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
 generate_yamls.py — Reads the SSB64 ROM's LBReloc file table and generates
-Torch YAML extraction configs for all 2132 relocatable files as BLOBs.
+Torch YAML extraction configs for every relocatable file as BLOBs.
 
 Usage:
-    python tools/generate_yamls.py [path/to/baserom.us.z64]
+    python tools/generate_yamls.py [--version {us,jp}] [path/to/baserom.z64]
 
-Defaults to baserom.us.z64 in the repo root.
+With no arguments: version=us, ROM=baserom.us.z64, output=yamls/us
+(the legacy contract — CMake invokes it argument-less, US output is
+byte-for-byte unchanged from before versioning was added).
 
-Output: yamls/us/reloc_*.yml files grouped by asset category.
+  --version us : reloc table @ 0x1AC870, 2132 files → yamls/us,
+                 names parsed from include/reloc_data.us.h
+  --version jp : reloc table @ 0x1ACAF0, 2107 files → yamls/jp,
+                 names parsed from include/reloc_data.jp.h
+
+The optional positional ROM path overrides the per-version default.
 """
 
+import argparse
 import os
 import re
 import struct
@@ -21,14 +29,38 @@ from pathlib import Path
 #  Constants
 # ============================================================================
 
-RELOC_TABLE_ROM_ADDR = 0x001AC870
-RELOC_FILE_COUNT = 2132
 RELOC_TABLE_ENTRY_SIZE = 12  # bytes
+
+# Per-ROM-version reloc table location + file count. The reloc table ROM
+# address comes from the upstream decomp splat configs
+# (smashbrothers.<v>.yaml: `- [<addr>, bin, relocData]`); file counts come
+# from tools/relocFileDescriptions.<v>.txt (FILE_COUNT header).
+VERSIONS = {
+    "us": {"reloc_table_rom_addr": 0x001AC870, "reloc_file_count": 2132},
+    "jp": {"reloc_table_rom_addr": 0x001ACAF0, "reloc_file_count": 2107},
+}
+
+# Set by select_version() from the chosen --version; default to US so the
+# module-level constants stay valid for any code importing this module.
+RELOC_TABLE_ROM_ADDR = VERSIONS["us"]["reloc_table_rom_addr"]
+RELOC_FILE_COUNT = VERSIONS["us"]["reloc_file_count"]
 # Table has FILE_COUNT + 1 entries (sentinel at end)
 RELOC_TABLE_SIZE = (RELOC_FILE_COUNT + 1) * RELOC_TABLE_ENTRY_SIZE
 RELOC_DATA_START = RELOC_TABLE_ROM_ADDR + RELOC_TABLE_SIZE  # where file data begins
 
-COMPRESSED_FILE_COUNT = 499  # files 0-498 are VPK0-compressed
+
+def select_version(version):
+    """Point the module-level reloc-table globals at the chosen version.
+
+    read_reloc_table() / compute_file_info() reference these as globals, so
+    the US code path is byte-for-byte unchanged when version == 'us'.
+    """
+    global RELOC_TABLE_ROM_ADDR, RELOC_FILE_COUNT, RELOC_TABLE_SIZE, RELOC_DATA_START
+    cfg = VERSIONS[version]
+    RELOC_TABLE_ROM_ADDR = cfg["reloc_table_rom_addr"]
+    RELOC_FILE_COUNT = cfg["reloc_file_count"]
+    RELOC_TABLE_SIZE = (RELOC_FILE_COUNT + 1) * RELOC_TABLE_ENTRY_SIZE
+    RELOC_DATA_START = RELOC_TABLE_ROM_ADDR + RELOC_TABLE_SIZE
 
 # ============================================================================
 #  Supplemental names for files that reloc_data.h only knows as ll_NNN_FileID
@@ -267,6 +299,32 @@ def parse_reloc_data_header(header_path):
 
     return id_to_name
 
+# Maps this ROM version's actual file_id -> the US ordinal embedded in its
+# numeric `ll_<N>_FileID` symbol name. SUPPLEMENTAL_NAMES / SUBMOTION_NAMES /
+# MAIN_MOTION_RANGES below are all hand-keyed by US ordinals; JP shifts every
+# file_id (US 2132 vs JP 2107 files), so those tables must be looked up by the
+# US ordinal, not the raw version file_id. Without this, JP submotion files
+# (US 357-498) land at JP ids 332-473 and fall through to "file_NNNN" — which
+# the port's portRelocIsFighterFigatreeFile() then misclassifies as non-
+# figatree (it keys on the "reloc_submotions/FT" path prefix), skipping the
+# AObj halfswap fixup and leaving CSS/opening fighters T-posing.
+#
+# Built from the header itself: the decomp emits `ll_<N>_FileID` for every
+# file the pretty-name tables don't cover, where <N> is the US ordinal and the
+# value is the per-version file_id. parse_reloc_data_header() captures these
+# with clean name "_<N>_". For US this map is the identity (ll_357 == 357), so
+# US yaml output is byte-for-byte unchanged.
+_VERID_TO_USORD = {}
+
+def build_verid_to_usord(id_to_name):
+    """{version_file_id: us_ordinal} from the header's ll_<N>_FileID symbols."""
+    m = {}
+    for fid, (_sym, clean) in id_to_name.items():
+        mo = re.match(r'^_(\d+)_$', clean)
+        if mo:
+            m[fid] = int(mo.group(1))
+    return m
+
 def resolve_name(file_id, id_to_name):
     """Resolve a file ID to (name, category_override_or_None).
 
@@ -278,18 +336,22 @@ def resolve_name(file_id, id_to_name):
         if not re.match(r'^_\d+_$', clean):
             return clean, None  # Named in header, no category override
 
+    # The US-ordinal-keyed tables below are version-agnostic only when looked
+    # up by US ordinal; identity for US, the -25-ish shift undone for JP.
+    usord = _VERID_TO_USORD.get(file_id, file_id)
+
     # Supplemental names (stage wallpapers, extern data banks, etc.)
-    if file_id in SUPPLEMENTAL_NAMES:
-        name, cat = SUPPLEMENTAL_NAMES[file_id]
+    if usord in SUPPLEMENTAL_NAMES:
+        name, cat = SUPPLEMENTAL_NAMES[usord]
         return name, cat
 
-    # Sub-motion animations (357-498)
-    if file_id in SUBMOTION_NAMES:
-        name, cat = SUBMOTION_NAMES[file_id]
+    # Sub-motion animations (US ordinals 357-498)
+    if usord in SUBMOTION_NAMES:
+        name, cat = SUBMOTION_NAMES[usord]
         return name, cat
 
-    # Main motion animations (499-2131)
-    name, cat = get_main_motion_name(file_id)
+    # Main motion animations (US ordinals 499-2131)
+    name, cat = get_main_motion_name(usord)
     if name:
         return name, cat
 
@@ -478,19 +540,31 @@ def write_yaml_files(files, id_to_name, output_dir):
 # ============================================================================
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate Torch reloc YAMLs from the SSB64 ROM.")
+    parser.add_argument("--version", choices=sorted(VERSIONS), default="us",
+                        help="ROM version (default: us)")
+    parser.add_argument("rom", nargs="?", default=None,
+                        help="ROM path (default: baserom.<version>.z64 in repo root)")
+    args = parser.parse_args()
+    version = args.version
+    select_version(version)
+
     repo_root = Path(__file__).resolve().parent.parent
-    rom_path = sys.argv[1] if len(sys.argv) > 1 else str(repo_root / "baserom.us.z64")
+    rom_path = args.rom if args.rom else str(repo_root / f"baserom.{version}.z64")
 
     if not os.path.isfile(rom_path):
         print(f"Error: ROM not found at {rom_path}")
         sys.exit(1)
 
-    header_path = str(repo_root / "include" / "reloc_data.h")
+    # Per-version generated header (reloc_data.us.h / reloc_data.jp.h);
+    # the decomp's selector shim picks the right one by REGION_* at compile.
+    header_name = f"reloc_data.{version}.h"
+    header_path = str(repo_root / "include" / header_name)
     if not os.path.isfile(header_path):
-        print(f"Error: reloc_data.h not found at {header_path}")
+        print(f"Error: {header_name} not found at {header_path}")
         sys.exit(1)
 
-    output_dir = str(repo_root / "yamls" / "us")
+    output_dir = str(repo_root / "yamls" / version)
 
     print(f"ROM: {rom_path}")
     print(f"Header: {header_path}")
@@ -500,7 +574,10 @@ def main():
     # Parse file ID names from header
     print("Parsing reloc_data.h...")
     id_to_name = parse_reloc_data_header(header_path)
-    print(f"  Found {len(id_to_name)} named file IDs")
+    global _VERID_TO_USORD
+    _VERID_TO_USORD = build_verid_to_usord(id_to_name)
+    print(f"  Found {len(id_to_name)} named file IDs"
+          f" ({len(_VERID_TO_USORD)} numeric ll_<N> ordinal remaps)")
     print()
 
     # Read ROM file table

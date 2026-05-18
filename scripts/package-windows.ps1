@@ -33,11 +33,17 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$BuildDir = Join-Path $Root "build-bundle-win"
+# ROM version: us (default) or jp — each is its own region-compiled
+# binary; CI matrixes over both. US keeps the historical artifact name
+# so existing links / the in-app updater are unaffected; JP gets "-jp".
+$Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
+if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
+$ArtSuffix = if ($Ver -eq "us") { "" } else { "-$Ver" }
+$BuildDir = Join-Path $Root "build-bundle-win-$Ver"
 $DistDir = Join-Path $Root "dist"
 $AppName = "BattleShip"
 $StageDir = Join-Path $DistDir $AppName
-$ZipPath = Join-Path $DistDir "$AppName-windows.zip"
+$ZipPath = Join-Path $DistDir "$AppName$ArtSuffix-windows.zip"
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
@@ -69,6 +75,7 @@ Write-Step "Configuring release build (portable)"
 # header for the v0.7.2 crash this avoids.
 cmake -B $BuildDir $Root `
     -DCMAKE_BUILD_TYPE=Release `
+    -DSSB64_VERSION=$Ver `
     | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
@@ -108,14 +115,14 @@ if (-not $TorchExe)              { Fail "torch.exe not found in $BuildDir" }
 Write-Step "Staging $StageDir"
 if (Test-Path $StageDir) { Remove-Item -Recurse -Force $StageDir }
 New-Item -ItemType Directory -Path $StageDir | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $StageDir "yamls\us") | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $StageDir "yamls\$Ver") | Out-Null
 
 Copy-Item $GameExe        (Join-Path $StageDir "$AppName.exe")
 Copy-Item $TorchExe      (Join-Path $StageDir "torch.exe")
 Copy-Item $F3DO2R        (Join-Path $StageDir "f3d.o2r")
 Copy-Item (Join-Path $Root "gamecontrollerdb.txt") $StageDir
 Copy-Item (Join-Path $Root "config.yml") $StageDir
-Copy-Item (Join-Path $Root "yamls\us\*.yml") (Join-Path $StageDir "yamls\us")
+Copy-Item (Join-Path $Root "yamls\$Ver\*.yml") (Join-Path $StageDir "yamls\$Ver")
 # Standalone .ico for shortcut/installer use — the icon is also embedded
 # directly in BattleShip.exe via port/ssb64.rc, so Explorer picks it up
 # without this file. Keep it bundled for future installer work.

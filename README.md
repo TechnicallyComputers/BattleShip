@@ -4,7 +4,7 @@
 
 # BattleShip
 
-**BattleShip** is a PC port of **Super Smash Bros. (N64, NTSC-U v1.0)** built on top of the [VetriTheRetri/ssb-decomp-re](https://github.com/vetritheretri/ssb-decomp-re) decompilation, using [libultraship](https://github.com/Kenix3/libultraship) for PC-native rendering / audio / input and [Torch](https://github.com/HarbourMasters/Torch) for extracting assets out of the ROM at build time.
+**BattleShip** is a PC port of **Super Smash Bros. (N64)** — both the **US** (NTSC-U v1.0) and **Japanese** (Nintendo All-Star! Dairantou Smash Brothers) releases — built on top of the [VetriTheRetri/ssb-decomp-re](https://github.com/vetritheretri/ssb-decomp-re) decompilation, using [libultraship](https://github.com/Kenix3/libultraship) for PC-native rendering / audio / input and [Torch](https://github.com/HarbourMasters/Torch) for extracting assets out of the ROM at build time.
 
 Runs natively on macOS (Apple Silicon), Linux, and Windows.
 
@@ -14,14 +14,17 @@ Android is planned and work-in-progress.
 
 **None of Nintendo's assets (code, textures, audio, models, text, ROM data) are checked into this repo or distributed with builds.** The port is a pure C/C++ source tree; every byte of Nintendo-owned data is extracted at build time from a ROM that *you* supply. If you do not own a legal copy of Super Smash Bros. for the Nintendo 64, you cannot build or run this project.
 
-The required ROM is **NTSC-U v1.0** (game code `NALE`, internal name `SMASH BROTHERS`):
+You supply your own ROM. The decomp game code is region-compiled, so US
+and JP are separate builds — build the one matching your ROM
+(`-DSSB64_VERSION=us|jp`, see [BUILDING.md](BUILDING.md)). The canonical,
+supported dumps (internal name `SMASH BROTHERS`):
 
-| Hash   | Value                                      |
-|--------|--------------------------------------------|
-| SHA‑1  | `e2929e10fccc0aa84e5776227e798abc07cedabf` |
-| MD5    | `f7c52568a31aadf26e14dc2b6416b2ed`         |
+| Version | Game code | SHA‑1 | MD5 |
+|---------|-----------|-------|-----|
+| **US** — NTSC-U v1.0 | `NALE` | `e2929e10fccc0aa84e5776227e798abc07cedabf` | `f7c52568a31aadf26e14dc2b6416b2ed` |
+| **JP** — Nintendo All-Star! Dairantou Smash Brothers v1.0 | `NALJ` | `4b71f0e01878696733eefa9c80d11c147ecb4984` | `66db457b130d31a286a23d6e4dd9726e` |
 
-If your dump does not match those hashes, it will not work.
+If your dump does not match the hashes for its version, it will not work.
 
 ## Features
 
