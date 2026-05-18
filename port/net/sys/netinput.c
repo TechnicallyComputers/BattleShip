@@ -156,6 +156,10 @@ static int sSYNetInputAdmissionSummaryIvCache = -999;
 static int sSYNetInputPredictDiagLevelCache = -999;
 static int sSYNetInputFrameCommitDiagLevelCache = -999;
 static int sSYNetInputIngressExtraPumpsEnvCache = -999;
+static sb32 sSYNetInputSessionIngressPumpsOverrideValid;
+static int sSYNetInputSessionIngressPumpsOverride;
+static sb32 sSYNetInputSessionBundleRedundancyOverrideValid;
+static int sSYNetInputSessionBundleRedundancyOverride;
 static int sSYNetInputDelaySyncDiagLevelCache = -999;
 static u32 sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 static int sSYNetInputStrictRemoteLeadBufferEnvCache = -999;
@@ -405,7 +409,43 @@ void syNetInputRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetInputStrictCache.is_valid = FALSE;
 	sSYNetInputInputContractTierEnvCache = -1;
 	sSYNetInputIngressExtraPumpsEnvCache = -999;
+	sSYNetInputSessionIngressPumpsOverrideValid = FALSE;
+	sSYNetInputSessionBundleRedundancyOverrideValid = FALSE;
 	syNetPeerResetStrictRingFuzzEnvCacheForNewMatch();
+}
+
+void syNetInputSetSessionIngressExtraPumpsOverride(s32 pumps)
+{
+	if (pumps < 0)
+	{
+		pumps = 0;
+	}
+	if (pumps > 4)
+	{
+		pumps = 4;
+	}
+	sSYNetInputSessionIngressPumpsOverride = pumps;
+	sSYNetInputSessionIngressPumpsOverrideValid = TRUE;
+}
+
+void syNetInputSetSessionBundleRedundancyOverride(s32 redundancy)
+{
+	if (redundancy < 0)
+	{
+		redundancy = 0;
+	}
+	if (redundancy > 8)
+	{
+		redundancy = 8;
+	}
+	sSYNetInputSessionBundleRedundancyOverride = redundancy;
+	sSYNetInputSessionBundleRedundancyOverrideValid = TRUE;
+}
+
+void syNetInputClearSessionTransportOverrides(void)
+{
+	sSYNetInputSessionIngressPumpsOverrideValid = FALSE;
+	sSYNetInputSessionBundleRedundancyOverrideValid = FALSE;
 }
 #endif
 
@@ -2319,15 +2359,33 @@ static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
 	    (boot_window != FALSE) ? 1 : 0);
 }
 
-static void syNetInputLogStrictDecision(u32 tick, u32 required_wire, u32 d, u32 slack, u32 hr, sb32 miss)
+/*
+ * Strict wire admission (`nSYNetTickCommitPhase_FuncReadWireAdmission`): `syNetPeerEvaluateSharedCommitStep` first
+ * requires **every remote human slot** to have a ring cell at **`wire_base = sim_tick + D`** (`syNetPeerRemoteInputsPresentForWireTick`).
+ * `hr` from `syNetPeerGetHighestRemoteTick()` is the highest **wire index** seen in ingress (not sim tick).
+ * **`wire_strict = wire_base + strict_slack`** (`SSB64_NETPLAY_STRICT_SLACK_FRAMES` et al., capped 0..4) caps how far
+ * `syNetPeerEffectiveWireFrontierFromHr` may sit ahead when resolving frames elsewhere (`syNetPeerIsRemoteInputReadyForSimTickEx`);
+ * the shared-commit gate itself keys off `wire_base` only.
+ * When rollback has used predicted remote input and arms recovery, `syNetRollbackPredictionRecoveryRequiresConfirmed`
+ * returns TRUE until `sim_tick` reaches `frontier + PHASE_LOCK_PREDICTION_TICKS` — then missing `wire_base` stalls as **R**
+ * (no prediction escape) until inputs arrive or `SSB64_NETPLAY_STRICT_R_ABORT_FRAMES` tears down VS.
+ */
+static void syNetInputLogStrictDecision(u32 tick, u32 wire_base, u32 d, u32 hr, sb32 miss)
 {
+	u32 wire_strict;
+	sb32 pred_rec;
+
 	if ((miss != FALSE) && (sSYNetInputStrictRStuckFrames > 0U) && ((sSYNetInputStrictRStuckFrames % 120U) != 0U))
 	{
 		return;
 	}
-	port_log("STRICT: tick=%u required_wire=%u (eff; D=%u slack=%u) hr=%u -> %s\n",
-	         (unsigned int)tick, (unsigned int)required_wire, (unsigned int)d, (unsigned int)slack, (unsigned int)hr,
-	         (miss != FALSE) ? "MISS (R)" : "READY");
+	wire_strict = syNetPeerGetStrictRequiredWireTick(tick);
+	pred_rec = syNetRollbackPredictionRecoveryRequiresConfirmed(tick);
+	port_log(
+	    "STRICT: tick=%u wire_base=%u (sim+D) wire_strict=%u D=%u slack=%d hr=%u pred_rec=%d -> %s\n",
+	    (unsigned int)tick, (unsigned int)wire_base, (unsigned int)wire_strict, (unsigned int)d,
+	    syNetInputGetStrictExtraSlack(), (unsigned int)hr, (pred_rec != FALSE) ? 1 : 0,
+	    (miss != FALSE) ? "MISS (R)" : "READY");
 }
 
 #define SYNETINPUT_STRICT_R_ABORT_FRAMES_DEFAULT 180U
@@ -2362,11 +2420,12 @@ static sb32 syNetInputStrictRemoteMissAbortIfStuck(u32 sim_tick)
 		return FALSE;
 	}
 	port_log(
-	    "SSB64 NetInput: strict remote MISS stall abort sim=%u frames=%u hr=%u required_wire=%u - ending VS session\n",
-	    (unsigned int)sim_tick,
-	    (unsigned int)sSYNetInputStrictRStuckFrames,
-	    (unsigned int)syNetPeerGetHighestRemoteTick(),
-	    (unsigned int)syNetPeerGetStrictRequiredWireTick(sim_tick));
+	    "SSB64 NetInput: strict remote MISS stall abort sim=%u frames=%u hr=%u wire_base=%u wire_strict=%u D=%u "
+	    "slack=%d pred_rec=%d (gate uses wire_base; see STRICT log) - ending VS session\n",
+	    (unsigned int)sim_tick, (unsigned int)sSYNetInputStrictRStuckFrames,
+	    (unsigned int)syNetPeerGetHighestRemoteTick(), (unsigned int)syNetPeerGetBaseRequiredWireTick(sim_tick),
+	    (unsigned int)syNetPeerGetStrictRequiredWireTick(sim_tick), (unsigned int)syNetPeerGetCommittedInputDelay(),
+	    syNetInputGetStrictExtraSlack(), (syNetRollbackPredictionRecoveryRequiresConfirmed(sim_tick) != FALSE) ? 1 : 0);
 	syNetPeerStopVSSession();
 	return TRUE;
 }
@@ -2377,7 +2436,11 @@ static void syNetInputMaybeIngressExtraPumpsOnStall(void)
 	int i;
 	const char *e;
 
-	if (sSYNetInputIngressExtraPumpsEnvCache < 0)
+	if (sSYNetInputSessionIngressPumpsOverrideValid != FALSE)
+	{
+		n = sSYNetInputSessionIngressPumpsOverride;
+	}
+	else if (sSYNetInputIngressExtraPumpsEnvCache < 0)
 	{
 		e = getenv("SSB64_NETPLAY_INGRESS_EXTRA_PUMPS_ON_STALL");
 		n = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
@@ -2496,7 +2559,7 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 					syNetTickCommitVerdictAllowAll(out);
 					return;
 				}
-				syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(), 0U,
+				syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
 				                            syNetPeerGetHighestRemoteTick(), TRUE);
 			}
 			return;

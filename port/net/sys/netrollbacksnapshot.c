@@ -117,19 +117,27 @@ typedef struct SYNetRbSnapDamageCollBlob
 
 } SYNetRbSnapDamageCollBlob;
 
+typedef struct SYNetRbSnapAObjNodeBlob
+{
+	u8 track;
+	u8 kind;
+	f32 length_invert;
+	f32 length;
+	f32 value_base;
+	f32 value_target;
+	f32 rate_base;
+	f32 rate_target;
+
+} SYNetRbSnapAObjNodeBlob;
+
 typedef struct SYNetRbSnapDObjAnimBlob
 {
 	f32 anim_wait;
 	f32 anim_speed;
 	f32 anim_frame;
-	/* Active AObj chain head values (first track only for CSI). */
-	u8 aobj_track;
-	u8 aobj_kind;
-	f32 aobj_length;
-	f32 aobj_value_base;
-	f32 aobj_value_target;
-	f32 aobj_rate_base;
-	f32 aobj_rate_target;
+	u8 aobj_count;
+	u8 pad[3];
+	SYNetRbSnapAObjNodeBlob aobj[SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX];
 
 } SYNetRbSnapDObjAnimBlob;
 
@@ -528,9 +536,43 @@ static void syNetRbSnapApplyMPColl(MPCollData *dst, const SYNetRbSnapMPCollBlob 
 	dst->ignore_line_id = src->ignore_line_id;
 }
 
+static void syNetRbSnapCaptureAObjNode(SYNetRbSnapAObjNodeBlob *dst, const AObj *aobj)
+{
+	memset(dst, 0, sizeof(*dst));
+	if (aobj == NULL)
+	{
+		return;
+	}
+	dst->track = aobj->track;
+	dst->kind = aobj->kind;
+	dst->length_invert = aobj->length_invert;
+	dst->length = aobj->length;
+	dst->value_base = aobj->value_base;
+	dst->value_target = aobj->value_target;
+	dst->rate_base = aobj->rate_base;
+	dst->rate_target = aobj->rate_target;
+}
+
+static void syNetRbSnapApplyAObjNode(AObj *aobj, const SYNetRbSnapAObjNodeBlob *src)
+{
+	if ((aobj == NULL) || (src == NULL))
+	{
+		return;
+	}
+	aobj->track = src->track;
+	aobj->kind = src->kind;
+	aobj->length_invert = src->length_invert;
+	aobj->length = src->length;
+	aobj->value_base = src->value_base;
+	aobj->value_target = src->value_target;
+	aobj->rate_base = src->rate_base;
+	aobj->rate_target = src->rate_target;
+}
+
 static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 {
 	AObj *aobj;
+	u8 count;
 
 	memset(dst, 0, sizeof(*dst));
 	if (dobj == NULL)
@@ -540,22 +582,19 @@ static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 	dst->anim_wait = dobj->anim_wait;
 	dst->anim_speed = dobj->anim_speed;
 	dst->anim_frame = dobj->anim_frame;
-	aobj = dobj->aobj;
-	if (aobj != NULL)
+	count = 0U;
+	for (aobj = dobj->aobj; (aobj != NULL) && (count < SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX); aobj = aobj->next)
 	{
-		dst->aobj_track = aobj->track;
-		dst->aobj_kind = aobj->kind;
-		dst->aobj_length = aobj->length;
-		dst->aobj_value_base = aobj->value_base;
-		dst->aobj_value_target = aobj->value_target;
-		dst->aobj_rate_base = aobj->rate_base;
-		dst->aobj_rate_target = aobj->rate_target;
+		syNetRbSnapCaptureAObjNode(&dst->aobj[count], aobj);
+		count++;
 	}
+	dst->aobj_count = count;
 }
 
 static void syNetRbSnapApplyDObjAnim(DObj *dobj, const SYNetRbSnapDObjAnimBlob *src)
 {
 	AObj *aobj;
+	u8 i;
 
 	if (dobj == NULL)
 	{
@@ -565,15 +604,10 @@ static void syNetRbSnapApplyDObjAnim(DObj *dobj, const SYNetRbSnapDObjAnimBlob *
 	dobj->anim_speed = src->anim_speed;
 	dobj->anim_frame = src->anim_frame;
 	aobj = dobj->aobj;
-	if (aobj != NULL)
+	for (i = 0U; (aobj != NULL) && (i < src->aobj_count) && (i < SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX); i++)
 	{
-		aobj->track = src->aobj_track;
-		aobj->kind = src->aobj_kind;
-		aobj->length = src->aobj_length;
-		aobj->value_base = src->aobj_value_base;
-		aobj->value_target = src->aobj_value_target;
-		aobj->rate_base = src->aobj_rate_base;
-		aobj->rate_target = src->aobj_rate_target;
+		syNetRbSnapApplyAObjNode(aobj, &src->aobj[i]);
+		aobj = aobj->next;
 	}
 }
 
@@ -1463,6 +1497,23 @@ static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick)
 
 #endif /* PORT */
 
+void syNetRbSnapshotSetRingFramesForSession(u32 frames)
+{
+#ifdef PORT
+	if (frames < 1U)
+	{
+		frames = 1U;
+	}
+	if (frames > SYNETRB_SNAPSHOT_RING_MAX)
+	{
+		frames = SYNETRB_SNAPSHOT_RING_MAX;
+	}
+	sSYNetRbSnapshotRingLen = frames;
+#else
+	(void)frames;
+#endif
+}
+
 void syNetRbSnapshotInit(void)
 {
 #ifdef PORT
@@ -1563,12 +1614,12 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 
 	slot->hash_fighter = syNetSyncHashBattleFightersFull();
 	slot->hash_world = syNetSyncHashRollbackWorld();
-	slot->hash_item = syNetSyncHashActiveItems();
-	slot->hash_weapon = syNetSyncHashActiveWeapons();
+	slot->hash_item = syNetSyncHashActiveItemsForRollback();
+	slot->hash_weapon = syNetSyncHashActiveWeaponsForRollback();
 	slot->hash_map = syNetSyncHashMapCollisionKinematics();
 	slot->hash_rng = syNetSyncHashRNGSeed();
 	slot->hash_camera = syNetSyncHashGMCamera();
-	slot->hash_animation = syNetSyncHashFighterAnimationState();
+	slot->hash_animation = syNetSyncHashFighterAnimationStateForRollback();
 
 	return TRUE;
 }

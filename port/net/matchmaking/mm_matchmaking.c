@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <direct.h>
 #include <errno.h>
@@ -25,7 +26,10 @@ extern void port_log(const char *fmt, ...);
 #ifndef MM_DEFAULT_BASE_URL
 #define MM_DEFAULT_BASE_URL "http://216.154.76.149:8899"
 #endif
-#define MM_QUEUE_DEPTH 16
+/* HTTPS jobs queue: producer can outpace single worker under high RTT — keep headroom. */
+#define MM_JOB_QUEUE_DEPTH 64
+/* Completed events: may burst after slow requests; larger than job queue; never drop MATCHED/ERROR lightly. */
+#define MM_DONE_QUEUE_DEPTH 128
 #define MM_CRED_FILENAME "matchmaking.cred"
 
 typedef enum MmJobKind
@@ -60,15 +64,18 @@ static pthread_t sWorkerThread;
 static pthread_mutex_t sMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t sDoneMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t sCond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t sDoneNotFull = PTHREAD_COND_INITIALIZER;
 static sb32 sWorkerRunning;
 static sb32 sWorkerSpawned;
+/* Mirrored for mmPushDone wait without holding sMutex (shutdown wake). */
+static volatile sb32 sMmWorkerRunningForDoneWait;
 
-static MmJob sJobQ[MM_QUEUE_DEPTH];
+static MmJob sJobQ[MM_JOB_QUEUE_DEPTH];
 static u32 sJobHead;
 static u32 sJobTail;
 static u32 sJobCount;
 
-static MmMatchResult sDoneQ[MM_QUEUE_DEPTH];
+static MmMatchResult sDoneQ[MM_DONE_QUEUE_DEPTH];
 static u32 sDoneHead;
 static u32 sDoneTail;
 static u32 sDoneCount;
@@ -77,19 +84,91 @@ static char sBaseUrl[192];
 static char sPlayerId[48];
 static char sApiToken[192];
 
+static sb32 mmPollKindIsCritical(MmPollKind k)
+{
+	switch (k)
+	{
+	case MM_POLL_MATCHED:
+	case MM_POLL_ERROR:
+	case MM_POLL_PLAYER_READY:
+	case MM_POLL_QUEUED:
+	case MM_POLL_CANCEL_OK:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static void mmDoneEvictDisposableAtHeadLocked(void)
+{
+	while ((sDoneCount > 0U) && (sDoneQ[sDoneHead].kind == MM_POLL_HEARTBEAT_OK))
+	{
+		sDoneHead = (sDoneHead + 1U) % MM_DONE_QUEUE_DEPTH;
+		sDoneCount--;
+	}
+}
+
+/*
+ * Reserve one slot for `incoming`. Evicts heartbeat completions first; critical results may wait
+ * for the main thread to drain under sDoneMutex (worker releases mutex while waiting).
+ */
+static sb32 mmDoneQueueReserveSlotLocked(const MmMatchResult *incoming)
+{
+	struct timespec ts;
+
+	for (;;)
+	{
+		mmDoneEvictDisposableAtHeadLocked();
+		if (sDoneCount < MM_DONE_QUEUE_DEPTH)
+		{
+			return TRUE;
+		}
+		if (mmPollKindIsCritical(incoming->kind) == FALSE)
+		{
+			return FALSE;
+		}
+		if (sMmWorkerRunningForDoneWait == FALSE)
+		{
+#ifdef PORT
+			port_log("SSB64 Matchmaking: shutdown: dropping critical done event (queue full)\n");
+#endif
+			return FALSE;
+		}
+		if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+		{
+			(void)pthread_cond_wait(&sDoneNotFull, &sDoneMutex);
+			continue;
+		}
+		ts.tv_nsec += 100 * 1000000L;
+		if (ts.tv_nsec >= 1000000000L)
+		{
+			ts.tv_sec++;
+			ts.tv_nsec -= 1000000000L;
+		}
+		(void)pthread_cond_timedwait(&sDoneNotFull, &sDoneMutex, &ts);
+	}
+}
+
 static void mmPushDone(const MmMatchResult *r)
 {
-	pthread_mutex_lock(&sDoneMutex);
-	if (sDoneCount >= MM_QUEUE_DEPTH)
+	if (r == NULL)
 	{
-#ifdef PORT
-		port_log("SSB64 Matchmaking: dropped completed event (overflow)\n");
-#endif
+		return;
+	}
+	pthread_mutex_lock(&sDoneMutex);
+	if (mmDoneQueueReserveSlotLocked(r) == FALSE)
+	{
 		pthread_mutex_unlock(&sDoneMutex);
+#ifdef PORT
+		if (r->kind != MM_POLL_HEARTBEAT_OK)
+		{
+			port_log("SSB64 Matchmaking: dropped completed event kind=%d (overflow)\n", (int)r->kind);
+		}
+#endif
 		return;
 	}
 	sDoneQ[sDoneTail] = *r;
-	sDoneTail = (sDoneTail + 1U) % MM_QUEUE_DEPTH;
+	sDoneTail = (sDoneTail + 1U) % MM_DONE_QUEUE_DEPTH;
 	sDoneCount++;
 	pthread_mutex_unlock(&sDoneMutex);
 }
@@ -764,17 +843,79 @@ static void mmRunCancel(const MmJob *job)
 	}
 }
 
+static sb32 mmJobQueueContainsPollForTicketLocked(const char *ticket_id)
+{
+	u32 i;
+	u32 idx;
+
+	if ((ticket_id == NULL) || (ticket_id[0] == '\0'))
+	{
+		return FALSE;
+	}
+	for (i = 0U; i < sJobCount; i++)
+	{
+		idx = (sJobHead + i) % MM_JOB_QUEUE_DEPTH;
+		if (sJobQ[idx].kind != MM_JOB_POLL_MATCH)
+		{
+			continue;
+		}
+		if (strcmp(sJobQ[idx].ticket_id, ticket_id) == 0)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 mmJobQueueContainsHeartbeatForTicketLocked(const char *ticket_id)
+{
+	u32 i;
+	u32 idx;
+
+	if ((ticket_id == NULL) || (ticket_id[0] == '\0'))
+	{
+		return FALSE;
+	}
+	for (i = 0U; i < sJobCount; i++)
+	{
+		idx = (sJobHead + i) % MM_JOB_QUEUE_DEPTH;
+		if (sJobQ[idx].kind != MM_JOB_HEARTBEAT)
+		{
+			continue;
+		}
+		if (strcmp(sJobQ[idx].ticket_id, ticket_id) == 0)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 static void mmEnqueueLocked(const MmJob *jp)
 {
-	if (sJobCount >= MM_QUEUE_DEPTH)
+	if (jp->kind == MM_JOB_POLL_MATCH)
+	{
+		if (mmJobQueueContainsPollForTicketLocked(jp->ticket_id) != FALSE)
+		{
+			return;
+		}
+	}
+	if (jp->kind == MM_JOB_HEARTBEAT)
+	{
+		if (mmJobQueueContainsHeartbeatForTicketLocked(jp->ticket_id) != FALSE)
+		{
+			return;
+		}
+	}
+	if (sJobCount >= MM_JOB_QUEUE_DEPTH)
 	{
 #ifdef PORT
-		port_log("SSB64 Matchmaking: job queue overflow (drop)\n");
+		port_log("SSB64 Matchmaking: job queue overflow (drop kind=%d)\n", (int)jp->kind);
 #endif
 		return;
 	}
 	sJobQ[sJobTail] = *jp;
-	sJobTail = (sJobTail + 1U) % MM_QUEUE_DEPTH;
+	sJobTail = (sJobTail + 1U) % MM_JOB_QUEUE_DEPTH;
 	sJobCount++;
 	pthread_cond_signal(&sCond);
 }
@@ -798,7 +939,7 @@ static void mmJobWorkerLoop(void *unused_arg)
 			break;
 		}
 		cur = sJobQ[sJobHead];
-		sJobHead = (sJobHead + 1U) % MM_QUEUE_DEPTH;
+		sJobHead = (sJobHead + 1U) % MM_JOB_QUEUE_DEPTH;
 		sJobCount--;
 		pthread_mutex_unlock(&sMutex);
 
@@ -853,10 +994,12 @@ void mmMatchmakingStartup(void)
 
 	sWorkerRunning = TRUE;
 	sWorkerSpawned = TRUE;
+	sMmWorkerRunningForDoneWait = TRUE;
 	if (pthread_create(&sWorkerThread, NULL, mmWorkerPthreadThunk, NULL) != 0)
 	{
 		sWorkerRunning = FALSE;
 		sWorkerSpawned = FALSE;
+		sMmWorkerRunningForDoneWait = FALSE;
 #ifdef PORT
 		port_log("SSB64 Matchmaking: pthread_create failed\n");
 #endif
@@ -876,9 +1019,13 @@ void mmMatchmakingShutdown(void)
 	}
 
 	pthread_mutex_lock(&sMutex);
+	sMmWorkerRunningForDoneWait = FALSE;
 	sWorkerRunning = FALSE;
 	pthread_cond_broadcast(&sCond);
 	pthread_mutex_unlock(&sMutex);
+	pthread_mutex_lock(&sDoneMutex);
+	pthread_cond_broadcast(&sDoneNotFull);
+	pthread_mutex_unlock(&sDoneMutex);
 	(void)pthread_join(sWorkerThread, NULL);
 	sWorkerSpawned = FALSE;
 
@@ -997,11 +1144,26 @@ sb32 mmMatchmakingDrainCompleted(MmMatchResult *out)
 		return FALSE;
 	}
 	*out = sDoneQ[sDoneHead];
-	sDoneHead = (sDoneHead + 1U) % MM_QUEUE_DEPTH;
+	sDoneHead = (sDoneHead + 1U) % MM_DONE_QUEUE_DEPTH;
 	sDoneCount--;
 	ok = TRUE;
+	pthread_cond_broadcast(&sDoneNotFull);
 	pthread_mutex_unlock(&sDoneMutex);
 	return ok;
+}
+
+u32 mmMatchmakingApproxPendingJobs(void)
+{
+	u32 n;
+
+	if (sWorkerSpawned == FALSE)
+	{
+		return 0U;
+	}
+	pthread_mutex_lock(&sMutex);
+	n = sJobCount;
+	pthread_mutex_unlock(&sMutex);
+	return n;
 }
 
 #endif /* PORT && SSB64_NETMENU */
