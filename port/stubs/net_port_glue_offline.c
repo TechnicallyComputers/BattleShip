@@ -16,6 +16,11 @@ u32 syNetPeerGetVsContractViHz(void)
 	return 0U;
 }
 
+sb32 syNetRollbackIsActive(void)
+{
+	return FALSE;
+}
+
 void syNetRollbackApplyPortSimPacing(u32 refresh_hz)
 {
 	(void)refresh_hz;

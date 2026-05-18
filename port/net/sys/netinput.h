@@ -46,6 +46,7 @@ typedef enum SYNetInputSource /* How Resolve picks this slot’s `(buttons, stic
 {
 	nSYNetInputSourceLocal,
 	nSYNetInputSourceRemoteConfirmed,
+	nSYNetInputSourceRemoteGapFilled,
 	nSYNetInputSourceRemotePredicted,
 	nSYNetInputSourceSaved
 
@@ -160,7 +161,7 @@ typedef struct SYNetTickCommitVerdict
 
 extern void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickCommitVerdict *out);
 extern sb32 syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate(void);
-/* Direct remote-ring presence check by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets). */
+/* Confirmed remote-ring presence check by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets). */
 extern sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick);
 /*
  * Cached getenv for `SSB64_NETPLAY_STRICT_REMOTE_LEAD_BUFFER_TICKS` (reset in `syNetInputRefreshCachedNetplayEnvForNewMatch`).
@@ -184,6 +185,10 @@ extern void syNetGgpoBattleFrameSet(u32 frame); /* Same as `syNetInputSetTick(fr
 extern void syNetInputSetSlotSource(s32 player, SYNetInputSource source);
 extern SYNetInputSource syNetInputGetSlotSource(s32 player);
 extern void syNetInputSetRemoteInput(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y); /* NetPeer recv path fills remote ring. */
+#ifdef PORT
+extern sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y,
+                                               u32 packet_seq, u32 current_tick, s32 frame_index);
+#endif
 extern void syNetInputSetSavedInput(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y);
 extern sb32 syNetInputGetHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern sb32 syNetInputGetPublishedFrame(s32 player, SYNetInputFrame *out_frame);
@@ -244,6 +249,10 @@ extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
 extern sb32 syNetInputTakeSuppressSceneUpdate(void);
 #endif
 extern void syNetInputRollbackPrepareForResim(u32 resim_start_tick); /* Reseed last_published + remote prediction seed before resim loop. */
+#ifdef PORT
+extern void syNetInputPublishSynchronizedTick(u32 tick); /* Resolve+publish only (pure rollback resim; no HID/network). */
+extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick); /* Overwrite published history with confirmed remote rows for [from,to). */
+#endif
 extern sb32 syNetInputGetRemoteHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 /* Post-publish simulation input only: valid after syNetInputPublishFrame for this tick. NULL if player out of range. */
 extern SYController *syNetInputGetSimController(s32 player);

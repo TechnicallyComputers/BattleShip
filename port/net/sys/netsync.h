@@ -32,5 +32,9 @@ extern u32 syNetSyncHashActiveWeapons(void);
 extern u32 syNetSyncHashRNGSeed(void);
 extern u32 syNetSyncHashGMCamera(void);
 extern u32 syNetSyncHashFighterAnimationState(void);
+#ifdef PORT
+extern void syNetSyncLogRollbackWorldDetail(const char *tag, u32 tick);
+extern void syNetSyncLogFighterDetail(const char *tag, u32 tick);
+#endif
 
 #endif /* _SYNETSYNC_H_ */

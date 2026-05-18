@@ -71,6 +71,7 @@ static u32 sSYNetPeerDesyncTracePrevFigh;
 static sb32 sSYNetPeerDesyncTracePrevValid;
 static int sSYNetPeerDesyncTraceLevelCache = -999;
 static int sSYNetPeerMpTicDiagAssertEnvCache = -999;
+static int sSYNetPeerStateDetailDiagEnvCache = -999;
 
 extern sb32 sSYNetPeerIsActive;
 
@@ -118,6 +119,27 @@ static int syNetPeerTickDiagLevel(void)
 s32 syNetPeerGetTickDiagLevel(void)
 {
 	return (s32)syNetPeerTickDiagLevel();
+}
+
+static int syNetPeerGetStateDetailDiagLevel(void)
+{
+	char *e;
+
+	if (sSYNetPeerStateDetailDiagEnvCache != -999)
+	{
+		return sSYNetPeerStateDetailDiagEnvCache;
+	}
+	e = getenv("SSB64_NETPLAY_STATE_DETAIL_DIAG");
+	sSYNetPeerStateDetailDiagEnvCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	if (sSYNetPeerStateDetailDiagEnvCache < 0)
+	{
+		sSYNetPeerStateDetailDiagEnvCache = 0;
+	}
+	if (sSYNetPeerStateDetailDiagEnvCache > 2)
+	{
+		sSYNetPeerStateDetailDiagEnvCache = 2;
+	}
+	return sSYNetPeerStateDetailDiagEnvCache;
 }
 #endif
 
@@ -281,7 +303,7 @@ static sb32 syNetPeerValidateRemoteReceiveList(void);
 static sb32 syNetPeerValidatePeerSenderList(void);
 static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *out_frame_count);
 static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketFrame *frames, s32 frame_count,
-                                       u32 current_tick);
+                                       u32 current_tick, u32 packet_seq);
 
 sb32 sSYNetPeerIsEnabled;
 sb32 sSYNetPeerIsConfigured;
@@ -3694,6 +3716,12 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	{
 		return;
 	}
+	if (syNetRollbackPredictionRecoveryRequiresConfirmed(sim_tick) != FALSE)
+	{
+		out->advance = FALSE;
+		out->hold_reason = 'R';
+		return;
+	}
 	prediction_window = out->prediction_window;
 	have_shared_frontier = syNetPeerGetSharedConfirmedSimFrontier(&shared_confirmed);
 	if (have_shared_frontier != FALSE)
@@ -5688,6 +5716,7 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 	u8 secondary_slot_byte;
 	s32 conn_last_tick[MAXCONTROLLERS];
 	u8 conn_disc[MAXCONTROLLERS];
+	s32 conn_symmetric_tick[MAXCONTROLLERS];
 
 	memset(frames, 0, sizeof(frames));
 	memset(sec_frames, 0, sizeof(sec_frames));
@@ -5716,6 +5745,7 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 #endif
 	}
 	syNetInputExportPeerConnectStatus(conn_last_tick, conn_disc, MAXCONTROLLERS);
+	syNetRollbackExportPeerSymmetricNotify(conn_symmetric_tick, MAXCONTROLLERS);
 	checksum = syNetPeerChecksumInputPacket(sSYNetPeerSessionID, sSYNetPeerHighestRemoteTick, sSYNetPeerSendSeq,
 	                                       wire_version, (u8)sSYNetPeerLocalPlayer, (u8)frame_count, frames,
 	                                       secondary_slot_byte, (u8)sec_frame_count, sec_frames, conn_last_tick, conn_disc);
@@ -5733,11 +5763,14 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 
 	for (i = 0; i < MAXCONTROLLERS; i++)
 	{
+		u32 sym_tick;
+
 		syNetPeerWriteU32(&cursor, (u32)conn_last_tick[i]);
 		syNetPeerWriteU8(&cursor, conn_disc[i]);
-		syNetPeerWriteU8(&cursor, 0);
-		syNetPeerWriteU8(&cursor, 0);
-		syNetPeerWriteU8(&cursor, 0);
+		sym_tick = (conn_symmetric_tick[i] > 0) ? (u32)conn_symmetric_tick[i] : 0U;
+		syNetPeerWriteU8(&cursor, (u8)((sym_tick >> 16) & 0xFF));
+		syNetPeerWriteU8(&cursor, (u8)((sym_tick >> 8) & 0xFF));
+		syNetPeerWriteU8(&cursor, (u8)(sym_tick & 0xFF));
 	}
 
 	for (i = 0; i < SYNETPEER_MAX_PACKET_FRAMES; i++)
@@ -6059,7 +6092,8 @@ static void syNetPeerLogUdpInputBundleDiag(u32 packet_seq, u32 ack_tick, u32 cur
 }
 #endif
 
-static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketFrame *frames, s32 frame_count, u32 current_tick)
+static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketFrame *frames, s32 frame_count,
+                                       u32 current_tick, u32 packet_seq)
 {
 	s32 i;
 
@@ -6090,10 +6124,13 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 				}
 			}
 		}
-		syNetInputSetRemoteInput(target_player, frames[i].tick, frames[i].buttons, frames[i].stick_x, frames[i].stick_y);
-		sSYNetPeerFramesStaged++;
-		sSYNetPeerInputChecksum = syNetPeerChecksumAccumulateU32(sSYNetPeerInputChecksum, (u32)target_player);
-		sSYNetPeerInputChecksum = syNetPeerChecksumAccumulateFrame(sSYNetPeerInputChecksum, &frames[i]);
+		if (syNetInputSetRemoteInputFromPacket(target_player, frames[i].tick, frames[i].buttons, frames[i].stick_x,
+		                                       frames[i].stick_y, packet_seq, current_tick, i) != FALSE)
+		{
+			sSYNetPeerFramesStaged++;
+			sSYNetPeerInputChecksum = syNetPeerChecksumAccumulateU32(sSYNetPeerInputChecksum, (u32)target_player);
+			sSYNetPeerInputChecksum = syNetPeerChecksumAccumulateFrame(sSYNetPeerInputChecksum, &frames[i]);
+		}
 	}
 }
 
@@ -6312,13 +6349,22 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 			for (i = 0; i < MAXCONTROLLERS; i++)
 			{
 				u32 lt_u;
+				u8 sym_b0;
+				u8 sym_b1;
+				u8 sym_b2;
+				u32 sym_tick;
 
 				lt_u = syNetPeerReadU32(&cursor);
 				recv_conn_tick[i] = (s32)lt_u;
 				recv_conn_disc[i] = syNetPeerReadU8(&cursor);
-				(void)syNetPeerReadU8(&cursor);
-				(void)syNetPeerReadU8(&cursor);
-				(void)syNetPeerReadU8(&cursor);
+				sym_b0 = syNetPeerReadU8(&cursor);
+				sym_b1 = syNetPeerReadU8(&cursor);
+				sym_b2 = syNetPeerReadU8(&cursor);
+				sym_tick = ((u32)sym_b0 << 16) | ((u32)sym_b1 << 8) | (u32)sym_b2;
+				if (sym_tick != 0U)
+				{
+					syNetRollbackOnPeerSymmetricRollbackNotify(i, sym_tick);
+				}
 			}
 			chk_tick = recv_conn_tick;
 			chk_disc = recv_conn_disc;
@@ -6464,10 +6510,10 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 	                               secondary_slot, sec_frame_count, sec_frames);
 #endif
 
-	syNetPeerStagePacketBundle((s32)player, frames, frame_count, current_tick);
+	syNetPeerStagePacketBundle((s32)player, frames, frame_count, current_tick, packet_seq);
 	if ((is_dual != FALSE) && (sec_frame_count > 0))
 	{
-		syNetPeerStagePacketBundle((s32)secondary_slot, sec_frames, sec_frame_count, current_tick);
+		syNetPeerStagePacketBundle((s32)secondary_slot, sec_frames, sec_frame_count, current_tick, packet_seq);
 	}
 }
 
@@ -6589,22 +6635,6 @@ void syNetPeerPumpIngressTransport(const char *caller_tag)
 #elif defined(PORT)
 	(void)caller_tag;
 	/* UDP recv pump is Linux-only in this tree. */
-#endif
-}
-
-void syNetPeerPumpIngressBeforeInputRead(void)
-{
-#if defined(PORT)
-	if (syNetRollbackIsResimulating() != FALSE)
-	{
-		return;
-	}
-	if (syNetPeerIsVSSessionActive() == FALSE)
-	{
-		return;
-	}
-	syNetPeerPumpIngressTransport("inactive_pre_read");
-	syNetPeerApplyPendingDelayContract();
 #endif
 }
 
@@ -6900,6 +6930,7 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	sSYNetPeerTickDiagEnvCache = -999;
 	sSYNetPeerDesyncTraceLevelCache = -999;
 	sSYNetPeerMpTicDiagAssertEnvCache = -999;
+	sSYNetPeerStateDetailDiagEnvCache = -999;
 	sSYNetPeerGcTraversalDiagEnvCache = -999;
 	sSYNetPeerFrameCommitEnvCache = -999;
 	sSYNetPeerUdpFrameTraceEnvCache = -1;
@@ -6916,6 +6947,12 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 	u32 inp_all = 0;
 	u32 fighter_hash;
 	u32 map_hash;
+	u32 world_hash;
+	u32 item_hash;
+	u32 weapon_hash;
+	u32 rng_hash;
+	u32 camera_hash;
+	u32 animation_hash;
 	u32 win_begin = 0;
 	u32 win_length = tick;
 
@@ -6970,6 +7007,12 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 
 	fighter_hash = syNetSyncHashBattleFighters();
 	map_hash = syNetSyncHashMapCollisionKinematics();
+	world_hash = syNetSyncHashRollbackWorld();
+	item_hash = syNetSyncHashActiveItems();
+	weapon_hash = syNetSyncHashActiveWeapons();
+	rng_hash = syNetSyncHashRNGSeed();
+	camera_hash = syNetSyncHashGMCamera();
+	animation_hash = syNetSyncHashFighterAnimationState();
 	{
 		if (sSYNetPeerMpTicDiagAssertEnvCache == -999)
 		{
@@ -6988,7 +7031,7 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 	syNetPeerFrameCommitAfterValidation(tick, win_begin, win_length);
 
 	port_log(
-		"SSB64 NetSync: role=%s lp=%d rp=%d tick=%u hist_win=[%u,%u) all=0x%08X p0=0x%08X p1=0x%08X p2=0x%08X p3=0x%08X figh=0x%08X mph=0x%08X snd_next=%u rcv_hw=%u gap=%u dup=%u ooo=%u puck=%u pko=%u pkn=%u sent=%u recv=%u dropped=%u stg=%u hr=%u commit_gen=%u late=%u inpchk=0x%08X pkt_valid=%d rb=%u lf=%u delay=%u ring=%u rscan=%u\n",
+		"SSB64 NetSync: role=%s lp=%d rp=%d tick=%u hist_win=[%u,%u) all=0x%08X p0=0x%08X p1=0x%08X p2=0x%08X p3=0x%08X figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X snd_next=%u rcv_hw=%u gap=%u dup=%u ooo=%u puck=%u pko=%u pkn=%u sent=%u recv=%u dropped=%u stg=%u hr=%u commit_gen=%u late=%u inpchk=0x%08X pkt_valid=%d rb=%u lf=%u delay=%u ring=%u rscan=%u\n",
 		(sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 		sSYNetPeerLocalPlayer,
 		sSYNetPeerRemotePlayer,
@@ -7002,6 +7045,12 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 		checksums[3],
 		fighter_hash,
 		map_hash,
+		world_hash,
+		item_hash,
+		weapon_hash,
+		rng_hash,
+		camera_hash,
+		animation_hash,
 		sSYNetPeerSendSeq,
 		sSYNetPeerRecvSeqHighWater,
 		sSYNetPeerSeqGaps,
@@ -7024,6 +7073,18 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 		sSYNetPeerInputDelay,
 		(u32)SYNETINPUT_HISTORY_LENGTH,
 		(u32)SYNETROLLBACK_SCAN_WINDOW);
+	{
+		int sdd = syNetPeerGetStateDetailDiagLevel();
+
+		if (sdd >= 1)
+		{
+			syNetSyncLogRollbackWorldDetail("netsync", tick);
+		}
+		if (sdd >= 2)
+		{
+			syNetSyncLogFighterDetail("netsync", tick);
+		}
+	}
 	{
 		int gtd = syNetPeerGetGcTraversalDiagLevel();
 
@@ -7673,10 +7734,16 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 	f = syNetSyncHashBattleFighters();
 	m = syNetSyncHashMapCollisionKinematics();
 	port_log(
-	    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X rb_applied=%u rb_load_fail=%u push=%d\n",
+	    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X rb_applied=%u rb_load_fail=%u push=%d\n",
 	    tick,
 	    f,
 	    m,
+	    syNetSyncHashRollbackWorld(),
+	    syNetSyncHashActiveItems(),
+	    syNetSyncHashActiveWeapons(),
+	    syNetSyncHashRNGSeed(),
+	    syNetSyncHashGMCamera(),
+	    syNetSyncHashFighterAnimationState(),
 	    (unsigned int)syNetRollbackGetAppliedResimCount(),
 	    (unsigned int)syNetRollbackGetLoadFailCount(),
 	    port_get_push_frame_count());

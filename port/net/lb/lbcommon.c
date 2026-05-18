@@ -1015,9 +1015,9 @@ void lbCommonSetupTreeDObjs(DObj *root_dobj, DObjDesc *dobjdesc, DObj **dobjs, u
 
         if (id != 0)
         {
-            current_dobj = array_dobjs[id] = gcAddChildForDObj(array_dobjs[id - 1], PORT_RESOLVE(dobjdesc->dl));
+            current_dobj = array_dobjs[id] = gcAddChildForDObj(array_dobjs[id - 1], PORT_RESOLVE_GFX(dobjdesc->dl));
         }
-        else current_dobj = array_dobjs[0] = gcAddChildForDObj(root_dobj, PORT_RESOLVE(dobjdesc->dl));
+        else current_dobj = array_dobjs[0] = gcAddChildForDObj(root_dobj, PORT_RESOLVE_GFX(dobjdesc->dl));
 
         if (dobjdesc->id & 0xF000)
         {
@@ -1172,7 +1172,7 @@ void lbCommonSetupFighterPartsDObjs
             (
                 (detail_curr == nFTPartsDetailHigh) ||
                 ((low_dobjdesc = FTPARTS_GET_DOBJDESC(&commonparts_container->commonparts[nFTPartsDetailLow - nFTPartsDetailStart])) == NULL) ||
-                (low_dobjdesc[i].dl == NULL)
+                (PORT_REF_IS_NULL(low_dobjdesc[i].dl))
             )
             {
                 detail_id = 0;
@@ -1188,13 +1188,13 @@ void lbCommonSetupFighterPartsDObjs
                 current_dobj = array_dobjs[id] = gcAddChildForDObj
                 (
                     array_dobjs[id - 1],
-                    PORT_RESOLVE(detail_dobjdesc[i].dl)
+                    PORT_RESOLVE_GFX(detail_dobjdesc[i].dl)
                 );
             }
             else current_dobj = array_dobjs[0] = gcAddChildForDObj
             (
                 root_dobj,
-                PORT_RESOLVE(detail_dobjdesc[i].dl)
+                PORT_RESOLVE_GFX(detail_dobjdesc[i].dl)
             );
             if (dobjdesc->id & 0x8000)
             {
@@ -1265,9 +1265,9 @@ void lbCommonSetupCustomTreeDObjsWithMObj
 
         if (id != 0)
         {
-            dobj = array_dobjs[id] = gcAddChildForDObj(array_dobjs[id - 1], PORT_RESOLVE(dobjdesc->dl));
+            dobj = array_dobjs[id] = gcAddChildForDObj(array_dobjs[id - 1], PORT_RESOLVE_GFX(dobjdesc->dl));
         }
-        else dobj = array_dobjs[0] = gcAddChildForDObj(root_dobj, PORT_RESOLVE(dobjdesc->dl));
+        else dobj = array_dobjs[0] = gcAddChildForDObj(root_dobj, PORT_RESOLVE_GFX(dobjdesc->dl));
 
         if (dobjdesc->id & 0x8000)
         {

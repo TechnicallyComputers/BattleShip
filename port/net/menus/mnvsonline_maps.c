@@ -8,6 +8,7 @@
 #include <sys/rdp.h>
 #include <reloc_data.h>
 #ifdef PORT
+#include <mp/mpcollision.h>
 extern void *func_800269C0_275C0(u16 id);
 #endif
 /*
@@ -1386,7 +1387,7 @@ GObj* mnVSNetLevelPrefsMapsMakeLayer(s32 gkind, MPGroundData *ground_data, MPGro
 		return NULL;
 	}
 	gobj = gcMakeGObjSPAfter(0, NULL, 5, GOBJ_PRIORITY_DEFAULT);
-	gcAddGObjDisplay(gobj, (ground_data->layer_mask & (1 << id)) ? mnVSNetLevelPrefsMapsModelSecProcDisplay : mnVSNetLevelPrefsMapsModelPriProcDisplay, 3, GOBJ_PRIORITY_DEFAULT, ~0);
+	gcAddGObjDisplay(gobj, (mpCollisionGetLayerMask(ground_data) & (1 << id)) ? mnVSNetLevelPrefsMapsModelSecProcDisplay : mnVSNetLevelPrefsMapsModelPriProcDisplay, 3, GOBJ_PRIORITY_DEFAULT, ~0);
 #ifdef PORT
 	gcSetupCustomDObjs(gobj, (DObjDesc*)PORT_RESOLVE(ground_desc->dobjdesc), NULL, nGCMatrixKindTraRotRpyRSca, nGCMatrixKindNull, nGCMatrixKindNull);
 #else
