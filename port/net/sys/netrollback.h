@@ -18,9 +18,11 @@
  * GObj ids when respawn allocates fresh ids). After load+apply,
  * `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY` (default on) recomputes and logs `LOAD_HASH_DRIFT` on mismatch.
  *
- * Rollback is **local input-timeline driven** (`netinput_timeline.c`, validated at scan time). Peer symmetric
- * notices default to diag-only (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for coupled resim;
- * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` forces log-only). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
+ * Rollback is **local input-timeline driven** (`netinput_timeline.c`, validated at scan time). GGPO input
+ * corrections coalesce into one deferred rewind (earliest mismatch, latest frontier) and honor the same debounce
+ * as scan mismatches (`SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`, default 3). Peer symmetric rollback is coupled by
+ * default when prediction windows are on (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0` disables;
+ * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
  * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Anim-only drift
  * (fighter/world/RNG/item/wpn/map/cam match) always soft-continues — figatree can advance during load before verify.
  * Load failure restores a pre-load emergency snapshot and stops the VS session. See

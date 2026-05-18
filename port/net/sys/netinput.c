@@ -2923,7 +2923,10 @@ void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick)
 void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick, u32 to_tick)
 {
 	u32 t;
-	SYNetInputFrame tx;
+	u32 scan;
+	SYNetInputFrame row;
+	SYNetInputFrame last_tx;
+	sb32 have_last_tx;
 
 	if ((from_tick >= to_tick) || (authority_slot < 0) || (authority_slot >= MAXCONTROLLERS))
 	{
@@ -2934,16 +2937,56 @@ void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 f
 	{
 		return;
 	}
+	/*
+	 * Symmetric follower: replay the same local rows the notifying peer applied from our wire stream.
+	 * Transmitted history is keyed by sim tick (see syNetInputNoteTransmittedSimFrame); when a tick was
+	 * never bundled yet, hold-last transmitted so resim does not reuse speculative published rows the
+	 * peer already replaced via remote-confirmed (GGPO on their side).
+	 */
+	have_last_tx = FALSE;
+	syNetInputClearFrame(&last_tx);
 	for (t = from_tick; t < to_tick; t++)
 	{
-		if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, authority_slot, t, &tx) == FALSE)
+		sb32 have_row;
+
+		have_row = FALSE;
+		if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, authority_slot, t, &row) != FALSE)
+		{
+			have_row = TRUE;
+			have_last_tx = TRUE;
+			last_tx = row;
+		}
+		else if ((syNetInputGetHistoryFrame(authority_slot, t, &row) != FALSE) && (row.is_predicted == FALSE))
+		{
+			have_row = TRUE;
+		}
+		else if (have_last_tx != FALSE)
+		{
+			row = last_tx;
+			have_row = TRUE;
+		}
+		else
+		{
+			for (scan = t; scan > from_tick; scan--)
+			{
+				if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, authority_slot, scan - 1U, &row) !=
+				    FALSE)
+				{
+					have_row = TRUE;
+					have_last_tx = TRUE;
+					last_tx = row;
+					break;
+				}
+			}
+		}
+		if (have_row == FALSE)
 		{
 			continue;
 		}
-		tx.tick = t;
-		tx.source = nSYNetInputSourceLocal;
-		tx.is_predicted = FALSE;
-		syNetInputStoreFrame(sSYNetInputHistory, authority_slot, &tx);
+		row.tick = t;
+		row.source = nSYNetInputSourceLocal;
+		row.is_predicted = FALSE;
+		syNetInputStoreFrame(sSYNetInputHistory, authority_slot, &row);
 	}
 	syNetInputStrictReadyCacheInvalidate();
 }
