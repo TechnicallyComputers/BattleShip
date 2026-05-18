@@ -72,7 +72,10 @@ jobs:
         # .app out. Smaller release surface, friendlier UX.
         with:
           name: BattleShip-macos-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}.dmg
+          # NB: GHA `a && b || c` is not a ternary — an empty-string `b`
+          # is falsy and falls through to `c`. Keep the non-empty value
+          # in the `&&` branch and the empty default in `||`.
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}.dmg
           if-no-files-found: error
 
   build-linux:
@@ -159,7 +162,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-linux-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}-x86_64.AppImage
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}-x86_64.AppImage
           if-no-files-found: error
 
   build-windows:
@@ -197,7 +200,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'us' && '' || '-jp' }}-windows.zip
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}-windows.zip
           if-no-files-found: error
 
   release:
