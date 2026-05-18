@@ -9,6 +9,7 @@ extern void port_coroutine_yield(void);
 #include <sys/netpeer.h>
 #include <sys/netreplay.h>
 #include <sys/netrollback.h>
+#include <sys/netsync.h>
 #include <sys/video.h>
 #include <reloc_data.h>
 #include <gm/gmcamera.h>
@@ -122,6 +123,14 @@ void scVSBattleFuncUpdate(void)
 	}
 #endif
 	ifCommonBattleUpdateInterfaceAll();
+#ifdef PORT
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (gSCManagerBattleState != NULL) &&
+	    (gSCManagerBattleState->game_status == nSCBattleGameStatusGo))
+	{
+		syNetSyncOnNetplayBattleGo();
+		syNetSyncReconcileBattleTimePassedFromSimTick();
+	}
+#endif
 	if (syNetRollbackIsResimulating() == FALSE)
 	{
 		syNetReplayUpdate();
@@ -140,6 +149,12 @@ void scVSBattleFuncUpdate(void)
 void scVSBattleFuncUpdateBattleSimOnly(void)
 {
 	ifCommonBattleUpdateInterfaceAll();
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (gSCManagerBattleState != NULL) &&
+	    (gSCManagerBattleState->game_status == nSCBattleGameStatusGo))
+	{
+		syNetSyncOnNetplayBattleGo();
+		syNetSyncReconcileBattleTimePassedFromSimTick();
+	}
 	syNetRollbackAfterBattleUpdate();
 	syNetInputAdvanceAuthoritativeSimTick();
 }

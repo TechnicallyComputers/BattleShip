@@ -51,6 +51,10 @@ extern sb32 syNetRollbackPredictionRecoveryRequiresConfirmed(u32 sim_tick);
 extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 count);
 /* Peer announced a correction on `slot` at `mismatch_tick` (24-bit wire encoding); queue one bounded local resim. */
 extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick);
+extern void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng);
+extern void syNetRollbackNotePeerBaselineDigestSent(void);
+extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
+						     u32 *out_rng);
 #endif
 
 #endif /* _SYNETROLLBACK_H_ */

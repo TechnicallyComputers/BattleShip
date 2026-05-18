@@ -8,6 +8,7 @@
 
 #include <ft/fighter.h>
 #include <ft/ftdef.h>
+#include <ft/ftmain.h>
 #include <ft/fttypes.h>
 #include <gm/gmdef.h>
 #include <gm/gmcamera.h>
@@ -407,6 +408,34 @@ static GObj *syNetRbSnapResolveItemGobj(u32 id)
 	return gobj;
 }
 
+static GObj *syNetRbSnapResolveArrowGobjForItem(u32 id, GObj *item_gobj, ITStruct *ip)
+{
+	GObj *arrow_gobj;
+
+	if ((id == 0U) || (item_gobj == NULL) || (ip == NULL))
+	{
+		return NULL;
+	}
+	arrow_gobj = gcFindGObjByID(id);
+	if (arrow_gobj == NULL)
+	{
+		return NULL;
+	}
+	if (itGetStruct(arrow_gobj) != ip)
+	{
+		return NULL;
+	}
+	if (ip->arrow_gobj != arrow_gobj)
+	{
+		return NULL;
+	}
+	if (ip->item_gobj != item_gobj)
+	{
+		return NULL;
+	}
+	return arrow_gobj;
+}
+
 static u32 syNetRbSnapGobjId(const GObj *gobj)
 {
 	s32 link;
@@ -622,7 +651,7 @@ static void syNetRbSnapApplyAttackColl(FTAttackColl *dst, const SYNetRbSnapAttac
 	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
 	{
 		dst->attack_records[i].victim_flags = src->attack_records[i].victim_flags;
-		dst->attack_records[i].victim_gobj = syNetRbSnapResolveGobj(src->attack_records[i].victim_gobj_id);
+		dst->attack_records[i].victim_gobj = syNetRbSnapResolveLiveGobj(src->attack_records[i].victim_gobj_id);
 	}
 	dst->attack_matrix = src->attack_matrix;
 }
@@ -865,6 +894,17 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	if (fighter_gobj != NULL)
 	{
 		fighter_gobj->anim_frame = blob->gobj_anim_frame;
+		ftMainRebindStatusProcs(fighter_gobj);
+		fp->proc_status = NULL;
+		fp->proc_accessory = NULL;
+		fp->proc_damage = NULL;
+		fp->proc_trap = NULL;
+		fp->proc_hit = NULL;
+		fp->proc_shield = NULL;
+		fp->proc_passive = NULL;
+		fp->proc_lagupdate = NULL;
+		fp->proc_lagstart = NULL;
+		fp->proc_lagend = NULL;
 	}
 }
 
@@ -1060,6 +1100,9 @@ static void syNetRbSnapApplyWorld(const SYNetRbSnapWorldBlob *world, u32 tick)
 			gITManagerRandomWeights.blocks[i] = world->item_random_weight_blocks[i];
 		}
 	}
+#ifdef PORT
+	syNetSyncReconcileBattleTimePassedForSimTick(tick);
+#endif
 }
 
 static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
@@ -1165,10 +1208,10 @@ static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob
 	ip->attack_coll = blob->attack_coll;
 	ip->damage_coll = blob->damage_coll;
 	ip->lifetime = blob->lifetime;
-	ip->owner_gobj = syNetRbSnapResolveGobj(blob->owner_gobj_id);
-	ip->reflect_gobj = syNetRbSnapResolveGobj(blob->reflect_gobj_id);
-	ip->damage_gobj = syNetRbSnapResolveGobj(blob->damage_gobj_id);
-	ip->arrow_gobj = syNetRbSnapResolveGobj(blob->arrow_gobj_id);
+	ip->owner_gobj = syNetRbSnapResolveLiveGobj(blob->owner_gobj_id);
+	ip->reflect_gobj = syNetRbSnapResolveLiveGobj(blob->reflect_gobj_id);
+	ip->damage_gobj = syNetRbSnapResolveLiveGobj(blob->damage_gobj_id);
+	ip->arrow_gobj = syNetRbSnapResolveArrowGobjForItem(blob->arrow_gobj_id, gobj, ip);
 	ip->multi = blob->multi;
 	ip->event_id = blob->event_id;
 	ip->spin_step = blob->spin_step;
@@ -1368,9 +1411,9 @@ static void syNetRbSnapApplyWeapons(const SYNetRbSnapshotSlot *slot)
 			wp->ga = blob->ga;
 			wp->attack_coll = blob->attack_coll;
 			wp->lifetime = blob->lifetime;
-			wp->owner_gobj = syNetRbSnapResolveGobj(blob->owner_gobj_id);
-			wp->reflect_gobj = syNetRbSnapResolveGobj(blob->reflect_gobj_id);
-			wp->absorb_gobj = syNetRbSnapResolveGobj(blob->absorb_gobj_id);
+			wp->owner_gobj = syNetRbSnapResolveLiveGobj(blob->owner_gobj_id);
+			wp->reflect_gobj = syNetRbSnapResolveLiveGobj(blob->reflect_gobj_id);
+			wp->absorb_gobj = syNetRbSnapResolveLiveGobj(blob->absorb_gobj_id);
 			wp->group_id = blob->group_id;
 			if (dobj != NULL)
 			{
@@ -1407,8 +1450,8 @@ static void syNetRbSnapApplyCamera(const SYNetRbSnapCameraBlob *cam)
 	{
 		gGMCameraGObj = cg;
 	}
-	gGMCameraStruct.pzoom_fighter_gobj = syNetRbSnapResolveGobj(cam->pzoom_fighter_gobj_id);
-	gGMCameraStruct.pfollow_fighter_gobj = syNetRbSnapResolveGobj(cam->pfollow_fighter_gobj_id);
+	gGMCameraStruct.pzoom_fighter_gobj = syNetRbSnapResolveLiveGobj(cam->pzoom_fighter_gobj_id);
+	gGMCameraStruct.pfollow_fighter_gobj = syNetRbSnapResolveLiveGobj(cam->pfollow_fighter_gobj_id);
 	gGMCameraPauseCameraEyeX = cam->pause_eye_x;
 	gGMCameraPauseCameraEyeY = cam->pause_eye_y;
 }
@@ -1478,6 +1521,9 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 {
 	GObj *fighter_gobj;
 
+#ifdef PORT
+	syNetSyncReconcileBattleTimePassedForSimTick(completed_sim_tick);
+#endif
 	memset(slot, 0, sizeof(*slot));
 	slot->tick = completed_sim_tick;
 	slot->is_valid = TRUE;
@@ -1665,5 +1711,25 @@ u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick)
 {
 	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
 	return slot->hash_animation;
+}
+
+sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	if ((figh == NULL) || (world == NULL) || (item == NULL) || (rng == NULL))
+	{
+		return FALSE;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return FALSE;
+	}
+	*figh = slot->hash_fighter;
+	*world = slot->hash_world;
+	*item = slot->hash_item;
+	*rng = slot->hash_rng;
+	return TRUE;
 }
 #endif

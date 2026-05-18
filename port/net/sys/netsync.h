@@ -35,6 +35,11 @@ extern u32 syNetSyncHashFighterAnimationState(void);
 #ifdef PORT
 extern void syNetSyncLogRollbackWorldDetail(const char *tag, u32 tick);
 extern void syNetSyncLogFighterDetail(const char *tag, u32 tick);
+/* Netplay: battle clock tied to authoritative sim tick (not wall-clock scheduler tics). */
+extern void syNetSyncResetNetplayBattleClock(void);
+extern void syNetSyncOnNetplayBattleGo(void);
+extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);
+extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
 #endif
 
 #endif /* _SYNETSYNC_H_ */

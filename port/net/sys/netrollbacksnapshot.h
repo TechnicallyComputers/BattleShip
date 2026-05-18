@@ -41,6 +41,7 @@ extern u32 syNetRbSnapshotGetSlotHashMap(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashRng(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashCamera(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick);
+extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
 #endif
 
 #endif /* _SYNETRB_SNAPSHOT_H_ */
