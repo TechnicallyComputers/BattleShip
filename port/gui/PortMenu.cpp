@@ -1111,23 +1111,23 @@ void PortMenu::AddMenuAssets() {
     WidgetPath path = { "Assets", "Extraction", SECTION_COLUMN_1 };
     AddSidebarEntry("Assets", "Extraction", 1);
     AddWidget(path, "Extraction", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "BattleShip.o2r is generated from your ROM and loaded on launch.", WIDGET_TEXT);
+    AddWidget(path, SSB64_O2R_NAME " is generated from your ROM and loaded on launch.", WIDGET_TEXT);
     AddWidget(path, "Schedule Re-extract", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([this](WidgetInfo&) {
-            const auto path = Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r");
+            const auto path = Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME);
             std::error_code ec;
             fs::remove(path, ec);
             mShowReextractMessage = true;
         })
-        .Options(ButtonOptions().Tooltip("Deletes BattleShip.o2r so it is regenerated from the ROM on next launch.")
+        .Options(ButtonOptions().Tooltip("Deletes " SSB64_O2R_NAME " so it is regenerated from the ROM on next launch.")
                      .Size(Sizes::Inline));
 
     path.sidebarName = "Paths";
     AddSidebarEntry("Assets", "Paths", 1);
     AddWidget(path, "Runtime Paths", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, fmt::format("App directory: {}", Ship::Context::GetPathRelativeToAppDirectory("")), WIDGET_TEXT);
-    AddWidget(path, fmt::format("Main archive: {}", Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r")),
+    AddWidget(path, fmt::format("Main archive: {}", Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME)),
               WIDGET_TEXT);
 
 #ifdef PORT_HIRES_ENABLED
@@ -1403,7 +1403,7 @@ void PortMenu::DrawElement() {
     if (ImGui::BeginPopupModal("Re-extract scheduled", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextWrapped(
-            "BattleShip.o2r will be regenerated from your ROM the next time the game launches.");
+            SSB64_O2R_NAME " will be regenerated from your ROM the next time the game launches.");
         ImGui::Spacing();
         if (ImGui::Button("OK", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();

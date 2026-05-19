@@ -643,7 +643,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 	 *      succeeds — or quits the window. */
 	{
 		const std::string targetO2r =
-			Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r");
+			Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME);
 		// silent=true: any failure during this auto-attempt should land in
 		// the wizard's status text, not a native popup that races the
 		// ImGui modal.
@@ -652,7 +652,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 		// noexcept exists / PortLocateFile rather than the throwing LUS
 		// form — issue #58.
 		if (!std::filesystem::exists(targetO2r, ec) &&
-		    !std::filesystem::exists(PortLocateFile("BattleShip.o2r"), ec)) {
+		    !std::filesystem::exists(PortLocateFile(SSB64_O2R_NAME), ec)) {
 			if (!ssb64::RunFirstRunWizard(targetO2r)) {
 				port_log("SSB64: first-run wizard cancelled — exiting\n");
 				// PortShutdown drops audio bridge refs + resets sContext
@@ -668,10 +668,12 @@ static int PortInitImpl(int argc, char* argv[]) {
 	}
 
 	{
-		// Add BattleShip.o2r to the running ResourceManager now that it exists.
+		// Add the per-region game archive to the running ResourceManager
+		// now that it exists (SSB64_O2R_NAME = BattleShip.o2r on US,
+		// BattleShip-JP.o2r on JP — see CMakeLists.txt).
 		auto am = sContext->GetResourceManager()->GetArchiveManager();
 
-		const std::string ssb64o2r = PortLocateFile("BattleShip.o2r");
+		const std::string ssb64o2r = PortLocateFile(SSB64_O2R_NAME);
 		port_log("SSB64: adding game archive -> %s\n", ssb64o2r.c_str());
 		if (!am->AddArchive(ssb64o2r)) {
 			port_log("SSB64: AddArchive failed for %s\n", ssb64o2r.c_str());

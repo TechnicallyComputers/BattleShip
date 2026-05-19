@@ -311,6 +311,13 @@ set(SSB64_COMPILE_DEFS
     # App identity (binary name + libultraship app-data scope). Quoted so
     # it expands to a C string literal at the use site.
     SSB64_APP_NAME=\"${SSB64_APP_NAME}\"
+    # Per-region archive filename: US writes/reads "BattleShip.o2r"
+    # (preserves the historical name so existing installs keep working);
+    # JP writes/reads "BattleShip-JP.o2r" so a stray archive in CWD or an
+    # accidental shared install directory can't be picked up by the wrong
+    # build (PortLocateFile falls back to CWD on miss, and the bifurcated
+    # app-data dirs from issue #190 don't catch that case).
+    SSB64_O2R_NAME=\"${SSB64_APP_NAME}.o2r\"
 
     # Port mode
     NON_MATCHING=1
