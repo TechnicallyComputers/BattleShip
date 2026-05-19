@@ -2084,24 +2084,30 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		wire_lock = syNetRollbackSymmetricWireLockActive();
 		target = syNetRollbackClampResimTargetTickEx(mismatch, target, frontier, wire_lock);
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target, NULL) == FALSE)
 	{
-		syNetRollbackLogDeferDiag("commit_begin_failed", mismatch, target, player);
-		return FALSE;
-	}
-	sSYNetRollbackDeferredMismatchPending = FALSE;
-	sSYNetRollbackDeferredMismatchTick = ~(u32)0;
-	sSYNetRollbackDeferredMismatchTargetTick = ~(u32)0;
-	sSYNetRollbackDeferredMismatchPlayer = -1;
-	port_log(
-	    "SSB64 NetRollback: GGPO deferred input correction resim mismatch_tick=%u target_tick=%u slot=%d\n",
-	    mismatch,
-	    target,
-	    (int)player);
-	if (syNetRollbackBeginResim(mismatch, target, player) == FALSE)
-	{
-		syNetRollbackLogDeferDiag("begin_resim_failed", mismatch, target, player);
-		return FALSE;
+		SYNetRollbackCorrectionCommitSnap commit_snap;
+
+		if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target, &commit_snap) == FALSE)
+		{
+			syNetRollbackLogDeferDiag("commit_begin_failed", mismatch, target, player);
+			return FALSE;
+		}
+		syNetRollbackTryArmSymmetricNotifyForLocalCorrection(player, mismatch, target);
+		sSYNetRollbackDeferredMismatchPending = FALSE;
+		sSYNetRollbackDeferredMismatchTick = ~(u32)0;
+		sSYNetRollbackDeferredMismatchTargetTick = ~(u32)0;
+		sSYNetRollbackDeferredMismatchPlayer = -1;
+		port_log(
+		    "SSB64 NetRollback: GGPO deferred input correction resim mismatch_tick=%u target_tick=%u slot=%d\n",
+		    mismatch,
+		    target,
+		    (int)player);
+		if (syNetRollbackBeginResim(mismatch, target, player) == FALSE)
+		{
+			syNetRollbackAbortCorrectionCommit(&commit_snap);
+			syNetRollbackLogDeferDiag("begin_resim_failed", mismatch, target, player);
+			return FALSE;
+		}
 	}
 	sSYNetRollbackRollbackCount++;
 	sSYNetRollbackResimOrdinal = sSYNetRollbackRollbackCount;
@@ -2323,20 +2329,25 @@ static sb32 syNetRollbackTryBeginDeferredStateMismatch(void)
 	sSYNetRollbackDeferredStateMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredStateMismatchTargetTick = ~(u32)0;
 	target = syNetRollbackClampResimTargetTick(mismatch, target);
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, load_tick, target, NULL) == FALSE)
 	{
-		syNetRollbackLogDeferDiag("state_resync_commit_failed", mismatch, target, -1);
-		syNetRollbackResetPeerBaselineResyncStorm();
-		return FALSE;
-	}
-	syNetPeerFrameCommitDiagNoteRecoveryStarted();
-	syNetPeerArmPostRecoveryConvergenceWatch();
-	port_log("SSB64 NetRollback: deferred frame-commit state resim mismatch_tick=%u target_tick=%u\n", mismatch,
-	         target);
-	if (syNetRollbackBeginResim(mismatch, target, -1) == FALSE)
-	{
-		syNetRollbackResetPeerBaselineResyncStorm();
-		return FALSE;
+		SYNetRollbackCorrectionCommitSnap commit_snap;
+
+		if (syNetRollbackTryCommitCorrectionBegin(mismatch, load_tick, target, &commit_snap) == FALSE)
+		{
+			syNetRollbackLogDeferDiag("state_resync_commit_failed", mismatch, target, -1);
+			syNetRollbackResetPeerBaselineResyncStorm();
+			return FALSE;
+		}
+		syNetPeerFrameCommitDiagNoteRecoveryStarted();
+		syNetPeerArmPostRecoveryConvergenceWatch();
+		port_log("SSB64 NetRollback: deferred frame-commit state resim mismatch_tick=%u target_tick=%u\n", mismatch,
+		         target);
+		if (syNetRollbackBeginResim(mismatch, target, -1) == FALSE)
+		{
+			syNetRollbackAbortCorrectionCommit(&commit_snap);
+			syNetRollbackResetPeerBaselineResyncStorm();
+			return FALSE;
+		}
 	}
 	sSYNetRollbackRollbackCount++;
 	sSYNetRollbackResimOrdinal = sSYNetRollbackRollbackCount;
@@ -2467,6 +2478,19 @@ static void syNetRollbackArmSymmetricNotify(s32 slot, u32 mismatch_tick, u32 tar
 		sSYNetRollbackSymmetricNotifyTargetTick[slot] = target_tick;
 	}
 	syNetPeerTrySendRollbackSyncNotice();
+}
+
+static void syNetRollbackTryArmSymmetricNotifyForLocalCorrection(s32 player, u32 mismatch_tick, u32 target_tick)
+{
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return;
+	}
+	if (syNetRollbackSymmetricWireLockActive() == FALSE)
+	{
+		return;
+	}
+	syNetRollbackArmSymmetricNotify(player, mismatch_tick, target_tick);
 }
 
 static void syNetRollbackExpireSymmetricNotify(void)
@@ -5532,16 +5556,25 @@ void syNetRollbackUpdate(void)
 		wire_lock = syNetRollbackSymmetricWireLockActive();
 		resim_target_tick = syNetRollbackClampResimTargetTickEx(mismatch, resim_target_tick, frontier, wire_lock);
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, resim_target_tick, NULL) == FALSE)
 	{
-		return;
-	}
-	if (syNetRollbackBeginResim(
-	        mismatch,
-	        resim_target_tick,
-	        (mismatch_from_peer_symmetric != FALSE) ? sSYNetRollbackPendingPeerSymmetricSlot : -1) == FALSE)
-	{
-		return;
+		SYNetRollbackCorrectionCommitSnap commit_snap;
+		s32 correction_player;
+
+		correction_player =
+		    (mismatch_from_peer_symmetric != FALSE) ? sSYNetRollbackPendingPeerSymmetricSlot : mismatch_player;
+		if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, resim_target_tick, &commit_snap) == FALSE)
+		{
+			return;
+		}
+		if (mismatch_from_peer_symmetric == FALSE)
+		{
+			syNetRollbackTryArmSymmetricNotifyForLocalCorrection(correction_player, mismatch, resim_target_tick);
+		}
+		if (syNetRollbackBeginResim(mismatch, resim_target_tick, correction_player) == FALSE)
+		{
+			syNetRollbackAbortCorrectionCommit(&commit_snap);
+			return;
+		}
 	}
 #ifdef PORT
 	if (mismatch_from_peer_symmetric != FALSE)
