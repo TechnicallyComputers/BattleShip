@@ -1625,21 +1625,6 @@ void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick)
 		sSYNetRollbackGgpoCorrectionLogsRemaining--;
 	}
 	syNetInputTimelineNotePublishedRemoteMismatch(player, sim_tick);
-	if (syNetRollbackSymmetricWireLockActive() != FALSE)
-	{
-		u32 notify_target;
-
-		notify_target = syNetInputGetTick();
-		if (notify_target < ~(u32)0)
-		{
-			notify_target++;
-		}
-		if (notify_target <= sim_tick)
-		{
-			notify_target = sim_tick + 1U;
-		}
-		syNetRollbackArmSymmetricNotify(player, sim_tick, notify_target);
-	}
 	if ((syNetRollbackStickMismatchRecoveryEnabled() != FALSE) &&
 	    (syNetInputGgpoStickNeutralAnalogFlip(&published, &remote) != FALSE))
 	{
@@ -1788,10 +1773,6 @@ void syNetRollbackNotifyLocalAuthorityTransmitRevision(s32 player, u32 sim_tick)
 	if (frontier <= sim_tick)
 	{
 		frontier = sim_tick + 1U;
-	}
-	if ((sSYNetRollbackSymmetricEnabled != FALSE) && (sSYNetRollbackSymmetricDiagOnly == FALSE))
-	{
-		syNetRollbackArmSymmetricNotify(player, sim_tick, frontier);
 	}
 	syNetRollbackQueueDeferredInputCorrectionEx(player, sim_tick, frontier);
 }
@@ -2102,10 +2083,6 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		}
 		wire_lock = syNetRollbackSymmetricWireLockActive();
 		target = syNetRollbackClampResimTargetTickEx(mismatch, target, frontier, wire_lock);
-		if ((player >= 0) && (wire_lock != FALSE))
-		{
-			syNetRollbackArmSymmetricNotify(player, mismatch, target);
-		}
 	}
 	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target, NULL) == FALSE)
 	{
@@ -5554,10 +5531,6 @@ void syNetRollbackUpdate(void)
 
 		wire_lock = syNetRollbackSymmetricWireLockActive();
 		resim_target_tick = syNetRollbackClampResimTargetTickEx(mismatch, resim_target_tick, frontier, wire_lock);
-		if ((wire_lock != FALSE) && (mismatch_player >= 0))
-		{
-			syNetRollbackArmSymmetricNotify(mismatch_player, mismatch, resim_target_tick);
-		}
 	}
 	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, resim_target_tick, NULL) == FALSE)
 	{
