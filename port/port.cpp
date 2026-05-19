@@ -26,6 +26,10 @@
 #include "enhancements/enhancements.h"
 #include "first_run.h"
 #include "gui/PortMenu.h"
+#ifdef PORT_HIRES_ENABLED
+#include "hires/HiResHook.h"
+#include "hires/HiResPack.h"
+#endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 
@@ -410,6 +414,16 @@ static int PortInitImpl(int argc, char* argv[]) {
 	if (!sContext->InitConfiguration()) { port_log("SSB64: InitConfiguration failed\n"); return 1; }
 	if (!sContext->InitConsoleVariables()) { port_log("SSB64: InitConsoleVariables failed\n"); return 1; }
 	port_log("SSB64: Config + CVars OK\n");
+
+#ifdef PORT_HIRES_ENABLED
+	// Hi-res texture pack: scan <app-data>/mods/ for GLideN64-named PNGs
+	// and register the Fast3D substitution hook. Master enable lives in
+	// the gHiResTextures.Enabled CVar (default 1) — toggled from the
+	// Assets → Mods menu, takes effect next cache miss. US-only (see
+	// CMakeLists.txt — JP builds drop port/hires/ entirely).
+	ssb64::hires::HiResPack::Get().Init();
+	ssb64_hires_register();
+#endif
 
 	/* Pillarbox the framebuffer to 4:3 every launch. The game emits 4:3
 	 * GBI only — when LUS's viewport runs at the window aspect (LUS
