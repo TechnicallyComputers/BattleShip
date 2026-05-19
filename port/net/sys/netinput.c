@@ -38,8 +38,19 @@ static ub8 sSYNetInputRemotePacketSeqValid[MAXCONTROLLERS][SYNETINPUT_HISTORY_LE
 static u32 sSYNetInputRemoteConfirmedConflictLogsRemaining;
 #define SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT 4
 #define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 6
+#define SYNETINPUT_NEUTRAL_GUARD_TICKS_DEFAULT 2
+#define SYNETINPUT_ANALOG_ONSET_STICK_MAG_DEFAULT 12
+#define SYNETINPUT_ANALOG_ONSET_LOOKBACK_DEFAULT 60
+#define SYNETINPUT_ANALOG_ONSET_FACING_THRESH_DEFAULT 4
+#define SYNETINPUT_ANALOG_ONSET_LARGE_DELTA_DEFAULT 35
 static s32 sSYNetInputGgpoStickDeadband = -1;
 static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
+static s32 sSYNetInputNeutralGuardTicks = -1;
+static s32 sSYNetInputAnalogOnsetStickMag = -1;
+static s32 sSYNetInputAnalogOnsetLookback = -1;
+static s32 sSYNetInputAnalogOnsetFacingThresh = -1;
+static s32 sSYNetInputAnalogOnsetLargeDelta = -1;
+static u32 sSYNetInputAnalogOnsetLogBudget;
 /* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
 static u32 sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
 static sb32 sSYNetInputSuppressSceneUpdateAfterRead;
@@ -74,6 +85,10 @@ typedef struct SYNetInputSlot
 	SYNetInputSource source;
 	SYNetInputFrame last_confirmed;
 	SYNetInputFrame last_published;
+#ifdef PORT
+	/* Newest strict-confirmed remote row with sticks outside predict deadband (analog onset). */
+	SYNetInputFrame last_non_neutral;
+#endif
 
 } SYNetInputSlot;
 
@@ -645,6 +660,13 @@ void syNetInputReset(void)
 	sSYNetInputStrictCache.is_valid = FALSE;
 	sSYNetInputRemoteConfirmedConflictLogsRemaining = 64U;
 	sSYNetInputRemoteGapFillLogBudget = 32U;
+	{
+		const char *env_onset_log;
+
+		env_onset_log = getenv("SSB64_NETPLAY_ANALOG_ONSET_LOG");
+		sSYNetInputAnalogOnsetLogBudget =
+		    ((env_onset_log != NULL) && (env_onset_log[0] != '\0') && (atoi(env_onset_log) != 0)) ? 8U : 0U;
+	}
 #endif
 
 	sSYNetInputReplayMetadata.magic = SYNETINPUT_REPLAY_MAGIC;
@@ -673,6 +695,7 @@ void syNetInputReset(void)
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_confirmed);
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_published);
 #ifdef PORT
+		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
 		sSYNetInputRemoteConfirmedLastWire[player] = -1;
 #endif
 		sSYNetInputReplayMetadata.player_kinds[player] = 0;
@@ -801,6 +824,135 @@ static u32 syNetInputGgpoStickDeadbandPredict(void)
 	return (u32)sSYNetInputGgpoStickDeadbandPredict;
 }
 
+#ifdef PORT
+static s32 syNetInputEnvClampS32(s32 value, s32 min_v, s32 max_v)
+{
+	if (value < min_v)
+	{
+		return min_v;
+	}
+	if (value > max_v)
+	{
+		return max_v;
+	}
+	return value;
+}
+
+static u32 syNetInputNeutralGuardMaxTicks(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputNeutralGuardTicks >= 0)
+	{
+		return (u32)sSYNetInputNeutralGuardTicks;
+	}
+	parsed = SYNETINPUT_NEUTRAL_GUARD_TICKS_DEFAULT;
+	env = getenv("SSB64_NETPLAY_NEUTRAL_GUARD_TICKS");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	parsed = syNetInputEnvClampS32(parsed, 0, 3);
+	sSYNetInputNeutralGuardTicks = parsed;
+	return (u32)sSYNetInputNeutralGuardTicks;
+}
+
+static u32 syNetInputAnalogOnsetStickMag(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputAnalogOnsetStickMag >= 0)
+	{
+		return (u32)sSYNetInputAnalogOnsetStickMag;
+	}
+	parsed = SYNETINPUT_ANALOG_ONSET_STICK_MAG_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_ONSET_STICK_MAG");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	parsed = syNetInputEnvClampS32(parsed, 8, 20);
+	sSYNetInputAnalogOnsetStickMag = parsed;
+	return (u32)sSYNetInputAnalogOnsetStickMag;
+}
+
+static u32 syNetInputAnalogOnsetLookbackTicks(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputAnalogOnsetLookback >= 0)
+	{
+		return (u32)sSYNetInputAnalogOnsetLookback;
+	}
+	parsed = SYNETINPUT_ANALOG_ONSET_LOOKBACK_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_ONSET_LOOKBACK");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	parsed = syNetInputEnvClampS32(parsed, 8, 120);
+	sSYNetInputAnalogOnsetLookback = parsed;
+	return (u32)sSYNetInputAnalogOnsetLookback;
+}
+
+static u32 syNetInputAnalogOnsetFacingThresh(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputAnalogOnsetFacingThresh >= 0)
+	{
+		return (u32)sSYNetInputAnalogOnsetFacingThresh;
+	}
+	parsed = SYNETINPUT_ANALOG_ONSET_FACING_THRESH_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_ONSET_FACING_THRESH");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	if (parsed < 0)
+	{
+		parsed = 0;
+	}
+	if (parsed > 40)
+	{
+		parsed = 40;
+	}
+	sSYNetInputAnalogOnsetFacingThresh = parsed;
+	return (u32)sSYNetInputAnalogOnsetFacingThresh;
+}
+
+static u32 syNetInputAnalogOnsetLargeDelta(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputAnalogOnsetLargeDelta >= 0)
+	{
+		return (u32)sSYNetInputAnalogOnsetLargeDelta;
+	}
+	parsed = SYNETINPUT_ANALOG_ONSET_LARGE_DELTA_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_ONSET_LARGE_DELTA");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	if (parsed < 0)
+	{
+		parsed = 0;
+	}
+	if (parsed > 127)
+	{
+		parsed = 127;
+	}
+	sSYNetInputAnalogOnsetLargeDelta = parsed;
+	return (u32)sSYNetInputAnalogOnsetLargeDelta;
+}
+#endif
+
 static s32 syNetInputAbsS8Diff(s8 a, s8 b)
 {
 	s32 d;
@@ -846,6 +998,58 @@ static sb32 syNetInputFrameSticksNearNeutral(const SYNetInputFrame *frame)
 	           ? TRUE
 	           : FALSE;
 }
+
+static sb32 syNetInputFrameSticksNearNeutralWithDeadband(const SYNetInputFrame *frame, u32 deadband)
+{
+	if (frame == NULL)
+	{
+		return FALSE;
+	}
+	return ((syNetInputAbsS8Diff(frame->stick_x, 0) <= (s32)deadband) &&
+	        (syNetInputAbsS8Diff(frame->stick_y, 0) <= (s32)deadband))
+	           ? TRUE
+	           : FALSE;
+}
+
+#ifdef PORT
+static s32 syNetInputStickSign(s8 axis)
+{
+	if (axis > 0)
+	{
+		return 1;
+	}
+	if (axis < 0)
+	{
+		return -1;
+	}
+	return 0;
+}
+
+static void syNetInputApplyAnalogOnsetStick(s8 *stick_x, s8 *stick_y, const SYNetInputFrame *last_nn, s32 mag)
+{
+	s32 sign_x;
+	s32 sign_y;
+
+	if ((stick_x == NULL) || (stick_y == NULL) || (last_nn == NULL) || (mag <= 0))
+	{
+		return;
+	}
+	sign_x = syNetInputStickSign(last_nn->stick_x);
+	sign_y = syNetInputStickSign(last_nn->stick_y);
+	*stick_x = (sign_x != 0) ? (s8)(sign_x * mag) : (s8)0;
+	*stick_y = (sign_y != 0) ? (s8)(sign_y * mag) : (s8)0;
+}
+
+static void syNetInputNoteRemoteNonNeutralStick(s32 player, const SYNetInputFrame *frame)
+{
+	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (frame->is_valid == FALSE) ||
+	    (syNetInputFrameSticksNearNeutral(frame) != FALSE))
+	{
+		return;
+	}
+	sSYNetInputSlots[player].last_non_neutral = *frame;
+}
+#endif
 
 static sb32 syNetInputDigitalStickSameCardinal(const SYNetInputFrame *a, const SYNetInputFrame *b)
 {
@@ -1006,6 +1210,8 @@ sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, con
                                                 sb32 correction_is_predicted)
 {
 	u32 deadband;
+	u32 facing_thresh;
+	u32 large_delta;
 
 	if ((old == NULL) || (new == NULL))
 	{
@@ -1023,6 +1229,35 @@ sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, con
 	{
 		deadband = syNetInputGgpoStickDeadband();
 	}
+#ifdef PORT
+	facing_thresh = syNetInputAnalogOnsetFacingThresh();
+	large_delta = syNetInputAnalogOnsetLargeDelta();
+	if (syNetInputFrameSticksNearNeutralWithDeadband(old, deadband) != FALSE)
+	{
+		if (syNetInputFrameSticksNearNeutralWithDeadband(new, deadband) == FALSE)
+		{
+			return TRUE;
+		}
+		if ((syNetInputAbsS8Diff(new->stick_x, 0) > 25) || (syNetInputAbsS8Diff(new->stick_y, 0) > 25))
+		{
+			return TRUE;
+		}
+	}
+	if ((syNetInputAbsS8Diff(old->stick_x, 0) > (s32)facing_thresh) &&
+	    (syNetInputAbsS8Diff(new->stick_x, 0) > (s32)facing_thresh) &&
+	    (syNetInputStickSign(old->stick_x) != syNetInputStickSign(new->stick_x)))
+	{
+		return TRUE;
+	}
+	if (syNetInputAbsS8Diff(old->stick_x, new->stick_x) > (s32)large_delta)
+	{
+		return TRUE;
+	}
+	if (syNetInputAbsS8Diff(old->stick_y, new->stick_y) > (s32)large_delta)
+	{
+		return TRUE;
+	}
+#endif
 	if (deadband == 0U)
 	{
 		return ((old->stick_x != new->stick_x) || (old->stick_y != new->stick_y)) ? TRUE : FALSE;
@@ -1212,6 +1447,9 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 	u32 sim_tick;
 
 	syNetInputStoreRemoteConfirmedFrame(player, frame);
+#ifdef PORT
+	syNetInputNoteRemoteNonNeutralStick(player, frame);
+#endif
 	syNetInputStoreRemotePacketSeq(player, wire_tick, packet_seq);
 	syNetInputTimelineOnRemoteConfirmedWire(player, wire_tick, frame);
 	sim_tick = syNetPeerDelaySimTickFromWire(wire_tick);
@@ -1573,12 +1811,14 @@ static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_st
 static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetInputFrame *out_frame)
 {
 	SYNetInputFrame *last_confirmed = &sSYNetInputSlots[player].last_confirmed;
+	SYNetInputFrame *last_non_neutral = &sSYNetInputSlots[player].last_non_neutral;
 	u16 buttons;
 	s8 stick_x;
 	s8 stick_y;
-	u32 neutral_guard;
+	u32 neutral_guard_max;
 	u32 lead_ticks;
-	u32 d_ticks;
+	u32 lookback;
+	sb32 had_stick_seed;
 
 	buttons = 0;
 	stick_x = 0;
@@ -1592,7 +1832,8 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 		stick_x = last_confirmed->stick_x;
 		stick_y = last_confirmed->stick_y;
 	}
-	if (syNetInputTryGetPredictionStickSeed(player, tick, &stick_x, &stick_y) == FALSE)
+	had_stick_seed = syNetInputTryGetPredictionStickSeed(player, tick, &stick_x, &stick_y);
+	if (had_stick_seed == FALSE)
 	{
 		if (last_confirmed->is_valid != FALSE)
 		{
@@ -1602,20 +1843,35 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 	}
 	if ((last_confirmed->is_valid != FALSE) && (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE))
 	{
-		neutral_guard = syNetPeerGetPhaseLockPredictionWindowTicks();
-		d_ticks = syNetPeerGetCommittedInputDelay();
-		if ((d_ticks > 0U) && (d_ticks < neutral_guard))
-		{
-			neutral_guard = d_ticks;
-		}
-		if ((neutral_guard > 0U) && (tick > last_confirmed->tick))
+		neutral_guard_max = syNetInputNeutralGuardMaxTicks();
+		lookback = syNetInputAnalogOnsetLookbackTicks();
+		if ((neutral_guard_max > 0U) && (tick > last_confirmed->tick) && (had_stick_seed == FALSE))
 		{
 			lead_ticks = tick - last_confirmed->tick;
-			if ((lead_ticks > 0U) && (lead_ticks <= neutral_guard) &&
-			    (syNetInputTryGetPredictionStickSeed(player, tick, &stick_x, &stick_y) == FALSE))
+			if ((lead_ticks > 0U) && (lead_ticks <= neutral_guard_max))
 			{
-				stick_x = 0;
-				stick_y = 0;
+				if ((last_non_neutral->is_valid != FALSE) && (tick >= last_non_neutral->tick) &&
+				    ((tick - last_non_neutral->tick) <= lookback))
+				{
+					syNetInputApplyAnalogOnsetStick(&stick_x, &stick_y, last_non_neutral,
+					                                (s32)syNetInputAnalogOnsetStickMag());
+					if (sSYNetInputAnalogOnsetLogBudget > 0U)
+					{
+						port_log(
+						    "SSB64 NetInput: analog_onset_predict player=%d tick=%u sx=%d sy=%d from_nn_tick=%u\n",
+						    (int)player,
+						    tick,
+						    stick_x,
+						    stick_y,
+						    last_non_neutral->tick);
+						sSYNetInputAnalogOnsetLogBudget--;
+					}
+				}
+				else
+				{
+					stick_x = 0;
+					stick_y = 0;
+				}
 			}
 		}
 	}
@@ -1851,6 +2107,7 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, tick, out_frame) != FALSE)
 			{
 				sSYNetInputSlots[player].last_confirmed = *out_frame;
+				syNetInputNoteRemoteNonNeutralStick(player, out_frame);
 				return;
 			}
 			if (syNetInputGetHistoryFrame(player, tick, out_frame) != FALSE)
@@ -1883,6 +2140,7 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 			if (syNetInputFrameIsRemoteStrictConfirmed(out_frame) != FALSE)
 			{
 				sSYNetInputSlots[player].last_confirmed = *out_frame;
+				syNetInputNoteRemoteNonNeutralStick(player, out_frame);
 			}
 #else
 			sSYNetInputSlots[player].last_confirmed = *out_frame;
@@ -2400,6 +2658,7 @@ void syNetInputClearRemoteSlotPredictionState(void)
 			continue;
 		}
 		syNetInputClearFrame(&sSYNetInputSlots[slot].last_confirmed);
+		syNetInputClearFrame(&sSYNetInputSlots[slot].last_non_neutral);
 	}
 }
 #endif
@@ -3350,6 +3609,9 @@ static void syNetInputRestoreRemoteConfirmedSeed(s32 player, u32 resim_start_tic
 	{
 		return;
 	}
+#ifdef PORT
+	syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+#endif
 	if (resim_start_tick == 0)
 	{
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_confirmed);
@@ -3360,10 +3622,34 @@ static void syNetInputRestoreRemoteConfirmedSeed(s32 player, u32 resim_start_tic
 		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t - 1, &frame) != FALSE)
 		{
 			sSYNetInputSlots[player].last_confirmed = frame;
-			return;
+			break;
 		}
 	}
-	syNetInputClearFrame(&sSYNetInputSlots[player].last_confirmed);
+	if (sSYNetInputSlots[player].last_confirmed.is_valid == FALSE)
+	{
+		syNetInputClearFrame(&sSYNetInputSlots[player].last_confirmed);
+		return;
+	}
+#ifdef PORT
+	{
+		u32 lookback;
+		u32 oldest;
+
+		lookback = syNetInputAnalogOnsetLookbackTicks();
+		oldest = (resim_start_tick > lookback) ? (resim_start_tick - lookback) : 0U;
+		for (t = resim_start_tick; t > oldest; t--)
+		{
+			if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t - 1, &frame) != FALSE)
+			{
+				if (syNetInputFrameSticksNearNeutral(&frame) == FALSE)
+				{
+					sSYNetInputSlots[player].last_non_neutral = frame;
+					return;
+				}
+			}
+		}
+	}
+#endif
 }
 
 /*
