@@ -97,6 +97,9 @@ extern void syNetRollbackPumpResimBaselineIfAwaiting(void);
 /* Cross-peer frame-commit state digest mismatch: queue rollback from start of validation window. */
 extern void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNetFrameCommitToken *local,
 						       const SYNetFrameCommitToken *peer);
+extern void syNetRollbackTryEmitResimPostHandshake(void);
+extern void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatch_tick, u32 target_tick,
+					       u32 figh, u32 world, u32 item, u32 rng, u32 input_digest);
 extern void syNetRollbackNotePeerBaselineDigestSent(void);
 extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
 						     u32 *out_rng, u32 *out_anim, u32 *out_weapon, u32 *out_map,

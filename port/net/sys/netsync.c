@@ -20,6 +20,8 @@
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
 
+#include <stdlib.h>
+
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
@@ -951,44 +953,183 @@ u32 syNetSyncHashActiveItems(void)
 	return hash;
 }
 
+static u32 syNetSyncFoldActiveItemGobj(GObj *gobj)
+{
+	DObj *dobj;
+	ITStruct *ip;
+	u32 fold;
+
+	ip = itGetStruct(gobj);
+	if (ip == NULL)
+	{
+		return 0U;
+	}
+	fold = 2166136261U;
+	fold = syNetSyncFnvAccumulateU32(fold, gobj->id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->kind);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->type);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lifetime);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->percent_damage);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lr);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->player);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->team);
+	fold = syNetSyncFnvAccumulateU32(fold, (ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U);
+	dobj = DObjGetStruct(gobj);
+	if (dobj != NULL)
+	{
+		Vec3f pos = dobj->translate.vec.f;
+
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+	}
+	return fold;
+}
+
+#define SYNET_SYNC_ITEM_HASH_SORT_MAX 48U
+
 u32 syNetSyncHashActiveItemsForRollback(void)
 {
+	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
 	GObj *gobj;
-	u32 hash = 2166136261U;
+	u32 count;
+	u32 hash;
+	u32 i;
+	u32 j;
 
+	count = 0U;
 	for (gobj = gGCCommonLinks[nGCCommonLinkIDItem]; gobj != NULL; gobj = gobj->link_next)
 	{
-		DObj *dobj;
-		ITStruct *ip = itGetStruct(gobj);
-		u32 fold;
-
-		if (ip == NULL)
+		if (itGetStruct(gobj) == NULL)
 		{
 			continue;
 		}
-		fold = 2166136261U;
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->kind);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->type);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lifetime);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->percent_damage);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lr);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->player);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->team);
-		fold = syNetSyncFnvAccumulateU32(fold, (ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U);
-		dobj = DObjGetStruct(gobj);
-		if (dobj != NULL)
+		if (count < SYNET_SYNC_ITEM_HASH_SORT_MAX)
 		{
-			Vec3f pos = dobj->translate.vec.f;
+			sorted[count++] = gobj;
+		}
+	}
+	for (i = 1U; i < count; i++)
+	{
+		GObj *key_gobj;
+		u32 key_id;
 
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+		key_gobj = sorted[i];
+		key_id = key_gobj->id;
+		j = i;
+		while ((j > 0U) && (sorted[j - 1U]->id > key_id))
+		{
+			sorted[j] = sorted[j - 1U];
+			j--;
+		}
+		sorted[j] = key_gobj;
+	}
+	hash = 2166136261U;
+	for (i = 0U; i < count; i++)
+	{
+		u32 fold;
+
+		fold = syNetSyncFoldActiveItemGobj(sorted[i]);
+		if (fold == 0U)
+		{
+			continue;
 		}
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 	}
 	return hash;
 }
+
+#ifdef PORT
+extern char *getenv(const char *name);
+extern int atoi(const char *s);
+
+static sb32 syNetSyncItemHashTraceEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_ITEM_HASH_TRACE");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
+{
+	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
+	GObj *gobj;
+	u32 count;
+	u32 hash;
+	u32 idx;
+	u32 i;
+	u32 j;
+
+	if (syNetSyncItemHashTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	count = 0U;
+	for (gobj = gGCCommonLinks[nGCCommonLinkIDItem]; gobj != NULL; gobj = gobj->link_next)
+	{
+		if (itGetStruct(gobj) == NULL)
+		{
+			continue;
+		}
+		if (count < SYNET_SYNC_ITEM_HASH_SORT_MAX)
+		{
+			sorted[count++] = gobj;
+		}
+	}
+	for (i = 1U; i < count; i++)
+	{
+		GObj *key_gobj;
+		u32 key_id;
+
+		key_gobj = sorted[i];
+		key_id = key_gobj->id;
+		j = i;
+		while ((j > 0U) && (sorted[j - 1U]->id > key_id))
+		{
+			sorted[j] = sorted[j - 1U];
+			j--;
+		}
+		sorted[j] = key_gobj;
+	}
+	hash = 2166136261U;
+	idx = 0U;
+	port_log("SSB64 NetSync: item_hash_walk begin sim_tick=%u live_sim=%u\n", sim_tick,
+	         (unsigned int)syNetInputGetTick());
+	for (i = 0U; i < count; i++)
+	{
+		ITStruct *ip;
+		u32 fold;
+
+		gobj = sorted[i];
+		ip = itGetStruct(gobj);
+		if (ip == NULL)
+		{
+			continue;
+		}
+		fold = syNetSyncFoldActiveItemGobj(gobj);
+		hash ^= fold;
+		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
+		port_log(
+		    "SSB64 NetSync: item_hash_walk step=%u gobj_id=%u kind=%d type=%d fold=0x%08X hash=0x%08X\n",
+		    idx,
+		    (unsigned int)gobj->id,
+		    (int)ip->kind,
+		    (int)ip->type,
+		    fold,
+		    hash);
+		idx++;
+	}
+	port_log("SSB64 NetSync: item_hash_walk end sim_tick=%u count=%u hash=0x%08X\n", sim_tick, idx, hash);
+}
+#endif
 
 u32 syNetSyncHashActiveWeapons(void)
 {

@@ -291,6 +291,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_SESSION_PARAMS 22
 #define SYNETPEER_PACKET_SESSION_PARAMS_ACK 23
 #define SYNETPEER_PACKET_ROLLBACK_SYNC 24
+#define SYNETPEER_PACKET_RESIM_POST 25
 /* header(12) + rtt_ms(4) + nine u8 knobs(9) + checksum(4) = 29 (wire v2) */
 #define SYNETPEER_SESSION_PARAMS_WIRE_BYTES (4 + 2 + 2 + 4 + 4 + 9 + 4)
 #define SYNETPEER_UDP_SYNC_PACKET_BYTES (4 + 2 + 2 + 4 + 2 + 2 + 4)
@@ -316,7 +317,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
+#define SYNETPEER_RESIM_POST_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
 #define SYNETPEER_BARRIER_SKEW_RETRY_MAX 3U
+#define SYNETPEER_STRICT_DISCONNECT_LATCH_K 4U
 
 typedef struct SYNetPeerPacketFrame
 {
@@ -371,6 +374,8 @@ u32 sSYNetPeerLastPacketNewestTick;
 sb32 sSYNetPeerLastPacketTicksValid;
 static s32 sSYNetPeerMergedConnectLastTick[MAXCONTROLLERS];
 static u8 sSYNetPeerMergedConnectDisc[MAXCONTROLLERS];
+static sb32 sSYNetPeerVsSessionEndReceived;
+static u32 sSYNetPeerPeerDisconnectConsec;
 sb32 sSYNetPeerBootstrapIsEnabled;
 sb32 sSYNetPeerBootstrapIsHost;
 sb32 sSYNetPeerBootstrapMetadataApplied;
@@ -3560,6 +3565,7 @@ void syNetPeerHandleControlPacket(const u8 *buffer, s32 size)
 	{
 		if (sSYNetPeerIsActive != FALSE)
 		{
+			sSYNetPeerVsSessionEndReceived = TRUE;
 			port_log("SSB64 NetPeer: received VS_SESSION_END role=%s tick=%u — stopping session\n",
 			         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 			         (unsigned int)syNetInputGetTick());
@@ -3587,6 +3593,8 @@ static void syNetPeerMergedConnectReset(void)
 		sSYNetPeerMergedConnectLastTick[i] = -1;
 		sSYNetPeerMergedConnectDisc[i] = 0;
 	}
+	sSYNetPeerVsSessionEndReceived = FALSE;
+	sSYNetPeerPeerDisconnectConsec = 0U;
 }
 
 static void syNetPeerLoadUdpLinkSyncEnvOnce(void)
@@ -6506,6 +6514,30 @@ static void syNetPeerMergeIncomingConnectStatus(const s32 *remote_tick, const u8
 		}
 		sSYNetPeerMergedConnectDisc[i] = (u8)(sSYNetPeerMergedConnectDisc[i] | remote_disc[i]);
 	}
+	{
+		sb32 any_disc = FALSE;
+		s32 di;
+
+		for (di = 0; di < MAXCONTROLLERS; di++)
+		{
+			if (remote_disc[di] != 0U)
+			{
+				any_disc = TRUE;
+				break;
+			}
+		}
+		if (any_disc != FALSE)
+		{
+			if (sSYNetPeerPeerDisconnectConsec < 0xFFFFU)
+			{
+				sSYNetPeerPeerDisconnectConsec++;
+			}
+		}
+		else
+		{
+			sSYNetPeerPeerDisconnectConsec = 0U;
+		}
+	}
 }
 
 #ifdef PORT
@@ -7097,6 +7129,7 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size);
+static void syNetPeerHandleResimPostPacket(const u8 *buffer, s32 size);
 #endif
 
 void syNetPeerHandlePacket(const u8 *buffer, s32 size)
@@ -7247,6 +7280,14 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				if (size == (s32)SYNETPEER_ROLLBACK_SYNC_BYTES)
 				{
 					syNetPeerHandleRollbackSyncPacket(buffer, size);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_RESIM_POST:
+				if (size == (s32)SYNETPEER_RESIM_POST_BYTES)
+				{
+					syNetPeerHandleResimPostPacket(buffer, size);
 					return;
 				}
 				break;
@@ -7730,6 +7771,80 @@ static struct SYNetPeerFrameCommitPeerSlot
 static u32 sSYNetPeerFrameCommitValidationsSincePeer;
 static sb32 sSYNetPeerFrameCommitPeerEver;
 static int sSYNetPeerFrameCommitEnvCache = -999;
+static int sSYNetPeerFrameCommitDiagEnvCache = -999;
+
+typedef struct SYNetPeerFrameCommitDiag
+{
+	u32 fc_sent;
+	u32 fc_recv;
+	u32 fc_compared;
+	u32 fc_pairing_fail;
+	u32 fc_state_diverge;
+	u32 fc_deferred_armed;
+	u32 fc_recovery_started;
+	u32 fc_recovery_skipped_no_snap;
+	u32 fc_pairing_starvation;
+} SYNetPeerFrameCommitDiag;
+
+static SYNetPeerFrameCommitDiag sSYNetPeerFrameCommitDiag;
+static u32 sSYNetPeerFrameCommitPairingStarvationCount;
+
+static sb32 syNetPeerFrameCommitDiagEnabled(void)
+{
+	const char *e;
+
+	if (sSYNetPeerFrameCommitDiagEnvCache != -999)
+	{
+		return (sSYNetPeerFrameCommitDiagEnvCache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_FRAME_COMMIT_DIAG");
+	sSYNetPeerFrameCommitDiagEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (sSYNetPeerFrameCommitDiagEnvCache != 0) ? TRUE : FALSE;
+}
+
+void syNetPeerFrameCommitDiagNoteDeferredArmed(void)
+{
+	sSYNetPeerFrameCommitDiag.fc_deferred_armed++;
+}
+
+void syNetPeerFrameCommitDiagNoteRecoveryStarted(void)
+{
+	sSYNetPeerFrameCommitDiag.fc_recovery_started++;
+}
+
+void syNetPeerFrameCommitDiagNoteRecoverySkippedNoSnap(void)
+{
+	sSYNetPeerFrameCommitDiag.fc_recovery_skipped_no_snap++;
+}
+
+void syNetPeerEmitFrameCommitDiagReport(void)
+{
+	port_log(
+	    "SSB64 NetPeer: FRAME_COMMIT_DIAG sent=%u recv=%u compared=%u pairing_fail=%u state_diverge=%u "
+	    "deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u\n",
+	    sSYNetPeerFrameCommitDiag.fc_sent,
+	    sSYNetPeerFrameCommitDiag.fc_recv,
+	    sSYNetPeerFrameCommitDiag.fc_compared,
+	    sSYNetPeerFrameCommitDiag.fc_pairing_fail,
+	    sSYNetPeerFrameCommitDiag.fc_state_diverge,
+	    sSYNetPeerFrameCommitDiag.fc_deferred_armed,
+	    sSYNetPeerFrameCommitDiag.fc_recovery_started,
+	    sSYNetPeerFrameCommitDiag.fc_recovery_skipped_no_snap,
+	    sSYNetPeerFrameCommitDiag.fc_pairing_starvation);
+}
+
+sb32 syNetPeerStrictTeardownFastPathActive(void)
+{
+	if (sSYNetPeerVsSessionEndReceived != FALSE)
+	{
+		return TRUE;
+	}
+	if (sSYNetPeerPeerDisconnectConsec >= SYNETPEER_STRICT_DISCONNECT_LATCH_K)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
 
 static int syNetPeerFrameCommitGetEnv(void)
 {
@@ -7770,6 +7885,8 @@ static void syNetPeerFrameCommitReset(void)
 	}
 	sSYNetPeerFrameCommitValidationsSincePeer = 0U;
 	sSYNetPeerFrameCommitPeerEver = FALSE;
+	sSYNetPeerFrameCommitPairingStarvationCount = 0U;
+	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
 
 static void syNetPeerFrameCommitStoreLocal(u32 vtick, const SYNetFrameCommitToken *t)
@@ -7825,13 +7942,71 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	sb32 di;
 	sb32 ds;
 	sb32 dt;
+	u32 anchor_diff;
 
+	sSYNetPeerFrameCommitDiag.fc_compared++;
+	if (local->frame_id != peer->frame_id)
+	{
+		sSYNetPeerFrameCommitDiag.fc_pairing_fail++;
+		if (syNetPeerFrameCommitDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_PAIRING_FAIL validation=%u reason=frame_id local=%d peer=%d anchor_local=%u anchor_peer=%u\n",
+			    vtick,
+			    (int)local->frame_id,
+			    (int)peer->frame_id,
+			    local->tick_anchor,
+			    peer->tick_anchor);
+		}
+		return;
+	}
+	anchor_diff = (local->tick_anchor >= peer->tick_anchor) ? (local->tick_anchor - peer->tick_anchor)
+								: (peer->tick_anchor - local->tick_anchor);
+	if (anchor_diff > 1U)
+	{
+		sSYNetPeerFrameCommitDiag.fc_pairing_fail++;
+		if (sSYNetPeerFrameCommitPairingStarvationCount < 0xFFFFU)
+		{
+			sSYNetPeerFrameCommitPairingStarvationCount++;
+		}
+		sSYNetPeerFrameCommitDiag.fc_pairing_starvation = sSYNetPeerFrameCommitPairingStarvationCount;
+		if (syNetPeerFrameCommitDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_PAIRING_FAIL validation=%u reason=tick_anchor anchor_local=%u anchor_peer=%u diff=%u\n",
+			    vtick,
+			    local->tick_anchor,
+			    peer->tick_anchor,
+			    anchor_diff);
+		}
+		if (sSYNetPeerFrameCommitPairingStarvationCount >= 4U)
+		{
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_PAIRING_STARVATION validation=%u count=%u — ending VS session\n",
+			    vtick,
+			    sSYNetPeerFrameCommitPairingStarvationCount);
+			syNetPeerSendVsSessionEndNotifyPeer();
+			syNetPeerStopVSSession();
+		}
+		return;
+	}
+	sSYNetPeerFrameCommitPairingStarvationCount = 0U;
+	if (syNetPeerFrameCommitDiagEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_COMPARE validation=%u frame_id=%d anchor_local=%u anchor_peer=%u\n",
+		    vtick,
+		    (int)local->frame_id,
+		    local->tick_anchor,
+		    peer->tick_anchor);
+	}
 	if (syNetFrameCommitTokensDesync(local, peer, &df, &di, &ds, &dt) != FALSE)
 	{
 		syNetDesyncClassifierOnFrameCommitTokenMismatch(vtick, local, peer);
 	}
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
 	{
+		sSYNetPeerFrameCommitDiag.fc_state_diverge++;
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
 	}
 }
@@ -7867,6 +8042,7 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 		return;
 	}
 	sSYNetPeerPacketsSent++;
+	sSYNetPeerFrameCommitDiag.fc_sent++;
 }
 
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
@@ -7913,6 +8089,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	sSYNetPeerFrameCommitDiag.fc_recv++;
 	sSYNetPeerFrameCommitPeerEver = TRUE;
 	sSYNetPeerFrameCommitValidationsSincePeer = 0U;
 	syNetDesyncClassifierOnFrameCommitPeerTokenReceived(validation_tick);
@@ -8191,6 +8368,93 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 					  (has_fighter_slots != FALSE) ? fighter_slot : NULL);
 }
 
+void syNetPeerTrySendResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatch_tick, u32 target_tick, u32 figh,
+				     u32 world, u32 item, u32 rng, u32 input_digest)
+{
+	u8 buf[SYNETPEER_RESIM_POST_BYTES];
+	u8 *cursor;
+	u32 chk;
+	int sent;
+
+	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
+	{
+		return;
+	}
+	cursor = buf;
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_RESIM_POST);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, epoch_id);
+	syNetPeerWriteU32(&cursor, load_tick);
+	syNetPeerWriteU32(&cursor, mismatch_tick);
+	syNetPeerWriteU32(&cursor, target_tick);
+	syNetPeerWriteU32(&cursor, figh);
+	syNetPeerWriteU32(&cursor, world);
+	syNetPeerWriteU32(&cursor, item);
+	syNetPeerWriteU32(&cursor, rng);
+	syNetPeerWriteU32(&cursor, input_digest);
+	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+	syNetPeerWriteU32(&cursor, chk);
+	sent = syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress);
+	if (sent == (int)sizeof(buf))
+	{
+		sSYNetPeerPacketsSent++;
+	}
+}
+
+static void syNetPeerHandleResimPostPacket(const u8 *buffer, s32 size)
+{
+	const u8 *c;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 epoch_id;
+	u32 load_tick;
+	u32 mismatch_tick;
+	u32 target_tick;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 input_digest;
+	u32 checksum;
+	u32 expected;
+
+	if (size != (s32)SYNETPEER_RESIM_POST_BYTES)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	c = buffer;
+	magic = syNetPeerReadU32(&c);
+	wire_version = syNetPeerReadU16(&c);
+	packet_type = syNetPeerReadU16(&c);
+	session_id = syNetPeerReadU32(&c);
+	epoch_id = syNetPeerReadU32(&c);
+	load_tick = syNetPeerReadU32(&c);
+	mismatch_tick = syNetPeerReadU32(&c);
+	target_tick = syNetPeerReadU32(&c);
+	figh = syNetPeerReadU32(&c);
+	world = syNetPeerReadU32(&c);
+	item = syNetPeerReadU32(&c);
+	rng = syNetPeerReadU32(&c);
+	input_digest = syNetPeerReadU32(&c);
+	checksum = syNetPeerReadU32(&c);
+	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
+	    (packet_type != (u16)SYNETPEER_PACKET_RESIM_POST) || (session_id != sSYNetPeerSessionID) ||
+	    (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	sSYNetPeerPacketsReceived++;
+	syNetRollbackOnPeerResimPostDigest(epoch_id, load_tick, mismatch_tick, target_tick, figh, world, item, rng,
+					   input_digest);
+}
+
 static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_begin, u32 win_len)
 {
 	SYNetFrameCommitToken tok;
@@ -8305,6 +8569,29 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 	syNetInputGetHistoryInputValueChecksumWindow(win_begin, win_length, checksums, &inp_all);
 
 	fighter_hash = syNetSyncHashBattleFighters();
+	{
+		const char *dual_env;
+		static int sDualHashProbeCache = -999;
+
+		if (sDualHashProbeCache == -999)
+		{
+			dual_env = getenv("SSB64_NETPLAY_VALIDATION_DUAL_HASH");
+			sDualHashProbeCache = ((dual_env != NULL) && (dual_env[0] != '\0') && (atoi(dual_env) != 0)) ? 1 : 0;
+		}
+		if (sDualHashProbeCache != 0)
+		{
+			u32 figh_full = syNetSyncHashBattleFightersFull();
+
+			if (figh_full != fighter_hash)
+			{
+				port_log(
+				    "SSB64 NetSync: validation_dual_hash tick=%u figh_light=0x%08X figh_full=0x%08X\n",
+				    tick,
+				    fighter_hash,
+				    figh_full);
+			}
+		}
+	}
 	map_hash = syNetSyncHashMapCollisionKinematics();
 	world_hash = syNetSyncHashRollbackWorld();
 	item_hash = syNetSyncHashActiveItemsForRollback();

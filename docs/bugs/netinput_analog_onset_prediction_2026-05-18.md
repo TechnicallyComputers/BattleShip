@@ -13,8 +13,9 @@
 ## Fix
 
 1. **`last_non_neutral`** on `SYNetInputSlot` — updated on strict remote confirm when sticks exceed predict deadband.
-2. **Analog onset prediction** — within capped `NEUTRAL_GUARD_TICKS` (default 2) after neutral confirm, if recent non-neutral history exists, predict minimal facing stick (`sign(axis) * ANALOG_ONSET_STICK_MAG`, default 12) instead of zero; true idle (no history) still predicts neutral.
-3. **Facing-aware significance** — `GameplayCorrectionIsSignificantEx` always significant for neutral→non-neutral, horizontal sign flip above threshold, and large per-axis delta (default 35).
+2. **Analog onset prediction** — within capped `NEUTRAL_GUARD_TICKS` (default 3) after neutral confirm, if recent non-neutral history exists, predict facing stick from source frame magnitude clamped (`ANALOG_ONSET_STICK_MAG`..`MAG_MAX`, default 28–80); if no history, peek last 4 remote confirmed rows for first partial analog instead of zero.
+3. **Facing-aware significance** — neutral→non-neutral, horizontal sign flip, large per-axis delta (default 40); **same-intent analog tolerance** (default 14): predicted vs confirmed both analog with matching axis signs and Δ≤14 does not queue GGPO resim (covers raw stick without quantize).
+4. **Default deadbands** — GGPO stick deadband 12 / predict 14 (was 4 / 6) for no-env gameplay.
 4. **Resim seed restore** — rewind `last_non_neutral` from confirmed history when preparing resim.
 
 Digital tap patch path unchanged (disabled during active rollback unless `PREDICTION_RECOVERY=1`).
@@ -23,8 +24,10 @@ Digital tap patch path unchanged (disabled during active rollback unless `PREDIC
 
 | Variable | Default | Role |
 |----------|---------|------|
-| `SSB64_NETPLAY_NEUTRAL_GUARD_TICKS` | 2 | Max ticks after neutral confirm to apply onset/zero policy (0–3) |
-| `SSB64_NETPLAY_ANALOG_ONSET_STICK_MAG` | 12 | Minimal predicted stick magnitude per signed axis (8–20) |
+| `SSB64_NETPLAY_NEUTRAL_GUARD_TICKS` | 3 | Max ticks after neutral confirm to apply onset/zero policy (0–3) |
+| `SSB64_NETPLAY_ANALOG_ONSET_STICK_MAG` | 28 | Onset floor magnitude per axis (8–80) |
+| `SSB64_NETPLAY_GGPO_STICK_DEADBAND` | 12 | Per-axis insignificant delta (bisect) |
+| `SSB64_NETPLAY_GGPO_STICK_DEADBAND_PREDICT` | 14 | Neutral test + predict compare slack |
 | `SSB64_NETPLAY_ANALOG_ONSET_LOOKBACK` | 60 | Max age of `last_non_neutral` for onset (8–120 sim ticks) |
 | `SSB64_NETPLAY_ANALOG_ONSET_FACING_THRESH` | 4 | Min \|sx\| for horizontal sign-flip significance |
 | `SSB64_NETPLAY_ANALOG_ONSET_LARGE_DELTA` | 35 | Per-axis delta always significant |

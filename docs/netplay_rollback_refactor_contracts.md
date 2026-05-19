@@ -54,6 +54,22 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 - **`LOAD_HASH_DRIFT`** after apply is a **hard failure** until restore is complete (item translate fix reduced one class; fighter/anim gaps may remain).
 - Ring depth **`SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES`** must cover practical rollback span (scan window 256 vs default ring 32 is a known sizing tension).
 
+## Hash partition map (integrity-first)
+
+All digests are **current-frame snapshots** (no trajectory). Consumers must not compare hashes across different functions.
+
+| Consumer | Fighter | Item |
+|----------|---------|------|
+| NetSync validation / frame-commit token | `syNetSyncHashBattleFighters()` (light) | `syNetSyncHashActiveItemsForRollback()` — XOR fold, **sorted by `gobj_id`** |
+| Rollback baseline / resim-complete / `RESIM_POST` | `syNetSyncHashBattleFightersFull()` | same rollback item hash |
+| Typed snapshot ring | per-slot subsystem hash in blob | full `SYNetRbSnapItemBlob` in [`port/net/sys/netrollbacksnapshot.c`](../port/net/sys/netrollbacksnapshot.c) |
+
+**Order dependence:** item rollback hash XORs per-item folds in `gobj_id` order. Snapshot restore guarantees per-`gobj_id` state, not linked-list order — post-load sim can reorder the list before hash time.
+
+**Optional probe:** `SSB64_NETPLAY_VALIDATION_DUAL_HASH=1` logs when light vs Full fighter hashes differ at NetSync validation (after item bisect).
+
+**Cross-peer resim boundary:** `SYNETPEER_PACKET_RESIM_POST` (type 25) carries `(epoch, load, mismatch, target)` + `figh/item/rng/input_digest`; compare when local forward resim completes and keys match pending peer token.
+
 ## Log signatures (regression)
 
 | Log | Interpretation |
@@ -65,6 +81,9 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 | `peer symmetric rollback` | Peer notice queued resim (transitional gameplay contract) |
 | `ROLLBACK_SYNC_SEND` / `ROLLBACK_SYNC_RECV` | Dedicated symmetric rollback notice packet (type 24) |
 | `RESIM_BASELINE_ECHO` | Passive peer echoed baseline digest without local resim episode |
+| `RESIM_POST_MATCH` / `RESIM_POST_DIVERGE` | Cross-peer post-resim digest handshake |
+| `FRAME_COMMIT_PAIRING_FAIL` | Same `frame_id` but `\|tick_anchor_local - tick_anchor_peer\| > 1` |
+| `FRAME_COMMIT_DIAG` | Shutdown counter summary (`fc_sent`, `fc_compared`, …) |
 | `STRICT MISS (R)` | Strict admission stall on missing exact wire row |
 
 ## Related bug write-ups

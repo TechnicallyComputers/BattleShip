@@ -86,6 +86,8 @@ extern void syNetSyncResetNetplayBattleClock(void);
 extern void syNetSyncOnNetplayBattleGo(void);
 extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);
 extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
+/* `SSB64_NETPLAY_ITEM_HASH_TRACE=1`: log GObj walk order + per-item fold at hash-compute time. */
+extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
 #endif
 
 #endif /* _SYNETSYNC_H_ */
