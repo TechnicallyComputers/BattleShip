@@ -380,9 +380,20 @@ static int PortInitImpl(int argc, char* argv[]) {
 		port_dl_ranges_init();
 	}
 
+	/* App identity comes from CMake (SSB64_APP_NAME = "BattleShip" for US,
+	 * "BattleShip-JP" for JP). The shortName scopes libultraship's
+	 * app-data directory (Context::GetAppDirectoryPath →
+	 * ~/Library/Application Support/<shortName>, $XDG_DATA_HOME/<shortName>,
+	 * %APPDATA%\<shortName>), so US and JP get fully separate
+	 * saves/config/logs/BattleShip.o2r and can never read each other's
+	 * ROM-derived data. The config filename stays fixed — it already
+	 * lives inside the per-app (bifurcated) directory. */
+#ifndef SSB64_APP_NAME
+#define SSB64_APP_NAME "BattleShip"
+#endif
 	sContext = Ship::Context::CreateUninitializedInstance(
-		"BattleShip",
-		"BattleShip",
+		SSB64_APP_NAME,
+		SSB64_APP_NAME,
 		"BattleShip.cfg.json"
 	);
 

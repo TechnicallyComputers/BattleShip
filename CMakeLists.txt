@@ -260,12 +260,29 @@ endif()
 #   src/libultra/ - Replaced by libultraship
 ################################################################################
 
+# User-facing application identity. The JP build is a SEPARATE application:
+# distinct binary name, distinct app-data dir (saves/config/logs/o2r), so a
+# user can have both installed and they never touch each other's ROM/o2r.
+# US keeps the historical "BattleShip" so existing installs / the in-app
+# updater / release links are unaffected. This single value drives the
+# binary OUTPUT_NAME, the libultraship Context name/shortName (which scopes
+# the app-data directory), and the per-platform package scripts.
+if(SSB64_VERSION STREQUAL "jp")
+    set(SSB64_APP_NAME "BattleShip-JP")
+else()
+    set(SSB64_APP_NAME "BattleShip")
+endif()
+message(STATUS "SSB64 app identity: ${SSB64_APP_NAME}")
+
 # Shared compile definitions used by both the decomp object library and the
 # main executable.
 set(SSB64_COMPILE_DEFS
     # Region (REGION_US/VERSION_US or REGION_JP/VERSION_JP per SSB64_VERSION)
     REGION_${SSB64_VERSION_UC}=1
     VERSION_${SSB64_VERSION_UC}=1
+    # App identity (binary name + libultraship app-data scope). Quoted so
+    # it expands to a C string literal at the use site.
+    SSB64_APP_NAME=\"${SSB64_APP_NAME}\"
 
     # Port mode
     NON_MATCHING=1
@@ -403,8 +420,9 @@ add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_DEBUG_TOOLS} $<TARGET_O
 
 # User-facing binary name. The CMake target keeps the historical
 # `ssb64` identifier (matches the repo, build dirs, internal symbols),
-# but the produced executable is `BattleShip` / `BattleShip.exe`.
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "BattleShip")
+# but the produced executable is `${SSB64_APP_NAME}` — `BattleShip`
+# (US) or `BattleShip-JP` (JP), so the two are distinct applications.
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${SSB64_APP_NAME}")
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set_target_properties(ssb64_game PROPERTIES

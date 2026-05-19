@@ -36,17 +36,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# ROM version: us (default) or jp — each is its own region-compiled
-# binary; CI matrixes over both. US keeps the historical artifact name
-# so existing links / the in-app updater are unaffected; JP gets "-jp".
+# ROM version: us (default) or jp. The JP build is a SEPARATE
+# application — own binary name, AppImage, app-data dir — so a user can
+# keep both and they never touch each other's ROM/o2r/saves. APP_NAME
+# mirrors CMake SSB64_APP_NAME / OUTPUT_NAME. US keeps the historical
+# "BattleShip" identity so existing links / the in-app updater are
+# unaffected.
 VER="${SSB64_VERSION:-us}"
 [[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
-[[ "$VER" == "us" ]] && ART_SUFFIX="" || ART_SUFFIX="-$VER"
 BUILD_DIR="$ROOT/build-bundle-linux-$VER"
 DIST_DIR="$ROOT/dist"
-APPDIR="$DIST_DIR/BattleShip.AppDir"
-APP_NAME="BattleShip"
-APPIMAGE="$DIST_DIR/${APP_NAME}${ART_SUFFIX}-x86_64.AppImage"
+[[ "$VER" == "jp" ]] && APP_NAME="BattleShip-JP" || APP_NAME="BattleShip"
+APPDIR="$DIST_DIR/$APP_NAME.AppDir"
+APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
@@ -85,7 +87,7 @@ rm -f "$F3D_O2R"
 [[ -f "$F3D_O2R" ]] || fail "f3d.o2r was not created"
 
 # ── 3. Locate built artifacts ──
-GAME_BIN="$BUILD_DIR/BattleShip"
+GAME_BIN="$BUILD_DIR/$APP_NAME"   # CMake OUTPUT_NAME == SSB64_APP_NAME
 TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 [[ -x "$GAME_BIN" ]] || fail "BattleShip binary not found at $GAME_BIN"
 [[ -x "$TORCH_BIN" ]] || fail "torch binary not found at $TORCH_BIN"
@@ -160,7 +162,7 @@ EOF
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=BattleShip
+Name=$APP_NAME
 Exec=$APP_NAME
 Icon=$APP_NAME
 Categories=Game;ArcadeGame;
@@ -278,5 +280,5 @@ else
     printf '   Install appimagetool from https://github.com/AppImage/AppImageKit/releases\n'
     printf '   then run: appimagetool "%s" "%s"\n' "$APPDIR" "$APPIMAGE"
 fi
-printf '   App-data: $XDG_DATA_HOME/BattleShip/ (or ~/.local/share/BattleShip/)\n'
+printf '   App-data: $XDG_DATA_HOME/%s/ (or ~/.local/share/%s/)\n' "$APP_NAME" "$APP_NAME"
 printf '   First launch will prompt for your ROM via the ImGui wizard.\n'

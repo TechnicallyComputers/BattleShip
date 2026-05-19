@@ -30,16 +30,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# ROM version to build: us (default) or jp. Each is its own
-# region-compiled binary; CI matrixes over both. US keeps the
-# historical artifact name (BattleShip.dmg) so existing links / the
-# in-app updater are unaffected; JP gets a "-jp" suffix.
+# ROM version: us (default) or jp. The JP build is a SEPARATE
+# application — its own binary name, .app, .dmg, app-data dir and
+# bundle id — so a user can keep both installed and they never touch
+# each other's ROM/o2r/saves. APP_NAME mirrors CMake SSB64_APP_NAME /
+# OUTPUT_NAME (BattleShip vs BattleShip-JP); the built binary is named
+# accordingly. US keeps the historical "BattleShip" identity so existing
+# installs / the in-app updater / release links are unaffected.
 VER="${SSB64_VERSION:-us}"
 [[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
-[[ "$VER" == "us" ]] && ART_SUFFIX="" || ART_SUFFIX="-$VER"
 BUILD_DIR="$ROOT/build-bundle-$VER"
 DIST_DIR="$ROOT/dist"
-APP_NAME="BattleShip"
+if [[ "$VER" == "jp" ]]; then
+    APP_NAME="BattleShip-JP"
+    APP_BUNDLE_ID="com.ssb-decomp-re.battleship-jp"
+else
+    APP_NAME="BattleShip"
+    APP_BUNDLE_ID="com.ssb-decomp-re.battleship"
+fi
 APP="$DIST_DIR/$APP_NAME.app"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -85,7 +93,9 @@ rm -f "$F3D_O2R"
 [[ -f "$F3D_O2R" ]] || fail "f3d.o2r was not created"
 
 # ── 2. Locate built artifacts ──
-SSB64_BIN="$BUILD_DIR/BattleShip"
+# CMake's OUTPUT_NAME == SSB64_APP_NAME == $APP_NAME, so the binary is
+# named BattleShip (US) or BattleShip-JP (JP).
+SSB64_BIN="$BUILD_DIR/$APP_NAME"
 TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 [[ -x "$SSB64_BIN" ]] || fail "BattleShip binary not found at $SSB64_BIN"
 [[ -x "$TORCH_BIN" ]] || fail "torch binary not found at $TORCH_BIN"
@@ -163,9 +173,9 @@ cat > "$APP/Contents/Info.plist" <<EOF
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>                <string>BattleShip</string>
-    <key>CFBundleDisplayName</key>         <string>BattleShip</string>
-    <key>CFBundleIdentifier</key>          <string>com.ssb-decomp-re.battleship</string>
+    <key>CFBundleName</key>                <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>          <string>$APP_BUNDLE_ID</string>
     <key>CFBundleVersion</key>             <string>1.0</string>
     <key>CFBundleShortVersionString</key>  <string>1.0</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>
@@ -298,10 +308,10 @@ codesign --verify --deep --strict "$APP" \
 # single multi-representation TIFF — Apple's documented mechanism for
 # resolution-independent DMG backgrounds; Finder picks the right rep
 # based on the user's display.
-DMG_VOLNAME="BattleShip"
+DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
-DMG="$DIST_DIR/$APP_NAME$ART_SUFFIX.dmg"
+DMG="$DIST_DIR/$APP_NAME.dmg"
 DMG_STAGE="$DIST_DIR/dmg-stage"
 DMG_BG_DIR="$DIST_DIR/dmg-bg"
 
@@ -355,5 +365,5 @@ printf '\n\033[32m✓ Bundle: %s (%s KB)\033[0m\n' "$APP" "$APP_KB"
 printf '\033[32m✓ DMG:    %s (%s KB)\033[0m\n' "$DMG" "$DMG_KB"
 printf '   To run from the bundle:        open "%s"\n' "$APP"
 printf '   To install from the DMG:       open "%s"  (then drag to Applications)\n' "$DMG"
-printf '   App-data: ~/Library/Application Support/BattleShip/\n'
+printf '   App-data: ~/Library/Application Support/%s/\n' "$APP_NAME"
 printf '   First launch will prompt for your ROM via the ImGui wizard.\n'
