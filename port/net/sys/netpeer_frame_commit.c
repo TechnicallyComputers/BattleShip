@@ -57,7 +57,7 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	out->slot_binding_hash = syNetFrameCommitHashSlotBindings(local_sim_slot, remote_sim_slot, extra_local_sim_slot,
 								  peer_sender_count, peer_sender_slots);
 	out->tick_anchor = syNetInputGetTick();
-	out->fighter_digest = syNetSyncHashBattleFighters();
+	out->fighter_digest = syNetSyncHashBattleFightersFull();
 	out->world_digest = syNetSyncHashRollbackWorld();
 	out->item_digest = syNetSyncHashActiveItemsForRollback();
 	out->rng_digest = syNetSyncHashRNGSeed();

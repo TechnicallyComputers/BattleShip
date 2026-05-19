@@ -7315,13 +7315,28 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				}
 				break;
 		}
-	}
-	if ((size > 0) && (size < 64))
-	{
-		port_log(
-		    "SSB64 NetPeer: ingress_unknown_small size=%d magic=0x%08X wire=%u type=%u sess=%u expect_sess=%u role=%s\n",
-		    size, (unsigned int)ctrl_magic, (unsigned int)ctrl_wire, (unsigned int)ctrl_type, (unsigned int)ctrl_session,
-		    (unsigned int)sSYNetPeerSessionID, (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client");
+		/*
+		 * Valid SSB64 header but not an INPUT bundle — do not fall through to the INPUT size gate
+		 * (drops FRAME_COMMIT / RESIM_POST / ROLLBACK_SYNC before handlers run).
+		 */
+		if ((size != (s32)SYNETPEER_PACKET_BYTES_LEGACY_V2) && (size != (s32)SYNETPEER_PACKET_BYTES_LEGACY_V3) &&
+		    (size != (s32)SYNETPEER_PACKET_BYTES_V4) && (size != (s32)SYNETPEER_PACKET_BYTES_V5))
+		{
+			if ((size > 0) && (size < 64))
+			{
+				port_log(
+				    "SSB64 NetPeer: ingress_unknown_small size=%d magic=0x%08X wire=%u type=%u sess=%u expect_sess=%u role=%s\n",
+				    size,
+				    (unsigned int)ctrl_magic,
+				    (unsigned int)ctrl_wire,
+				    (unsigned int)ctrl_type,
+				    (unsigned int)ctrl_session,
+				    (unsigned int)sSYNetPeerSessionID,
+				    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client");
+			}
+			sSYNetPeerPacketsDropped++;
+			return;
+		}
 	}
 #endif
 	is_dual = FALSE;
@@ -7788,6 +7803,57 @@ typedef struct SYNetPeerFrameCommitDiag
 
 static SYNetPeerFrameCommitDiag sSYNetPeerFrameCommitDiag;
 static u32 sSYNetPeerFrameCommitPairingStarvationCount;
+#define SYNETPEER_POST_RECOVERY_CONVERGENCE_EPOCHS 2U
+static sb32 sSYNetPeerPostRecoveryConvergenceWatch;
+static u32 sSYNetPeerConvergenceMatchEpochs;
+static u32 sSYNetPeerConvergenceFailEpochs;
+
+void syNetPeerArmPostRecoveryConvergenceWatch(void)
+{
+	sSYNetPeerPostRecoveryConvergenceWatch = TRUE;
+	sSYNetPeerConvergenceMatchEpochs = 0U;
+	sSYNetPeerConvergenceFailEpochs = 0U;
+}
+
+static void syNetPeerNotePostRecoveryConvergenceEpoch(sb32 matched, u32 validation_tick)
+{
+	if (sSYNetPeerPostRecoveryConvergenceWatch == FALSE)
+	{
+		return;
+	}
+	if (matched != FALSE)
+	{
+		if (sSYNetPeerConvergenceMatchEpochs < 0xFFFFU)
+		{
+			sSYNetPeerConvergenceMatchEpochs++;
+		}
+		sSYNetPeerConvergenceFailEpochs = 0U;
+		if (sSYNetPeerConvergenceMatchEpochs >= SYNETPEER_POST_RECOVERY_CONVERGENCE_EPOCHS)
+		{
+			port_log(
+			    "SSB64 NetPeer: POST_RECOVERY_CONVERGENCE_OK validation=%u epochs=%u — watch cleared\n",
+			    validation_tick,
+			    sSYNetPeerConvergenceMatchEpochs);
+			sSYNetPeerPostRecoveryConvergenceWatch = FALSE;
+		}
+		return;
+	}
+	if (sSYNetPeerConvergenceFailEpochs < 0xFFFFU)
+	{
+		sSYNetPeerConvergenceFailEpochs++;
+	}
+	sSYNetPeerConvergenceMatchEpochs = 0U;
+	if (sSYNetPeerConvergenceFailEpochs >= SYNETPEER_POST_RECOVERY_CONVERGENCE_EPOCHS)
+	{
+		port_log(
+		    "SSB64 NetPeer: POST_RECOVERY_CONVERGENCE_FAIL validation=%u fail_epochs=%u — ending VS session\n",
+		    validation_tick,
+		    sSYNetPeerConvergenceFailEpochs);
+		sSYNetPeerPostRecoveryConvergenceWatch = FALSE;
+		syNetPeerSendVsSessionEndNotifyPeer();
+		syNetPeerStopVSSession();
+	}
+}
 
 static sb32 syNetPeerFrameCommitDiagEnabled(void)
 {
@@ -7886,6 +7952,9 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerFrameCommitValidationsSincePeer = 0U;
 	sSYNetPeerFrameCommitPeerEver = FALSE;
 	sSYNetPeerFrameCommitPairingStarvationCount = 0U;
+	sSYNetPeerPostRecoveryConvergenceWatch = FALSE;
+	sSYNetPeerConvergenceMatchEpochs = 0U;
+	sSYNetPeerConvergenceFailEpochs = 0U;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
 
@@ -7958,6 +8027,7 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			    local->tick_anchor,
 			    peer->tick_anchor);
 		}
+		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		return;
 	}
 	anchor_diff = (local->tick_anchor >= peer->tick_anchor) ? (local->tick_anchor - peer->tick_anchor)
@@ -7988,6 +8058,7 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			syNetPeerSendVsSessionEndNotifyPeer();
 			syNetPeerStopVSSession();
 		}
+		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		return;
 	}
 	sSYNetPeerFrameCommitPairingStarvationCount = 0U;
@@ -8007,8 +8078,11 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
 	{
 		sSYNetPeerFrameCommitDiag.fc_state_diverge++;
+		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
+		return;
 	}
+	syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
 }
 
 static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrameCommitToken *t)
