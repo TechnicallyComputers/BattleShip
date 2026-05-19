@@ -312,6 +312,20 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
+# Hi-res texture pack support is US-only. Pack PNGs are addressed by
+# CRC32-IEEE of the decoded RGBA8 buffer that came out of the US ROM
+# fast-path; JP rendering hits different hash inputs (different glyph
+# art for VS-records, JP-only menus, plus palette/sprite nuances on
+# shared assets), so a US-built pack would silently miss on JP and no
+# JP-only pack has been authored. Drop port/hires/ from the JP build
+# entirely and gate the port.cpp / PortMenu.cpp integration on
+# PORT_HIRES_ENABLED.
+if(SSB64_VERSION STREQUAL "us")
+    list(APPEND SSB64_COMPILE_DEFS PORT_HIRES_ENABLED=1)
+else()
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
+endif()
+
 ################################################################################
 # Decomp C code — OBJECT library with custom include/ shadowing system headers
 ################################################################################

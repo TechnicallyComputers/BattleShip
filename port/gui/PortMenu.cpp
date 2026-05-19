@@ -9,7 +9,9 @@
 
 #include "Compat.h"
 #include "../enhancements/enhancements.h"
+#ifdef PORT_HIRES_ENABLED
 #include "../hires/HiResPack.h"
+#endif
 
 #include <fast/backends/gfx_rendering_api.h>
 #include <fast/postprocess/PostProcessSourceLoader.h>
@@ -1128,6 +1130,7 @@ void PortMenu::AddMenuAssets() {
     AddWidget(path, fmt::format("Main archive: {}", Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r")),
               WIDGET_TEXT);
 
+#ifdef PORT_HIRES_ENABLED
     path.sidebarName = "Mods";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Assets", "Mods", 1);
@@ -1207,6 +1210,7 @@ void PortMenu::AddMenuAssets() {
             SDL_OpenURL(std::string("file:///" + fs::absolute(missPath).string()).c_str());
         })
         .Options(ButtonOptions().Tooltip("Opens the hires_miss_dump/ folder where native-key dumps land."));
+#endif // PORT_HIRES_ENABLED
 }
 
 void PortMenu::AddMenuAbout() {
