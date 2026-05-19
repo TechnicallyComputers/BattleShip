@@ -25,6 +25,9 @@
  * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
  * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Anim-only drift
  * (fighter/world/RNG/item/wpn/map/cam match) always soft-continues — figatree can advance during load before verify.
+ * Symmetric episodes: wire-locked resim target, post-load baseline gate before forward sim, no snapshot
+ * save during resim/episode cooldown. Out of scope: full snapshot exchange, pure independent GGPO without
+ * symmetric notify, hard-fail on anim-only load drift. See `docs/netplay_rollback_test_matrix.md`.
  * Load failure restores a pre-load emergency snapshot and stops the VS session. See
  * `docs/netplay_rollback_refactor_contracts.md`.
  *

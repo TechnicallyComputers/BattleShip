@@ -4531,6 +4531,21 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			return;
 		}
 	}
+	if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
+	{
+		u32 remote_sim_frontier;
+		u32 rollback_sim_cap;
+
+		remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+		rollback_sim_cap = remote_sim_frontier + syNetPeerGetCommittedInputDelay() + prediction_window;
+		if (sim_tick > rollback_sim_cap)
+		{
+			syNetPeerPumpIngressTransport("rollback_frontier_cap");
+			out->advance = FALSE;
+			out->hold_reason = 'R';
+			return;
+		}
+	}
 	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U))
 	{
 		sb32 predict_ok = FALSE;
@@ -6900,10 +6915,28 @@ void syNetPeerSendLocalInput(void)
 #if defined(PORT)
 	u8 buffer[SYNETPEER_PACKET_RECV_MAX];
 	u32 size;
+	static u32 sLastInputSendSimTick = ~(u32)0;
+	static u32 sInputSendsThisSimTick;
+	u32 sim_tick;
 
 	if ((syNetPeerRequireInputBindStrict() != FALSE) && (syNetPeerInputBindIsComplete() == FALSE))
 	{
 		return;
+	}
+	/* While sim is stalled (strict MISS / skew hold), cap redundant INPUT spam per sim tick. */
+	sim_tick = syNetInputGetTick();
+	if (sim_tick == sLastInputSendSimTick)
+	{
+		if (sInputSendsThisSimTick >= 3U)
+		{
+			return;
+		}
+		sInputSendsThisSimTick++;
+	}
+	else
+	{
+		sLastInputSendSimTick = sim_tick;
+		sInputSendsThisSimTick = 0U;
 	}
 	syNetPeerBuildPacket(buffer, &size);
 
@@ -9766,6 +9799,22 @@ static void syNetPeerRefreshSkewPacingLeadMaxFromEnv(void)
 		v = 10000;
 	}
 	sSYNetPeerSkewPacingLeadMaxTicks = (u32)v;
+}
+
+void syNetPeerApplyAutoNegotiatedSkewLeadMax(u32 lead_max_ticks)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return;
+	}
+	if (lead_max_ticks > 10000U)
+	{
+		lead_max_ticks = 10000U;
+	}
+	sSYNetPeerSkewPacingLeadMaxTicks = lead_max_ticks;
 }
 
 static void syNetPeerRefreshSkewBehindMaxFromEnv(void)

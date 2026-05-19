@@ -22,7 +22,10 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 
 - **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`.
 - **Conservative remote button prediction** — remote human slots: hold-last sticks, buttons default 0 (`SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` for legacy hold-last).
-- **Symmetric peer notices** — default **diag-only** when phase_lock prediction window ≥ 2; set `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=1` for legacy follower coupling.
+- **Symmetric resim execution** — wire-locked `target_tick` when symmetric follower is active (no per-peer `highest_remote + D + 1` shrink); post-load **baseline gate** (`figh`/`world`/`item`/`rng`) before `AdvanceResimBudget`; skip snapshot save during `resim_pending` / episode cooldown; cosmetic RNG reset on snapshot load; confirmed-only remote rows during resim (no predicted fallback). See [`netrollback_rng_item_identity_drift_2026-05-17.md`](bugs/netrollback_rng_item_identity_drift_2026-05-17.md).
+- **Symmetric peer notices** — auto session enables follower resim (`symmetric_diag_only=0`); `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only.
+
+**Out of scope (longer term):** full snapshot byte exchange; disabling symmetric notify for pure independent GGPO until independent detection is proven symmetric; hard-blocking resim on anim-only `LOAD_HASH_DRIFT` (soft-continue policy remains). See [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md#out-of-scope-longer-term).
 
 **Transitional / unsafe today:**
 
@@ -32,7 +35,7 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 ## Rollback trigger (target)
 
 - **Local and input-driven** (GekkoNet `GetMinIncorrectFrame` style): rollback when confirmed input proves a prior prediction wrong.
-- **Peer symmetric rollback notices** (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC`, INPUT `peer_connect_status` padding) are **transitional**. Target: diagnostic only or removed; peers must not rewind because another peer mispredicted.
+- **Peer symmetric rollback notices** — still the **coordination contract** for matching `mismatch_tick` / `target_tick`. Not a substitute for independent per-peer mismatch detection until that path is proven to pick the same span without notify.
 
 ## Resimulation (target)
 
