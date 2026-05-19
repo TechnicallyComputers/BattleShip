@@ -134,6 +134,7 @@ FetchContent_Declare(
     PATCH_COMMAND  ${CMAKE_COMMAND}
                    -DCAPSTONE_TMPL=cmake/capstone.cmake.in
                    -DFUNCHOOK_CML=CMakeLists.txt
+                   -DFUNCHOOK_UNIX=src/funchook_unix.c
                    -P ${CMAKE_SOURCE_DIR}/cmake/funchook_capstone_bump.cmake
 )
 FetchContent_MakeAvailable(funchook)
@@ -553,6 +554,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
 endif()
+# NOTE (APPLE): the mod hook backend needs __TEXT max-protection = rwx so
+# the JIT-entitled process can flip an engine code page writable to patch
+# a prologue. `-Wl,-segprot,__TEXT,rwx,r-x` would do it, but Apple's new
+# linker (ld-prime, ld-12xx) silently ignores -segprot. It's instead done
+# as a deterministic post-link Mach-O edit below (before codesign).
 
 ################################################################################
 # TCC mod scripting: export the engine's full symbol table so libtcc-compiled
@@ -714,6 +720,36 @@ if(NOT DISABLE_SCRIPTING)
             VERBATIM
         )
     endif()
+endif()
+
+################################################################################
+# macOS: re-sign with JIT entitlements so the mod loader's hook backend
+# (funchook) can patch engine __TEXT at runtime.
+#
+# Apple Silicon enforces W^X on code-signed text pages: funchook's inline
+# detour mprotect(RWX) is denied ("Failed to unprotect memory ...
+# Permission denied") on a linker-/ad-hoc-signed binary with no
+# entitlements. Re-signing ad-hoc WITH the JIT entitlements lifts that —
+# the cs.allow-* keys are honored for ad-hoc signatures. Must run LAST
+# (any later binary mutation would invalidate the signature). No-op on
+# Intel macs too, but harmless; gated to APPLE.
+################################################################################
+
+if(APPLE)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMENT "macOS: __TEXT->rwx maxprot + ad-hoc re-sign w/ JIT entitlements (mod hook backend)"
+        # 1. Raise __TEXT max-protection to rwx so the hook backend can
+        #    flip an engine code page writable at runtime.
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/macho_text_rwx.py
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+        # 2. Re-sign LAST (seals the modified binary). The cs.allow-*
+        #    entitlements are honored for ad-hoc signatures.
+        COMMAND codesign --force --sign - --timestamp=none
+            --entitlements "${CMAKE_SOURCE_DIR}/cmake/macos_entitlements.plist"
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+        VERBATIM
+    )
 endif()
 
 ################################################################################
