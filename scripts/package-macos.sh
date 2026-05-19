@@ -30,9 +30,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT/build-bundle"
+# ROM version: us (default) or jp. The JP build is a SEPARATE
+# application — its own binary name, .app, .dmg, app-data dir and
+# bundle id — so a user can keep both installed and they never touch
+# each other's ROM/o2r/saves. APP_NAME mirrors CMake SSB64_APP_NAME /
+# OUTPUT_NAME (BattleShip vs BattleShip-JP); the built binary is named
+# accordingly. US keeps the historical "BattleShip" identity so existing
+# installs / the in-app updater / release links are unaffected.
+VER="${SSB64_VERSION:-us}"
+[[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
+BUILD_DIR="$ROOT/build-bundle-$VER"
 DIST_DIR="$ROOT/dist"
-APP_NAME="BattleShip"
+if [[ "$VER" == "jp" ]]; then
+    APP_NAME="BattleShip-JP"
+    APP_BUNDLE_ID="com.ssb-decomp-re.battleship-jp"
+else
+    APP_NAME="BattleShip"
+    APP_BUNDLE_ID="com.ssb-decomp-re.battleship"
+fi
 APP="$DIST_DIR/$APP_NAME.app"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -62,6 +77,7 @@ step "Configuring release build with NON_PORTABLE=ON"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
+    -DSSB64_VERSION="$VER" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -77,7 +93,9 @@ rm -f "$F3D_O2R"
 [[ -f "$F3D_O2R" ]] || fail "f3d.o2r was not created"
 
 # ── 2. Locate built artifacts ──
-SSB64_BIN="$BUILD_DIR/BattleShip"
+# CMake's OUTPUT_NAME == SSB64_APP_NAME == $APP_NAME, so the binary is
+# named BattleShip (US) or BattleShip-JP (JP).
+SSB64_BIN="$BUILD_DIR/$APP_NAME"
 TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 [[ -x "$SSB64_BIN" ]] || fail "BattleShip binary not found at $SSB64_BIN"
 [[ -x "$TORCH_BIN" ]] || fail "torch binary not found at $TORCH_BIN"
@@ -85,14 +103,14 @@ TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 # ── 3. Assemble the bundle ──
 step "Assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/yamls/us"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/yamls/$VER"
 
 cp "$SSB64_BIN"  "$APP/Contents/MacOS/$APP_NAME"
 cp "$TORCH_BIN"  "$APP/Contents/MacOS/torch"
 cp "$F3D_O2R"    "$APP/Contents/Resources/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APP/Contents/Resources/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APP/Contents/Resources/config.yml"
-cp "$ROOT/yamls/us/"*.yml "$APP/Contents/Resources/yamls/us/"
+cp "$ROOT/yamls/$VER/"*.yml "$APP/Contents/Resources/yamls/$VER/"
 cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
@@ -155,9 +173,9 @@ cat > "$APP/Contents/Info.plist" <<EOF
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>                <string>BattleShip</string>
-    <key>CFBundleDisplayName</key>         <string>BattleShip</string>
-    <key>CFBundleIdentifier</key>          <string>com.ssb-decomp-re.battleship</string>
+    <key>CFBundleName</key>                <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>          <string>$APP_BUNDLE_ID</string>
     <key>CFBundleVersion</key>             <string>1.0</string>
     <key>CFBundleShortVersionString</key>  <string>1.0</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>
@@ -225,6 +243,33 @@ for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
     fi
 done
 
+# ── 4a. De-duplicate LC_RPATH ──
+# dyld aborts the process at load with "duplicate LC_RPATH '<path>'" if a
+# Mach-O carries the same rpath twice. The libultraship/CMake macOS link
+# already emits `@executable_path/../Frameworks/`, and dylibbundler's
+# rewrite pass adds the same path again → the .app crashes immediately on
+# launch (no main(), just the dyld abort — verified on the JP bundle).
+# Collapse any duplicates to a single entry. install_name_tool
+# -delete_rpath removes one occurrence per call; loop until one remains.
+# Done before codesign so the subsequent `codesign --force` re-seals the
+# final load commands. Version-independent (affects US and JP equally).
+step "De-duplicating LC_RPATH load commands"
+for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
+    rp='@executable_path/../Frameworks/'
+    count_rpath() {
+        otool -l "$1" | awk -v p="$rp" '
+            /^[[:space:]]*cmd LC_RPATH$/ { in_rp=1; next }
+            in_rp && /^[[:space:]]*path / { if ($2 == p) c++; in_rp=0 }
+            END { print c+0 }'
+    }
+    n="$(count_rpath "$bin")"
+    while [[ "${n:-0}" -gt 1 ]]; do
+        install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null || break
+        n=$((n - 1))
+        printf '  %s: removed a duplicate LC_RPATH (%d left)\n' "$(basename "$bin")" "$n"
+    done
+done
+
 # ── 4b. Adhoc-sign the bundle as a unit ──
 # Modern Gatekeeper (Sequoia / 15.x+) flags downloaded adhoc-signed
 # bundles as "damaged" if the signature isn't deep enough to cover
@@ -263,7 +308,7 @@ codesign --verify --deep --strict "$APP" \
 # single multi-representation TIFF — Apple's documented mechanism for
 # resolution-independent DMG backgrounds; Finder picks the right rep
 # based on the user's display.
-DMG_VOLNAME="BattleShip"
+DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
 DMG="$DIST_DIR/$APP_NAME.dmg"
@@ -280,12 +325,6 @@ mkdir -p "$DMG_STAGE" "$DMG_BG_DIR"
 # user should see in the DMG window. The Applications shortcut is
 # injected by --app-drop-link, not staged here.
 cp -R "$APP" "$DMG_STAGE/"
-
-# Bundle the standalone Python save editor next to the .app so users
-# can edit ~/Library/Application Support/BattleShip/ssb64_save.bin
-# (binary save game format documented in the script's docstring).
-# Pure stdlib, no install needed — runs as `python3 save_editor.py …`.
-cp "$ROOT/tools/save_editor.py" "$DMG_STAGE/save_editor.py"
 
 sips -Z $((DMG_BG_LONG * 2)) "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg@2x.png" >/dev/null
 sips -Z $DMG_BG_LONG          "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg.png"    >/dev/null
@@ -326,5 +365,5 @@ printf '\n\033[32m✓ Bundle: %s (%s KB)\033[0m\n' "$APP" "$APP_KB"
 printf '\033[32m✓ DMG:    %s (%s KB)\033[0m\n' "$DMG" "$DMG_KB"
 printf '   To run from the bundle:        open "%s"\n' "$APP"
 printf '   To install from the DMG:       open "%s"  (then drag to Applications)\n' "$DMG"
-printf '   App-data: ~/Library/Application Support/BattleShip/\n'
+printf '   App-data: ~/Library/Application Support/%s/\n' "$APP_NAME"
 printf '   First launch will prompt for your ROM via the ImGui wizard.\n'

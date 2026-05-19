@@ -1,17 +1,21 @@
 #pragma once
 
-#define RELOC_FILE_COUNT 2132
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
- * Maps file_id (0–2131) to the resource path in the .o2r archive.
- * Auto-generated from yamls/us/reloc_*.yml by tools/generate_reloc_table.py.
+/*
+ * Selector shim — the actual RELOC_FILE_COUNT define and the
+ * gRelocFileTable[] extern live in RelocFileTable.<version>.h, generated
+ * per-version by tools/generate_reloc_table.py. This mirrors the decomp's
+ * include/reloc_data.h design: switching versions only invalidates the
+ * version-specific header, so US and JP generated tables coexist in the
+ * source tree and separate build dirs never fight over one file.
+ *
+ * REGION_US / REGION_JP come from SSB64_COMPILE_DEFS (CMake, driven by
+ * SSB64_VERSION).
  */
-extern const char* const gRelocFileTable[RELOC_FILE_COUNT];
 
-#ifdef __cplusplus
-}
+#if defined(REGION_US)
+#include "RelocFileTable.us.h"
+#elif defined(REGION_JP)
+#include "RelocFileTable.jp.h"
+#else
+#error "RelocFileTable.h included without REGION_US or REGION_JP defined"
 #endif
