@@ -47,6 +47,7 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Peer diverge detail | `SSB64_NETPLAY_PEER_DIVERGE_DETAIL=1` or `STATE_DETAIL_DIAG>=1`; field-level `PEER_DIVERGE_DIFF` on `PEER_SNAPSHOT_DIVERGE` |
 | Peer diverge resync window | `SSB64_NETPLAY_PEER_DIVERGE_RESYNC_TICKS=4` (default 2) before hard abort vs storm resync |
 | Hash transition log | `SSB64_NETPLAY_HASH_TRANSITION_LOG=1` (local-only; pairs with `SIM_STATE_TICK_INTERVAL=1`) |
+| Joint translate bisect | `SSB64_NETPLAY_JOINT_TRANSLATE_TRACE=1` (+ optional `_SLOT` / `_FKIND`); forward-sim only; `joint_translate_trigger` on first Full `figh` step |
 | GC traversal diag | `SSB64_NETPLAY_GC_TRAVERSAL_DIAG=2` (`gch` + `pairs=` on NetSync lines; non-zero after Phase 3) |
 | GObj eject trace | `SSB64_NETPLAY_GOBJ_EJECT_TRACE=1`, `GOBJ_EJECT_RING=32`; `RING_DUMP` on peer diverge |
 | Mixed input quantize | `SSB64_NETPLAY_MIXED_INPUT_QUANTIZE=1` (default); `=0` to send raw partial keyboard sticks |

@@ -3718,6 +3718,15 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 		    (int)stored_yaku_n,
 		    live.map);
 	}
+	{
+		u32 slot_anim = syNetRbSnapshotGetSlotHashAnimation(load_tick);
+
+		port_log(
+		    "SSB64 NetRollback: fighter_anim post-load tick=%u live_anim=0x%08X slot_anim=0x%08X\n",
+		    load_tick,
+		    live.animation,
+		    slot_anim);
+	}
 	port_log(
 	    "SSB64 NetRollback: resim baseline (post-load tick=%u) live figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X | slot figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X\n",
 	    load_tick,

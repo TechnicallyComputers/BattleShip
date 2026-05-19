@@ -81,6 +81,11 @@ extern void syNetSyncLogWorldHashDiff(const char *tag, u32 tick, const SYNetSync
 extern s32 syNetSyncPeerDivergeDetailEnabled(void);
 extern void syNetSyncLogRollbackWorldDetail(const char *tag, u32 tick);
 extern void syNetSyncLogFighterDetail(const char *tag, u32 tick);
+/* `SSB64_NETPLAY_JOINT_TRANSLATE_TRACE=1`: per-joint translate + Full-only scalars each forward-sim tick. */
+extern void syNetSyncResetJointTranslateTraceSession(void);
+extern void syNetSyncRefreshJointTranslateTraceEnvCache(void);
+extern void syNetSyncLogFighterJointTranslateTrace(u32 tick);
+extern void syNetSyncJointTranslateTraceOnFighStep(u32 tick, u32 figh);
 /* Netplay: battle clock tied to authoritative sim tick (not wall-clock scheduler tics). */
 extern void syNetSyncResetNetplayBattleClock(void);
 extern void syNetSyncOnNetplayBattleGo(void);

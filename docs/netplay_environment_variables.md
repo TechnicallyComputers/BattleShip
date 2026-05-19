@@ -170,6 +170,7 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_NETPLAY_PACING_LOG`**
 - **`SSB64_NETPLAY_SIM_TRACE_NEEDLE_MIN`**, **`SSB64_NETPLAY_SIM_TRACE_NEEDLE_MAX`**, **`SSB64_NETPLAY_SIM_TRACE_NEEDLE_LEVEL`**
 - **`SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL`**
+- **`SSB64_NETPLAY_JOINT_TRANSLATE_TRACE`** — When **`1`**, each **live forward-sim** tick (`rb_applied=0`, not resimming) logs one `joint_translate` line per non-null `fp->joints[ji]` with translate hashes (same encoding as Full `figh`), per-joint `anim_frame`/`anim_wait`, and Full-only fighter scalars (`motion_attack_id`, `hitstatus`, `invincible_tics`, `is_shield`, `is_hitstun`) on the same line. Optional **`SSB64_NETPLAY_JOINT_TRANSLATE_TRACE_SLOT`** / **`_FKIND`** restrict which fighters are logged. On the **first** forward-sim `figh` (`syNetSyncHashBattleFightersFull`) change per battle, emits one `joint_translate_trigger` bookmark (`prev_tick` + old/new hash); session resets on battle clock reset. No tick window — intentionally noisy. Diff host vs client logs at `prev_tick` and `tick` after the trigger to find the first diverging `ji`.
 
 ---
 
