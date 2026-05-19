@@ -157,14 +157,14 @@ step "Configuring CMake ($GEN, $CONFIG)"
 cmake -S "$WT_DIR" -B "$WT_DIR/build" -G "$GEN" -DCMAKE_BUILD_TYPE="$CONFIG"
 
 # ── 5b. Symlink extracted assets ──
-# Torch extraction (BattleShip.o2r, f3d.o2r, ssb64.o2r) is slow and produces
-# bytewise-identical output for a given baserom. The binary loads them from
-# its CWD on launch — without them, the game prints "archive ... does not
-# exist" and exits. Reuse the main tree's extracted assets via symlink so
-# parallel worktrees don't each re-run extraction.
-step "Symlinking extracted assets (BattleShip.o2r / f3d.o2r / ssb64.o2r)"
+# Torch extraction (BattleShip.o2r) is slow and produces bytewise-identical
+# output for a given baserom. The binary loads BattleShip.o2r (ROM-derived)
+# and f3d.o2r (shaders) from its CWD on launch — without them the game
+# prints "archive ... does not exist" and exits. Reuse the main tree's
+# extracted assets via symlink so parallel worktrees don't each re-extract.
+step "Symlinking extracted assets (BattleShip.o2r / f3d.o2r)"
 linked_any=0
-for asset in BattleShip.o2r f3d.o2r ssb64.o2r; do
+for asset in BattleShip.o2r f3d.o2r; do
     src=""
     for cand in "$ROOT/build/$asset" "$ROOT/$asset"; do
         if [[ -f "$cand" ]]; then src="$cand"; break; fi

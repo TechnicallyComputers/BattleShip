@@ -47,8 +47,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+<<<<<<< HEAD
 DIST_DIR="$ROOT/dist"
 APP_NAME="BattleShip"
+=======
+# ROM version: us (default) or jp. The JP build is a SEPARATE
+# application — own binary name, AppImage, app-data dir — so a user can
+# keep both and they never touch each other's ROM/o2r/saves. APP_NAME
+# mirrors CMake SSB64_APP_NAME / OUTPUT_NAME. US keeps the historical
+# "BattleShip" identity so existing links / the in-app updater are
+# unaffected.
+VER="${SSB64_VERSION:-us}"
+[[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
+BUILD_DIR="$ROOT/build-bundle-linux-$VER"
+DIST_DIR="$ROOT/dist"
+[[ "$VER" == "jp" ]] && APP_NAME="BattleShip-JP" || APP_NAME="BattleShip"
+APPDIR="$DIST_DIR/$APP_NAME.AppDir"
+APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
+>>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 # Extra CMake configure arguments (forwarded to CMake). Use --netplay for the Netplay AppImage
@@ -122,7 +138,11 @@ step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMEN
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
+<<<<<<< HEAD
     "${EXTRA_CMAKE_ARGS[@]}" \
+=======
+    -DSSB64_VERSION="$VER" \
+>>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -136,7 +156,7 @@ rm -f "$F3D_O2R"
 [[ -f "$F3D_O2R" ]] || fail "f3d.o2r was not created"
 
 # ── 3. Locate built artifacts ──
-GAME_BIN="$BUILD_DIR/BattleShip"
+GAME_BIN="$BUILD_DIR/$APP_NAME"   # CMake OUTPUT_NAME == SSB64_APP_NAME
 TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 [[ -x "$GAME_BIN" ]] || fail "BattleShip binary not found at $GAME_BIN"
 [[ -x "$TORCH_BIN" ]] || fail "torch binary not found at $TORCH_BIN"
@@ -144,14 +164,14 @@ TORCH_BIN="$BUILD_DIR/TorchExternal/src/TorchExternal-build/torch"
 # ── 4. Assemble AppDir ──
 step "Assembling $APPDIR"
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/$APP_NAME/yamls/us"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/$APP_NAME/yamls/$VER"
 
 cp "$GAME_BIN"   "$APPDIR/usr/bin/$APP_NAME"
 cp "$TORCH_BIN"  "$APPDIR/usr/bin/torch"
 cp "$F3D_O2R"    "$APPDIR/usr/share/$APP_NAME/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APPDIR/usr/share/$APP_NAME/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APPDIR/usr/share/$APP_NAME/config.yml"
-cp "$ROOT/yamls/us/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/us/"
+cp "$ROOT/yamls/$VER/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/$VER/"
 
 # VS net-menu PNGs (mn_vs_submenu_png.c); must sit next to the binary like CMake
 # POST_BUILD ($<TARGET_FILE_DIR>/port/net/assets). RealAppBundlePath() is the
@@ -219,7 +239,11 @@ EOF
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
+<<<<<<< HEAD
 Name=$DESKTOP_DISPLAY_NAME
+=======
+Name=$APP_NAME
+>>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 Exec=$APP_NAME
 Icon=$APP_NAME
 Categories=Game;ArcadeGame;
@@ -328,14 +352,8 @@ if command -v appimagetool >/dev/null 2>&1; then
     appimagetool "$APPDIR" "$APPIMAGE"
     [[ -f "$APPIMAGE" ]] || fail "appimagetool did not produce $APPIMAGE"
     chmod +x "$APPIMAGE"
-    # Drop the standalone Python save editor next to the AppImage so
-    # users can edit $XDG_DATA_HOME/BattleShip/ssb64_save.bin without
-    # extracting the AppImage. Pure stdlib, runs as
-    # `python3 save_editor.py …`.
-    cp "$ROOT/tools/save_editor.py" "$DIST_DIR/save_editor.py"
     APP_KB=$(du -k "$APPIMAGE" | awk '{print $1}')
     printf '\n\033[32m✓ AppImage ready: %s (%s KB)\033[0m\n' "$APPIMAGE" "$APP_KB"
-    printf '\033[32m✓ Save editor:    %s\033[0m\n' "$DIST_DIR/save_editor.py"
 else
     APP_KB=$(du -sk "$APPDIR" | awk '{print $1}')
     printf '\n\033[33m! appimagetool not in PATH — produced AppDir only.\033[0m\n'
@@ -343,5 +361,5 @@ else
     printf '   Install appimagetool from https://github.com/AppImage/AppImageKit/releases\n'
     printf '   then run: appimagetool "%s" "%s"\n' "$APPDIR" "$APPIMAGE"
 fi
-printf '   App-data: $XDG_DATA_HOME/BattleShip/ (or ~/.local/share/BattleShip/)\n'
+printf '   App-data: $XDG_DATA_HOME/%s/ (or ~/.local/share/%s/)\n' "$APP_NAME" "$APP_NAME"
 printf '   First launch will prompt for your ROM via the ImGui wizard.\n'

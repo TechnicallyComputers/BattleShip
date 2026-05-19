@@ -33,9 +33,17 @@ Generates:
                             extra `ll*` names referenced by src/.
 
 Usage: run from the repo root.
-    python3 tools/generate_reloc_stubs.py
+    python3 tools/generate_reloc_stubs.py [--version {us,jp}]
+
+  us (default): tools/reloc_data_symbols.us.txt -> include/reloc_data.us.h
+  jp          : tools/reloc_data_symbols.jp.txt -> include/reloc_data.jp.h
+
+The decomp's selector shim (decomp/include/reloc_data.h) #includes
+reloc_data.<REGION>.h, so both versions' headers coexist in the source
+tree and a US build dir and a JP build dir never fight over one file.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -45,8 +53,26 @@ ROOT = Path(__file__).resolve().parent.parent
 # pre-submodule path was ROOT/src; it's still on disk during the submodule
 # migration but slated for deletion. Prefer the submodule path when present.
 SRC_DIR = (ROOT / "decomp" / "src") if (ROOT / "decomp" / "src").is_dir() else (ROOT / "src")
-HEADER_OUT = ROOT / "include" / "reloc_data.h"
-SYMBOLS_TXT = ROOT / "tools" / "reloc_data_symbols.us.txt"
+
+# Per-version inputs/outputs. US keeps the legacy flat header name so its
+# generated output path AND contents are byte-for-byte unchanged from before
+# versioning; other versions get a version-suffixed sibling.
+VERSIONS = {
+    "us": {"symbols": "reloc_data_symbols.us.txt", "header": "reloc_data.us.h"},
+    "jp": {"symbols": "reloc_data_symbols.jp.txt", "header": "reloc_data.jp.h"},
+}
+
+# Defaults (US) so the module is importable without selecting a version.
+HEADER_OUT = ROOT / "include" / VERSIONS["us"]["header"]
+SYMBOLS_TXT = ROOT / "tools" / VERSIONS["us"]["symbols"]
+
+
+def select_version(version):
+    """Repoint the symbols-input / header-output globals at the version."""
+    global HEADER_OUT, SYMBOLS_TXT
+    cfg = VERSIONS[version]
+    SYMBOLS_TXT = ROOT / "tools" / cfg["symbols"]
+    HEADER_OUT = ROOT / "include" / cfg["header"]
 
 SYMBOL_RE = re.compile(r"\bll[A-Z_][A-Za-z0-9_]*\b")
 ASSIGN_RE = re.compile(r"^\s*(ll[A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+?)\s*;\s*$")
@@ -115,10 +141,10 @@ def write_header(values: dict[str, str], extra_stubs: set[str]) -> None:
         "",
         "/*",
         " * reloc_data.h — AUTO-GENERATED. Run tools/generate_reloc_stubs.py to",
-        " * regenerate after updating tools/reloc_data_symbols.us.txt or after",
+        f" * regenerate after updating tools/{SYMBOLS_TXT.name} or after",
         " * adding new decomp sources that reference `ll*` linker symbols.",
         " *",
-        " * Every symbol in tools/reloc_data_symbols.us.txt (vendored from",
+        f" * Every symbol in tools/{SYMBOLS_TXT.name} (vendored from",
         " * ssb-decomp-re) is mirrored here as a #define holding the real",
         " * numeric value, so downstream tools (generate_yamls.py,",
         " * generate_reloc_table.py) always see the full name table even if",
@@ -167,6 +193,11 @@ def write_header(values: dict[str, str], extra_stubs: set[str]) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", choices=sorted(VERSIONS), default="us",
+                        help="ROM version (default: us)")
+    select_version(parser.parse_args().version)
+
     values = parse_symbol_values()
     src_symbols = collect_src_symbols()
     extra_stubs = src_symbols - set(values.keys())

@@ -1,20 +1,50 @@
 #!/usr/bin/env python3
 """
-generate_reloc_table.py — Reads yamls/us/reloc_*.yml and generates
-port/resource/RelocFileTable.cpp, a file_id-to-resource-path lookup table.
+generate_reloc_table.py — Reads yamls/<version>/reloc_*.yml and generates
+the file_id-to-resource-path lookup table (RelocFileTable.cpp) plus its
+header (RelocFileTable.h, which carries the per-version RELOC_FILE_COUNT).
 
 Usage:
-    python tools/generate_reloc_table.py
+    python tools/generate_reloc_table.py [--version {us,jp}]
+
+  us (default): yamls/us -> port/resource/RelocFileTable.us.{cpp,h}
+                (RELOC_FILE_COUNT = 2132)
+  jp          : yamls/jp -> port/resource/RelocFileTable.jp.{cpp,h}
+                (RELOC_FILE_COUNT = 2107)
+
+port/resource/RelocFileTable.h is a committed selector shim that
+#includes RelocFileTable.<REGION>.h, mirroring the decomp's
+reloc_data.h design so both versions coexist in the source tree.
 """
 
+import argparse
 import os
 import re
 import sys
 from pathlib import Path
 
-YAML_DIR = Path("yamls/us")
-OUTPUT   = Path("port/resource/RelocFileTable.cpp")
-FILE_COUNT = 2132
+# US keeps the legacy unsuffixed output names so its generated files are
+# byte-for-byte unchanged; other versions get version-suffixed siblings.
+VERSIONS = {
+    "us": {"yaml_dir": "yamls/us", "stem": "RelocFileTable.us", "file_count": 2132},
+    "jp": {"yaml_dir": "yamls/jp", "stem": "RelocFileTable.jp", "file_count": 2107},
+}
+
+# Defaults (US) so the module is importable without selecting a version.
+YAML_DIR   = Path(VERSIONS["us"]["yaml_dir"])
+OUTPUT     = Path(f"port/resource/{VERSIONS['us']['stem']}.cpp")
+OUTPUT_H   = Path(f"port/resource/{VERSIONS['us']['stem']}.h")
+FILE_COUNT = VERSIONS["us"]["file_count"]
+
+
+def select_version(version):
+    """Repoint the input/output/count globals at the chosen version."""
+    global YAML_DIR, OUTPUT, OUTPUT_H, FILE_COUNT
+    cfg = VERSIONS[version]
+    YAML_DIR   = Path(cfg["yaml_dir"])
+    OUTPUT     = Path(f"port/resource/{cfg['stem']}.cpp")
+    OUTPUT_H   = Path(f"port/resource/{cfg['stem']}.h")
+    FILE_COUNT = cfg["file_count"]
 
 
 def parse_yaml_entries(yaml_dir: Path) -> dict[int, str]:
@@ -81,7 +111,42 @@ def generate(entries: dict[int, str], output: Path) -> None:
     print(f"Generated {output} ({len(entries)} entries)")
 
 
+def generate_header(output_h: Path) -> None:
+    """Write RelocFileTable.<version>.h carrying RELOC_FILE_COUNT + the
+    gRelocFileTable extern. The committed RelocFileTable.h shim selects
+    the right one by REGION_*. The 'us' body is the same content the
+    previously hand-maintained RelocFileTable.h carried (count 2132).
+    """
+    lines = [
+        "#pragma once",
+        "",
+        f"#define RELOC_FILE_COUNT {FILE_COUNT}",
+        "",
+        "#ifdef __cplusplus",
+        'extern "C" {',
+        "#endif",
+        "",
+        "/**",
+        f" * Maps file_id (0–{FILE_COUNT - 1}) to the resource path in the .o2r archive.",
+        f" * Auto-generated from {YAML_DIR.as_posix()}/reloc_*.yml by tools/generate_reloc_table.py.",
+        " */",
+        "extern const char* const gRelocFileTable[RELOC_FILE_COUNT];",
+        "",
+        "#ifdef __cplusplus",
+        "}",
+        "#endif",
+        "",
+    ]
+    output_h.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Generated {output_h} (RELOC_FILE_COUNT={FILE_COUNT})")
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", choices=sorted(VERSIONS), default="us",
+                        help="ROM version (default: us)")
+    select_version(parser.parse_args().version)
+
     os.chdir(Path(__file__).resolve().parent.parent)
     entries = parse_yaml_entries(YAML_DIR)
 
@@ -95,6 +160,7 @@ def main():
               file=sys.stderr)
 
     generate(entries, OUTPUT)
+    generate_header(OUTPUT_H)
 
 
 if __name__ == "__main__":

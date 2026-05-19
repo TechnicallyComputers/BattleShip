@@ -49,6 +49,15 @@ CMakeLists.txt
 - MD5: `f7c52568a31aadf26e14dc2b6416b2ed`
 - Game code: NALE, internal name "SMASH BROTHERS"
 
+### JP (Nintendo All-Star! Dairantou Smash Brothers)
+- File: `baserom.jp.z64` — Z64 big-endian
+- SHA1: `4b71f0e01878696733eefa9c80d11c147ecb4984` (matches the upstream
+  decomp's `smashbrothers.jp.yaml` target)
+- Game code: NALJ, internal name "SMASH BROTHERS", country byte `0x3E`=`J`
+- Build with `-DSSB64_VERSION=jp` (separate build dir; the decomp game
+  code is region-conditionally compiled). Reloc table @ `0x1ACAF0`,
+  2107 files. See `docs/jp_rom_compat_plan_2026-05-17.md`.
+
 ## Key Dependencies
 - **libultraship** (Kenix3/libultraship) — replaces libultra with PC-native rendering, audio, input, resource management
 - **Torch** (HarbourMasters/Torch) — asset extraction from ROM into .o2r archives via YAML configs

@@ -42,7 +42,8 @@ WRAPPABLE_SUFFIXES = {".c", ".h", ".cpp", ".hpp", ".inc"}
 # Files that are auto-generated and should NOT be committed to the submodule fork —
 # the submodule is for source, not codegen artifacts.
 AUTO_GEN_FILES = {
-    "include/reloc_data.h",
+    "include/reloc_data.us.h",
+    "include/reloc_data.jp.h",
 }
 AUTO_GEN_GLOBS = (
     re.compile(r"^src/credits/.+\.encoded$"),

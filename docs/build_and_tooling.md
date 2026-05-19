@@ -66,6 +66,20 @@ Netmenu: add `-DSSB64_NETMENU=ON` and install `mingw-w64-curl` (listed in the bo
 
 **Torch sidecar:** `ExternalProject_Add(TorchExternal)` does not inherit the parent toolchain. When `CMAKE_SYSTEM_NAME` is `Windows` and `MINGW` or `CMAKE_CROSSCOMPILING` is set, the root `CMakeLists.txt` forwards compilers and `CMAKE_FIND_ROOT_PATH` so `torch.exe` matches `BattleShip.exe`. POST_BUILD copies `torch` via `cmake/CopyIfExists.cmake` so a missing sidecar during incremental builds does not fail the main target.
 
+### ROM version (US / JP)
+
+`-DSSB64_VERSION=us` (default) or `-DSSB64_VERSION=jp` selects the ROM
+version. The decomp game code is region-conditionally compiled
+(`#if REGION_US/REGION_JP`), so **US and JP are separate builds — use a
+separate build dir per version.** The switch drives the region defines,
+`yamls/<v>` extraction configs, `baserom.<v>.{z64,n64,v64}` selection,
+credits text, the JP-only source exclusions (`mncongra.c`/`mnstartup.c`),
+and the per-version generated reloc artifacts
+(`reloc_data.<v>.h`, `RelocFileTable.<v>.{cpp,h}`, selected via committed
+shims that mirror the decomp's `reloc_data.h` selector). The user still
+supplies their own ROM; no assets are shipped. Full design + bring-up
+notes: `docs/jp_rom_compat_plan_2026-05-17.md`.
+
 ## Runtime Logs
 After running the game:
 - **Game trace log**: `ssb64.log` in the cwd — `port_log()` output (boot sequence, thread creation, frame milestones). Overwritten each run.
