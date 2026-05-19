@@ -33,17 +33,19 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-# ROM version: us (default) or jp — each is its own region-compiled
-# binary; CI matrixes over both. US keeps the historical artifact name
-# so existing links / the in-app updater are unaffected; JP gets "-jp".
+# ROM version: us (default) or jp. The JP build is a SEPARATE
+# application — own .exe name, zip, app-data dir — so a user can keep
+# both and they never touch each other's ROM/o2r/saves. $AppName
+# mirrors CMake SSB64_APP_NAME / OUTPUT_NAME. US keeps the historical
+# "BattleShip" identity so existing links / the in-app updater are
+# unaffected.
 $Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
 if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
-$ArtSuffix = if ($Ver -eq "us") { "" } else { "-$Ver" }
 $BuildDir = Join-Path $Root "build-bundle-win-$Ver"
 $DistDir = Join-Path $Root "dist"
-$AppName = "BattleShip"
+$AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
 $StageDir = Join-Path $DistDir $AppName
-$ZipPath = Join-Path $DistDir "$AppName$ArtSuffix-windows.zip"
+$ZipPath = Join-Path $DistDir "$AppName-windows.zip"
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
@@ -94,10 +96,12 @@ Pop-Location
 if (-not (Test-Path $F3DO2R)) { Fail "f3d.o2r was not created" }
 
 # ── 3. Locate built artifacts ──
-$GameExe = Join-Path $BuildDir "Release\BattleShip.exe"
+# CMake OUTPUT_NAME == SSB64_APP_NAME == $AppName, so the exe is
+# BattleShip.exe (US) or BattleShip-JP.exe (JP).
+$GameExe = Join-Path $BuildDir "Release\$AppName.exe"
 if (-not (Test-Path $GameExe)) {
     # Fall back to non-multi-config layout (Ninja).
-    $GameExe = Join-Path $BuildDir "BattleShip.exe"
+    $GameExe = Join-Path $BuildDir "$AppName.exe"
 }
 $TorchExe = $null
 foreach ($cand in @(
@@ -108,7 +112,7 @@ foreach ($cand in @(
     $p = Join-Path $BuildDir $cand
     if (Test-Path $p) { $TorchExe = $p; break }
 }
-if (-not (Test-Path $GameExe))   { Fail "BattleShip.exe not found at $GameExe" }
+if (-not (Test-Path $GameExe))   { Fail "$AppName.exe not found at $GameExe" }
 if (-not $TorchExe)              { Fail "torch.exe not found in $BuildDir" }
 
 # ── 4. Stage the release tree ──

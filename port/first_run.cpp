@@ -27,6 +27,22 @@
 
 namespace fs = std::filesystem;
 
+// Region the binary was compiled for (see CMake REGION_US/REGION_JP).
+// First-run asset extraction is region-locked: a JP build extracts only
+// from a JP ROM into the JP app-data dir, and never looks at a US ROM /
+// US o2r (and vice versa). US strings are kept verbatim so US behaviour
+// is byte-for-byte unchanged.
+#if defined(REGION_JP)
+static constexpr const char* kRegion  = "jp";
+static constexpr const char* kRomBase = "baserom.jp";
+static constexpr const char* kRomDesc = "Japanese (NALJ) \"Nintendo All-Star! "
+                                        "Dairantou Smash Brothers\" ROM";
+#else
+static constexpr const char* kRegion  = "us";
+static constexpr const char* kRomBase = "baserom.us";
+static constexpr const char* kRomDesc = "Super Smash Bros. NTSC-U v1.0 ROM";
+#endif
+
 namespace ssb64 {
 
 namespace {
@@ -241,7 +257,7 @@ std::string FindAssetConfigDir() {
     for (const auto& root : roots) {
         fs::path dir = root;
         while (!dir.empty()) {
-            if (fs::exists(dir / "config.yml") && fs::exists(dir / "yamls" / "us")) {
+            if (fs::exists(dir / "config.yml") && fs::exists(dir / "yamls" / kRegion)) {
                 return dir.string();
             }
 
@@ -262,7 +278,7 @@ std::string FindBaseRom() {
     std::vector<std::string> candidates;
     for (const auto& base : {appData, bundle, bundle + "/..", std::string(".")}) {
         for (const char* ext : {"z64", "n64", "v64"}) {
-            candidates.push_back(base + "/baserom.us." + ext);
+            candidates.push_back(base + "/" + kRomBase + "." + ext);
         }
     }
 
@@ -312,11 +328,11 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     if (rom.empty()) {
         const std::string appData = Ship::Context::GetAppDirectoryPath();
         port_log("first_run: ERROR no ROM found.\n"
-                 "  Drop a baserom.us.{z64,n64,v64} into %s\n",
-                 appData.c_str());
+                 "  Drop a %s.{z64,n64,v64} into %s\n",
+                 kRomBase, appData.c_str());
         const std::string msg =
-            "Asset extraction needs your Super Smash Bros. NTSC-U v1.0 ROM.\n\n"
-            "Place a baserom.us.z64 (or .n64 / .v64) into:\n  " + appData +
+            "Asset extraction needs your " + std::string(kRomDesc) + ".\n\n"
+            "Place a " + std::string(kRomBase) + ".z64 (or .n64 / .v64) into:\n  " + appData +
             "\n\nThen launch the game again.";
         if (!silent) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
@@ -334,8 +350,8 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
 
     const std::string cfgDir = FindAssetConfigDir();
     if (cfgDir.empty()) {
-        port_log("first_run: ERROR could not locate config.yml + yamls/us/\n");
-        return { false, {}, "Could not locate config.yml + yamls/us", {} };
+        port_log("first_run: ERROR could not locate config.yml + yamls/%s/\n", kRegion);
+        return { false, {}, std::string("Could not locate config.yml + yamls/") + kRegion, {} };
     }
     port_log("first_run: asset config dir -> %s\n", cfgDir.c_str());
 
@@ -441,8 +457,8 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
     // 256 char ImGui input buffer. Pre-fill with the conventional path the
     // user is most likely to try first; they can edit/replace freely.
     char romPath[1024] = {0};
-    std::snprintf(romPath, sizeof(romPath), "%s/baserom.us.z64",
-                  appData.c_str());
+    std::snprintf(romPath, sizeof(romPath), "%s/%s.z64",
+                  appData.c_str(), kRomBase);
 
     enum class State { WaitingForRom, Extracting, Done, Cancelled };
     State state = State::WaitingForRom;
@@ -531,8 +547,8 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
                     "Nintendo 64 ROM before it can launch.");
                 ImGui::Spacing();
                 ImGui::TextWrapped(
-                    "Required: a Super Smash Bros. (NTSC-U v1.0) dump in "
-                    ".z64, .n64, or .v64 format.");
+                    "Required: a %s dump in .z64, .n64, or .v64 format.",
+                    kRomDesc);
                 ImGui::Separator();
 
                 ImGui::Text("ROM path:");

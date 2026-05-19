@@ -75,7 +75,7 @@ jobs:
           # NB: GHA `a && b || c` is not a ternary — an empty-string `b`
           # is falsy and falls through to `c`. Keep the non-empty value
           # in the `&&` branch and the empty default in `||`.
-          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}.dmg
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}.dmg
           if-no-files-found: error
 
   build-linux:
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-linux-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}-x86_64.AppImage
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-x86_64.AppImage
           if-no-files-found: error
 
   build-windows:
@@ -200,7 +200,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'jp' && '-jp' || '' }}-windows.zip
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-windows.zip
           if-no-files-found: error
 
   release:
@@ -218,11 +218,11 @@ jobs:
         with:
           files: |
             artifacts/BattleShip.dmg
-            artifacts/BattleShip-jp.dmg
+            artifacts/BattleShip-JP.dmg
             artifacts/BattleShip-x86_64.AppImage
-            artifacts/BattleShip-jp-x86_64.AppImage
+            artifacts/BattleShip-JP-x86_64.AppImage
             artifacts/BattleShip-windows.zip
-            artifacts/BattleShip-jp-windows.zip
+            artifacts/BattleShip-JP-windows.zip
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.
