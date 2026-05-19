@@ -186,6 +186,31 @@ add_custom_target(PrepareBuildInputs
     DEPENDS GenerateRelocArtifacts GenerateCreditsAssets
 )
 
+# ── Window icon embed (US/JP) ─────────────────────────────────────────────
+# Linux SDL only renders an app icon on the WM if SDL_SetWindowIcon() is
+# called at runtime — there's no .rc-equivalent that the WM reads at
+# launch. The PNG bytes are baked into the binary via tools/embed_icon.py
+# so port/port_window_icon.cpp doesn't have to chase the icon across
+# build/dev-tree/AppImage layouts. Region-aware: US uses assets/icon.png,
+# JP uses assets/icon-jp.png.
+set(SSB64_ICON_PNG ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png)
+if(SSB64_VERSION STREQUAL "jp")
+    set(SSB64_ICON_PNG ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon-jp.png)
+endif()
+set(SSB64_ICON_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(SSB64_ICON_GEN ${SSB64_ICON_GEN_DIR}/port_icon_data.h)
+add_custom_command(
+    OUTPUT ${SSB64_ICON_GEN}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_icon.py
+            ${SSB64_ICON_PNG} ${SSB64_ICON_GEN} kSSB64IconPng
+    DEPENDS
+        ${SSB64_ICON_PNG}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_icon.py
+    COMMENT "Embedding window icon (${SSB64_VERSION}) -> ${SSB64_ICON_GEN}"
+    VERBATIM
+)
+
 add_custom_target(ExtractAssetHeaders
     DEPENDS PrepareBuildInputs
     COMMENT "BattleShip asset/header generation is driven by PrepareBuildInputs"
@@ -219,6 +244,9 @@ list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
 list(APPEND SSB64_SRC_PORT
     ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp)
+# Treat the generated icon header as a source so CMake schedules it ahead
+# of any port TU compilation (port_window_icon.cpp #includes it).
+list(APPEND SSB64_SRC_PORT ${SSB64_ICON_GEN})
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -464,6 +492,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
+    ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
 )
 
 ################################################################################

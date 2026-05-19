@@ -30,6 +30,7 @@
 #include "hires/HiResHook.h"
 #include "hires/HiResPack.h"
 #endif
+#include "port_window_icon.h"
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 
@@ -612,6 +613,11 @@ static int PortInitImpl(int argc, char* argv[]) {
 			gui->SetMenu(std::make_shared<ssb64::PortMenu>());
 			port_log("SSB64: Port menu attached\n");
 		}
+
+		// Linux: WMs only show the app icon if SDL_SetWindowIcon is called
+		// on the live window. .ico/.icns paths are baked into the .exe /
+		// .app on Windows / macOS so this is a no-op there.
+		ssb64::SetWindowIcon();
 	}
 
 	// Pin LUS to off-screen rendering so mGameFb is populated during
