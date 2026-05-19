@@ -41,6 +41,8 @@ extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashItem(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashWeapon(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashMap(u32 tick);
+/* Stored yakumono slot count at save tick; -1 if slot invalid or map partition empty. */
+extern s32 syNetRbSnapshotGetSlotMapYakumonoCount(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashRng(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashCamera(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick);

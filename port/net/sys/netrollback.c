@@ -3703,6 +3703,21 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackPeerBaselineSlotItem = syNetRbSnapshotGetSlotHashItem(load_tick);
 	sSYNetRollbackPeerBaselineSlotRng = syNetRbSnapshotGetSlotHashRng(load_tick);
 	syNetRollbackCollectFighterSlotHashes(sSYNetRollbackPeerBaselineFighterSlot);
+	{
+		s32 live_yaku_n = gMPCollisionYakumonosNum;
+		s32 stored_yaku_n = syNetRbSnapshotGetSlotMapYakumonoCount(load_tick);
+
+		if (live_yaku_n < 0)
+		{
+			live_yaku_n = 0;
+		}
+		port_log(
+		    "SSB64 NetRollback: map_yaku post-load tick=%u live_n=%d stored_n=%d mph=0x%08X\n",
+		    load_tick,
+		    (int)live_yaku_n,
+		    (int)stored_yaku_n,
+		    live.map);
+	}
 	port_log(
 	    "SSB64 NetRollback: resim baseline (post-load tick=%u) live figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X | slot figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X\n",
 	    load_tick,
