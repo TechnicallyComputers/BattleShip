@@ -1103,6 +1103,7 @@ static void syNetRbSnapApplyWorld(const SYNetRbSnapWorldBlob *world, u32 tick)
 		}
 	}
 	syUtilsSetRandomSeed(world->rng_seed);
+	syUtilsResetCosmeticRandomSeed(world->rng_seed);
 	gITManagerAppearActor.spawn_wait = world->item_spawn_wait;
 	gITManagerAppearActor.weights.weights_sum = world->item_weights_sum;
 	gITManagerAppearActor.weights.valids_num = world->item_weights_valids_num;

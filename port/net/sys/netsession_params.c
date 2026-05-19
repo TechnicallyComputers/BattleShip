@@ -19,7 +19,8 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS 2U
 #define SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN 4U
 #define SYNETSESSION_PARAMS_ROLLBACK_D_MIN 2U
-#define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 5U
+#define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 10U
+#define SYNETSESSION_PARAMS_PREDICTION_MAX 8U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 48U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 128U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
@@ -111,6 +112,119 @@ static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
 	return frames;
 }
 
+/*
+ * Delay vs prediction runway (phase_lock) by connection quality.
+ * Ratio is delay-heavy: prediction depth <= D on excellent links, up to ~1.5x D on good, capped on high RTT.
+ */
+static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_ticks, u32 *out_d_ticks,
+							u32 *out_phase_lock)
+{
+	u32 d_ticks;
+	u32 phase_lock;
+	u32 pred_cap;
+
+	if ((out_d_ticks == NULL) || (out_phase_lock == NULL))
+	{
+		return;
+	}
+	d_ticks = one_way_ticks;
+	phase_lock = one_way_ticks;
+	if (rtt_ms < 80U)
+	{
+		/* Excellent (<60–80ms RTT): D 2–4, prediction 2–4, ~1:1 delay-heavy */
+		if (d_ticks < 2U)
+		{
+			d_ticks = 2U;
+		}
+		if (d_ticks > 4U)
+		{
+			d_ticks = 4U;
+		}
+		phase_lock = d_ticks;
+		if (phase_lock < 2U)
+		{
+			phase_lock = 2U;
+		}
+	}
+	else if (rtt_ms < 150U)
+	{
+		/* Good (80–150ms): D 3–5, prediction 4–6, up to ~1.5:1 */
+		d_ticks = one_way_ticks + 1U;
+		if (d_ticks < 3U)
+		{
+			d_ticks = 3U;
+		}
+		if (d_ticks > 5U)
+		{
+			d_ticks = 5U;
+		}
+		phase_lock = d_ticks + (d_ticks / 2U);
+		if (phase_lock < 4U)
+		{
+			phase_lock = 4U;
+		}
+		if (phase_lock > 6U)
+		{
+			phase_lock = 6U;
+		}
+	}
+	else if (rtt_ms < 220U)
+	{
+		/* Playable (150–220ms): D 4–7, prediction 6–8, delay-heavy */
+		d_ticks = one_way_ticks + 2U;
+		if (d_ticks < 4U)
+		{
+			d_ticks = 4U;
+		}
+		if (d_ticks > 7U)
+		{
+			d_ticks = 7U;
+		}
+		phase_lock = d_ticks + 2U;
+		if (phase_lock < 6U)
+		{
+			phase_lock = 6U;
+		}
+		if (phase_lock > SYNETSESSION_PARAMS_PREDICTION_MAX)
+		{
+			phase_lock = SYNETSESSION_PARAMS_PREDICTION_MAX;
+		}
+	}
+	else
+	{
+		/* High (>220ms): D 6–10+, prediction capped ~6–8, strongly delay-heavy */
+		d_ticks = one_way_ticks + 4U;
+		if (d_ticks < 6U)
+		{
+			d_ticks = 6U;
+		}
+		if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
+		{
+			d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
+		}
+		phase_lock = 8U;
+	}
+	pred_cap = d_ticks + (d_ticks / 2U);
+	if (phase_lock > pred_cap)
+	{
+		phase_lock = pred_cap;
+	}
+	if (phase_lock > SYNETSESSION_PARAMS_PREDICTION_MAX)
+	{
+		phase_lock = SYNETSESSION_PARAMS_PREDICTION_MAX;
+	}
+	if (phase_lock < 2U)
+	{
+		phase_lock = 2U;
+	}
+	if (phase_lock > SYNETSESSION_PARAMS_PHASE_LOCK_MAX)
+	{
+		phase_lock = SYNETSESSION_PARAMS_PHASE_LOCK_MAX;
+	}
+	*out_d_ticks = d_ticks;
+	*out_phase_lock = phase_lock;
+}
+
 static u32 syNetSessionParamsComputeResimTicksFromRtt(u32 rtt_ms)
 {
 	u32 ticks;
@@ -168,54 +282,33 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	half_rtt_ms = (rtt_ms + 1U) / 2U;
 	one_way_ticks = syNetSessionParamsCeilDiv(half_rtt_ms, frame_ms_num);
 	/*
-	 * Rollback-first matchmaking: keep committed input delay (wire = sim + D) small and carry RTT in the
-	 * prediction runway + snapshot ring. Peers predict ahead of confirmed remote ingress and resim on mismatch.
+	 * Rollback-first: committed input delay (wire = sim + D) tracks RTT band; phase_lock is the prediction /
+	 * rollback runway (not extra input delay). See delay:prediction table in ComputeDelayAndPrediction.
 	 */
-	if (rtt_ms < 100U)
+	syNetSessionParamsComputeDelayAndPrediction(rtt_ms, one_way_ticks, &d_ticks, &phase_lock);
+	if (d_ticks < SYNETSESSION_PARAMS_DELAY_MIN)
 	{
-		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MIN;
-	}
-	else if (rtt_ms < 180U)
-	{
-		d_ticks = 3U;
-	}
-	else
-	{
-		d_ticks = 4U;
+		d_ticks = SYNETSESSION_PARAMS_DELAY_MIN;
 	}
 	if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
 	{
 		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
 	}
-	if (d_ticks < SYNETSESSION_PARAMS_DELAY_MIN)
-	{
-		d_ticks = SYNETSESSION_PARAMS_DELAY_MIN;
-	}
-	phase_lock = one_way_ticks + SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS;
-	if (phase_lock < SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN)
-	{
-		phase_lock = SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN;
-	}
-	if (phase_lock > SYNETSESSION_PARAMS_PHASE_LOCK_MAX)
-	{
-		phase_lock = SYNETSESSION_PARAMS_PHASE_LOCK_MAX;
-	}
-	/* Low RTT: shorter prediction runway reduces tap mispredict rollback churn (D still from RTT table). */
-	if ((rtt_ms < 120U) && (phase_lock > 4U))
-	{
-		phase_lock = 4U;
-	}
 	if (rtt_ms < 80U)
-	{
-		redundancy = 0U;
-	}
-	else if (rtt_ms < 200U)
 	{
 		redundancy = 1U;
 	}
-	else
+	else if (rtt_ms < 150U)
 	{
 		redundancy = 2U;
+	}
+	else if (rtt_ms < 220U)
+	{
+		redundancy = 2U;
+	}
+	else
+	{
+		redundancy = 3U;
 	}
 	if (rtt_ms < 120U)
 	{
@@ -311,6 +404,20 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	}
 	syNetPeerApplyAutoNegotiatedTransportParams((u32)params->phase_lock_ticks, (u32)params->bundle_redundancy,
 	                                           (u32)params->ingress_extra_pumps, (u32)params->strict_ring_fuzz_ticks);
+	{
+		u32 skew_lead;
+
+		skew_lead = (u32)params->input_delay + 1U;
+		if (skew_lead > (u32)params->phase_lock_ticks)
+		{
+			skew_lead = (u32)params->phase_lock_ticks;
+		}
+		if (skew_lead < 2U)
+		{
+			skew_lead = 2U;
+		}
+		syNetPeerApplyAutoNegotiatedSkewLeadMax(skew_lead);
+	}
 	syNetRollbackApplySessionNegotiated(params);
 	port_log(
 	    "SSB64 NetSession: apply tag=%s rtt_ms=%u D=%u phase_lock=%u redundancy=%u pumps=%u fuzz=%u "

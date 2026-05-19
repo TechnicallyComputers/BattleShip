@@ -15,6 +15,7 @@
 #include <sys/controller.h>
 #include <sys/netpeer.h>
 #include <sys/netrollback.h>
+#include <sys/netsession_params.h>
 #include <sys/netinput_timeline.h>
 #include <sys/taskman.h>
 
@@ -124,10 +125,35 @@ void syNetGgpoBattleFrameSet(u32 frame)
 
 #endif
 
+static sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
+{
+	u32 hr;
+	u32 cap;
+
+	if ((syNetSessionParamsRollbackEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return TRUE;
+	}
+	hr = syNetPeerGetHighestRemoteTick();
+	if (hr == 0U)
+	{
+		return TRUE;
+	}
+	cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() +
+	      syNetPeerGetPhaseLockPredictionWindowTicks();
+	return (next_sim_tick <= cap) ? TRUE : FALSE;
+}
+
 void syNetInputAdvanceAuthoritativeSimTick(void)
 {
 	u32 completed_tick;
+	u32 next_tick;
 
+	next_tick = sSYNetInputTick + 1U;
+	if (syNetInputRollbackSimAdvanceAllowed(next_tick) == FALSE)
+	{
+		return;
+	}
 	completed_tick = sSYNetInputTick;
 	sSYNetInputTick++;
 #ifdef PORT
@@ -3333,20 +3359,37 @@ void syNetInputRollbackPrepareForResim(u32 resim_start_tick)
 }
 
 #ifdef PORT
+static u32 sSYNetInputResimReconcileMissLogFrom;
+
 static void syNetInputRollbackReconcileRemoteSlotFromWire(s32 slot, u32 t)
 {
 	SYNetInputFrame row;
-	SYNetInputFrame wire;
 
 	if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, t, &row) != FALSE)
 	{
 		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
 		return;
 	}
-	if ((syNetInputTryGetRemoteHistoryForSimTick(slot, t, &wire) != FALSE) &&
-	    (syNetInputFrameIsRemoteConfirmed(&wire) != FALSE))
+	if (syNetRollbackIsResimulating() != FALSE)
 	{
-		syNetInputStoreFrame(sSYNetInputHistory, slot, &wire);
+		if (sSYNetInputResimReconcileMissLogFrom == ~(u32)0)
+		{
+			sSYNetInputResimReconcileMissLogFrom = t;
+			port_log(
+			    "SSB64 NetInput: resim reconcile missing confirmed remote slot=%d tick=%u (no predicted fallback)\n",
+			    (int)slot,
+			    t);
+		}
+		return;
+	}
+	{
+		SYNetInputFrame wire;
+
+		if ((syNetInputTryGetRemoteHistoryForSimTick(slot, t, &wire) != FALSE) &&
+		    (syNetInputFrameIsRemoteConfirmed(&wire) != FALSE))
+		{
+			syNetInputStoreFrame(sSYNetInputHistory, slot, &wire);
+		}
 	}
 }
 
@@ -3394,6 +3437,7 @@ void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick, s32 correc
 	{
 		return;
 	}
+	sSYNetInputResimReconcileMissLogFrom = ~(u32)0;
 	local_slot = syNetPeerGetLocalSimSlot();
 	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
 	n = syNetPeerGetRemoteHumanSlotCount();
