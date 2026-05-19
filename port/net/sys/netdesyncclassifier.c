@@ -58,6 +58,7 @@ static SYNetDesyncCat s_last_leading_logged = SYNET_DESYNC_CAT_NONE;
 static int s_frame_commit_wire_cache = -999;
 static int s_frame_commit_starvation_thr_cache = -999;
 static sb32 s_commit_starvation_latched;
+static u32 s_commit_mismatch_classifier_log_count;
 
 static int syNetDesyncClassifierGetLevel(void)
 {
@@ -257,6 +258,7 @@ void syNetDesyncClassifierReset(void)
 	s_frame_commit_wire_cache = -999;
 	s_frame_commit_starvation_thr_cache = -999;
 	s_commit_starvation_latched = FALSE;
+	s_commit_mismatch_classifier_log_count = 0U;
 }
 
 void syNetDesyncClassifierOnNetSyncValidation(u32 validation_tick, u32 hist_win_begin, u32 hist_win_len, u32 inp_all,
@@ -381,6 +383,18 @@ void syNetDesyncClassifierOnFrameCommitTokenMismatch(u32 validation_tick, const 
 	s_trace.last_commit_delta_input_digest = di;
 	s_trace.last_commit_delta_slot_binding = ds;
 	s_trace.commit_mismatch_detail_valid = TRUE;
+	if (syNetDesyncClassifierGetLevel() >= 1)
+	{
+		if (s_commit_mismatch_classifier_log_count < 16U)
+		{
+			s_commit_mismatch_classifier_log_count++;
+			port_log(
+			    "SSB64 DESYNC_CLASSIFIER: commit_token_mismatch validation=%u delta_frame_id=%d "
+			    "delta_input_digest=%d delta_slot_binding=%d local inp=0x%08X bind=0x%08X | peer inp=0x%08X bind=0x%08X\n",
+			    validation_tick, (int)df, (int)di, (int)ds, local->input_digest, local->slot_binding_hash,
+			    peer->input_digest, peer->slot_binding_hash);
+		}
+	}
 	syNetDesyncMaybeLogLeadingChange();
 }
 
@@ -482,9 +496,10 @@ void syNetDesyncClassifierEmitFrameCommitReportOnVsStop(void)
 		    "PEER_TOKEN:  frame_id=%d input_digest=0x%08X slot_binding=0x%08X tick_anchor=%u\n",
 		    (int)s_trace.last_commit_mismatch_peer.frame_id, s_trace.last_commit_mismatch_peer.input_digest,
 		    s_trace.last_commit_mismatch_peer.slot_binding_hash, s_trace.last_commit_mismatch_peer.tick_anchor);
-		port_log("DELTA: frame_id=%d input_digest=%d slot_binding=%d (tick_anchor logged only; not compared)\n",
-			 (int)s_trace.last_commit_delta_frame_id, (int)s_trace.last_commit_delta_input_digest,
-			 (int)s_trace.last_commit_delta_slot_binding);
+		port_log(
+		    "DELTA: frame_id=%d input_digest=%d slot_binding=%d (slot_binding/tick_anchor logged only; not cross-peer compared)\n",
+		    (int)s_trace.last_commit_delta_frame_id, (int)s_trace.last_commit_delta_input_digest,
+		    (int)s_trace.last_commit_delta_slot_binding);
 	}
 	else
 	{

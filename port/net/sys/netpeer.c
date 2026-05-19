@@ -195,6 +195,15 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_MAX_REMOTE_PLAYLIST 4
 #define SYNETPEER_SECONDARY_SLOT_ABSENT 255
 #define SYNETPEER_VALIDATION_INPUT_WINDOW 120
+/*
+ * Linux UDP recv buffer sizing for VS INPUT flood (frame-commit / control starvation).
+ * Wire V4 INPUT bundle is SYNETPEER_PACKET_BYTES_V4 (200 B in current layout). NetPeer `stg=` in periodic
+ * stats is cumulative remote *input frames* staged since session start — not unread datagram count or bytes.
+ * Default rcvbuf targets ~5120 datagram slots (1 MiB / 200 B) before kernel doubling on Linux.
+ */
+#define SYNETPEER_UDP_RCVBUF_DEFAULT_BYTES (1024U * 1024U)
+#define SYNETPEER_UDP_RCVBUF_MIN_BYTES (256U * 1024U)
+#define SYNETPEER_UDP_RCVBUF_MAX_BYTES (16U * 1024U * 1024U)
 #define SYNETPEER_METADATA_BYTES (11 * 4 + 8 + (MAXCONTROLLERS * 7) + 2)
 #define SYNETPEER_BOOTSTRAP_PACKET_BYTES (4 + 2 + 2 + 4 + SYNETPEER_METADATA_BYTES + 4)
 #define SYNETPEER_CONTROL_PACKET_BYTES (4 + 2 + 2 + 4 + 4)
@@ -312,8 +321,8 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_INPUT_DELAY_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
-/* Frame commit token (NetSync validation cadence). */
-#define SYNETPEER_FRAME_COMMIT_BYTES (56)
+/* Frame commit token (NetSync validation cadence): header(12) + validation_tick + 8 token u32s + checksum(4) = 52. */
+#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
@@ -1332,6 +1341,54 @@ static sb32 syNetPeerDatagramSocketIsUsable(void)
 	return ((sSYNetPeerIsActive != FALSE) && (syNetPeerOsSocketIsValid(sSYNetPeerSocket) != FALSE)) ? TRUE : FALSE;
 }
 
+static u32 syNetPeerGetUdpRecvBufBytes(void)
+{
+	const char *env;
+	static s32 sCached = -999;
+	s32 parsed;
+
+	if (sCached >= 0)
+	{
+		return (u32)sCached;
+	}
+	parsed = (s32)SYNETPEER_UDP_RCVBUF_DEFAULT_BYTES;
+	env = getenv("SSB64_NETPLAY_UDP_RCVBUF_BYTES");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+	}
+	if (parsed < (s32)SYNETPEER_UDP_RCVBUF_MIN_BYTES)
+	{
+		parsed = (s32)SYNETPEER_UDP_RCVBUF_MIN_BYTES;
+	}
+	if (parsed > (s32)SYNETPEER_UDP_RCVBUF_MAX_BYTES)
+	{
+		parsed = (s32)SYNETPEER_UDP_RCVBUF_MAX_BYTES;
+	}
+	sCached = parsed;
+	return (u32)sCached;
+}
+
+static void syNetPeerApplyUdpRecvBufSizing(void)
+{
+	u32 bytes;
+	int rcvbuf;
+
+	bytes = syNetPeerGetUdpRecvBufBytes();
+	rcvbuf = (int)bytes;
+	if (syNetPeerOsSetsockoptRecvBuf(sSYNetPeerSocket, rcvbuf) != 0)
+	{
+		port_log("SSB64 NetPeer: SO_RCVBUF=%u failed err=%d\n", bytes, syNetPeerOsSocketLastError());
+		return;
+	}
+	port_log(
+	    "SSB64 NetPeer: SO_RCVBUF=%u bytes (~%u INPUT datagrams at %u B; Linux may double effective size; stg stat is "
+	    "frames not queue depth)\n",
+	    bytes,
+	    bytes / (u32)SYNETPEER_PACKET_BYTES_V4,
+	    (u32)SYNETPEER_PACKET_BYTES_V4);
+}
+
 sb32 syNetPeerOpenSocket(void)
 {
 	int reuse = 1;
@@ -1361,6 +1418,7 @@ sb32 syNetPeerOpenSocket(void)
 		syNetPeerCloseSocket();
 		return FALSE;
 	}
+	syNetPeerApplyUdpRecvBufSizing();
 	if (syNetPeerOsSetNonBlocking(sSYNetPeerSocket) != 0)
 	{
 		port_log("SSB64 NetPeer: nonblocking setup failed err=%d\n", syNetPeerOsSocketLastError());
@@ -4122,6 +4180,7 @@ static void syNetPeerMaybeLatchBothSidesStartupAfterExecSync(void)
 	port_reset_vs_decouple_pacing_for_net_barrier();
 	port_log("SSB64 NetPeer: both_sides_latched_startup agreed_tick=%u role=%s (push+decouple epoch reset)\n",
 	         (unsigned int)agreed, (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client");
+	syNetInputLogStartupInputBindingSnapshot(agreed);
 }
 
 static SYNetPeerSyncPipelinePhase syNetPeerDeriveSyncPipelinePhase(void)
@@ -7126,6 +7185,10 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 }
 
 #if defined(PORT)
+static int syNetPeerFrameCommitGetEnv(void);
+static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void);
+static void syNetPeerLogFrameCommitRecvDrop(const char *reason, s32 size, u32 magic, u16 wire_version, u16 packet_type,
+                                            u32 session_id, u32 checksum, u32 expected);
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size);
@@ -7265,7 +7328,10 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 					syNetPeerHandleFrameCommitPacket(buffer, size);
 					return;
 				}
-				break;
+				syNetPeerLogFrameCommitRecvDrop("ingress_size", size, ctrl_magic, ctrl_wire, ctrl_type,
+				                                ctrl_session, 0U, 0U);
+				sSYNetPeerPacketsDropped++;
+				return;
 
 			case SYNETPEER_PACKET_ROLLBACK_BASELINE:
 				if ((size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ||
@@ -7784,6 +7850,7 @@ static struct SYNetPeerFrameCommitPeerSlot
 } sSYNetPeerFrameCommitPeerPending[SYNETPEER_FRAME_COMMIT_RING];
 
 static u32 sSYNetPeerFrameCommitValidationsSincePeer;
+static u32 sSYNetPeerFrameCommitMismatchLogCount;
 static sb32 sSYNetPeerFrameCommitPeerEver;
 static int sSYNetPeerFrameCommitEnvCache = -999;
 static int sSYNetPeerFrameCommitDiagEnvCache = -999;
@@ -7799,6 +7866,9 @@ typedef struct SYNetPeerFrameCommitDiag
 	u32 fc_recovery_started;
 	u32 fc_recovery_skipped_no_snap;
 	u32 fc_pairing_starvation;
+	u32 fc_recv_drop_size;
+	u32 fc_recv_drop_header;
+	u32 fc_recv_drop_checksum;
 } SYNetPeerFrameCommitDiag;
 
 static SYNetPeerFrameCommitDiag sSYNetPeerFrameCommitDiag;
@@ -7868,6 +7938,93 @@ static sb32 syNetPeerFrameCommitDiagEnabled(void)
 	return (sSYNetPeerFrameCommitDiagEnvCache != 0) ? TRUE : FALSE;
 }
 
+static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void)
+{
+	if (syNetPeerFrameCommitDiagEnabled() != FALSE)
+	{
+		return TRUE;
+	}
+	if (syNetPeerFrameCommitGetEnv() != 0)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static u32 syNetPeerFrameCommitRecvDropLogBudget(void)
+{
+	const char *e;
+	static s32 sBudget = -999;
+	s32 v;
+
+	if (sBudget >= 0)
+	{
+		return (u32)sBudget;
+	}
+	v = 16;
+	e = getenv("SSB64_NETPLAY_FRAME_COMMIT_RECV_LOG_MAX");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	sBudget = v;
+	return (u32)sBudget;
+}
+
+static void syNetPeerLogFrameCommitRecvDrop(const char *reason, s32 size, u32 magic, u16 wire_version, u16 packet_type,
+                                          u32 session_id, u32 checksum, u32 expected)
+{
+	static u32 sLogsRemaining;
+
+	if (syNetPeerFrameCommitRecvDropLogEnabled() == FALSE)
+	{
+		return;
+	}
+	if (sLogsRemaining == 0U)
+	{
+		sLogsRemaining = syNetPeerFrameCommitRecvDropLogBudget();
+	}
+	if (sLogsRemaining == 0U)
+	{
+		return;
+	}
+	sLogsRemaining--;
+	if (reason != NULL)
+	{
+		if (strcmp(reason, "handler_size") == 0)
+		{
+			sSYNetPeerFrameCommitDiag.fc_recv_drop_size++;
+		}
+		else if (strcmp(reason, "ingress_size") == 0)
+		{
+			sSYNetPeerFrameCommitDiag.fc_recv_drop_size++;
+		}
+		else if (strcmp(reason, "header") == 0)
+		{
+			sSYNetPeerFrameCommitDiag.fc_recv_drop_header++;
+		}
+		else if (strcmp(reason, "checksum") == 0)
+		{
+			sSYNetPeerFrameCommitDiag.fc_recv_drop_checksum++;
+		}
+	}
+	port_log(
+	    "SSB64 NetPeer: FRAME_COMMIT_RECV_DROP reason=%s size=%d magic=0x%08X wire=%u type=%u sess=%u expect_sess=%u chk=0x%08X expected=0x%08X\n",
+	    reason,
+	    size,
+	    magic,
+	    (unsigned int)wire_version,
+	    (unsigned int)packet_type,
+	    session_id,
+	    (unsigned int)sSYNetPeerSessionID,
+	    checksum,
+	    expected);
+}
+
 void syNetPeerFrameCommitDiagNoteDeferredArmed(void)
 {
 	sSYNetPeerFrameCommitDiag.fc_deferred_armed++;
@@ -7887,7 +8044,8 @@ void syNetPeerEmitFrameCommitDiagReport(void)
 {
 	port_log(
 	    "SSB64 NetPeer: FRAME_COMMIT_DIAG sent=%u recv=%u compared=%u pairing_fail=%u state_diverge=%u "
-	    "deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u\n",
+	    "deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u "
+	    "recv_drop_size=%u recv_drop_header=%u recv_drop_checksum=%u\n",
 	    sSYNetPeerFrameCommitDiag.fc_sent,
 	    sSYNetPeerFrameCommitDiag.fc_recv,
 	    sSYNetPeerFrameCommitDiag.fc_compared,
@@ -7896,7 +8054,10 @@ void syNetPeerEmitFrameCommitDiagReport(void)
 	    sSYNetPeerFrameCommitDiag.fc_deferred_armed,
 	    sSYNetPeerFrameCommitDiag.fc_recovery_started,
 	    sSYNetPeerFrameCommitDiag.fc_recovery_skipped_no_snap,
-	    sSYNetPeerFrameCommitDiag.fc_pairing_starvation);
+	    sSYNetPeerFrameCommitDiag.fc_pairing_starvation,
+	    sSYNetPeerFrameCommitDiag.fc_recv_drop_size,
+	    sSYNetPeerFrameCommitDiag.fc_recv_drop_header,
+	    sSYNetPeerFrameCommitDiag.fc_recv_drop_checksum);
 }
 
 sb32 syNetPeerStrictTeardownFastPathActive(void)
@@ -7955,6 +8116,7 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerPostRecoveryConvergenceWatch = FALSE;
 	sSYNetPeerConvergenceMatchEpochs = 0U;
 	sSYNetPeerConvergenceFailEpochs = 0U;
+	sSYNetPeerFrameCommitMismatchLogCount = 0U;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
 
@@ -8073,6 +8235,15 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	}
 	if (syNetFrameCommitTokensDesync(local, peer, &df, &di, &ds, &dt) != FALSE)
 	{
+		if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+		{
+			sSYNetPeerFrameCommitMismatchLogCount++;
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_TOKEN_MISMATCH validation=%u delta_frame_id=%d delta_input_digest=%d "
+			    "delta_slot_binding=%d local inp=0x%08X bind=0x%08X figh=0x%08X | peer inp=0x%08X bind=0x%08X figh=0x%08X\n",
+			    vtick, (int)df, (int)di, (int)ds, local->input_digest, local->slot_binding_hash,
+			    local->fighter_digest, peer->input_digest, peer->slot_binding_hash, peer->fighter_digest);
+		}
 		syNetDesyncClassifierOnFrameCommitTokenMismatch(vtick, local, peer);
 	}
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
@@ -8082,6 +8253,7 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
 		return;
 	}
+	syNetRollbackNoteFrameCommitStateAgreed(vtick);
 	syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
 }
 
@@ -8109,7 +8281,7 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	syNetPeerWriteU32(&cursor, t->world_digest);
 	syNetPeerWriteU32(&cursor, t->item_digest);
 	syNetPeerWriteU32(&cursor, t->rng_digest);
-	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+	chk = syNetPeerChecksumBytes(buf, (u32)(cursor - buf));
 	syNetPeerWriteU32(&cursor, chk);
 	if (syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress) != (int)sizeof(buf))
 	{
@@ -8135,6 +8307,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 
 	if (size != (s32)SYNETPEER_FRAME_COMMIT_BYTES)
 	{
+		syNetPeerLogFrameCommitRecvDrop("handler_size", size, 0U, 0U, 0U, 0U, 0U, 0U);
 		sSYNetPeerPacketsDropped++;
 		return;
 	}
@@ -8156,9 +8329,17 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	checksum = syNetPeerReadU32(&c);
 	peer.frame_id = (s32)frame_id_u;
 	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
-	    (packet_type != (u16)SYNETPEER_PACKET_FRAME_COMMIT) || (session_id != sSYNetPeerSessionID) ||
-	    (checksum != expected))
+	    (packet_type != (u16)SYNETPEER_PACKET_FRAME_COMMIT) || (session_id != sSYNetPeerSessionID))
 	{
+		syNetPeerLogFrameCommitRecvDrop("header", size, magic, wire_version, packet_type, session_id, checksum,
+		                                expected);
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	if (checksum != expected)
+	{
+		syNetPeerLogFrameCommitRecvDrop("checksum", size, magic, wire_version, packet_type, session_id, checksum,
+		                                expected);
 		sSYNetPeerPacketsDropped++;
 		return;
 	}
@@ -8828,13 +9009,22 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 		    "SSB64 NetSync: remote_ring_diag_win=[%u,%u) all=0x%08X p0=0x%08X p1=0x%08X p2=0x%08X p3=0x%08X "
 		    "(+src/pred/valid)\n",
 		    win_begin, win_begin + win_length, rall_diag, rdiag[0], rdiag[1], rdiag[2], rdiag[3]);
-		if (syNetInputDiagFindFirstPublishedRemoteMismatch(win_begin, win_length, &mis_player, &mis_tick,
-		                                                   &mis_kind) != FALSE)
+		if (syNetInputDiagFindFirstActionablePublishedRemoteMismatch(win_begin, win_length, sSYNetPeerLocalPlayer,
+		                                                             sSYNetPeerExtraLocalSenderSlot, &mis_player,
+		                                                             &mis_tick, &mis_kind) != FALSE)
 		{
 			port_log(
-			    "SSB64 NetSync: pub_vs_remote mismatch kind=%s player=%d tick=%u (published history vs "
-			    "remote ring; buttons/sticks/tick)\n",
+			    "SSB64 NetSync: pub_vs_remote actionable kind=%s player=%d tick=%u (published history vs "
+			    "remote-confirmed; remote slot or value mismatch)\n",
 			    (mis_kind == 0U) ? "presence" : "values", (int)mis_player, (unsigned int)mis_tick);
+		}
+		else if (syNetInputDiagFindFirstPublishedRemoteMismatch(win_begin, win_length, &mis_player, &mis_tick,
+		                                                        &mis_kind) != FALSE)
+		{
+			port_log(
+			    "SSB64 NetSync: pub_vs_remote local_slot_presence_only kind=presence player=%d tick=%u "
+			    "(expected: no remote-confirmed row for locally-authored sim slot on this peer)\n",
+			    (int)mis_player, (unsigned int)mis_tick);
 		}
 	}
 	if (syNetPeerTickDiagLevel() >= 1)
@@ -9591,6 +9781,8 @@ void syNetPeerUpdate(void)
 #endif
 		sSYNetPeerBattleStartRepeatFrames--;
 	}
+	/* NetSync validation + frame-commit send before INPUT so control lands ahead of the next bundle burst. */
+	syNetPeerLogStats();
 	syNetPeerSendLocalInput();
 #if defined(PORT)
 	{
@@ -9601,7 +9793,6 @@ void syNetPeerUpdate(void)
 		syNetPeerRunAdaptiveInputDelaySimStep(tick_now);
 	}
 #endif
-	syNetPeerLogStats();
 	syNetRollbackUpdate();
 #if defined(PORT)
 	syNetPeerMaybeLogSimStateTickTrace();

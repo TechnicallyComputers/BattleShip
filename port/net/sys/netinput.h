@@ -226,9 +226,21 @@ extern s32 syNetInputGetAbortOnInputMismatchMask(void);
 extern sb32 syNetInputGetAbortOnInputMismatchFatal(void);
 extern sb32 syNetInputDiagFindFirstPublishedRemoteMismatch(u32 tick_begin, u32 frame_count, s32 *out_player,
                                                            u32 *out_tick, u32 *out_kind);
+/*
+ * Subset of published-vs-remote-confirmed mismatches meant for operator logs: value mismatches on any slot, or
+ * presence mismatches on remote human sim slots only (skips local-slot presence-only: no wire echo on same peer).
+ */
+extern sb32 syNetInputDiagFindFirstActionablePublishedRemoteMismatch(u32 tick_begin, u32 frame_count,
+                                                                   s32 local_sim_slot, s32 extra_local_sim_slot,
+                                                                   s32 *out_player, u32 *out_tick, u32 *out_kind);
+/* One-shot ring snapshot after symmetric startup latch (tick 0..3 published vs remote-confirmed per slot). */
+extern void syNetInputLogStartupInputBindingSnapshot(u32 agreed_tick);
 extern void syNetInputLogDesyncNeedle(u32 validation_tick, u32 needle_tick, int trace_level);
 /* Clear `last_confirmed` for NetPeer remote receive slots (call after bind / session slot wiring). */
 extern void syNetInputClearRemoteSlotPredictionState(void);
+/* Sticky per-sim-tick flag: TRUE when synchronize/publish used predicted remote input for that tick. */
+extern void syNetInputNoteSimTickPredictedRemoteUsage(u32 sim_tick, const SYNetInputFrame *synced_frames);
+extern sb32 syNetInputSimTickUsedPredictedRemote(u32 sim_tick);
 #endif
 extern void syNetInputSetRecordingEnabled(sb32 is_enabled);
 extern sb32 syNetInputGetRecordingEnabled(void);
@@ -270,8 +282,10 @@ extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tic
  * `SSB64_NETPLAY_GGPO_STICK_DEADBAND` (default 4).
  */
 extern sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
-                                                sb32 correction_is_predicted);
+                                                      sb32 correction_is_predicted);
 extern sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new);
+extern sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, const SYNetInputFrame *published,
+                                                         const SYNetInputFrame *remote);
 /* TRUE when published vs remote sticks disagree with neutral vs analog (GGPO stick-mismatch recovery). */
 extern sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote);
 /* TRUE: patch published row only (skip GGPO resim) for isolated digital keyboard tap/release under delay. */

@@ -325,6 +325,7 @@ typedef struct SYNetRbSnapshotSlot
 {
 	u32 tick;
 	sb32 is_valid;
+	sb32 is_load_safe;
 	u32 hash_fighter;
 	u32 hash_world;
 	u32 hash_item;
@@ -1497,6 +1498,7 @@ static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick)
 }
 
 static u32 sSYNetRbSnapshotLastCommittedTick;
+static u32 sSYNetRbSnapshotLastLoadSafeTick;
 
 #endif /* PORT */
 
@@ -1552,9 +1554,11 @@ void syNetRbSnapshotResetSession(void)
 	for (i = 0; i < SYNETRB_SNAPSHOT_RING_MAX; i++)
 	{
 		sSYNetRbSnapshotRing[i].is_valid = FALSE;
+		sSYNetRbSnapshotRing[i].is_load_safe = FALSE;
 		sSYNetRbSnapshotRing[i].tick = ~(u32)0;
 	}
 	sSYNetRbSnapshotLastCommittedTick = ~(u32)0;
+	sSYNetRbSnapshotLastLoadSafeTick = ~(u32)0;
 	sSYNetRbSnapshotGuardLogBudget = 16;
 	sSYNetRbEmergencyValid = FALSE;
 	memset(&sSYNetRbEmergencySlot, 0, sizeof(sSYNetRbEmergencySlot));
@@ -1582,6 +1586,7 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	memset(slot, 0, sizeof(*slot));
 	slot->tick = completed_sim_tick;
 	slot->is_valid = TRUE;
+	slot->is_load_safe = TRUE;
 
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
 	     fighter_gobj = fighter_gobj->link_next)
@@ -1684,6 +1689,11 @@ sb32 syNetRbSnapshotRestoreLiveEmergency(void)
 
 sb32 syNetRbSnapshotSave(u32 completed_sim_tick)
 {
+	return syNetRbSnapshotSaveMarked(completed_sim_tick, TRUE);
+}
+
+sb32 syNetRbSnapshotSaveMarked(u32 completed_sim_tick, sb32 is_load_safe)
+{
 #ifdef PORT
 	SYNetRbSnapshotSlot *slot;
 
@@ -1692,13 +1702,19 @@ sb32 syNetRbSnapshotSave(u32 completed_sim_tick)
 	{
 		return FALSE;
 	}
+	slot->is_load_safe = is_load_safe;
 	if (completed_sim_tick > sSYNetRbSnapshotLastCommittedTick)
 	{
 		sSYNetRbSnapshotLastCommittedTick = completed_sim_tick;
 	}
+	if ((is_load_safe != FALSE) && (completed_sim_tick > sSYNetRbSnapshotLastLoadSafeTick))
+	{
+		sSYNetRbSnapshotLastLoadSafeTick = completed_sim_tick;
+	}
 	return TRUE;
 #else
 	(void)completed_sim_tick;
+	(void)is_load_safe;
 	return FALSE;
 #endif
 }
@@ -1838,5 +1854,56 @@ u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick)
 		}
 	}
 	return ~(u32)0;
+}
+
+u32 syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(u32 tick, u32 min_tick)
+{
+	u32 t;
+
+	if (tick == 0U)
+	{
+		return ~(u32)0;
+	}
+	for (t = tick; t >= min_tick; t--)
+	{
+		SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(t);
+
+		if ((slot->is_valid != FALSE) && (slot->tick == t) && (slot->is_load_safe != FALSE))
+		{
+			return t;
+		}
+		if (t == 0U)
+		{
+			break;
+		}
+	}
+	return ~(u32)0;
+}
+
+u32 syNetRbSnapshotGetLastLoadSafeTick(void)
+{
+	return sSYNetRbSnapshotLastLoadSafeTick;
+}
+
+void syNetRbSnapshotMarkLoadUnsafe(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+	u32 probe;
+
+	if (tick == 0U)
+	{
+		return;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return;
+	}
+	slot->is_load_safe = FALSE;
+	if (tick == sSYNetRbSnapshotLastLoadSafeTick)
+	{
+		probe = (tick > 0U) ? (tick - 1U) : 0U;
+		sSYNetRbSnapshotLastLoadSafeTick = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(probe, 0U);
+	}
 }
 #endif
