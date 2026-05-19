@@ -155,7 +155,21 @@ static u32 sSYNetRollbackPeerBaselineResyncOriginMismatch;
 static sb32 sSYNetRollbackPeerBaselineResyncStormActive;
 static u32 sSYNetRollbackBaselineEchoRetryLoadTick = ~(u32)0;
 static u32 sSYNetRollbackBaselineEchoRetryAttempts;
+static sb32 sSYNetRollbackDeferredPeerSymmetricPending;
+static u32 sSYNetRollbackDeferredPeerSymmetricTick;
+static u32 sSYNetRollbackDeferredPeerSymmetricTargetTick;
+static s32 sSYNetRollbackDeferredPeerSymmetricSlot;
+static sb32 sSYNetRollbackDeferredPeerBaselineComparePending;
+static u32 sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+static u32 sSYNetRollbackEpochId;
+static u32 sSYNetRollbackPeerEpochTargetTick;
+static u32 sSYNetRollbackPeerEpochMismatchTick;
+static u32 sSYNetRollbackEpochHoldLogsRemaining;
+static int sSYNetRollbackEpochCapSlackCache = -999;
 static int sSYNetRollbackPeerDivergeResyncTicksCache = -999;
+
+#define SYNETROLLBACK_EPOCH_CAP_SLACK_DEFAULT 1U
+#define SYNETROLLBACK_EPOCH_CAP_SLACK_DISABLE 99U
 
 typedef enum SYNetRollbackEpisodePhase
 {
@@ -187,6 +201,8 @@ static SYNetRollbackEpisode sSYNetRollbackEpisode;
 #define SYNETROLLBACK_MAX_EPISODE_EXTENSIONS 3U
 #define SYNETROLLBACK_PEER_BASELINE_ECHO_MIN_ADVANCE_TICKS 30U
 #define SYNETROLLBACK_PEER_BASELINE_RESYNC_MAX_STEPS 8U
+#define SYNETROLLBACK_BASELINE_SNAPSHOT_RETRY_MAX 4U
+#define SYNETROLLBACK_LOAD_TICK_REWIND_MAX 16U
 #define SYNETROLLBACK_ROLLBACK_COOLDOWN_FRAMES_DEFAULT 2U
 
 #define SYNETROLLBACK_DEBOUNCE_FRAMES_DEFAULT 3U
@@ -208,6 +224,7 @@ static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, c
 							       const u32 *peer_fighter_slot);
 static sb32 syNetRollbackTryEchoBaselineResponse(u32 load_tick);
 static sb32 syNetRollbackBaselineEchoAllowed(u32 load_tick);
+static void syNetRollbackQueuePeerSymmetricNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
 static void syNetRollbackResetPeerBaselineResyncStorm(void);
 static sb32 syNetRollbackPeerBaselineResyncStormLimitReached(u32 load_tick);
 static void syNetRollbackOnPeerBaselineResyncStormLimit(u32 load_tick);
@@ -216,6 +233,21 @@ static u32 syNetRollbackGetPeerDivergeResyncTicks(void);
 static void syNetRollbackComparePeerBaselineToLocal(u32 load_tick, const SYNetRollbackHashSet *peer,
 						    const u32 *peer_fighter_slot);
 static void syNetRollbackPumpBaselineEchoRetry(void);
+static sb32 syNetRollbackBaselineCompareQuiesced(void);
+static void syNetRollbackFlushDeferredPeerSymmetric(void);
+static sb32 syNetRollbackSnapshotReadyForBaselineCompare(u32 load_tick);
+static sb32 syNetRollbackResolveLoadTickForSnapshot(u32 *io_load_tick, u32 *io_mismatch_tick);
+static sb32 syNetRollbackPeerBaselineDriftIsAnimOnly(const SYNetRollbackHashSet *peer,
+						     const SYNetRollbackHashSet *local);
+static sb32 syNetRollbackPeerBaselineDriftIsGameplayOnlyMap(const SYNetRollbackHashSet *peer,
+							    const SYNetRollbackHashSet *local);
+static void syNetRollbackRunDeferredPeerBaselineCompare(void);
+static u32 syNetRollbackGetEpochCapSlack(void);
+static u32 syNetRollbackComputePeerEpochLiveCap(void);
+static void syNetRollbackNotePeerEpochTarget(s32 slot, u32 mismatch_tick, u32 target_tick);
+static void syNetRollbackClearPeerEpochState(void);
+static void syNetRollbackMaybeLogEpochHold(u32 sim_tick, u32 cap, u32 cap_source, u32 local_resim,
+					    u32 peer_target);
 static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollbackHashSet *peer,
 						   const SYNetRollbackHashSet *local, const u32 *peer_fighter_slot);
 static void syNetRollbackEpisodeReset(void);
@@ -456,6 +488,17 @@ void syNetRollbackInit(void)
 	sSYNetRollbackPeerBaselineResyncSteps = 0U;
 	sSYNetRollbackPeerBaselineResyncOriginMismatch = ~(u32)0;
 	sSYNetRollbackPeerBaselineResyncStormActive = FALSE;
+	sSYNetRollbackBaselineEchoRetryLoadTick = ~(u32)0;
+	sSYNetRollbackBaselineEchoRetryAttempts = 0U;
+	sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+	sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricSlot = -1;
+	sSYNetRollbackDeferredPeerBaselineComparePending = FALSE;
+	sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+	sSYNetRollbackEpochId = 0U;
+	syNetRollbackClearPeerEpochState();
+	sSYNetRollbackEpochHoldLogsRemaining = 16U;
 	{
 		const char *env_sh;
 
@@ -625,6 +668,15 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackPeerBaselineResyncSteps = 0U;
 	sSYNetRollbackPeerBaselineResyncOriginMismatch = ~(u32)0;
 	sSYNetRollbackPeerBaselineResyncStormActive = FALSE;
+	sSYNetRollbackBaselineEchoRetryLoadTick = ~(u32)0;
+	sSYNetRollbackBaselineEchoRetryAttempts = 0U;
+	sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+	sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricSlot = -1;
+	sSYNetRollbackDeferredPeerBaselineComparePending = FALSE;
+	sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+	syNetRollbackClearPeerEpochState();
 	syNetRollbackEpisodeReset();
 	sSYNetRollbackPeerSnapshotAbort = TRUE;
 	syNetSyncResetNetplayBattleClock();
@@ -648,6 +700,13 @@ void syNetRollbackStopVSSession(void)
 	sSYNetRollbackPendingPeerSymmetricTick = ~(u32)0;
 	sSYNetRollbackPendingPeerSymmetricTargetTick = ~(u32)0;
 	sSYNetRollbackPendingPeerSymmetricSlot = -1;
+	sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+	sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricSlot = -1;
+	sSYNetRollbackDeferredPeerBaselineComparePending = FALSE;
+	sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+	syNetRollbackClearPeerEpochState();
 	sSYNetRollbackResimFromPeerSymmetric = FALSE;
 	sSYNetRollbackResimPreHashesValid = FALSE;
 	sSYNetRollbackResimLoadTick = ~(u32)0;
@@ -839,6 +898,10 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 		{
 			sSYNetRollbackEpisodeResolvedThrough = completed_target;
 		}
+		if ((sSYNetRollbackPeerEpochTargetTick != 0U) && (completed_target >= sSYNetRollbackPeerEpochTargetTick))
+		{
+			syNetRollbackClearPeerEpochState();
+		}
 	}
 	sSYNetRollbackEpisodeAnchorMismatch = ~(u32)0;
 	sSYNetRollbackEpisodeAnchorLoadTick = ~(u32)0;
@@ -882,6 +945,31 @@ sb32 syNetRollbackPredictionRecoveryEnabled(void)
 	}
 	env = getenv("SSB64_NETPLAY_PREDICTION_RECOVERY");
 	return ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? TRUE : FALSE;
+}
+
+sb32 syNetRollbackStickMismatchRecoveryEnabled(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+
+	if (syNetRollbackIsActive() == FALSE)
+	{
+		return FALSE;
+	}
+	if (sCached >= 0)
+	{
+		return (sCached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_STICK_MISMATCH_RECOVERY");
+	if ((env != NULL) && (env[0] != '\0') && (atoi(env) == 0))
+	{
+		sCached = 0;
+	}
+	else
+	{
+		sCached = 1;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
 }
 
 static u32 syNetRollbackRollbackCooldownFrames(void)
@@ -1193,6 +1281,11 @@ void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick)
 			notify_target = sim_tick + 1U;
 		}
 		syNetRollbackArmSymmetricNotify(player, sim_tick, notify_target);
+	}
+	if ((syNetRollbackStickMismatchRecoveryEnabled() != FALSE) &&
+	    (syNetInputGgpoStickNeutralAnalogFlip(&published, &remote) != FALSE))
+	{
+		syNetRollbackArmPredictionRecoveryForStickMismatch(sim_tick, syNetInputGetTick());
 	}
 	syNetRollbackQueueDeferredInputCorrection(player, sim_tick);
 }
@@ -1931,6 +2024,244 @@ void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_tar
 	}
 }
 
+static u32 syNetRollbackGetEpochCapSlack(void)
+{
+	const char *env;
+	int v;
+
+	if (sSYNetRollbackEpochCapSlackCache != -999)
+	{
+		v = sSYNetRollbackEpochCapSlackCache;
+	}
+	else
+	{
+		v = (int)SYNETROLLBACK_EPOCH_CAP_SLACK_DEFAULT;
+		env = getenv("SSB64_NETPLAY_ROLLBACK_EPOCH_CAP_SLACK");
+		if ((env != NULL) && (env[0] != '\0'))
+		{
+			v = atoi(env);
+		}
+		sSYNetRollbackEpochCapSlackCache = v;
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	return (u32)v;
+}
+
+static void syNetRollbackClearPeerEpochState(void)
+{
+	sSYNetRollbackPeerEpochTargetTick = 0U;
+	sSYNetRollbackPeerEpochMismatchTick = 0U;
+}
+
+static void syNetRollbackNotePeerEpochTarget(s32 slot, u32 mismatch_tick, u32 target_tick)
+{
+	(void)slot;
+	if ((mismatch_tick == 0U) || (target_tick == 0U))
+	{
+		return;
+	}
+	if ((sSYNetRollbackPeerEpochTargetTick == 0U) || (target_tick > sSYNetRollbackPeerEpochTargetTick) ||
+	    ((target_tick == sSYNetRollbackPeerEpochTargetTick) && (mismatch_tick < sSYNetRollbackPeerEpochMismatchTick)))
+	{
+		sSYNetRollbackPeerEpochTargetTick = target_tick;
+		sSYNetRollbackPeerEpochMismatchTick = mismatch_tick;
+	}
+}
+
+static u32 syNetRollbackComputePeerEpochLiveCap(void)
+{
+	u32 peer_target;
+	u32 slack;
+
+	if (syNetRollbackGetEpochCapSlack() >= SYNETROLLBACK_EPOCH_CAP_SLACK_DISABLE)
+	{
+		return ~(u32)0;
+	}
+	peer_target = 0U;
+	if (sSYNetRollbackPeerEpochTargetTick != 0U)
+	{
+		peer_target = sSYNetRollbackPeerEpochTargetTick;
+	}
+	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
+	    (sSYNetRollbackPendingPeerSymmetricTargetTick != ~(u32)0) &&
+	    (sSYNetRollbackPendingPeerSymmetricTargetTick > peer_target))
+	{
+		peer_target = sSYNetRollbackPendingPeerSymmetricTargetTick;
+	}
+	if ((sSYNetRollbackDeferredPeerSymmetricPending != FALSE) &&
+	    (sSYNetRollbackDeferredPeerSymmetricTargetTick > peer_target))
+	{
+		peer_target = sSYNetRollbackDeferredPeerSymmetricTargetTick;
+	}
+	if (peer_target == 0U)
+	{
+		return ~(u32)0;
+	}
+	slack = syNetRollbackGetEpochCapSlack();
+	if (peer_target > (~(u32)0 - slack))
+	{
+		return ~(u32)0;
+	}
+	return peer_target + slack;
+}
+
+static void syNetRollbackMaybeLogEpochHold(u32 sim_tick, u32 cap, u32 cap_source, u32 local_resim, u32 peer_target)
+{
+	const char *owner;
+	const char *source;
+
+	if (sSYNetRollbackEpochHoldLogsRemaining == 0U)
+	{
+		return;
+	}
+	owner = "live";
+	if (sSYNetRollbackResimPending != FALSE)
+	{
+		owner = sSYNetRollbackResimFromPeerSymmetric != FALSE ? "peer_follower" : "local_initiator";
+	}
+	else if (sSYNetRollbackPeerEpochTargetTick != 0U)
+	{
+		owner = "peer_epoch";
+	}
+	source = "none";
+	if ((cap_source & 1U) != 0U)
+	{
+		source = "local_resim";
+	}
+	else if ((cap_source & 2U) != 0U)
+	{
+		source = "peer_target";
+	}
+	else if ((cap_source & 4U) != 0U)
+	{
+		source = "hr_cap";
+	}
+	port_log(
+	    "SSB64 NetRollback: rollback_epoch_hold epoch=%u owner=%s sim=%u cap=%u source=%s local_resim=%u peer_target=%u slack=%u\n",
+	    sSYNetRollbackEpochId,
+	    owner,
+	    sim_tick,
+	    cap,
+	    source,
+	    local_resim,
+	    peer_target,
+	    syNetRollbackGetEpochCapSlack());
+	sSYNetRollbackEpochHoldLogsRemaining--;
+}
+
+sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source)
+{
+	u32 cap;
+	u32 source;
+
+	if (out_max_live_sim == NULL)
+	{
+		return FALSE;
+	}
+	if ((syNetRollbackIsActive() == FALSE) || (syNetSessionParamsRollbackEnabled() == FALSE))
+	{
+		return FALSE;
+	}
+	cap = ~(u32)0;
+	source = 0U;
+	if ((sSYNetRollbackResimPending != FALSE) && (sSYNetRollbackResimTargetTick != ~(u32)0))
+	{
+		cap = sSYNetRollbackResimTargetTick;
+		source = 1U;
+	}
+	{
+		u32 peer_cap;
+
+		peer_cap = syNetRollbackComputePeerEpochLiveCap();
+		if (peer_cap != ~(u32)0)
+		{
+			if ((cap == ~(u32)0) || (peer_cap < cap))
+			{
+				cap = peer_cap;
+			}
+			source |= 2U;
+		}
+	}
+	if (out_cap_source != NULL)
+	{
+		*out_cap_source = source;
+	}
+	*out_max_live_sim = cap;
+	return (cap != ~(u32)0) ? TRUE : FALSE;
+}
+
+sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick)
+{
+	u32 cap;
+	u32 cap_source;
+	u32 local_resim;
+	u32 peer_target;
+
+	if ((syNetRollbackIsActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackGetLiveSimCap(&cap, &cap_source) == FALSE)
+	{
+		return FALSE;
+	}
+	if (cap == ~(u32)0)
+	{
+		return FALSE;
+	}
+	if (sim_tick <= cap)
+	{
+		return FALSE;
+	}
+	local_resim =
+	    (sSYNetRollbackResimPending != FALSE) ? sSYNetRollbackResimTargetTick : 0U;
+	peer_target = sSYNetRollbackPeerEpochTargetTick;
+	syNetRollbackMaybeLogEpochHold(sim_tick, cap, cap_source, local_resim, peer_target);
+	return TRUE;
+}
+
+u32 syNetRollbackGetEpochId(void)
+{
+	return sSYNetRollbackEpochId;
+}
+
+sb32 syNetRollbackAcceptPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick)
+{
+	if ((sSYNetRollbackSymmetricEnabled == FALSE) || (syNetRollbackIsActive() == FALSE))
+	{
+		return FALSE;
+	}
+	if ((slot < 0) || (slot >= MAXCONTROLLERS) || (mismatch_tick == 0U))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackPeerSymmetricAppliedTick[slot] != 0U) &&
+	    (mismatch_tick <= sSYNetRollbackPeerSymmetricAppliedTick[slot]))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (mismatch_tick < sSYNetRollbackEpisodeResolvedThrough))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
+	    (mismatch_tick == sSYNetRollbackPendingPeerSymmetricTick) &&
+	    (target_tick != 0U) && (target_tick <= sSYNetRollbackPendingPeerSymmetricTargetTick))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackDeferredPeerSymmetricPending != FALSE) &&
+	    (mismatch_tick == sSYNetRollbackDeferredPeerSymmetricTick) &&
+	    (target_tick != 0U) && (target_tick <= sSYNetRollbackDeferredPeerSymmetricTargetTick))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick)
 {
 	u32 frontier;
@@ -1957,12 +2288,7 @@ void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32
 	{
 		return;
 	}
-	if ((sSYNetRollbackPeerSymmetricAppliedTick[slot] != 0U) &&
-	    (mismatch_tick <= sSYNetRollbackPeerSymmetricAppliedTick[slot]))
-	{
-		return;
-	}
-	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (mismatch_tick < sSYNetRollbackEpisodeResolvedThrough))
+	if (syNetRollbackAcceptPeerSymmetricRollbackNotify(slot, mismatch_tick, target_tick) == FALSE)
 	{
 		return;
 	}
@@ -1983,33 +2309,31 @@ void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32
 	{
 		target_tick = mismatch_tick + 1U;
 	}
-	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
-	    (mismatch_tick == sSYNetRollbackPendingPeerSymmetricTick))
+	syNetRollbackNotePeerEpochTarget(slot, mismatch_tick, target_tick);
+	if (syNetRollbackBaselineCompareQuiesced() == FALSE)
 	{
-		if (target_tick > sSYNetRollbackPendingPeerSymmetricTargetTick)
+		if ((sSYNetRollbackDeferredPeerSymmetricPending != FALSE) &&
+		    (mismatch_tick == sSYNetRollbackDeferredPeerSymmetricTick) &&
+		    (target_tick > sSYNetRollbackDeferredPeerSymmetricTargetTick))
 		{
-			sSYNetRollbackPendingPeerSymmetricTargetTick = target_tick;
+			sSYNetRollbackDeferredPeerSymmetricTargetTick = target_tick;
 		}
-		return;
-	}
-	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
-	    (mismatch_tick > sSYNetRollbackPendingPeerSymmetricTick))
-	{
-		return;
-	}
-	sSYNetRollbackPendingPeerSymmetricTick = mismatch_tick;
-	sSYNetRollbackPendingPeerSymmetricTargetTick = target_tick;
-	sSYNetRollbackPendingPeerSymmetricSlot = slot;
-	if (sSYNetRollbackPeerSymmetricLogsRemaining > 0U)
-	{
+		else if ((sSYNetRollbackDeferredPeerSymmetricPending == FALSE) ||
+		         (mismatch_tick <= sSYNetRollbackDeferredPeerSymmetricTick))
+		{
+			sSYNetRollbackDeferredPeerSymmetricPending = TRUE;
+			sSYNetRollbackDeferredPeerSymmetricTick = mismatch_tick;
+			sSYNetRollbackDeferredPeerSymmetricTargetTick = target_tick;
+			sSYNetRollbackDeferredPeerSymmetricSlot = slot;
+		}
 		port_log(
-		    "SSB64 NetRollback: peer symmetric rollback queued slot=%d mismatch_tick=%u target_tick=%u sim=%u\n",
-		    (int)slot,
+		    "SSB64 NetRollback: peer symmetric rollback deferred mismatch_tick=%u target_tick=%u sim=%u\n",
 		    mismatch_tick,
 		    target_tick,
 		    syNetInputGetTick());
-		sSYNetRollbackPeerSymmetricLogsRemaining--;
+		return;
 	}
+	syNetRollbackQueuePeerSymmetricNotify(slot, mismatch_tick, target_tick);
 }
 #endif
 
@@ -2195,7 +2519,7 @@ void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32 fronti
 {
 	SYNetInputFrame hist;
 
-	if (syNetRollbackPredictionRecoveryEnabled() == FALSE)
+	if (syNetRollbackStickMismatchRecoveryEnabled() == FALSE)
 	{
 		return;
 	}
@@ -2206,10 +2530,6 @@ void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32 fronti
 
 sb32 syNetRollbackPredictionRecoveryRequiresConfirmed(u32 sim_tick)
 {
-	if (syNetRollbackPredictionRecoveryEnabled() == FALSE)
-	{
-		return FALSE;
-	}
 	if ((syNetRollbackIsActive() == FALSE) || (sSYNetRollbackPredictionRecoveryUntilSim == 0U))
 	{
 		return FALSE;
@@ -2245,6 +2565,7 @@ void syNetRollbackAfterBattleUpdate(void)
 #endif
 	syNetRollbackSavePostTick(completed_tick);
 #ifdef PORT
+	syNetRollbackFlushDeferredPeerSymmetric();
 	syNetRollbackPumpBaselineEchoRetry();
 	if ((sSYNetRollbackSynctestEnabled != FALSE) && (completed_tick >= sSYNetRollbackSynctestNextProbeTick) &&
 	    (completed_tick > 0U))
@@ -2686,6 +3007,10 @@ static void syNetRollbackEpisodeSyncToLegacy(void)
 static void syNetRollbackEpisodeBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick, s32 corrected_slot,
 				      sb32 initiator, sb32 from_peer_notify)
 {
+	if (sSYNetRollbackEpochId < ~(u32)0)
+	{
+		sSYNetRollbackEpochId++;
+	}
 	sSYNetRollbackEpisode.phase = nSYNetRollbackEpisodePhaseAwaitingBaseline;
 	sSYNetRollbackEpisode.mismatch_tick = mismatch_tick;
 	sSYNetRollbackEpisode.load_tick = load_tick;
@@ -2733,6 +3058,8 @@ static void syNetRollbackFinishForwardResim(void)
 	sSYNetRollbackPeerBaselineSendPending = FALSE;
 	syNetRollbackClearSymmetricNotifyAll();
 	syNetRollbackResetPeerBaselineResyncStorm();
+	syNetRollbackClearPeerEpochState();
+	syNetRollbackRunDeferredPeerBaselineCompare();
 }
 
 void syNetRollbackPumpResimBaselineIfAwaiting(void)
@@ -2829,6 +3156,10 @@ static void syNetRollbackResetPeerBaselineResyncStorm(void)
 {
 	sSYNetRollbackBaselineEchoRetryLoadTick = ~(u32)0;
 	sSYNetRollbackBaselineEchoRetryAttempts = 0U;
+	sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+	sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricSlot = -1;
 	sSYNetRollbackPeerBaselineResyncSteps = 0U;
 	sSYNetRollbackPeerBaselineResyncOriginMismatch = ~(u32)0;
 	sSYNetRollbackPeerBaselineResyncStormActive = FALSE;
@@ -3031,7 +3362,6 @@ static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, c
 							       const u32 *peer_fighter_slot)
 {
 	sb32 slot_ok;
-	sb32 anim_ok;
 
 	if ((peer == NULL) || (sSYNetRollbackResimPending == FALSE) || (load_tick != sSYNetRollbackResimLoadTick) ||
 	    (sSYNetRollbackResimAwaitingPeerBaseline == FALSE) || (sSYNetRollbackResimBaselineGateOpen != FALSE))
@@ -3044,12 +3374,7 @@ static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, c
 	           (peer->rng == sSYNetRollbackPeerBaselineSlotRng))
 	              ? TRUE
 	              : FALSE;
-	anim_ok = TRUE;
-	if ((peer->world == sSYNetRollbackPeerBaselineSlotWorld) && (peer->animation != sSYNetRollbackPeerBaselineAnim))
-	{
-		anim_ok = FALSE;
-	}
-	if ((slot_ok != FALSE) && (anim_ok != FALSE) &&
+	if ((slot_ok != FALSE) &&
 	    (syNetRollbackBaselineFighterSlotsMatch(peer_fighter_slot, sSYNetRollbackPeerBaselineFighterSlot) != FALSE) &&
 	    (peer->fighter == sSYNetRollbackPeerBaselineFigh) && (peer->world == sSYNetRollbackPeerBaselineWorld) &&
 	    (peer->item == sSYNetRollbackPeerBaselineItem) && (peer->rng == sSYNetRollbackPeerBaselineRng))
@@ -3317,6 +3642,236 @@ static u32 syNetRollbackGetPeerDivergeResyncTicks(void)
 	return (u32)v;
 }
 
+static sb32 syNetRollbackBaselineCompareQuiesced(void)
+{
+	if (sSYNetRollbackBaselineEchoRetryLoadTick != ~(u32)0)
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackResimPending != FALSE) && (sSYNetRollbackResimAwaitingPeerBaseline != FALSE) &&
+	    (sSYNetRollbackResimBaselineGateOpen == FALSE))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static void syNetRollbackQueuePeerSymmetricNotify(s32 slot, u32 mismatch_tick, u32 target_tick)
+{
+	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
+	    (mismatch_tick == sSYNetRollbackPendingPeerSymmetricTick))
+	{
+		if (target_tick > sSYNetRollbackPendingPeerSymmetricTargetTick)
+		{
+			sSYNetRollbackPendingPeerSymmetricTargetTick = target_tick;
+		}
+		return;
+	}
+	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
+	    (mismatch_tick > sSYNetRollbackPendingPeerSymmetricTick))
+	{
+		return;
+	}
+	sSYNetRollbackPendingPeerSymmetricTick = mismatch_tick;
+	sSYNetRollbackPendingPeerSymmetricTargetTick = target_tick;
+	sSYNetRollbackPendingPeerSymmetricSlot = slot;
+	if (sSYNetRollbackPeerSymmetricLogsRemaining > 0U)
+	{
+		port_log(
+		    "SSB64 NetRollback: peer symmetric rollback queued slot=%d mismatch_tick=%u target_tick=%u sim=%u\n",
+		    (int)slot,
+		    mismatch_tick,
+		    target_tick,
+		    syNetInputGetTick());
+		sSYNetRollbackPeerSymmetricLogsRemaining--;
+	}
+}
+
+static void syNetRollbackFlushDeferredPeerSymmetric(void)
+{
+	u32 mismatch_tick;
+	u32 target_tick;
+	s32 slot;
+
+	if (sSYNetRollbackDeferredPeerSymmetricPending == FALSE)
+	{
+		return;
+	}
+	if (syNetRollbackBaselineCompareQuiesced() == FALSE)
+	{
+		return;
+	}
+	mismatch_tick = sSYNetRollbackDeferredPeerSymmetricTick;
+	target_tick = sSYNetRollbackDeferredPeerSymmetricTargetTick;
+	slot = sSYNetRollbackDeferredPeerSymmetricSlot;
+	sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+	sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+	sSYNetRollbackDeferredPeerSymmetricSlot = -1;
+	port_log(
+	    "SSB64 NetRollback: peer symmetric rollback flush deferred mismatch_tick=%u target_tick=%u sim=%u\n",
+	    mismatch_tick,
+	    target_tick,
+	    syNetInputGetTick());
+	syNetRollbackQueuePeerSymmetricNotify(slot, mismatch_tick, target_tick);
+	syNetRollbackRunDeferredPeerBaselineCompare();
+}
+
+static sb32 syNetRollbackSnapshotReadyForBaselineCompare(u32 load_tick)
+{
+	u32 sim_tick;
+
+	if (load_tick == 0U)
+	{
+		return FALSE;
+	}
+	/* Sealed ticks only after at least one completed episode; load anchor stays comparable. */
+	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (load_tick > sSYNetRollbackEpisodeResolvedThrough))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackResimPending != FALSE) && (load_tick > sSYNetRollbackResimLoadTick) &&
+	    (load_tick < sSYNetRollbackResimTargetTick))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackPeerEpochMismatchTick != 0U) && (sSYNetRollbackPeerEpochTargetTick != 0U) &&
+	    (load_tick >= sSYNetRollbackPeerEpochMismatchTick) && (load_tick < sSYNetRollbackPeerEpochTargetTick))
+	{
+		return FALSE;
+	}
+	sim_tick = syNetInputGetTick();
+	if (load_tick >= sim_tick)
+	{
+		return FALSE;
+	}
+	return syNetRbSnapshotIsTickCommitted(load_tick);
+}
+
+static sb32 syNetRollbackResolveLoadTickForSnapshot(u32 *io_load_tick, u32 *io_mismatch_tick)
+{
+	u32 min_load;
+	u32 ring_cap;
+	u32 sim_tick;
+	u32 resolved;
+	u32 load_tick;
+	u32 rewind_limit;
+
+	if ((io_load_tick == NULL) || (io_mismatch_tick == NULL))
+	{
+		return FALSE;
+	}
+	load_tick = *io_load_tick;
+	if (syNetRbSnapshotGetStoredSubsystemHashes(load_tick, NULL, NULL, NULL, NULL) != FALSE)
+	{
+		return TRUE;
+	}
+	sim_tick = syNetInputGetTick();
+	ring_cap = syNetRbSnapshotRingCapacity();
+	min_load = 0U;
+	if ((ring_cap > 2U) && (sim_tick > (ring_cap - 2U)))
+	{
+		min_load = sim_tick - (ring_cap - 2U);
+	}
+	if (load_tick < min_load)
+	{
+		return FALSE;
+	}
+	rewind_limit = SYNETROLLBACK_LOAD_TICK_REWIND_MAX;
+	if ((load_tick > min_load) && ((load_tick - min_load) < rewind_limit))
+	{
+		rewind_limit = load_tick - min_load;
+	}
+	if (load_tick > rewind_limit)
+	{
+		min_load = load_tick - rewind_limit;
+	}
+	resolved = syNetRbSnapshotFindLatestValidTickAtOrBefore(load_tick, min_load);
+	if (resolved == ~(u32)0)
+	{
+		return FALSE;
+	}
+	if (resolved != load_tick)
+	{
+		port_log(
+		    "SSB64 NetRollback: LOAD_TICK_ADJUST requested=%u resolved=%u mismatch=%u->%u sim=%u\n",
+		    load_tick,
+		    resolved,
+		    *io_mismatch_tick,
+		    resolved + 1U,
+		    sim_tick);
+		*io_load_tick = resolved;
+		if (*io_mismatch_tick > (resolved + 1U))
+		{
+			*io_mismatch_tick = resolved + 1U;
+		}
+	}
+	return TRUE;
+}
+
+static sb32 syNetRollbackPeerBaselineDriftIsAnimOnly(const SYNetRollbackHashSet *peer, const SYNetRollbackHashSet *local)
+{
+	if ((peer == NULL) || (local == NULL))
+	{
+		return FALSE;
+	}
+	if ((peer->fighter != local->fighter) || (peer->world != local->world) || (peer->item != local->item) ||
+	    (peer->rng != local->rng) || (peer->weapon != local->weapon) || (peer->map != local->map) ||
+	    (peer->camera != local->camera))
+	{
+		return FALSE;
+	}
+	if (peer->animation == local->animation)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static sb32 syNetRollbackPeerBaselineDriftIsGameplayOnlyMap(const SYNetRollbackHashSet *peer,
+							    const SYNetRollbackHashSet *local)
+{
+	if ((peer == NULL) || (local == NULL))
+	{
+		return FALSE;
+	}
+	if (peer->map == local->map)
+	{
+		return FALSE;
+	}
+	if ((peer->fighter != local->fighter) || (peer->world != local->world) || (peer->item != local->item) ||
+	    (peer->rng != local->rng) || (peer->animation != local->animation) || (peer->weapon != local->weapon) ||
+	    (peer->camera != local->camera))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static void syNetRollbackRunDeferredPeerBaselineCompare(void)
+{
+	u32 load_tick;
+
+	if (sSYNetRollbackDeferredPeerBaselineComparePending == FALSE)
+	{
+		return;
+	}
+	if (sSYNetRollbackLastPeerOutcomeValid == FALSE)
+	{
+		sSYNetRollbackDeferredPeerBaselineComparePending = FALSE;
+		sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+		return;
+	}
+	load_tick = sSYNetRollbackDeferredPeerBaselineCompareLoadTick;
+	if (load_tick != sSYNetRollbackLastPeerOutcomeTick)
+	{
+		return;
+	}
+	sSYNetRollbackDeferredPeerBaselineComparePending = FALSE;
+	sSYNetRollbackDeferredPeerBaselineCompareLoadTick = ~(u32)0;
+	syNetRollbackComparePeerBaselineToLocal(load_tick, &sSYNetRollbackLastPeerOutcomeHash, NULL);
+}
+
 static u32 syNetRollbackClampLoadTickForPeerSend(u32 load_tick)
 {
 	u32 remote_hr;
@@ -3366,6 +3921,28 @@ static void syNetRollbackComparePeerBaselineToLocal(u32 load_tick, const SYNetRo
 	    (peer->rng == local.rng) && (peer->animation == local.animation) && (peer->weapon == local.weapon) &&
 	    (peer->map == local.map) && (peer->camera == local.camera))
 	{
+		return;
+	}
+	if (syNetRollbackPeerBaselineDriftIsAnimOnly(peer, &local) != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_BASELINE_ANIM_ONLY load_tick=%u peer anim=0x%08X local anim=0x%08X — continuing\n",
+		    load_tick,
+		    peer->animation,
+		    local.animation);
+		return;
+	}
+	if (syNetRollbackPeerBaselineDriftIsGameplayOnlyMap(peer, &local) != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_BASELINE_MAP_DRIFT load_tick=%u peer map=0x%08X local map=0x%08X — arming resync\n",
+		    load_tick,
+		    peer->map,
+		    local.map);
+		if (syNetRollbackPeerBaselineResyncStormLimitReached(load_tick) == FALSE)
+		{
+			syNetRollbackArmPeerBaselineResync(load_tick);
+		}
 		return;
 	}
 	sim_tick = syNetInputGetTick();
@@ -3419,6 +3996,7 @@ static void syNetRollbackPumpBaselineEchoRetry(void)
 	syNetRollbackComparePeerBaselineToLocal(load_tick, &sSYNetRollbackLastPeerOutcomeHash, NULL);
 	sSYNetRollbackBaselineEchoRetryLoadTick = ~(u32)0;
 	sSYNetRollbackBaselineEchoRetryAttempts = 0U;
+	syNetRollbackFlushDeferredPeerSymmetric();
 }
 
 static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollbackHashSet *peer,
@@ -3572,23 +4150,26 @@ void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 i
 	{
 		(void)syNetRollbackTryEchoBaselineResponse(load_tick);
 	}
-	if (syNetRbSnapshotGetStoredSubsystemHashes(load_tick, &local.fighter, &local.world, &local.item, &local.rng) ==
-	    FALSE)
+	if (syNetRollbackSnapshotReadyForBaselineCompare(load_tick) == FALSE)
 	{
 		u32 sim_tick;
 
 		sim_tick = syNetInputGetTick();
-		if ((sim_tick <= (load_tick + 1U)) && (sSYNetRollbackBaselineEchoRetryAttempts < 2U))
+		if (sSYNetRollbackBaselineEchoRetryAttempts < SYNETROLLBACK_BASELINE_SNAPSHOT_RETRY_MAX)
 		{
 			sSYNetRollbackBaselineEchoRetryLoadTick = load_tick;
 			sSYNetRollbackBaselineEchoRetryAttempts++;
 			port_log(
-			    "SSB64 NetRollback: BASELINE_ECHO_RETRY_DEFER load_tick=%u sim=%u attempt=%u (no_snapshot)\n",
+			    "SSB64 NetRollback: BASELINE_ECHO_RETRY_DEFER load_tick=%u sim=%u attempt=%u (snapshot_not_ready)\n",
 			    load_tick,
 			    sim_tick,
 			    sSYNetRollbackBaselineEchoRetryAttempts);
 			return;
 		}
+	}
+	if (syNetRbSnapshotGetStoredSubsystemHashes(load_tick, &local.fighter, &local.world, &local.item, &local.rng) ==
+	    FALSE)
+	{
 		local = syNetRollbackCollectHashes();
 	}
 	else
@@ -3597,6 +4178,19 @@ void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 i
 		local.map = syNetRbSnapshotGetSlotHashMap(load_tick);
 		local.camera = syNetRbSnapshotGetSlotHashCamera(load_tick);
 		local.animation = syNetRbSnapshotGetSlotHashAnimation(load_tick);
+	}
+	if ((sSYNetRollbackResimPending != FALSE) && (load_tick > sSYNetRollbackResimLoadTick) &&
+	    (load_tick < sSYNetRollbackResimTargetTick))
+	{
+		sSYNetRollbackDeferredPeerBaselineComparePending = TRUE;
+		sSYNetRollbackDeferredPeerBaselineCompareLoadTick = load_tick;
+		port_log(
+		    "SSB64 NetRollback: PEER_BASELINE_COMPARE_DEFER load_tick=%u resim_span=%u..%u sim=%u\n",
+		    load_tick,
+		    sSYNetRollbackResimLoadTick,
+		    sSYNetRollbackResimTargetTick,
+		    syNetInputGetTick());
+		return;
 	}
 	syNetRollbackComparePeerBaselineToLocal(load_tick, &peer, fighter_slot);
 }
@@ -3668,6 +4262,19 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 			}
 		}
 	}
+	if (syNetRollbackResolveLoadTickForSnapshot(&load_tick, &mismatch_tick) == FALSE)
+	{
+#ifdef PORT
+		port_log(
+		    "SSB64 NetRollback: load post tick %u failed (no snapshot in ring; ring=%u scan=%u)\n",
+		    load_tick,
+		    (unsigned int)syNetRbSnapshotRingCapacity(),
+		    (unsigned int)SYNETROLLBACK_SCAN_WINDOW);
+		sSYNetRollbackLoadFailCount++;
+		syNetRollbackResetCorrectionEpisode();
+#endif
+		return FALSE;
+	}
 	if (syNetRollbackLoadPostTick(load_tick) == FALSE)
 	{
 #ifdef PORT
@@ -3677,6 +4284,7 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 		    (unsigned int)syNetRbSnapshotRingCapacity(),
 		    (unsigned int)SYNETROLLBACK_SCAN_WINDOW);
 		sSYNetRollbackLoadFailCount++;
+		syNetRollbackResetCorrectionEpisode();
 #endif
 		return FALSE;
 	}
@@ -3697,12 +4305,14 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 #ifdef PORT
 	syNetInputRollbackReconcileResimSpan(mismatch_tick, target_tick, correction_player);
 	port_log(
-	    "SSB64 NetRollback: resim begin mismatch_tick=%u load_tick=%u target_tick=%u span=%u budget=%u/frame\n",
+	    "SSB64 NetRollback: resim begin epoch=%u mismatch_tick=%u load_tick=%u target_tick=%u span=%u budget=%u/frame owner=%s\n",
+	    sSYNetRollbackEpochId,
 	    mismatch_tick,
 	    load_tick,
 	    target_tick,
 	    (unsigned int)(target_tick - mismatch_tick),
-	    (unsigned int)sSYNetRollbackResimTicksPerFrame);
+	    (unsigned int)sSYNetRollbackResimTicksPerFrame,
+	    sSYNetRollbackResimFromPeerSymmetric != FALSE ? "peer_follower" : "local_initiator");
 	syNetRollbackEpisodeBegin(mismatch_tick, load_tick, target_tick, correction_player, TRUE,
 	                        sSYNetRollbackResimFromPeerSymmetric);
 	sSYNetRollbackResimStallFrames = 0U;
@@ -3749,7 +4359,8 @@ static void syNetRollbackLogResimComplete(void)
 	}
 	post = syNetRollbackCollectHashes();
 	port_log(
-	    "SSB64 NetRollback: resim complete baseline/post figh=0x%08X/0x%08X world=0x%08X/0x%08X item=0x%08X/0x%08X wpn=0x%08X/0x%08X mph=0x%08X/0x%08X rng=0x%08X/0x%08X cam=0x%08X/0x%08X anim=0x%08X/0x%08X load_tick=%u mismatch_tick=%u rollbacks=%u\n",
+	    "SSB64 NetRollback: resim complete epoch=%u baseline/post figh=0x%08X/0x%08X world=0x%08X/0x%08X item=0x%08X/0x%08X wpn=0x%08X/0x%08X mph=0x%08X/0x%08X rng=0x%08X/0x%08X cam=0x%08X/0x%08X anim=0x%08X/0x%08X load_tick=%u mismatch_tick=%u rollbacks=%u\n",
+	    sSYNetRollbackEpochId,
 	    sSYNetRollbackResimPreHashes.fighter,
 	    post.fighter,
 	    sSYNetRollbackResimPreHashes.world,
@@ -3864,6 +4475,27 @@ static sb32 syNetRollbackResimStallAbortIfNeeded(void)
 	return TRUE;
 }
 
+static sb32 syNetRollbackResimSnapshotRefreshEnabled(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+
+	if (sCached >= 0)
+	{
+		return (sCached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_RESIM_SNAPSHOT_REFRESH");
+	if ((env != NULL) && (env[0] != '\0') && (atoi(env) == 0))
+	{
+		sCached = 0;
+	}
+	else
+	{
+		sCached = 1;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
+}
+
 static void syNetRollbackAdvanceResimBudget(void)
 {
 #ifdef PORT
@@ -3900,6 +4532,10 @@ static void syNetRollbackAdvanceResimBudget(void)
 		syNetInputSetTick(t);
 		syNetInputPublishSynchronizedTick(t);
 		scVSBattleFuncUpdateBattleSimOnly();
+		if (syNetRollbackResimSnapshotRefreshEnabled() != FALSE)
+		{
+			(void)syNetRbSnapshotSave(t);
+		}
 		syNetRollbackLogResimTickTrace(t);
 		t++;
 		ran++;
@@ -3976,6 +4612,7 @@ void syNetRollbackUpdate(void)
 	{
 		return;
 	}
+	syNetRollbackFlushDeferredPeerSymmetric();
 	if (syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate() == FALSE)
 	{
 		return;

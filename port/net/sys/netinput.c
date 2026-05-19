@@ -53,6 +53,8 @@ static s32 sSYNetInputAnalogOnsetLargeDelta = -1;
 static u32 sSYNetInputAnalogOnsetLogBudget;
 /* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
 static u32 sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
+static sb32 sSYNetInputLocalEncodingWasDigital[MAXCONTROLLERS];
+static u32 sSYNetInputMixedInputLogBudget;
 static sb32 sSYNetInputSuppressSceneUpdateAfterRead;
 
 sb32 syNetInputTakeSuppressSceneUpdate(void)
@@ -88,6 +90,9 @@ typedef struct SYNetInputSlot
 #ifdef PORT
 	/* Newest strict-confirmed remote row with sticks outside predict deadband (analog onset). */
 	SYNetInputFrame last_non_neutral;
+	/* Remote stick encoding (pad vs keyboard) for mixed-input prediction. */
+	sb32 remote_encoding_was_digital;
+	u32 remote_encoding_grace_until_tick;
 #endif
 
 } SYNetInputSlot;
@@ -581,6 +586,14 @@ static u32 syNetInputLocalDelayOwnerTick(u32 sample_tick)
 	return sample_tick + d;
 }
 
+#ifdef PORT
+static sb32 syNetInputMixedInputQuantizeEnabled(void);
+static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y);
+static void syNetInputSnapStickDominantAxisForPrediction(s8 *stick_x, s8 *stick_y);
+static void syNetInputNoteLocalEncodingOnSample(s32 player, s8 stick_x, s8 stick_y, u32 tick);
+static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame);
+#endif
+
 static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
 {
 	SYNetInputFrame frame;
@@ -597,8 +610,19 @@ static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
 		return;
 	}
 	controller = &sSYNetInputHardwareLatch[hw_player];
-	syNetInputMakeFrame(&frame, owner_tick, controller->button_hold, controller->stick_range.x, controller->stick_range.y,
-	                   nSYNetInputSourceLocal, FALSE);
+	{
+		s8 stick_x;
+		s8 stick_y;
+
+		stick_x = controller->stick_range.x;
+		stick_y = controller->stick_range.y;
+		syNetInputNoteLocalEncodingOnSample(player, stick_x, stick_y, owner_tick);
+		if (syNetInputMixedInputQuantizeEnabled() != FALSE)
+		{
+			syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
+		}
+		syNetInputMakeFrame(&frame, owner_tick, controller->button_hold, stick_x, stick_y, nSYNetInputSourceLocal, FALSE);
+	}
 	syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
 }
 
@@ -650,6 +674,7 @@ void syNetInputReset(void)
 	sSYNetInputIsReplayMetadataValid = FALSE;
 #ifdef PORT
 	sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
+	memset(sSYNetInputLocalEncodingWasDigital, 0, sizeof(sSYNetInputLocalEncodingWasDigital));
 #endif
 #ifdef PORT
 	syNetInputTimelineReset();
@@ -666,6 +691,13 @@ void syNetInputReset(void)
 		env_onset_log = getenv("SSB64_NETPLAY_ANALOG_ONSET_LOG");
 		sSYNetInputAnalogOnsetLogBudget =
 		    ((env_onset_log != NULL) && (env_onset_log[0] != '\0') && (atoi(env_onset_log) != 0)) ? 8U : 0U;
+	}
+	{
+		const char *env_mixed_log;
+
+		env_mixed_log = getenv("SSB64_NETPLAY_MIXED_INPUT_LOG");
+		sSYNetInputMixedInputLogBudget =
+		    ((env_mixed_log != NULL) && (env_mixed_log[0] != '\0') && (atoi(env_mixed_log) != 0)) ? 8U : 0U;
 	}
 #endif
 
@@ -696,6 +728,8 @@ void syNetInputReset(void)
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_published);
 #ifdef PORT
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+		sSYNetInputSlots[player].remote_encoding_was_digital = FALSE;
+		sSYNetInputSlots[player].remote_encoding_grace_until_tick = 0U;
 		sSYNetInputRemoteConfirmedLastWire[player] = -1;
 #endif
 		sSYNetInputReplayMetadata.player_kinds[player] = 0;
@@ -965,10 +999,55 @@ static s32 syNetInputAbsS8Diff(s8 a, s8 b)
 	return d;
 }
 
+static s32 syNetInputStickSign(s8 axis)
+{
+	if (axis > 0)
+	{
+		return 1;
+	}
+	if (axis < 0)
+	{
+		return -1;
+	}
+	return 0;
+}
+
 /* SSB digital keyboard encoding: full stick deflection on one axis. */
 static sb32 syNetInputStickAxisIsDigital(s8 axis)
 {
 	return ((axis == 85) || (axis == -85)) ? TRUE : FALSE;
+}
+
+static sb32 syNetInputStickEncodingLooksDigital(s8 stick_x, s8 stick_y)
+{
+	s32 ax;
+	s32 ay;
+
+	if ((syNetInputStickAxisIsDigital(stick_x) != FALSE) || (syNetInputStickAxisIsDigital(stick_y) != FALSE))
+	{
+		return TRUE;
+	}
+	ax = syNetInputAbsS8Diff(stick_x, 0);
+	ay = syNetInputAbsS8Diff(stick_y, 0);
+	if ((ax == 0) && (ay == 0))
+	{
+		return FALSE;
+	}
+	/* Dominant cardinal (partial keyboard / port scaling before ±85 quantize). */
+	if ((ax >= 20) && (ay <= 14))
+	{
+		return TRUE;
+	}
+	if ((ay >= 20) && (ax <= 14))
+	{
+		return TRUE;
+	}
+	/* Diagonal keyboard (e.g. sx=-23 sy=79): both axes active, neither at full analog sweep. */
+	if ((ax >= 18) && (ay >= 18) && (ax <= 84) && (ay <= 84))
+	{
+		return TRUE;
+	}
+	return FALSE;
 }
 
 static sb32 syNetInputFrameIsDigitalKeyboard(const SYNetInputFrame *frame)
@@ -983,9 +1062,193 @@ static sb32 syNetInputFrameIsDigitalKeyboard(const SYNetInputFrame *frame)
 	           : FALSE;
 }
 
-#ifdef PORT
-static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame);
-#endif
+static sb32 syNetInputFrameIsQuasiDigitalKeyboard(const SYNetInputFrame *frame)
+{
+	if (frame == NULL)
+	{
+		return FALSE;
+	}
+	return syNetInputStickEncodingLooksDigital(frame->stick_x, frame->stick_y);
+}
+
+static sb32 syNetInputMixedInputQuantizeEnabled(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+
+	if (sCached >= 0)
+	{
+		return (sCached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_MIXED_INPUT_QUANTIZE");
+	if ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0))
+	{
+		sCached = 1;
+	}
+	else
+	{
+		sCached = 0;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
+}
+
+static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y)
+{
+	s32 sign_x;
+	s32 sign_y;
+
+	if ((stick_x == NULL) || (stick_y == NULL))
+	{
+		return;
+	}
+	if (syNetInputStickEncodingLooksDigital(*stick_x, *stick_y) == FALSE)
+	{
+		return;
+	}
+	sign_x = syNetInputStickSign(*stick_x);
+	sign_y = syNetInputStickSign(*stick_y);
+	if (sign_x != 0)
+	{
+		*stick_x = (s8)(sign_x * 85);
+	}
+	else
+	{
+		*stick_x = 0;
+	}
+	if (sign_y != 0)
+	{
+		*stick_y = (s8)(sign_y * 85);
+	}
+	else
+	{
+		*stick_y = 0;
+	}
+}
+
+/* Remote prediction only: snap the dominant keyboard axis to ±85; never promote a weak axis. */
+static void syNetInputSnapStickDominantAxisForPrediction(s8 *stick_x, s8 *stick_y)
+{
+	s32 ax;
+	s32 ay;
+	s32 sign_x;
+	s32 sign_y;
+
+	if ((stick_x == NULL) || (stick_y == NULL))
+	{
+		return;
+	}
+	if (syNetInputStickEncodingLooksDigital(*stick_x, *stick_y) == FALSE)
+	{
+		return;
+	}
+	ax = syNetInputAbsS8Diff(*stick_x, 0);
+	ay = syNetInputAbsS8Diff(*stick_y, 0);
+	if ((ax >= 20) && (ay <= 14))
+	{
+		sign_x = syNetInputStickSign(*stick_x);
+		*stick_x = (sign_x != 0) ? (s8)(sign_x * 85) : (s8)0;
+		*stick_y = 0;
+		return;
+	}
+	if ((ay >= 20) && (ax <= 14))
+	{
+		sign_y = syNetInputStickSign(*stick_y);
+		*stick_y = (sign_y != 0) ? (s8)(sign_y * 85) : (s8)0;
+		*stick_x = 0;
+	}
+}
+
+static sb32 syNetInputRemoteRecentEncodingIsDigital(s32 player, u32 tick, u32 lookback_frames)
+{
+	SYNetInputFrame frame;
+	u32 samples;
+	u32 digital_samples;
+	u32 t;
+	u32 oldest;
+
+	if ((lookback_frames == 0U) || (syNetInputCheckPlayer(player) == FALSE))
+	{
+		return FALSE;
+	}
+	oldest = (tick > lookback_frames) ? (tick - lookback_frames) : 0U;
+	samples = 0U;
+	digital_samples = 0U;
+	for (t = tick; t > oldest; t--)
+	{
+		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t - 1U, &frame) == FALSE)
+		{
+			break;
+		}
+		samples++;
+		if (syNetInputStickEncodingLooksDigital(frame.stick_x, frame.stick_y) != FALSE)
+		{
+			digital_samples++;
+		}
+	}
+	return ((samples > 0U) && ((digital_samples * 2U) >= samples)) ? TRUE : FALSE;
+}
+
+static void syNetInputNoteRemoteEncodingOnConfirm(s32 player, const SYNetInputFrame *frame)
+{
+	sb32 now_digital;
+
+	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE))
+	{
+		return;
+	}
+	now_digital = syNetInputStickEncodingLooksDigital(frame->stick_x, frame->stick_y);
+	if ((sSYNetInputSlots[player].remote_encoding_was_digital != FALSE) != (now_digital != FALSE))
+	{
+		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+		if (frame->tick < ~(u32)0 - 3U)
+		{
+			sSYNetInputSlots[player].remote_encoding_grace_until_tick = frame->tick + 3U;
+		}
+		else
+		{
+			sSYNetInputSlots[player].remote_encoding_grace_until_tick = ~(u32)0;
+		}
+		if (sSYNetInputMixedInputLogBudget > 0U)
+		{
+			port_log(
+			    "SSB64 NetInput: remote_encoding_switch player=%d tick=%u digital=%d sx=%d sy=%d grace_until=%u\n",
+			    (int)player,
+			    frame->tick,
+			    (now_digital != FALSE) ? 1 : 0,
+			    frame->stick_x,
+			    frame->stick_y,
+			    sSYNetInputSlots[player].remote_encoding_grace_until_tick);
+			sSYNetInputMixedInputLogBudget--;
+		}
+	}
+	sSYNetInputSlots[player].remote_encoding_was_digital = now_digital;
+}
+
+static void syNetInputNoteLocalEncodingOnSample(s32 player, s8 stick_x, s8 stick_y, u32 tick)
+{
+	sb32 now_digital;
+
+	if (syNetInputCheckPlayer(player) == FALSE)
+	{
+		return;
+	}
+	now_digital = syNetInputStickEncodingLooksDigital(stick_x, stick_y);
+	if ((sSYNetInputLocalEncodingWasDigital[player] != FALSE) != (now_digital != FALSE))
+	{
+		if (sSYNetInputMixedInputLogBudget > 0U)
+		{
+			port_log(
+			    "SSB64 NetInput: local_encoding_switch player=%d tick=%u digital=%d sx=%d sy=%d\n",
+			    (int)player,
+			    tick,
+			    (now_digital != FALSE) ? 1 : 0,
+			    stick_x,
+			    stick_y);
+			sSYNetInputMixedInputLogBudget--;
+		}
+	}
+	sSYNetInputLocalEncodingWasDigital[player] = now_digital;
+}
 
 static sb32 syNetInputFrameSticksNearNeutral(const SYNetInputFrame *frame)
 {
@@ -1012,19 +1275,6 @@ static sb32 syNetInputFrameSticksNearNeutralWithDeadband(const SYNetInputFrame *
 }
 
 #ifdef PORT
-static s32 syNetInputStickSign(s8 axis)
-{
-	if (axis > 0)
-	{
-		return 1;
-	}
-	if (axis < 0)
-	{
-		return -1;
-	}
-	return 0;
-}
-
 static void syNetInputApplyAnalogOnsetStick(s8 *stick_x, s8 *stick_y, const SYNetInputFrame *last_nn, s32 mag)
 {
 	s32 sign_x;
@@ -1204,6 +1454,124 @@ sb32 syNetInputShouldPatchDigitalTapWithoutRollback(s32 player, u32 sim_tick, co
 		return FALSE;
 	}
 	return FALSE;
+}
+
+#define SYNETINPUT_ANALOG_PRED_DECAY_TICKS_DEFAULT 3U
+#define SYNETINPUT_ANALOG_PRED_DECAY_NUM 3
+#define SYNETINPUT_ANALOG_PRED_DECAY_DEN 4
+#define SYNETINPUT_ANALOG_PRED_MIN_MAG_DEFAULT 12U
+
+static u32 syNetInputAnalogPredDecayTicks(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+	s32 v;
+
+	if (sCached >= 0)
+	{
+		return (u32)sCached;
+	}
+	v = (s32)SYNETINPUT_ANALOG_PRED_DECAY_TICKS_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_PRED_DECAY_TICKS");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		v = atoi(env);
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	sCached = v;
+	return (u32)v;
+}
+
+static u32 syNetInputAnalogPredMinMag(void)
+{
+	const char *env;
+	static sb32 sCached = -1;
+	s32 v;
+
+	if (sCached >= 0)
+	{
+		return (u32)sCached;
+	}
+	v = (s32)SYNETINPUT_ANALOG_PRED_MIN_MAG_DEFAULT;
+	env = getenv("SSB64_NETPLAY_ANALOG_PRED_MIN_MAG");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		v = atoi(env);
+	}
+	if (v < 0)
+	{
+		v = 0;
+	}
+	sCached = v;
+	return (u32)v;
+}
+
+static sb32 syNetInputStickLooksAnalog(s8 stick_x, s8 stick_y)
+{
+	u32 min_mag;
+
+	min_mag = syNetInputAnalogPredMinMag();
+	if ((syNetInputAbsS8Diff(stick_x, 0) <= (s32)min_mag) && (syNetInputAbsS8Diff(stick_y, 0) <= (s32)min_mag))
+	{
+		return FALSE;
+	}
+	return (syNetInputStickEncodingLooksDigital(stick_x, stick_y) == FALSE) ? TRUE : FALSE;
+}
+
+static void syNetInputApplyAnalogPredictionDecay(s8 *stick_x, s8 *stick_y, u32 lead_ticks)
+{
+	u32 decay_ticks;
+	u32 min_mag;
+	u32 age;
+	u32 i;
+	s32 sx;
+	s32 sy;
+
+	if ((stick_x == NULL) || (stick_y == NULL))
+	{
+		return;
+	}
+	decay_ticks = syNetInputAnalogPredDecayTicks();
+	if ((decay_ticks == 0U) || (lead_ticks <= decay_ticks))
+	{
+		return;
+	}
+	age = lead_ticks - decay_ticks;
+	sx = (s32)*stick_x;
+	sy = (s32)*stick_y;
+	for (i = 0U; i < age; i++)
+	{
+		sx = (sx * SYNETINPUT_ANALOG_PRED_DECAY_NUM) / SYNETINPUT_ANALOG_PRED_DECAY_DEN;
+		sy = (sy * SYNETINPUT_ANALOG_PRED_DECAY_NUM) / SYNETINPUT_ANALOG_PRED_DECAY_DEN;
+	}
+	min_mag = syNetInputAnalogPredMinMag();
+	if (syNetInputAbsS8Diff((s8)sx, 0) < (s32)min_mag)
+	{
+		sx = 0;
+	}
+	if (syNetInputAbsS8Diff((s8)sy, 0) < (s32)min_mag)
+	{
+		sy = 0;
+	}
+	*stick_x = (s8)sx;
+	*stick_y = (s8)sy;
+}
+
+sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote)
+{
+	sb32 pub_neutral;
+	sb32 rem_neutral;
+
+	if ((published == NULL) || (remote == NULL))
+	{
+		return FALSE;
+	}
+	pub_neutral = syNetInputFrameSticksNearNeutral(published);
+	rem_neutral = syNetInputFrameSticksNearNeutral(remote);
+	return (pub_neutral != rem_neutral) ? TRUE : FALSE;
 }
 
 sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
@@ -1448,6 +1816,7 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 
 	syNetInputStoreRemoteConfirmedFrame(player, frame);
 #ifdef PORT
+	syNetInputNoteRemoteEncodingOnConfirm(player, frame);
 	syNetInputNoteRemoteNonNeutralStick(player, frame);
 #endif
 	syNetInputStoreRemotePacketSeq(player, wire_tick, packet_seq);
@@ -1728,8 +2097,19 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 	}
 	hw_player = syNetPeerResolveLocalHardwareDevice(player);
 	controller = &sSYNetInputHardwareLatch[hw_player];
-	syNetInputMakeFrame(out_frame, tick, controller->button_hold, controller->stick_range.x, controller->stick_range.y,
-	                   nSYNetInputSourceLocal, FALSE);
+	{
+		s8 stick_x;
+		s8 stick_y;
+
+		stick_x = controller->stick_range.x;
+		stick_y = controller->stick_range.y;
+		syNetInputNoteLocalEncodingOnSample(player, stick_x, stick_y, tick);
+		if (syNetInputMixedInputQuantizeEnabled() != FALSE)
+		{
+			syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
+		}
+		syNetInputMakeFrame(out_frame, tick, controller->button_hold, stick_x, stick_y, nSYNetInputSourceLocal, FALSE);
+	}
 #else
 	{
 		SYController *controller = &gSYControllerDevices[player];
@@ -1763,6 +2143,9 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 static sb32 syNetInputTryGetPredictionSeedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_stick_x, s8 *out_stick_y);
 static sb32 syNetInputPredictRemoteButtonsHoldLast(void);
+static sb32 syNetInputStickLooksAnalog(s8 stick_x, s8 stick_y);
+static void syNetInputApplyAnalogPredictionDecay(s8 *stick_x, s8 *stick_y, u32 lead_ticks);
+static u32 syNetInputAnalogPredDecayTicks(void);
 #endif
 
 #ifdef PORT
@@ -1819,7 +2202,11 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 	u32 lead_ticks;
 	u32 lookback;
 	sb32 had_stick_seed;
+	sb32 remote_recent_digital;
+	sb32 encoding_grace;
+	sb32 analog_onset_applied;
 
+	analog_onset_applied = FALSE;
 	buttons = 0;
 	stick_x = 0;
 	stick_y = 0;
@@ -1841,6 +2228,13 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 			stick_y = last_confirmed->stick_y;
 		}
 	}
+	else if ((last_confirmed->is_valid != FALSE) && (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) &&
+	         (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) == FALSE))
+	{
+		stick_x = 0;
+		stick_y = 0;
+		had_stick_seed = FALSE;
+	}
 	if ((last_confirmed->is_valid != FALSE) && (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE))
 	{
 		neutral_guard_max = syNetInputNeutralGuardMaxTicks();
@@ -1855,6 +2249,7 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 				{
 					syNetInputApplyAnalogOnsetStick(&stick_x, &stick_y, last_non_neutral,
 					                                (s32)syNetInputAnalogOnsetStickMag());
+					analog_onset_applied = TRUE;
 					if (sSYNetInputAnalogOnsetLogBudget > 0U)
 					{
 						port_log(
@@ -1869,27 +2264,70 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 				}
 				else
 				{
-					stick_x = 0;
-					stick_y = 0;
+					remote_recent_digital = syNetInputRemoteRecentEncodingIsDigital(player, tick, 4U);
+					encoding_grace =
+					    ((tick <= sSYNetInputSlots[player].remote_encoding_grace_until_tick) ? TRUE : FALSE);
+					if ((syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) != FALSE) ||
+					    (remote_recent_digital != FALSE) || (encoding_grace != FALSE))
+					{
+						stick_x = last_confirmed->stick_x;
+						stick_y = last_confirmed->stick_y;
+						syNetInputSnapStickDominantAxisForPrediction(&stick_x, &stick_y);
+					}
+					else
+					{
+						stick_x = 0;
+						stick_y = 0;
+					}
 				}
 			}
 		}
 	}
 	if (last_confirmed->is_valid != FALSE)
 	{
-		if (syNetInputStickAxisIsDigital(last_confirmed->stick_x) != FALSE)
+		if (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) != FALSE)
 		{
 			stick_x = last_confirmed->stick_x;
-		}
-		if (syNetInputStickAxisIsDigital(last_confirmed->stick_y) != FALSE)
-		{
 			stick_y = last_confirmed->stick_y;
+			syNetInputSnapStickDominantAxisForPrediction(&stick_x, &stick_y);
+		}
+		else
+		{
+			if (syNetInputStickAxisIsDigital(last_confirmed->stick_x) != FALSE)
+			{
+				stick_x = last_confirmed->stick_x;
+			}
+			if (syNetInputStickAxisIsDigital(last_confirmed->stick_y) != FALSE)
+			{
+				stick_y = last_confirmed->stick_y;
+			}
 		}
 	}
-	if ((sSYNetInputPredictNeutral != FALSE) && (syNetInputFrameIsDigitalKeyboard(last_confirmed) == FALSE))
+	if ((sSYNetInputPredictNeutral != FALSE) && (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) == FALSE))
 	{
 		stick_x = 0;
 		stick_y = 0;
+	}
+	if (last_confirmed->is_valid != FALSE)
+	{
+		if (tick > last_confirmed->tick)
+		{
+			lead_ticks = tick - last_confirmed->tick;
+		}
+		else
+		{
+			lead_ticks = 0U;
+		}
+		if ((syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) && (analog_onset_applied == FALSE) &&
+		    (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) == FALSE))
+		{
+			stick_x = 0;
+			stick_y = 0;
+		}
+		else if ((lead_ticks > 0U) && (syNetInputStickLooksAnalog(stick_x, stick_y) != FALSE))
+		{
+			syNetInputApplyAnalogPredictionDecay(&stick_x, &stick_y, lead_ticks);
+		}
 	}
 	syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemotePredicted, TRUE);
 }
@@ -2659,6 +3097,8 @@ void syNetInputClearRemoteSlotPredictionState(void)
 		}
 		syNetInputClearFrame(&sSYNetInputSlots[slot].last_confirmed);
 		syNetInputClearFrame(&sSYNetInputSlots[slot].last_non_neutral);
+		sSYNetInputSlots[slot].remote_encoding_was_digital = FALSE;
+		sSYNetInputSlots[slot].remote_encoding_grace_until_tick = 0U;
 	}
 }
 #endif
@@ -3610,7 +4050,9 @@ static void syNetInputRestoreRemoteConfirmedSeed(s32 player, u32 resim_start_tic
 		return;
 	}
 #ifdef PORT
-	syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+		sSYNetInputSlots[player].remote_encoding_was_digital = FALSE;
+		sSYNetInputSlots[player].remote_encoding_grace_until_tick = 0U;
 #endif
 	if (resim_start_tick == 0)
 	{
@@ -3644,10 +4086,14 @@ static void syNetInputRestoreRemoteConfirmedSeed(s32 player, u32 resim_start_tic
 				if (syNetInputFrameSticksNearNeutral(&frame) == FALSE)
 				{
 					sSYNetInputSlots[player].last_non_neutral = frame;
+					sSYNetInputSlots[player].remote_encoding_was_digital =
+					    syNetInputStickEncodingLooksDigital(frame.stick_x, frame.stick_y);
 					return;
 				}
 			}
 		}
+		sSYNetInputSlots[player].remote_encoding_was_digital = syNetInputStickEncodingLooksDigital(
+		    sSYNetInputSlots[player].last_confirmed.stick_x, sSYNetInputSlots[player].last_confirmed.stick_y);
 	}
 #endif
 }

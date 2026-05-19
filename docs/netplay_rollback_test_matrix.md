@@ -16,6 +16,8 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Symmetric GGPO soak | Symmetric follower + `resim_rng_verify` on by default with rollback; **do not** set `SSB64_NETPLAY_PREDICT_NEUTRAL=1`, `SSB64_NETPLAY_PREDICTION_RECOVERY=1`, or `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1`; expect `session_negotiated … symmetric=1 symmetric_diag_only=0 resim_rng_verify=1`, paired `GGPO deferred input correction resim`, `resim begin`/`complete`; **no** `prediction recovery armed` |
 | Analog onset soak | Source `scripts/netplay-analog-onset-soak.env.example`; **unset** `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1`; expect `symmetric_diag_only=0`, paired `resim complete`, no `PEER_BASELINE_RESYNC_STORM`, no stale `RESIM_BASELINE_ECHO` spam |
 | KO lifecycle bisect soak | Source `scripts/netplay-ko-lifecycle-soak.env.example`; **no** `PREDICT_NEUTRAL=1`; `SIM_STATE_TICK_INTERVAL=1`, `GC_TRAVERSAL_DIAG=2`, `GOBJ_EJECT_TRACE=1`, `PEER_DIVERGE_DETAIL=1`; pass = first divergent partition + tick in both logs; fail = `PEER_DIVERGE_DIFF` / `peer_snapshot_diverge` at KO |
+| Mixed keyboard/analog soak | Source `scripts/netplay-mixed-input-soak.env.example`; pad vs keyboard from GO and optional mid-match device switch; **no** `PREDICT_NEUTRAL=1`; pass = 5+ min, paired `resim complete`, no `PEER_SNAPSHOT_DIVERGE`; fail = `figh`/`anim` diverge with `world`/`rng` match, or `ROLLBACK_IDENTITY_DRIFT` |
+| Epoch pacing + analog decay soak | Same mixed-input env; expect `rollback_epoch_hold` with `epoch=` during peer resim; **no** live `sim` ahead of peer symmetric `target+slack` while peer epoch active; no mirrored `RESIM_BASELINE_MISMATCH` at same `load_tick`; `SSB64_NETPLAY_ROLLBACK_EPOCH_CAP_SLACK=99` bisect disables cap; `SSB64_NETPLAY_ANALOG_PRED_DECAY_TICKS=0` bisect disables decay |
 | Legacy gate proceed | `SSB64_NETPLAY_RESIM_BASELINE_PROCEED_ON_TIMEOUT=1` (unsafe; debug only) |
 | Snapshot save assert | `SSB64_NETPLAY_SNAPSHOT_SAVE_ASSERT=1` (one-shot log if save runs during `resim_pending`) |
 | ~200 ms RTT netem | `tc netem delay 95ms 15ms distribution normal loss 0.3%` both peers; expect `rtt_ms≈200`, `D≈6–7`, `phase_lock≈8` (capped), `rb_snap≥48`, `fuzz≥2`, `redundancy≥2`; watch `rb=` in NetSync (prediction + resim, not lockstep-only) |
@@ -47,6 +49,12 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Hash transition log | `SSB64_NETPLAY_HASH_TRANSITION_LOG=1` (local-only; pairs with `SIM_STATE_TICK_INTERVAL=1`) |
 | GC traversal diag | `SSB64_NETPLAY_GC_TRAVERSAL_DIAG=2` (`gch` + `pairs=` on NetSync lines; non-zero after Phase 3) |
 | GObj eject trace | `SSB64_NETPLAY_GOBJ_EJECT_TRACE=1`, `GOBJ_EJECT_RING=32`; `RING_DUMP` on peer diverge |
+| Mixed input quantize | `SSB64_NETPLAY_MIXED_INPUT_QUANTIZE=1` (default); `=0` to send raw partial keyboard sticks |
+| Mixed input log | `SSB64_NETPLAY_MIXED_INPUT_LOG=1` (encoding switch lines) |
+| Resim snapshot refresh | `SSB64_NETPLAY_RESIM_SNAPSHOT_REFRESH=1` (default); `=0` debug-only — disables per-tick ring refresh during resim replay |
+| Rollback epoch cap slack | `SSB64_NETPLAY_ROLLBACK_EPOCH_CAP_SLACK=1` (default); `=99` disables peer-epoch live-sim cap |
+| Analog prediction decay | `SSB64_NETPLAY_ANALOG_PRED_DECAY_TICKS=3` (default); `=0` off; `SSB64_NETPLAY_ANALOG_PRED_MIN_MAG=12` |
+| Stick mismatch recovery | `SSB64_NETPLAY_STICK_MISMATCH_RECOVERY=1` (default); `=0` off — confirmed-only window after neutral↔analog GGPO (not `PREDICTION_RECOVERY`) |
 
 ## Cases
 
@@ -59,6 +67,8 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 7. **Ring underrun** — deep rollback with `SNAPSHOT_FRAMES=32` and mismatch >32 ticks ago; expect load-fail log, not SIGSEGV.
 8. **Cap overflow** (when instrumented) — >16 items or >32 weapons; loud failure, not silent truncation.
 9. **Analog onset idle→walk** — remote idle then small stick → run; prediction uses minimal facing when `last_non_neutral` valid; GGPO still resims on confirm mismatch; symmetric follower + baseline gate per case 16 env row.
+10. **Mixed keyboard vs pad** — opponents use different devices from match start; no session abort in 5+ min soak env.
+11. **Mid-match device switch** — one peer switches pad↔keyboard once; at most brief rollback visible; session continues (no `PEER_SNAPSHOT_DIVERGE`).
 
 ## Pass criteria
 
@@ -95,6 +105,13 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | `BASELINE_ECHO_RETRY_DEFER` then `BASELINE_ECHO_RETRY` | One-frame snapshot race; should recover or diverge after retry, not instant abort |
 | `BASELINE_LOAD_CLAMP` | Initiator advertised load_tick ahead of remote frontier — clamped send |
 | `hash_transition partition=gch` before `figh` | Frame composition / GObj order fork — see `netplay_frame_composition.md` |
+| `PEER_SNAPSHOT_DIVERGE` with `world`/`rng` match, `figh`/`anim` mismatch | Stale snapshot ring at `load_tick` or encoding/prediction churn — see mixed-input bug doc |
+| `load post tick N failed` then no client `resim begin` | Episode anchor blocked retry — fixed: reset episode on load fail + `LOAD_TICK_ADJUST` |
+| `PEER_BASELINE_ANIM_ONLY` | Gameplay partitions match, anim differs — session continues (not `PEER_SNAPSHOT_DIVERGE`) |
+| `peer symmetric rollback deferred` | `ROLLBACK_SYNC` held until baseline echo/gate quiesced |
+| `BASELINE_ECHO_RETRY_DEFER … snapshot_not_ready` | `load_tick >= sim_tick` or ring not committed — wait for `AfterBattleUpdate` save |
+| `remote_encoding_switch` then immediate `pred=1` neutral | Quasi-digital / grace prediction regression |
+| `ROLLBACK_IDENTITY_DRIFT` after keyboard onset resim | Resim replay non-determinism or wrong confirmed span |
 
 ## Out of scope (longer term)
 
