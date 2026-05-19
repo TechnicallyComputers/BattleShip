@@ -8457,12 +8457,39 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 #endif /* #if defined(PORT) at ~6512 (frame commit + NetSync validation) */
 #endif /* #ifdef PORT at ~6456 (gc / desync helpers) */
 
+static u32 syNetPeerNetSyncLogInterval(void)
+{
+	static s32 sCachedInterval = -999;
+	s32 parsed;
+
+	if (sCachedInterval != -999)
+	{
+		return (u32)sCachedInterval;
+	}
+	parsed = SYNETPEER_LOG_INTERVAL;
+	{
+		const char *env;
+
+		env = getenv("SSB64_NETPLAY_NETSYNC_LOG_INTERVAL");
+		if ((env != NULL) && (env[0] != '\0'))
+		{
+			parsed = atoi(env);
+		}
+	}
+	if (parsed <= 0)
+	{
+		parsed = SYNETPEER_LOG_INTERVAL;
+	}
+	sCachedInterval = parsed;
+	return (u32)sCachedInterval;
+}
+
 void syNetPeerLogStats(void)
 {
 #ifdef PORT
 	u32 tick = syNetInputGetTick();
 
-	if ((tick == 0) || ((tick - sSYNetPeerLastLogTick) < SYNETPEER_LOG_INTERVAL))
+	if ((tick == 0) || ((tick - sSYNetPeerLastLogTick) < syNetPeerNetSyncLogInterval()))
 	{
 		return;
 	}
@@ -8998,20 +9025,107 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 	}
 	f = syNetSyncHashBattleFighters();
 	m = syNetSyncHashMapCollisionKinematics();
-	port_log(
-	    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X rb_applied=%u rb_load_fail=%u push=%d\n",
-	    tick,
-	    f,
-	    m,
-	    syNetSyncHashRollbackWorld(),
-	    syNetSyncHashActiveItemsForRollback(),
-	    syNetSyncHashActiveWeaponsForRollback(),
-	    syNetSyncHashRNGSeed(),
-	    syNetSyncHashGMCamera(),
-	    syNetSyncHashFighterAnimationStateForRollback(),
-	    (unsigned int)syNetRollbackGetAppliedResimCount(),
-	    (unsigned int)syNetRollbackGetLoadFailCount(),
-	    port_get_push_frame_count());
+	{
+		u32 world_h = syNetSyncHashRollbackWorld();
+		u32 item_h = syNetSyncHashActiveItemsForRollback();
+		u32 wpn_h = syNetSyncHashActiveWeaponsForRollback();
+		u32 rng_h = syNetSyncHashRNGSeed();
+		u32 cam_h = syNetSyncHashGMCamera();
+		u32 anim_h = syNetSyncHashFighterAnimationStateForRollback();
+		u32 gch_h = syNetSyncHashGcRunAllTraversalFingerprint();
+		const char *ht_env;
+		static sb32 sHashTransitionLogCache = -999;
+		static u32 sHashTransitionPrevTick;
+		static u32 sHashTransitionPrevFigh;
+		static u32 sHashTransitionPrevWorld;
+		static u32 sHashTransitionPrevAnim;
+		static u32 sHashTransitionPrevItem;
+		static u32 sHashTransitionPrevRng;
+		static u32 sHashTransitionPrevGch;
+
+		if (sHashTransitionLogCache == -999)
+		{
+			ht_env = getenv("SSB64_NETPLAY_HASH_TRANSITION_LOG");
+			sHashTransitionLogCache = ((ht_env != NULL) && (ht_env[0] != '\0') && (atoi(ht_env) != 0)) ? 1 : 0;
+			sHashTransitionPrevTick = ~(u32)0;
+		}
+		if (sHashTransitionLogCache != 0)
+		{
+			if ((sHashTransitionPrevTick != ~(u32)0) && (tick > sHashTransitionPrevTick))
+			{
+				if (f != sHashTransitionPrevFigh)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=figh old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevFigh,
+					    f);
+				}
+				if (world_h != sHashTransitionPrevWorld)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=world old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevWorld,
+					    world_h);
+				}
+				if (anim_h != sHashTransitionPrevAnim)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=anim old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevAnim,
+					    anim_h);
+				}
+				if (item_h != sHashTransitionPrevItem)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=item old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevItem,
+					    item_h);
+				}
+				if (rng_h != sHashTransitionPrevRng)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=rng old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevRng,
+					    rng_h);
+				}
+				if (gch_h != sHashTransitionPrevGch)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=gch old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevGch,
+					    gch_h);
+				}
+			}
+			sHashTransitionPrevTick = tick;
+			sHashTransitionPrevFigh = f;
+			sHashTransitionPrevWorld = world_h;
+			sHashTransitionPrevAnim = anim_h;
+			sHashTransitionPrevItem = item_h;
+			sHashTransitionPrevRng = rng_h;
+			sHashTransitionPrevGch = gch_h;
+		}
+		port_log(
+		    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X rb_applied=%u rb_load_fail=%u push=%d\n",
+		    tick,
+		    f,
+		    m,
+		    world_h,
+		    item_h,
+		    wpn_h,
+		    rng_h,
+		    cam_h,
+		    anim_h,
+		    gch_h,
+		    (unsigned int)syNetRollbackGetAppliedResimCount(),
+		    (unsigned int)syNetRollbackGetLoadFailCount(),
+		    port_get_push_frame_count());
+	}
 }
 #endif
 

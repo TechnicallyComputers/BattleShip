@@ -428,6 +428,315 @@ u32 syNetSyncHashRollbackWorld(void)
 }
 
 #ifdef PORT
+#include <stdlib.h>
+#include <string.h>
+
+static int sSYNetSyncPeerDivergeDetailEnvCache = -999;
+
+static int syNetSyncEnvParseInt(const char *e, int default_val)
+{
+	long v;
+
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		return default_val;
+	}
+	v = strtol(e, NULL, 10);
+	return (int)v;
+}
+
+s32 syNetSyncPeerDivergeDetailEnabled(void)
+{
+	const char *e;
+	int state_detail;
+
+	if (sSYNetSyncPeerDivergeDetailEnvCache != -999)
+	{
+		return (sSYNetSyncPeerDivergeDetailEnvCache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_PEER_DIVERGE_DETAIL");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		sSYNetSyncPeerDivergeDetailEnvCache = (syNetSyncEnvParseInt(e, 0) != 0) ? 1 : 0;
+		return (sSYNetSyncPeerDivergeDetailEnvCache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_STATE_DETAIL_DIAG");
+	state_detail = syNetSyncEnvParseInt(e, 0);
+	if (state_detail < 0)
+	{
+		state_detail = 0;
+	}
+	sSYNetSyncPeerDivergeDetailEnvCache = (state_detail >= 1) ? 1 : 0;
+	return (sSYNetSyncPeerDivergeDetailEnvCache != 0) ? TRUE : FALSE;
+}
+
+void syNetSyncCollectRollbackWorldComponents(SYNetSyncRollbackWorldComponents *out)
+{
+	s32 pi;
+	s32 i;
+	s32 n;
+	s32 mapobjs_num;
+	s32 random_valids_num;
+
+	if (out == NULL)
+	{
+		return;
+	}
+	memset(out, 0, sizeof(*out));
+	out->hash_battle_time = 2166136261U;
+	out->hash_battle_players = 2166136261U;
+	out->hash_spawn_wait = 2166136261U;
+	out->hash_appear_tables = 2166136261U;
+	out->hash_random_tables = 2166136261U;
+	if (gSCManagerBattleState != NULL)
+	{
+		out->time_remain = gSCManagerBattleState->time_remain;
+		out->time_passed = gSCManagerBattleState->time_passed;
+		out->game_status = gSCManagerBattleState->game_status;
+		out->hash_battle_time =
+		    syNetSyncFnvAccumulateU32(out->hash_battle_time, (u32)out->time_remain);
+		out->hash_battle_time =
+		    syNetSyncFnvAccumulateU32(out->hash_battle_time, (u32)out->time_passed);
+		out->hash_battle_time =
+		    syNetSyncFnvAccumulateU32(out->hash_battle_time, (u32)out->game_status);
+		for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+		{
+			out->stock_count[pi] = gSCManagerBattleState->players[pi].stock_count;
+			out->score[pi] = gSCManagerBattleState->players[pi].score;
+			out->falls[pi] = gSCManagerBattleState->players[pi].falls;
+			out->stale_id[pi] = gSCManagerBattleState->players[pi].stale_id;
+			out->hash_battle_players =
+			    syNetSyncFnvAccumulateU32(out->hash_battle_players, (u32)out->stock_count[pi]);
+			out->hash_battle_players =
+			    syNetSyncFnvAccumulateU32(out->hash_battle_players, (u32)out->score[pi]);
+			out->hash_battle_players =
+			    syNetSyncFnvAccumulateU32(out->hash_battle_players, (u32)out->falls[pi]);
+			out->hash_battle_players =
+			    syNetSyncFnvAccumulateU32(out->hash_battle_players, out->stale_id[pi]);
+		}
+	}
+	out->spawn_wait = (u32)gITManagerAppearActor.spawn_wait;
+	out->appear_weights_sum = (u32)gITManagerAppearActor.weights.weights_sum;
+	out->appear_valids_num = (u32)gITManagerAppearActor.weights.valids_num;
+	out->mapobjs_num = (u32)gITManagerAppearActor.mapobjs_num;
+	out->random_weights_sum = (u32)gITManagerRandomWeights.weights_sum;
+	out->random_valids_num = (u32)gITManagerRandomWeights.valids_num;
+	out->hash_spawn_wait = syNetSyncFnvAccumulateU32(2166136261U, out->spawn_wait);
+	mapobjs_num = out->mapobjs_num;
+	if (mapobjs_num > nITKindEnumCount)
+	{
+		mapobjs_num = nITKindEnumCount;
+	}
+	out->mapobjs_hash = syNetSyncHashU8Array(gITManagerAppearActor.mapobjs, mapobjs_num);
+	random_valids_num = out->random_valids_num;
+	if (random_valids_num > nITKindEnumCount)
+	{
+		random_valids_num = nITKindEnumCount;
+	}
+	out->random_kinds_hash = syNetSyncHashU8Array(gITManagerRandomWeights.kinds, random_valids_num);
+	out->random_blocks_hash = syNetSyncHashU16Array(gITManagerRandomWeights.blocks, random_valids_num);
+	out->hash_appear_tables = 2166136261U;
+	out->hash_appear_tables =
+	    syNetSyncFnvAccumulateU32(out->hash_appear_tables, out->appear_weights_sum);
+	out->hash_appear_tables =
+	    syNetSyncFnvAccumulateU32(out->hash_appear_tables, out->appear_valids_num);
+	out->hash_appear_tables = syNetSyncFnvAccumulateU32(out->hash_appear_tables, out->mapobjs_num);
+	n = mapobjs_num;
+	if ((gITManagerAppearActor.mapobjs != NULL) && (n > 0))
+	{
+		for (i = 0; i < n; i++)
+		{
+			out->hash_appear_tables =
+			    syNetSyncFnvAccumulateU32(out->hash_appear_tables,
+						      (u32)gITManagerAppearActor.mapobjs[i]);
+		}
+	}
+	out->hash_random_tables = 2166136261U;
+	out->hash_random_tables =
+	    syNetSyncFnvAccumulateU32(out->hash_random_tables, out->random_weights_sum);
+	out->hash_random_tables =
+	    syNetSyncFnvAccumulateU32(out->hash_random_tables, out->random_valids_num);
+	n = random_valids_num;
+	if ((gITManagerRandomWeights.kinds != NULL) && (gITManagerRandomWeights.blocks != NULL) && (n > 0))
+	{
+		for (i = 0; i < n; i++)
+		{
+			out->hash_random_tables =
+			    syNetSyncFnvAccumulateU32(out->hash_random_tables,
+						      (u32)gITManagerRandomWeights.kinds[i]);
+			out->hash_random_tables =
+			    syNetSyncFnvAccumulateU32(out->hash_random_tables,
+						      (u32)gITManagerRandomWeights.blocks[i]);
+		}
+	}
+	out->hash_combined = syNetSyncHashRollbackWorld();
+}
+
+static void syNetSyncLogWorldScalarDiff(const char *tag, u32 tick, const char *field, s32 peer_v, s32 local_v)
+{
+	if (peer_v != local_v)
+	{
+		port_log("SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=%s peer=%d local=%d\n", tag, tick, field,
+			 (int)peer_v, (int)local_v);
+	}
+}
+
+static void syNetSyncLogWorldU32Diff(const char *tag, u32 tick, const char *field, u32 peer_v, u32 local_v)
+{
+	if (peer_v != local_v)
+	{
+		port_log("SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=%s peer=%u local=%u\n", tag, tick, field,
+			 (unsigned int)peer_v, (unsigned int)local_v);
+	}
+}
+
+void syNetSyncLogWorldHashDiff(const char *tag, u32 tick, const SYNetSyncRollbackWorldComponents *peer,
+			       const SYNetSyncRollbackWorldComponents *local)
+{
+	s32 pi;
+
+	if ((local == NULL) || (syNetSyncPeerDivergeDetailEnabled() == FALSE))
+	{
+		return;
+	}
+	if (peer == NULL)
+	{
+		port_log(
+		    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u world_local_breakdown time_remain=%d time_passed=%d status=%d spawn_wait=%u appear_sum=%u appear_valid=%u mapobjs=%u map_hash=0x%08X random_sum=%u random_valid=%u random_kinds=0x%08X random_blocks=0x%08X hash_time=0x%08X hash_players=0x%08X hash_spawn=0x%08X hash_appear=0x%08X hash_random=0x%08X world=0x%08X\n",
+		    tag,
+		    tick,
+		    (int)local->time_remain,
+		    (int)local->time_passed,
+		    (int)local->game_status,
+		    (unsigned int)local->spawn_wait,
+		    (unsigned int)local->appear_weights_sum,
+		    (unsigned int)local->appear_valids_num,
+		    (unsigned int)local->mapobjs_num,
+		    local->mapobjs_hash,
+		    (unsigned int)local->random_weights_sum,
+		    (unsigned int)local->random_valids_num,
+		    local->random_kinds_hash,
+		    local->random_blocks_hash,
+		    local->hash_battle_time,
+		    local->hash_battle_players,
+		    local->hash_spawn_wait,
+		    local->hash_appear_tables,
+		    local->hash_random_tables,
+		    local->hash_combined);
+		for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+		{
+			port_log(
+			    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u player=%d stock=%d score=%d falls=%d stale_id=%u\n",
+			    tag,
+			    tick,
+			    (int)pi,
+			    (int)local->stock_count[pi],
+			    (int)local->score[pi],
+			    (int)local->falls[pi],
+			    (unsigned int)local->stale_id[pi]);
+		}
+		return;
+	}
+	if (peer->hash_battle_time != local->hash_battle_time)
+	{
+		port_log("SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u partition=battle_time peer=0x%08X local=0x%08X\n",
+			 tag,
+			 tick,
+			 peer->hash_battle_time,
+			 local->hash_battle_time);
+		syNetSyncLogWorldScalarDiff(tag, tick, "time_remain", peer->time_remain, local->time_remain);
+		syNetSyncLogWorldScalarDiff(tag, tick, "time_passed", peer->time_passed, local->time_passed);
+		syNetSyncLogWorldScalarDiff(tag, tick, "game_status", peer->game_status, local->game_status);
+	}
+	if (peer->hash_battle_players != local->hash_battle_players)
+	{
+		port_log(
+		    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u partition=battle_players peer=0x%08X local=0x%08X\n",
+		    tag,
+		    tick,
+		    peer->hash_battle_players,
+		    local->hash_battle_players);
+		for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+		{
+			syNetSyncLogWorldScalarDiff(tag, tick, "stock_count", peer->stock_count[pi], local->stock_count[pi]);
+			syNetSyncLogWorldScalarDiff(tag, tick, "score", peer->score[pi], local->score[pi]);
+			syNetSyncLogWorldScalarDiff(tag, tick, "falls", peer->falls[pi], local->falls[pi]);
+			if (peer->stale_id[pi] != local->stale_id[pi])
+			{
+				port_log(
+				    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=stale_id player=%d peer=%u local=%u\n",
+				    tag,
+				    tick,
+				    (int)pi,
+				    (unsigned int)peer->stale_id[pi],
+				    (unsigned int)local->stale_id[pi]);
+			}
+		}
+	}
+	if (peer->hash_spawn_wait != local->hash_spawn_wait)
+	{
+		port_log("SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u partition=spawn_wait peer=0x%08X local=0x%08X\n",
+			 tag,
+			 tick,
+			 peer->hash_spawn_wait,
+			 local->hash_spawn_wait);
+		syNetSyncLogWorldU32Diff(tag, tick, "spawn_wait", peer->spawn_wait, local->spawn_wait);
+	}
+	if (peer->hash_appear_tables != local->hash_appear_tables)
+	{
+		port_log(
+		    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u partition=appear_tables peer=0x%08X local=0x%08X\n",
+		    tag,
+		    tick,
+		    peer->hash_appear_tables,
+		    local->hash_appear_tables);
+		syNetSyncLogWorldU32Diff(tag, tick, "appear_weights_sum", peer->appear_weights_sum,
+					 local->appear_weights_sum);
+		syNetSyncLogWorldU32Diff(tag, tick, "appear_valids_num", peer->appear_valids_num, local->appear_valids_num);
+		syNetSyncLogWorldU32Diff(tag, tick, "mapobjs_num", peer->mapobjs_num, local->mapobjs_num);
+		if (peer->mapobjs_hash != local->mapobjs_hash)
+		{
+			port_log(
+			    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=mapobjs_hash peer=0x%08X local=0x%08X\n",
+			    tag,
+			    tick,
+			    peer->mapobjs_hash,
+			    local->mapobjs_hash);
+		}
+	}
+	if (peer->hash_random_tables != local->hash_random_tables)
+	{
+		port_log(
+		    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u partition=random_tables peer=0x%08X local=0x%08X\n",
+		    tag,
+		    tick,
+		    peer->hash_random_tables,
+		    local->hash_random_tables);
+		syNetSyncLogWorldU32Diff(tag, tick, "random_weights_sum", peer->random_weights_sum,
+					 local->random_weights_sum);
+		syNetSyncLogWorldU32Diff(tag, tick, "random_valids_num", peer->random_valids_num,
+					 local->random_valids_num);
+		if (peer->random_kinds_hash != local->random_kinds_hash)
+		{
+			port_log(
+			    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=random_kinds_hash peer=0x%08X local=0x%08X\n",
+			    tag,
+			    tick,
+			    peer->random_kinds_hash,
+			    local->random_kinds_hash);
+		}
+		if (peer->random_blocks_hash != local->random_blocks_hash)
+		{
+			port_log(
+			    "SSB64 NetSync: PEER_DIVERGE_DIFF tag=%s tick=%u field=random_blocks_hash peer=0x%08X local=0x%08X\n",
+			    tag,
+			    tick,
+			    peer->random_blocks_hash,
+			    local->random_blocks_hash);
+		}
+	}
+}
+
 void syNetSyncLogRollbackWorldDetail(const char *tag, u32 tick)
 {
 	s32 mapobjs_num;

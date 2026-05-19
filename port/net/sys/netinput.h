@@ -265,8 +265,9 @@ extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tic
 						      const SYNetInputFrame *confirmed);
 /*
  * TRUE when confirmed remote input differs enough from `old` to warrant GGPO rollback (buttons any change;
- * sticks when |delta| > deadband). `correction_is_predicted`: use `SSB64_NETPLAY_GGPO_STICK_DEADBAND_PREDICT`
- * (default 2) instead of `SSB64_NETPLAY_GGPO_STICK_DEADBAND` (default 4).
+ * sticks when |delta| > deadband, neutral→non-neutral onset, horizontal sign flip, or large delta).
+ * `correction_is_predicted`: use `SSB64_NETPLAY_GGPO_STICK_DEADBAND_PREDICT` (default 6) instead of
+ * `SSB64_NETPLAY_GGPO_STICK_DEADBAND` (default 4).
  */
 extern sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
                                                         sb32 correction_is_predicted);

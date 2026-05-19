@@ -504,13 +504,14 @@ void syNetDesyncClassifierEmitReportOnVsStop(void)
 	port_log(
 	    "Evidence ticks: input_values=%u (player=%d) input_presence=%u (player=%d) transport_gap=%u rollback_in=%u "
 	    "commit_token_mismatch=%u bootstrap_bind=%u commit_delay_E=%u commit_delay_S=%u commit_delay_K=%u "
-	    "load_hash_drift=%u verify_strict=%u last_val_tick=%u last_inp_all=0x%08X last_figh=0x%08X last_mph=0x%08X\n",
+	    "load_hash_drift=%u peer_snapshot_diverge=%u verify_strict=%u last_val_tick=%u last_inp_all=0x%08X last_figh=0x%08X last_mph=0x%08X\n",
 	    s_trace.first_input_values_tick, (int)s_trace.first_input_values_player, s_trace.first_input_presence_tick,
 	    (int)s_trace.first_input_presence_player, s_trace.first_transport_gap_tick,
 	    s_trace.first_rollback_input_mismatch_tick, s_trace.first_commit_token_mismatch_validation_tick,
 	    s_trace.first_bootstrap_bind_mismatch_tick, s_trace.first_commit_delay_E_tick, s_trace.first_commit_delay_S_tick,
-	    s_trace.first_commit_delay_K_tick, s_trace.first_load_hash_drift_tick, s_trace.first_verify_strict_tick,
-	    s_trace.last_validation_tick, s_trace.last_inp_all, s_trace.last_figh, s_trace.last_mph);
+	    s_trace.first_commit_delay_K_tick, s_trace.first_load_hash_drift_tick,
+	    s_trace.first_peer_snapshot_diverge_tick, s_trace.first_verify_strict_tick, s_trace.last_validation_tick,
+	    s_trace.last_inp_all, s_trace.last_figh, s_trace.last_mph);
 	port_log(
 	    "Notes: COMMIT = first cross-peer SYNetFrameCommitToken mismatch (NetSync cadence). INPUT = value "
 	    "pub_vs_remote, rollback mismatch, seq_gap, or commit-token starvation fallback. bootstrap_bind = "
