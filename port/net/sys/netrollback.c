@@ -553,6 +553,7 @@ static void syNetRollbackEpisodeSetPhase(SYNetRollbackEpisodePhase phase);
 static void syNetRollbackQueueDeferredInputCorrection(s32 player, u32 sim_tick);
 static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick, u32 target_tick_override);
 static void syNetRollbackArmSymmetricNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
+static void syNetRollbackClearSymmetricNotifyAll(void);
 static void syNetRollbackOnResimCompleted(void);
 static void syNetRollbackArmPredictionRecovery(u32 mismatch_tick, u32 frontier_tick, const SYNetInputFrame *hist);
 static void syNetRollbackTryOutcomeAwareCorrection(u32 probe_frontier);
@@ -560,7 +561,19 @@ static u32 syNetRollbackFindEarliestPredictedRemoteTick(u32 from_tick, u32 to_ti
 static void syNetRollbackCoalesceScanResimSpan(u32 *io_mismatch, u32 *io_target, u32 frontier);
 static void syNetRollbackResetCorrectionEpisode(void);
 static void syNetRollbackNoteEpisodeResimCompleted(void);
-static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick);
+typedef struct SYNetRollbackCorrectionCommitSnap
+{
+	u32 episode_anchor_mismatch;
+	u32 episode_anchor_load_tick;
+	u32 episode_last_target_tick;
+	u32 episode_extensions;
+	u32 last_rollback_begin_sim_tick;
+} SYNetRollbackCorrectionCommitSnap;
+static void syNetRollbackCorrectionCommitSnapSave(SYNetRollbackCorrectionCommitSnap *snap);
+static void syNetRollbackAbortCorrectionCommit(const SYNetRollbackCorrectionCommitSnap *snap);
+static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick,
+						  SYNetRollbackCorrectionCommitSnap *out_revert_on_begin_fail);
+static void syNetRollbackTryArmSymmetricNotifyForLocalCorrection(s32 player, u32 mismatch_tick, u32 target_tick);
 static sb32 syNetRollbackGlobalCooldownAllows(u32 mismatch_tick);
 static sb32 syNetRollbackHistRemoteValueMismatch(const SYNetInputFrame *hist, const SYNetInputFrame *remote);
 static sb32 syNetRollbackTickHasValueMismatch(u32 sim_tick, s32 player);
@@ -1330,25 +1343,55 @@ static sb32 syNetRollbackGlobalCooldownAllows(u32 mismatch_tick)
 	return FALSE;
 }
 
-static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick)
+static void syNetRollbackCorrectionCommitSnapSave(SYNetRollbackCorrectionCommitSnap *snap)
+{
+	snap->episode_anchor_mismatch = sSYNetRollbackEpisodeAnchorMismatch;
+	snap->episode_anchor_load_tick = sSYNetRollbackEpisodeAnchorLoadTick;
+	snap->episode_last_target_tick = sSYNetRollbackEpisodeLastTargetTick;
+	snap->episode_extensions = sSYNetRollbackEpisodeExtensions;
+	snap->last_rollback_begin_sim_tick = sSYNetRollbackLastRollbackBeginSimTick;
+}
+
+static void syNetRollbackAbortCorrectionCommit(const SYNetRollbackCorrectionCommitSnap *snap)
+{
+	if (snap != NULL)
+	{
+		sSYNetRollbackEpisodeAnchorMismatch = snap->episode_anchor_mismatch;
+		sSYNetRollbackEpisodeAnchorLoadTick = snap->episode_anchor_load_tick;
+		sSYNetRollbackEpisodeLastTargetTick = snap->episode_last_target_tick;
+		sSYNetRollbackEpisodeExtensions = snap->episode_extensions;
+		sSYNetRollbackLastRollbackBeginSimTick = snap->last_rollback_begin_sim_tick;
+	}
+	syNetRollbackClearSymmetricNotifyAll();
+}
+
+static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick,
+						  SYNetRollbackCorrectionCommitSnap *out_revert_on_begin_fail)
 {
 	u32 sim_tick;
+	SYNetRollbackCorrectionCommitSnap snap;
+
+	syNetRollbackCorrectionCommitSnapSave(&snap);
 
 	if ((mismatch_tick == 0U) || (target_tick <= mismatch_tick) || (load_tick == ~(u32)0))
 	{
+		syNetRollbackAbortCorrectionCommit(&snap);
 		return FALSE;
 	}
 	if (syNetRollbackGlobalCooldownAllows(mismatch_tick) == FALSE)
 	{
+		syNetRollbackAbortCorrectionCommit(&snap);
 		return FALSE;
 	}
 	sim_tick = syNetInputGetTick();
 	if ((load_tick == sSYNetRollbackSuppressReloadLoadTick) && (sim_tick <= sSYNetRollbackSuppressReloadUntilSim))
 	{
+		syNetRollbackAbortCorrectionCommit(&snap);
 		return FALSE;
 	}
 	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (mismatch_tick < sSYNetRollbackEpisodeResolvedThrough))
 	{
+		syNetRollbackAbortCorrectionCommit(&snap);
 		return FALSE;
 	}
 	if (sSYNetRollbackEpisodeAnchorMismatch == ~(u32)0)
@@ -1367,6 +1410,7 @@ static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_ti
 			sSYNetRollbackEpisodeExtensions++;
 			if (sSYNetRollbackEpisodeExtensions >= SYNETROLLBACK_MAX_EPISODE_EXTENSIONS)
 			{
+				syNetRollbackAbortCorrectionCommit(&snap);
 				return FALSE;
 			}
 		}
@@ -1382,16 +1426,22 @@ static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_ti
 	{
 		if (target_tick <= sSYNetRollbackEpisodeLastTargetTick)
 		{
+			syNetRollbackAbortCorrectionCommit(&snap);
 			return FALSE;
 		}
 		if (sSYNetRollbackEpisodeExtensions >= SYNETROLLBACK_MAX_EPISODE_EXTENSIONS)
 		{
+			syNetRollbackAbortCorrectionCommit(&snap);
 			return FALSE;
 		}
 		sSYNetRollbackEpisodeExtensions++;
 	}
 	sSYNetRollbackEpisodeLastTargetTick = target_tick;
 	sSYNetRollbackLastRollbackBeginSimTick = sim_tick;
+	if (out_revert_on_begin_fail != NULL)
+	{
+		*out_revert_on_begin_fail = snap;
+	}
 	return TRUE;
 }
 
@@ -1821,7 +1871,7 @@ static void syNetRollbackTryOutcomeAwareCorrection(u32 probe_frontier)
 	{
 		target_tick = mismatch + 1U;
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target_tick) == FALSE)
+	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target_tick, NULL) == FALSE)
 	{
 		return;
 	}
@@ -1908,7 +1958,7 @@ static void syNetRollbackSchedulePostResimInputFollowup(void)
 	{
 		target_tick = sSYNetRollbackResimTargetTick;
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target_tick) == FALSE)
+	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target_tick, NULL) == FALSE)
 	{
 		return;
 	}
@@ -2057,7 +2107,7 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 			syNetRollbackArmSymmetricNotify(player, mismatch, target);
 		}
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target) == FALSE)
+	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target, NULL) == FALSE)
 	{
 		syNetRollbackLogDeferDiag("commit_begin_failed", mismatch, target, player);
 		return FALSE;
@@ -2296,7 +2346,7 @@ static sb32 syNetRollbackTryBeginDeferredStateMismatch(void)
 	sSYNetRollbackDeferredStateMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredStateMismatchTargetTick = ~(u32)0;
 	target = syNetRollbackClampResimTargetTick(mismatch, target);
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, load_tick, target) == FALSE)
+	if (syNetRollbackTryCommitCorrectionBegin(mismatch, load_tick, target, NULL) == FALSE)
 	{
 		syNetRollbackLogDeferDiag("state_resync_commit_failed", mismatch, target, -1);
 		syNetRollbackResetPeerBaselineResyncStorm();
@@ -5509,7 +5559,7 @@ void syNetRollbackUpdate(void)
 			syNetRollbackArmSymmetricNotify(mismatch_player, mismatch, resim_target_tick);
 		}
 	}
-	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, resim_target_tick) == FALSE)
+	if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, resim_target_tick, NULL) == FALSE)
 	{
 		return;
 	}
