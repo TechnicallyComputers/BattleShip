@@ -223,6 +223,9 @@ typedef struct SYNetRbSnapFighterBlob
 	FTMotionScript motion_scripts[2][2];
 	Vec3f joint_translate[FTPARTS_JOINT_NUM_MAX];
 	SYNetRbSnapDObjAnimBlob joint_anim[FTPARTS_JOINT_NUM_MAX];
+	u8 joint_dobj_flags[FTPARTS_JOINT_NUM_MAX];
+	u8 joint_event32_pad[3];
+	uintptr_t joint_anim_joint_event32[FTPARTS_JOINT_NUM_MAX];
 
 	FTModelPartStatus modelpart_status[FTPARTS_JOINT_NUM_MAX - nFTPartsJointCommonStart];
 	FTTexturePartStatus texturepart_status[2];
@@ -802,6 +805,9 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 		{
 			blob->joint_translate[ji] = fp->joints[ji]->translate.vec.f;
 			syNetRbSnapCaptureDObjAnim(&blob->joint_anim[ji], fp->joints[ji]);
+			blob->joint_dobj_flags[ji] = fp->joints[ji]->flags;
+			blob->joint_anim_joint_event32[ji] =
+			    (fp->joints[ji]->anim_joint.event32 != NULL) ? (uintptr_t)fp->joints[ji]->anim_joint.event32 : 0U;
 		}
 	}
 	if (fighter_gobj != NULL)
@@ -929,6 +935,15 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 		{
 			fp->joints[ji]->translate.vec.f = blob->joint_translate[ji];
 			syNetRbSnapApplyDObjAnim(fp->joints[ji], &blob->joint_anim[ji]);
+			if (blob->joint_anim_joint_event32[ji] != 0U)
+			{
+				fp->joints[ji]->anim_joint.event32 = (AObjEvent32 *)blob->joint_anim_joint_event32[ji];
+			}
+			else
+			{
+				fp->joints[ji]->anim_joint.event32 = NULL;
+			}
+			fp->joints[ji]->flags = blob->joint_dobj_flags[ji];
 		}
 	}
 	if (fighter_gobj != NULL)

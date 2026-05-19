@@ -8749,6 +8749,7 @@ static void syNetPeerRefreshCachedNetplayEnvCachesOnly(void)
 	syNetPeerResetDelaySyncCommitLeadEnv();
 	sSYNetPeerIngressDiagEnvCache = -999;
 	sSYNetPeerPhaseLockPredictionWindowEnv = -999;
+	syNetSyncRefreshJointTranslateTraceEnvCache();
 }
 
 void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
@@ -9555,6 +9556,13 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 	if (tick == 0U)
 	{
 		return;
+	}
+
+	if ((syNetRollbackIsResimulating() == FALSE) && (syNetRollbackGetAppliedResimCount() == 0U))
+	{
+		u32 figh_full = syNetSyncHashBattleFightersFull();
+
+		syNetSyncJointTranslateTraceOnFighStep(tick, figh_full);
 	}
 
 	e_min = getenv("SSB64_NETPLAY_SIM_TRACE_NEEDLE_MIN");

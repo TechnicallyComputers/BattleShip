@@ -26,7 +26,7 @@ Extend `SYNetRbSnapYakuBlob` with `SYNetRbSnapDObjAnimBlob anim`, `flags`, and `
 
 - Yakumono count remains stage-static (`mpCollisionAllocYakumono`); index `i` is the identity key.
 - `aobj->interpolate` (TraI) is not snapshotted; Zebes platforms typically use TraX/Y/Z. Add per-node `interpolate` if a stage needs TraI.
-- Fighter joints share the same `event32` gap but are motion-driven; yakumono layer-1 anim is autonomous.
+- Fighter joints had the same `event32` gap; see [`netrollback_fighter_joint_anim_event32_2026-05-19.md`](netrollback_fighter_joint_anim_event32_2026-05-19.md).
 
 ## Verification
 

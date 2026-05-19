@@ -25,6 +25,7 @@
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
+
 #endif
 
 /*
@@ -334,6 +335,7 @@ u32 syNetSyncHashBattleFightersFull(void)
 void syNetSyncResetNetplayBattleClock(void)
 {
 	sSYNetSyncBattleGoSimTick = ~(u32)0;
+	syNetSyncResetJointTranslateTraceSession();
 }
 
 void syNetSyncOnNetplayBattleGo(void)
@@ -435,6 +437,13 @@ u32 syNetSyncHashRollbackWorld(void)
 
 static int sSYNetSyncPeerDivergeDetailEnvCache = -999;
 
+static sb32 sSYNetSyncJointTranslateTraceCache = -999;
+static s32 sSYNetSyncJointTranslateTraceSlotFilter = -1;
+static s32 sSYNetSyncJointTranslateTraceFkindFilter = -1;
+static sb32 sSYNetSyncJointTranslateTraceTriggerFired = FALSE;
+static u32 sSYNetSyncJointTranslateTracePrevTick = ~(u32)0;
+static u32 sSYNetSyncJointTranslateTracePrevFigh = 0U;
+
 static int syNetSyncEnvParseInt(const char *e, int default_val)
 {
 	long v;
@@ -445,6 +454,52 @@ static int syNetSyncEnvParseInt(const char *e, int default_val)
 	}
 	v = strtol(e, NULL, 10);
 	return (int)v;
+}
+
+static void syNetSyncRefreshJointTranslateTraceEnv(void)
+{
+	const char *e;
+
+	if (sSYNetSyncJointTranslateTraceCache != -999)
+	{
+		return;
+	}
+	sSYNetSyncJointTranslateTraceSlotFilter = -1;
+	sSYNetSyncJointTranslateTraceFkindFilter = -1;
+	e = getenv("SSB64_NETPLAY_JOINT_TRANSLATE_TRACE");
+	sSYNetSyncJointTranslateTraceCache = (syNetSyncEnvParseInt(e, 0) != 0) ? 1 : 0;
+	if (sSYNetSyncJointTranslateTraceCache == 0)
+	{
+		return;
+	}
+	e = getenv("SSB64_NETPLAY_JOINT_TRANSLATE_TRACE_SLOT");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		sSYNetSyncJointTranslateTraceSlotFilter = syNetSyncEnvParseInt(e, -1);
+	}
+	e = getenv("SSB64_NETPLAY_JOINT_TRANSLATE_TRACE_FKIND");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		sSYNetSyncJointTranslateTraceFkindFilter = syNetSyncEnvParseInt(e, -1);
+	}
+}
+
+static sb32 syNetSyncJointTranslateTraceEnabled(void)
+{
+	syNetSyncRefreshJointTranslateTraceEnv();
+	return (sSYNetSyncJointTranslateTraceCache != 0) ? TRUE : FALSE;
+}
+
+void syNetSyncResetJointTranslateTraceSession(void)
+{
+	sSYNetSyncJointTranslateTraceTriggerFired = FALSE;
+	sSYNetSyncJointTranslateTracePrevTick = ~(u32)0;
+	sSYNetSyncJointTranslateTracePrevFigh = 0U;
+}
+
+void syNetSyncRefreshJointTranslateTraceEnvCache(void)
+{
+	sSYNetSyncJointTranslateTraceCache = -999;
 }
 
 s32 syNetSyncPeerDivergeDetailEnabled(void)
@@ -912,6 +967,94 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		    syNetSyncHashF32(fp->damage_knockback),
 		    syNetSyncHashFighterStructLight(fp));
 	}
+}
+
+void syNetSyncLogFighterJointTranslateTrace(u32 tick)
+{
+	GObj *fighter_gobj;
+	s32 ji;
+
+	if (syNetSyncJointTranslateTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		DObj *joint;
+		Vec3f tr;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		if ((sSYNetSyncJointTranslateTraceSlotFilter >= 0) &&
+		    (fp->player != sSYNetSyncJointTranslateTraceSlotFilter))
+		{
+			continue;
+		}
+		if ((sSYNetSyncJointTranslateTraceFkindFilter >= 0) &&
+		    (fp->fkind != sSYNetSyncJointTranslateTraceFkindFilter))
+		{
+			continue;
+		}
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+		{
+			joint = fp->joints[ji];
+			if (joint == NULL)
+			{
+				continue;
+			}
+			tr = joint->translate.vec.f;
+			port_log(
+			    "SSB64 NetSync: joint_translate tick=%u slot=%d fkind=%d ji=%d "
+			    "tx=0x%08X ty=0x%08X tz=0x%08X anim_frame=0x%08X anim_wait=0x%08X "
+			    "motion_attack_id=%d hitstatus=%d inv=%d is_shield=%u is_hitstun=%u\n",
+			    tick,
+			    (int)fp->player,
+			    (int)fp->fkind,
+			    ji,
+			    syNetSyncHashF32(tr.x),
+			    syNetSyncHashF32(tr.y),
+			    syNetSyncHashF32(tr.z),
+			    syNetSyncHashF32(joint->anim_frame),
+			    syNetSyncHashF32(joint->anim_wait),
+			    (int)fp->motion_attack_id,
+			    (int)fp->hitstatus,
+			    (int)fp->invincible_tics,
+			    (unsigned int)(fp->is_shield != FALSE),
+			    (unsigned int)(fp->is_hitstun != FALSE));
+		}
+	}
+}
+
+void syNetSyncJointTranslateTraceOnFighStep(u32 tick, u32 figh)
+{
+	if (syNetSyncJointTranslateTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	if (sSYNetSyncJointTranslateTraceTriggerFired == FALSE)
+	{
+		if ((sSYNetSyncJointTranslateTracePrevTick != ~(u32)0) && (figh != sSYNetSyncJointTranslateTracePrevFigh))
+		{
+			port_log(
+			    "SSB64 NetSync: joint_translate_trigger tick=%u prev_tick=%u figh_old=0x%08X figh_new=0x%08X\n",
+			    tick,
+			    sSYNetSyncJointTranslateTracePrevTick,
+			    sSYNetSyncJointTranslateTracePrevFigh,
+			    figh);
+			sSYNetSyncJointTranslateTraceTriggerFired = TRUE;
+		}
+	}
+	syNetSyncLogFighterJointTranslateTrace(tick);
+	sSYNetSyncJointTranslateTracePrevTick = tick;
+	sSYNetSyncJointTranslateTracePrevFigh = figh;
 }
 #endif
 
