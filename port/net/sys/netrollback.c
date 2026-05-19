@@ -211,6 +211,12 @@ typedef struct SYNetRollbackResimPostDigest
 static sb32 sSYNetRollbackResimPostPeerPending;
 static SYNetRollbackResimPostKey sSYNetRollbackResimPostPeerKey;
 static SYNetRollbackResimPostDigest sSYNetRollbackResimPostPeerDigest;
+static sb32 sSYNetRollbackResimPostLocalValid;
+static SYNetRollbackResimPostKey sSYNetRollbackResimPostLocalKey;
+static SYNetRollbackResimPostDigest sSYNetRollbackResimPostLocalDigest;
+static sb32 sSYNetRollbackResimPostCompletedValid;
+static SYNetRollbackResimPostKey sSYNetRollbackResimPostCompletedKey;
+static SYNetRollbackResimPostDigest sSYNetRollbackResimPostCompletedDigest;
 
 static SYNetRollbackHashSet syNetRollbackCollectHashes(void);
 
@@ -282,6 +288,87 @@ static void syNetRollbackCompareResimPostDigests(const SYNetRollbackResimPostKey
 		sSYNetRollbackDeferredStateMismatchTargetTick =
 		    (frontier > key->target_tick) ? frontier : key->target_tick;
 	}
+	syNetPeerArmPostRecoveryConvergenceWatch();
+}
+
+static void syNetRollbackCaptureResimPostBoundaryDigest(void)
+{
+	SYNetRollbackHashSet post;
+
+	if ((sSYNetRollbackResimMismatchTick == 0U) || (sSYNetRollbackResimTargetTick <= sSYNetRollbackResimMismatchTick) ||
+	    (sSYNetRollbackResimLoadTick == ~(u32)0))
+	{
+		sSYNetRollbackResimPostLocalValid = FALSE;
+		return;
+	}
+	sSYNetRollbackResimPostLocalKey.epoch_id = sSYNetRollbackEpochId;
+	sSYNetRollbackResimPostLocalKey.load_tick = sSYNetRollbackResimLoadTick;
+	sSYNetRollbackResimPostLocalKey.mismatch_tick = sSYNetRollbackResimMismatchTick;
+	sSYNetRollbackResimPostLocalKey.target_tick = sSYNetRollbackResimTargetTick;
+	post = syNetRollbackCollectHashes();
+	sSYNetRollbackResimPostLocalDigest.figh = post.fighter;
+	sSYNetRollbackResimPostLocalDigest.world = post.world;
+	sSYNetRollbackResimPostLocalDigest.item = post.item;
+	sSYNetRollbackResimPostLocalDigest.rng = post.rng;
+	sSYNetRollbackResimPostLocalValid = TRUE;
+}
+
+static void syNetRollbackFillResimPostInputDigest(const SYNetRollbackResimPostKey *key, u32 *out_input_digest)
+{
+	u32 sums[MAXCONTROLLERS];
+	u32 win_begin;
+	u32 win_len;
+
+	if ((key == NULL) || (out_input_digest == NULL))
+	{
+		return;
+	}
+	win_begin = key->mismatch_tick;
+	win_len = key->target_tick - key->mismatch_tick;
+	if (win_len == 0U)
+	{
+		win_len = 1U;
+	}
+	syNetInputGetHistoryInputValueChecksumWindow(win_begin, win_len, sums, out_input_digest);
+}
+
+static void syNetRollbackClearResimPostBoundaryDigest(void)
+{
+	sSYNetRollbackResimPostLocalValid = FALSE;
+}
+
+static void syNetRollbackFlushPendingResimPostHandshake(void)
+{
+	SYNetRollbackResimPostDigest local;
+
+	if ((sSYNetRollbackResimPostPeerPending == FALSE) || (syNetRollbackIsActive() == FALSE))
+	{
+		return;
+	}
+	if (sSYNetRollbackResimPostLocalValid != FALSE)
+	{
+		local = sSYNetRollbackResimPostLocalDigest;
+		syNetRollbackFillResimPostInputDigest(&sSYNetRollbackResimPostLocalKey, &local.input_digest);
+		if (syNetRollbackResimPostKeysEqual(&sSYNetRollbackResimPostLocalKey, &sSYNetRollbackResimPostPeerKey) != FALSE)
+		{
+			syNetRollbackCompareResimPostDigests(&sSYNetRollbackResimPostLocalKey, &local,
+							     &sSYNetRollbackResimPostPeerDigest);
+			sSYNetRollbackResimPostPeerPending = FALSE;
+		}
+		return;
+	}
+	if (sSYNetRollbackResimPostCompletedValid == FALSE)
+	{
+		return;
+	}
+	local = sSYNetRollbackResimPostCompletedDigest;
+	syNetRollbackFillResimPostInputDigest(&sSYNetRollbackResimPostCompletedKey, &local.input_digest);
+	if (syNetRollbackResimPostKeysEqual(&sSYNetRollbackResimPostCompletedKey, &sSYNetRollbackResimPostPeerKey) != FALSE)
+	{
+		syNetRollbackCompareResimPostDigests(&sSYNetRollbackResimPostCompletedKey, &local,
+						     &sSYNetRollbackResimPostPeerDigest);
+		sSYNetRollbackResimPostPeerPending = FALSE;
+	}
 }
 
 void syNetRollbackTryEmitResimPostHandshake(void)
@@ -289,34 +376,35 @@ void syNetRollbackTryEmitResimPostHandshake(void)
 	SYNetRollbackResimPostKey key;
 	SYNetRollbackResimPostDigest local;
 	SYNetRollbackHashSet h;
-	u32 sums[MAXCONTROLLERS];
-	u32 win_begin;
-	u32 win_len;
 
 	if (syNetRollbackIsActive() == FALSE)
 	{
 		return;
 	}
-	key.epoch_id = sSYNetRollbackEpochId;
-	key.load_tick = sSYNetRollbackResimLoadTick;
-	key.mismatch_tick = sSYNetRollbackResimMismatchTick;
-	key.target_tick = sSYNetRollbackResimTargetTick;
-	if ((key.mismatch_tick == 0U) || (key.target_tick <= key.mismatch_tick))
+	if ((sSYNetRollbackResimPostLocalValid != FALSE) &&
+	    (sSYNetRollbackResimPostLocalKey.mismatch_tick != 0U) &&
+	    (sSYNetRollbackResimPostLocalKey.target_tick > sSYNetRollbackResimPostLocalKey.mismatch_tick))
 	{
-		return;
+		key = sSYNetRollbackResimPostLocalKey;
+		local = sSYNetRollbackResimPostLocalDigest;
 	}
-	h = syNetRollbackCollectHashes();
-	local.figh = h.fighter;
-	local.world = h.world;
-	local.item = h.item;
-	local.rng = h.rng;
-	win_begin = key.mismatch_tick;
-	win_len = key.target_tick - key.mismatch_tick;
-	if (win_len == 0U)
+	else
 	{
-		win_len = 1U;
+		key.epoch_id = sSYNetRollbackEpochId;
+		key.load_tick = sSYNetRollbackResimLoadTick;
+		key.mismatch_tick = sSYNetRollbackResimMismatchTick;
+		key.target_tick = sSYNetRollbackResimTargetTick;
+		if ((key.mismatch_tick == 0U) || (key.target_tick <= key.mismatch_tick))
+		{
+			return;
+		}
+		h = syNetRollbackCollectHashes();
+		local.figh = h.fighter;
+		local.world = h.world;
+		local.item = h.item;
+		local.rng = h.rng;
 	}
-	syNetInputGetHistoryInputValueChecksumWindow(win_begin, win_len, sums, &local.input_digest);
+	syNetRollbackFillResimPostInputDigest(&key, &local.input_digest);
 	if ((sSYNetRollbackResimPostPeerPending != FALSE) &&
 	    (syNetRollbackResimPostKeysEqual(&key, &sSYNetRollbackResimPostPeerKey) != FALSE))
 	{
@@ -334,9 +422,6 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 	SYNetRollbackResimPostDigest peer;
 	SYNetRollbackResimPostDigest local;
 	SYNetRollbackHashSet h;
-	u32 sums[MAXCONTROLLERS];
-	u32 win_begin;
-	u32 win_len;
 
 	(void)world;
 	key.epoch_id = epoch_id;
@@ -359,8 +444,25 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 		sSYNetRollbackResimPostPeerPending = TRUE;
 		return;
 	}
+	if ((sSYNetRollbackResimPostLocalValid != FALSE) &&
+	    (syNetRollbackResimPostKeysEqual(&key, &sSYNetRollbackResimPostLocalKey) != FALSE))
+	{
+		local = sSYNetRollbackResimPostLocalDigest;
+		syNetRollbackFillResimPostInputDigest(&key, &local.input_digest);
+		syNetRollbackCompareResimPostDigests(&key, &local, &peer);
+		return;
+	}
+	if ((sSYNetRollbackResimPostCompletedValid != FALSE) &&
+	    (syNetRollbackResimPostKeysEqual(&key, &sSYNetRollbackResimPostCompletedKey) != FALSE))
+	{
+		local = sSYNetRollbackResimPostCompletedDigest;
+		syNetRollbackFillResimPostInputDigest(&key, &local.input_digest);
+		syNetRollbackCompareResimPostDigests(&key, &local, &peer);
+		return;
+	}
 	if ((key.epoch_id != sSYNetRollbackEpochId) || (key.load_tick != sSYNetRollbackResimLoadTick) ||
-	    (key.mismatch_tick != sSYNetRollbackResimMismatchTick) || (key.target_tick != sSYNetRollbackResimTargetTick))
+	    (key.mismatch_tick != sSYNetRollbackResimMismatchTick) ||
+	    (key.target_tick != sSYNetRollbackResimTargetTick))
 	{
 		sSYNetRollbackResimPostPeerKey = key;
 		sSYNetRollbackResimPostPeerDigest = peer;
@@ -372,13 +474,7 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 	local.world = h.world;
 	local.item = h.item;
 	local.rng = h.rng;
-	win_begin = key.mismatch_tick;
-	win_len = key.target_tick - key.mismatch_tick;
-	if (win_len == 0U)
-	{
-		win_len = 1U;
-	}
-	syNetInputGetHistoryInputValueChecksumWindow(win_begin, win_len, sums, &local.input_digest);
+	syNetRollbackFillResimPostInputDigest(&key, &local.input_digest);
 	syNetRollbackCompareResimPostDigests(&key, &local, &peer);
 }
 #endif
@@ -917,6 +1013,9 @@ void syNetRollbackStopVSSession(void)
 	sSYNetRollbackDeferredStateMismatchPending = FALSE;
 	sSYNetRollbackDeferredStateMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredStateMismatchTargetTick = ~(u32)0;
+	sSYNetRollbackResimPostPeerPending = FALSE;
+	sSYNetRollbackResimPostLocalValid = FALSE;
+	sSYNetRollbackResimPostCompletedValid = FALSE;
 	syNetSyncResetNetplayBattleClock();
 #endif
 }
@@ -1424,6 +1523,11 @@ void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick)
 	{
 		return;
 	}
+	if ((sSYNetRollbackResimPending != FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	{
+		syNetRollbackDeferRemoteInputCorrection(player, sim_tick);
+		return;
+	}
 	if (syNetRollbackShouldQueueGgpoCorrection(sim_tick) == FALSE)
 	{
 		return;
@@ -1821,6 +1925,9 @@ static void syNetRollbackOnResimCompleted(void)
 		    syNetSyncHashRNGSeed());
 	}
 	syNetRollbackTryEmitResimPostHandshake();
+	syNetRollbackFlushPendingResimPostHandshake();
+	syNetRollbackClearResimPostBoundaryDigest();
+	sSYNetRollbackResimLoadTick = ~(u32)0;
 	syNetRollbackSchedulePostResimInputFollowup();
 }
 
@@ -2035,6 +2142,7 @@ static sb32 syNetRollbackTryBeginDeferredStateMismatch(void)
 		return FALSE;
 	}
 	syNetPeerFrameCommitDiagNoteRecoveryStarted();
+	syNetPeerArmPostRecoveryConvergenceWatch();
 	port_log("SSB64 NetRollback: deferred frame-commit state resim mismatch_tick=%u target_tick=%u\n", mismatch,
 	         target);
 	if (syNetRollbackBeginResim(mismatch, target, -1) == FALSE)
@@ -3288,6 +3396,12 @@ static void syNetRollbackPumpResimBaselineSend(void)
 {
 	if ((sSYNetRollbackResimPending == FALSE) || (sSYNetRollbackResimAwaitingPeerBaseline == FALSE) ||
 	    (sSYNetRollbackResimBaselineGateOpen != FALSE))
+	{
+		return;
+	}
+	/* Rate-limit retransmits so baseline packets are not drowned by INPUT bundles. */
+	if ((sSYNetRollbackPeerBaselineRetransmitCount > 0U) &&
+	    ((sSYNetRollbackResimBaselineWaitFrames & 1U) != 0U))
 	{
 		return;
 	}
@@ -4643,7 +4757,13 @@ static void syNetRollbackLogResimComplete(void)
 	}
 	sSYNetRollbackLastVerifyHash = post.fighter;
 	sSYNetRollbackResimPreHashesValid = FALSE;
-	sSYNetRollbackResimLoadTick = ~(u32)0;
+	syNetRollbackCaptureResimPostBoundaryDigest();
+	if (sSYNetRollbackResimPostLocalValid != FALSE)
+	{
+		sSYNetRollbackResimPostCompletedValid = TRUE;
+		sSYNetRollbackResimPostCompletedKey = sSYNetRollbackResimPostLocalKey;
+		sSYNetRollbackResimPostCompletedDigest = sSYNetRollbackResimPostLocalDigest;
+	}
 }
 #endif
 
@@ -4816,6 +4936,7 @@ void syNetRollbackUpdate(void)
 		return;
 	}
 #ifdef PORT
+	syNetRollbackFlushPendingResimPostHandshake();
 	syNetRollbackDebugTryApplyPendingForceMismatch();
 	syNetRollbackExpireSymmetricNotify();
 	if (syNetRollbackTryBeginDeferredStateMismatch() != FALSE)

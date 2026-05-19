@@ -122,7 +122,8 @@ Run **both** peers with false-digital fix + mixed-input env from [`netinput_fals
 |-----------|------|
 | No `pred sx=85` / `pred sy=85` | False-digital regression absent |
 | `SSB64_NETPLAY_ITEM_HASH_TRACE=1` at resim target tick | Host/client walk order + final hash match |
-| `RESIM_POST_MATCH` at each resim boundary | Cross-peer post-resim digests agree |
+| `RESIM_POST_MATCH` at each resim boundary | Cross-peer post-resim digests agree (`load=` must not be `4294967295`) |
+| `POST_RECOVERY_CONVERGENCE_OK` | Two consecutive frame-commit compares after recovery (`SSB64_NETPLAY_FRAME_COMMIT_TOKEN=1`) |
 | NetSync validation from ~3900+ | No sustained `figh` diff while `all` matches |
 | `FRAME_COMMIT_DIAG compared > 0` | Frame-commit pairing ran (`SSB64_NETPLAY_FRAME_COMMIT_TOKEN=1`) |
 | Host closes window | Peer receives `VS_SESSION_END` and stops in ≪180 render frames (not `STRICT MISS` stall) |

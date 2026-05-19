@@ -60,7 +60,8 @@ All digests are **current-frame snapshots** (no trajectory). Consumers must not 
 
 | Consumer | Fighter | Item |
 |----------|---------|------|
-| NetSync validation / frame-commit token | `syNetSyncHashBattleFighters()` (light) | `syNetSyncHashActiveItemsForRollback()` — XOR fold, **sorted by `gobj_id`** |
+| NetSync validation log | `syNetSyncHashBattleFighters()` (light) | `syNetSyncHashActiveItemsForRollback()` — XOR fold, **sorted by `gobj_id`** |
+| Frame-commit token (enforcement) | `syNetSyncHashBattleFightersFull()` | same rollback item hash |
 | Rollback baseline / resim-complete / `RESIM_POST` | `syNetSyncHashBattleFightersFull()` | same rollback item hash |
 | Typed snapshot ring | per-slot subsystem hash in blob | full `SYNetRbSnapItemBlob` in [`port/net/sys/netrollbacksnapshot.c`](../port/net/sys/netrollbacksnapshot.c) |
 
