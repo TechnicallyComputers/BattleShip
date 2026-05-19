@@ -250,15 +250,13 @@ file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h"
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
-<<<<<<< HEAD
+# port/net/*.c belongs in ssb64_game (needs port/net on the include path); see cmake/Ssb64NetmenuSources.cmake
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/net/")
-=======
 # RelocFileTable.{us,jp}.cpp both define gRelocFileTable — compile only the
 # selected version's table (the rest are siblings for the other version).
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
 list(APPEND SSB64_SRC_PORT
     ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp)
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -286,20 +284,15 @@ set(SSB64_DECOMP_SOURCES
 # Exclude .inc.c files (inline data included by other .c files)
 list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX "\\.inc\\.c$")
 
-<<<<<<< HEAD
-# Root for #include <sys/net*.h> -> port/net/sys/*.h on selected TUs.
-set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
-
-if(SSB64_NETMENU)
-    # Mirror port/net/**.c over decomp/src/** when paths align; aliases + port-only list in module.
-    include(Ssb64NetmenuSources)
-=======
 # JP build excludes the US-only startup/congratulations menu sources
 # (matches the upstream decomp Makefile's VERSION=jp C_FILES filter-out).
 if(SSB64_VERSION STREQUAL "jp")
     list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX
         "decomp/src/mn/mncommon/(mncongra|mnstartup)\\.c$")
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
+endif()
+
+if(SSB64_NETMENU)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuSources.cmake")
 endif()
 
 ################################################################################
@@ -627,20 +620,11 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/config.yml
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/config.yml
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-<<<<<<< HEAD
-        ${CMAKE_SOURCE_DIR}/yamls/us
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/us
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC=${TORCH_EXECUTABLE}
-        -DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
-        -P ${CMAKE_SOURCE_DIR}/cmake/CopyIfExists.cmake
-=======
         ${CMAKE_SOURCE_DIR}/yamls/${SSB64_VERSION}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${TORCH_EXECUTABLE}
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 )
 
 if(SSB64_NETMENU)

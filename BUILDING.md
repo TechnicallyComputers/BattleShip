@@ -27,7 +27,6 @@ of the build (cached afterwards) — there is no separate extract step.
 
   A dump that doesn't match these hashes will not work.
 
-<<<<<<< HEAD
 ## Build variants (offline vs netmenu)
 
 By default, CMake builds the **offline** game (`SSB64_NETMENU=OFF`):
@@ -83,9 +82,8 @@ Build Release:
 Run:
 - Debug: `.\build\x64\Debug\BattleShip.exe`
 - Release: `.\build\x64\Release\BattleShip.exe`
-=======
+
 `.z64` is shown above; `.n64`/`.v64` are also accepted.
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 
 Netmenu on MSVC: configure with `-DSSB64_NETMENU=ON` (vcpkg supplies curl when `USE_AUTO_VCPKG=ON`).
 
@@ -169,33 +167,22 @@ it with `-G "Visual Studio 17 2022" -T v143` if a runner has several.
 
 ## Notes
 
-<<<<<<< HEAD
-- A normal `cmake --build` builds `BattleShip` and the standalone `torch` sidecar (`TorchExternal`).
-- **macOS / Linux native configure is unchanged** by the MinGW cross path; no extra flags are required for day-to-day offline development.
-- Post-build, CMake copies these next to the executable (when present):
-  - `torch`
-  - `config.yml`
-  - `yamls/us`
-  - `f3d.o2r`
-  - `gamecontrollerdb.txt`
-  - menu font files under `assets/custom/fonts`
-- Runtime first-run extraction also uses the sidecar `torch` executable.
-- `ExtractAssetHeaders` no longer rewrites `yamls/us/reloc_*.yml` on every build.
-- `port/resource/RelocFileTable.cpp` is still generated from the checked-in reloc YAMLs.
-=======
 - Each version's assets and binary live entirely in that version's build
   directory; US and JP never clobber each other. Run the binary from its
   build dir (it loads `BattleShip.o2r` relative to the working
   directory).
 - Switching versions is just a different build dir + `-DSSB64_VERSION`;
   both can be built and kept side by side.
-- A normal build also produces the standalone `torch` sidecar and copies
-  `config.yml`, `yamls/<ver>`, `f3d.o2r`, `gamecontrollerdb.txt`, and the
-  menu fonts next to the executable.
-- The checked-in reloc YAMLs (`yamls/<ver>/reloc_*.yml`) and the
-  generated `port/resource/RelocFileTable.<ver>.cpp` are treated as
-  source inputs, not rebuilt on every compile.
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
+- A normal `cmake --build` builds `${SSB64_APP_NAME}` (`BattleShip` or
+  `BattleShip-JP`) and the standalone `torch` sidecar (`TorchExternal`).
+- **macOS / Linux native configure is unchanged** by the MinGW cross path; no extra flags are required for day-to-day offline development.
+- Post-build, CMake copies these next to the executable (when present):
+  `torch`, `config.yml`, `yamls/<ver>`, `f3d.o2r`, `gamecontrollerdb.txt`,
+  and menu font files under `assets/custom/fonts`.
+- Runtime first-run extraction also uses the sidecar `torch` executable.
+- The checked-in reloc YAMLs (`yamls/<ver>/reloc_*.yml`) and the generated
+  `port/resource/RelocFileTable.<ver>.cpp` are treated as source inputs,
+  not rebuilt on every compile.
 
 ### Advanced / manual targets
 
