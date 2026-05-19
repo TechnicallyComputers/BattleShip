@@ -44,6 +44,10 @@ extern u32 syNetRbSnapshotGetSlotHashRng(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashCamera(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick);
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
+/* Ring slot published for tick (valid + tick match + save completed). */
+extern sb32 syNetRbSnapshotIsTickCommitted(u32 tick);
+/* Walk backward from tick down to min_tick inclusive; ~(u32)0 if none. */
+extern u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick);
 #endif
 
 #endif /* _SYNETRB_SNAPSHOT_H_ */

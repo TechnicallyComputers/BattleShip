@@ -4483,7 +4483,7 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	out->prediction_window = syNetPeerGetPhaseLockPredictionWindowTicks();
 	out->commit_gen = sSYNetPeerGlobalCommitGen;
 
-	if ((sSYNetPeerIsActive == FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	if (sSYNetPeerIsActive == FALSE)
 	{
 		return;
 	}
@@ -4535,18 +4535,48 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			return;
 		}
 	}
+	if (syNetSessionParamsRollbackEnabled() != FALSE)
+	{
+		u32 epoch_cap;
+		u32 cap_source;
+
+		if ((syNetRollbackIsResimulating() == FALSE) &&
+		    (syNetRollbackGetLiveSimCap(&epoch_cap, &cap_source) != FALSE) && (epoch_cap != ~(u32)0) &&
+		    (sim_tick > epoch_cap))
+		{
+			(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
+			syNetPeerPumpIngressTransport("rollback_epoch_hold");
+			out->advance = FALSE;
+			out->hold_reason = 'B';
+			return;
+		}
+	}
 	if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
 	{
 		u32 remote_sim_frontier;
 		u32 rollback_sim_cap;
+		u32 epoch_cap;
+		u32 effective_cap;
 
 		remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
 		rollback_sim_cap = remote_sim_frontier + syNetPeerGetCommittedInputDelay() + prediction_window;
-		if (sim_tick > rollback_sim_cap)
+		effective_cap = rollback_sim_cap;
+		if ((syNetRollbackIsResimulating() == FALSE) &&
+		    (syNetRollbackGetLiveSimCap(&epoch_cap, NULL) != FALSE) && (epoch_cap != ~(u32)0) &&
+		    (epoch_cap < effective_cap))
 		{
-			syNetPeerPumpIngressTransport("rollback_frontier_cap");
+			effective_cap = epoch_cap;
+		}
+		if (sim_tick > effective_cap)
+		{
+			if (effective_cap == epoch_cap)
+			{
+				(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
+			}
+			syNetPeerPumpIngressTransport(
+			    (effective_cap == epoch_cap) ? "rollback_epoch_hold" : "rollback_frontier_cap");
 			out->advance = FALSE;
-			out->hold_reason = 'R';
+			out->hold_reason = (effective_cap == epoch_cap) ? 'B' : 'R';
 			return;
 		}
 	}
@@ -8065,6 +8095,11 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 		    checksum,
 		    expected,
 		    (session_id != sSYNetPeerSessionID) ? 1U : 0U);
+		return;
+	}
+	if (syNetRollbackAcceptPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick) == FALSE)
+	{
+		sSYNetPeerPacketsReceived++;
 		return;
 	}
 	sSYNetPeerPacketsReceived++;

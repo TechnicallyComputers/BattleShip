@@ -53,6 +53,11 @@ extern void syNetRollbackStartVSSession(void);
 extern void syNetRollbackStopVSSession(void);
 extern sb32 syNetRollbackIsActive(void);   /* Env enabled AND VS session flagged. */
 extern sb32 syNetRollbackIsResimulating(void); /* TRUE while nested `syNetRollbackRunResim` loop executes. */
+/* Max sim tick allowed for live forward commit during peer rollback epoch (~0 = no epoch cap). */
+extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source);
+/* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
+extern sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick);
+extern u32 syNetRollbackGetEpochId(void);
 
 extern void syNetRollbackAfterBattleUpdate(void); /* Snapshot completed tick into ring (post-`scVSBattleFuncUpdate`). */
 extern void syNetRollbackUpdate(void);            /* NetPeer: detect mismatch, load snapshot, resim forward. */
@@ -66,6 +71,8 @@ extern u32 syNetRollbackGetLoadFailCount(void);
 extern sb32 syNetRollbackLoadSnapshotAfterCompletedTick(u32 completed_sim_tick);
 /* TRUE when `SSB64_NETPLAY_PREDICTION_RECOVERY=1` (debug); default off — significant mismatches use full resim. */
 extern sb32 syNetRollbackPredictionRecoveryEnabled(void);
+/* Default on: short confirmed-only window after neutral↔analog GGPO correction (`STICK_MISMATCH_RECOVERY=0` off). */
+extern sb32 syNetRollbackStickMismatchRecoveryEnabled(void);
 /* TRUE after a predicted-input correction while rollback temporarily requires exact confirmed rows. */
 extern sb32 syNetRollbackPredictionRecoveryRequiresConfirmed(u32 sim_tick);
 /* Extend confirmed-only remote input window after neutral→motion stick correction. */
@@ -73,6 +80,8 @@ extern void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32
 /* Fill per-slot symmetric rollback ticks for INPUT peer_connect_status padding (-1 = none). */
 extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_target_tick_per_slot, s32 count);
 /* Peer announced a correction on `slot` at `mismatch_tick` (24-bit wire); queue resim through `target_tick` (24-bit). */
+/* FALSE when notify is stale or already covered by pending/deferred symmetric rollback. */
+extern sb32 syNetRollbackAcceptPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
 extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
 /* Queue one resim for a remote input correction that arrived during an active resim span. */
 extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);

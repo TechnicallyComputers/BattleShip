@@ -127,6 +127,12 @@ void scVSBattleFuncUpdate(void)
 		syNetPeerUpdate();
 		return;
 	}
+	if ((syNetPeerIsVSSessionActive() != FALSE) &&
+	    (syNetRollbackShouldBlockLiveBattleAdvance(syNetInputGetTick()) != FALSE))
+	{
+		syNetPeerUpdate();
+		return;
+	}
 #endif
 	ifCommonBattleUpdateInterfaceAll();
 #ifdef PORT

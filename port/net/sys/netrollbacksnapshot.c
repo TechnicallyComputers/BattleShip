@@ -1496,6 +1496,8 @@ static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick)
 	return &sSYNetRbSnapshotRing[tick % sSYNetRbSnapshotRingLen];
 }
 
+static u32 sSYNetRbSnapshotLastCommittedTick;
+
 #endif /* PORT */
 
 void syNetRbSnapshotSetRingFramesForSession(u32 frames)
@@ -1552,6 +1554,7 @@ void syNetRbSnapshotResetSession(void)
 		sSYNetRbSnapshotRing[i].is_valid = FALSE;
 		sSYNetRbSnapshotRing[i].tick = ~(u32)0;
 	}
+	sSYNetRbSnapshotLastCommittedTick = ~(u32)0;
 	sSYNetRbSnapshotGuardLogBudget = 16;
 	sSYNetRbEmergencyValid = FALSE;
 	memset(&sSYNetRbEmergencySlot, 0, sizeof(sSYNetRbEmergencySlot));
@@ -1685,7 +1688,15 @@ sb32 syNetRbSnapshotSave(u32 completed_sim_tick)
 	SYNetRbSnapshotSlot *slot;
 
 	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
-	return syNetRbSnapFillSlotFromLive(slot, completed_sim_tick);
+	if (syNetRbSnapFillSlotFromLive(slot, completed_sim_tick) == FALSE)
+	{
+		return FALSE;
+	}
+	if (completed_sim_tick > sSYNetRbSnapshotLastCommittedTick)
+	{
+		sSYNetRbSnapshotLastCommittedTick = completed_sim_tick;
+	}
+	return TRUE;
 #else
 	(void)completed_sim_tick;
 	return FALSE;
@@ -1783,5 +1794,49 @@ sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u3
 	*item = slot->hash_item;
 	*rng = slot->hash_rng;
 	return TRUE;
+}
+
+sb32 syNetRbSnapshotIsTickCommitted(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	if (tick == 0U)
+	{
+		return FALSE;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRbSnapshotLastCommittedTick != ~(u32)0) && (tick > sSYNetRbSnapshotLastCommittedTick))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick)
+{
+	u32 t;
+
+	if (tick == 0U)
+	{
+		return ~(u32)0;
+	}
+	for (t = tick; t >= min_tick; t--)
+	{
+		SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(t);
+
+		if ((slot->is_valid != FALSE) && (slot->tick == t))
+		{
+			return t;
+		}
+		if (t == 0U)
+		{
+			break;
+		}
+	}
+	return ~(u32)0;
 }
 #endif

@@ -270,8 +270,10 @@ extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tic
  * `SSB64_NETPLAY_GGPO_STICK_DEADBAND` (default 4).
  */
 extern sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
-                                                        sb32 correction_is_predicted);
+                                                sb32 correction_is_predicted);
 extern sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new);
+/* TRUE when published vs remote sticks disagree with neutral vs analog (GGPO stick-mismatch recovery). */
+extern sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote);
 /* TRUE: patch published row only (skip GGPO resim) for isolated digital keyboard tap/release under delay. */
 extern sb32 syNetInputShouldPatchDigitalTapWithoutRollback(s32 player, u32 sim_tick,
                                                             const SYNetInputFrame *published,
