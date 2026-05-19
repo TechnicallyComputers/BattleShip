@@ -25,6 +25,7 @@
 #include <wp/wptypes.h>
 
 #ifdef PORT
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -238,6 +239,10 @@ typedef struct SYNetRbSnapYakuBlob
 	Vec3f translate;
 	Vec3f speed;
 	s32 user_data_s;
+	SYNetRbSnapDObjAnimBlob anim;
+	u8 flags;
+	u8 pad[3];
+	uintptr_t anim_joint_event32;
 
 } SYNetRbSnapYakuBlob;
 
@@ -943,6 +948,55 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	}
 }
 
+static void syNetRbSnapCaptureYakuDObj(SYNetRbSnapYakuBlob *yaku, DObj *dobj, const Vec3f *speed)
+{
+	if ((yaku == NULL) || (dobj == NULL))
+	{
+		return;
+	}
+	yaku->translate = dobj->translate.vec.f;
+	if (speed != NULL)
+	{
+		yaku->speed = *speed;
+	}
+	else
+	{
+		yaku->speed.x = yaku->speed.y = yaku->speed.z = 0.0F;
+	}
+	yaku->user_data_s = dobj->user_data.s;
+	yaku->flags = dobj->flags;
+	yaku->anim_joint_event32 = (dobj->anim_joint.event32 != NULL) ? (uintptr_t)dobj->anim_joint.event32 : 0U;
+	syNetRbSnapCaptureDObjAnim(&yaku->anim, dobj);
+}
+
+static void syNetRbSnapApplyYakuDObj(DObj *dobj, const SYNetRbSnapYakuBlob *yaku, Vec3f *speed_out)
+{
+	if ((dobj == NULL) || (yaku == NULL))
+	{
+		return;
+	}
+	syNetRbSnapApplyDObjAnim(dobj, &yaku->anim);
+	if (yaku->anim_joint_event32 != 0U)
+	{
+		dobj->anim_joint.event32 = (AObjEvent32 *)yaku->anim_joint_event32;
+	}
+	else
+	{
+		dobj->anim_joint.event32 = NULL;
+	}
+	dobj->flags = yaku->flags;
+	if (dobj->parent_gobj != NULL)
+	{
+		dobj->parent_gobj->anim_frame = dobj->anim_frame;
+	}
+	dobj->translate.vec.f = yaku->translate;
+	dobj->user_data.s = yaku->user_data_s;
+	if (speed_out != NULL)
+	{
+		*speed_out = yaku->speed;
+	}
+}
+
 static void syNetRbSnapCaptureMap(SYNetRbSnapshotSlot *slot)
 {
 	s32 i;
@@ -970,14 +1024,10 @@ static void syNetRbSnapCaptureMap(SYNetRbSnapshotSlot *slot)
 		dobj = gMPCollisionYakumonoDObjs->dobjs[i];
 		if (dobj == NULL)
 		{
-			slot->mp_yaku[i].translate.x = slot->mp_yaku[i].translate.y = slot->mp_yaku[i].translate.z = 0.0F;
-			slot->mp_yaku[i].speed.x = slot->mp_yaku[i].speed.y = slot->mp_yaku[i].speed.z = 0.0F;
-			slot->mp_yaku[i].user_data_s = 0;
+			memset(&slot->mp_yaku[i], 0, sizeof(slot->mp_yaku[i]));
 			continue;
 		}
-		slot->mp_yaku[i].translate = dobj->translate.vec.f;
-		slot->mp_yaku[i].speed = gMPCollisionSpeeds[i];
-		slot->mp_yaku[i].user_data_s = dobj->user_data.s;
+		syNetRbSnapCaptureYakuDObj(&slot->mp_yaku[i], dobj, &gMPCollisionSpeeds[i]);
 	}
 	slot->mp_yaku_captured = TRUE;
 }
@@ -1019,9 +1069,7 @@ static void syNetRbSnapApplyMap(const SYNetRbSnapshotSlot *slot)
 		{
 			continue;
 		}
-		dobj->translate.vec.f = slot->mp_yaku[i].translate;
-		dobj->user_data.s = slot->mp_yaku[i].user_data_s;
-		gMPCollisionSpeeds[i] = slot->mp_yaku[i].speed;
+		syNetRbSnapApplyYakuDObj(dobj, &slot->mp_yaku[i], &gMPCollisionSpeeds[i]);
 	}
 }
 
@@ -1776,6 +1824,18 @@ u32 syNetRbSnapshotGetSlotHashMap(u32 tick)
 	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
 	return slot->hash_map;
 }
+
+s32 syNetRbSnapshotGetSlotMapYakumonoCount(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
+
+	if ((slot->is_valid == FALSE) || (slot->tick != tick) || (slot->mp_yaku_captured == FALSE))
+	{
+		return -1;
+	}
+	return slot->mp_yakumono_count;
+}
+
 u32 syNetRbSnapshotGetSlotHashRng(u32 tick)
 {
 	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
