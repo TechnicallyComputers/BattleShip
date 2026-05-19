@@ -27,7 +27,7 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 				const u8 *peer_sender_slots);
 u32 syNetFrameCommitHashSlotBindings(s32 local_sim_slot, s32 remote_sim_slot, s32 extra_local_sim_slot,
 				     s32 peer_sender_count, const u8 *peer_sender_slots);
-/* TRUE if any compared field disagrees (cross-peer structural desync for this validation). */
+/* TRUE if frame_id or input_digest disagree (cross-peer). slot_binding is logged via out_delta_slot_binding but not compared. */
 sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b,
 				  sb32 *out_delta_frame_id, sb32 *out_delta_input_digest, sb32 *out_delta_slot_binding,
 				  sb32 *out_delta_tick_anchor);

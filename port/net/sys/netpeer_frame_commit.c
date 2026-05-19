@@ -74,6 +74,7 @@ sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFra
 
 	df = (a->frame_id != b->frame_id) ? TRUE : FALSE;
 	di = (a->input_digest != b->input_digest) ? TRUE : FALSE;
+	/* slot_binding_hash mixes each peer's local_sim/remote_sim; mirrored roles always differ in 1v1. */
 	ds = (a->slot_binding_hash != b->slot_binding_hash) ? TRUE : FALSE;
 	/* Intentionally ignore tick_anchor for equality: peers may hit NetSync validation one sim tick apart. */
 	dt = FALSE;
@@ -93,7 +94,8 @@ sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFra
 	{
 		*out_delta_tick_anchor = dt;
 	}
-	return ((df != FALSE) || (di != FALSE) || (ds != FALSE)) ? TRUE : FALSE;
+	/* Cross-peer desync: frame_id + input_digest only (state digests use syNetFrameCommitStateDigestsDiverge). */
+	return ((df != FALSE) || (di != FALSE)) ? TRUE : FALSE;
 }
 
 sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b)

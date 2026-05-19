@@ -52,6 +52,11 @@ int syNetPeerOsSetsockoptReuseAddr(syNetPeerOsSocket s, int reuse_bool)
 	return setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&v, (int)sizeof(v));
 }
 
+int syNetPeerOsSetsockoptRecvBuf(syNetPeerOsSocket s, int bytes)
+{
+	return setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&bytes, (int)sizeof(bytes));
+}
+
 void syNetPeerOsSleepMicros(unsigned usec)
 {
 	if (usec == 0U)
@@ -167,6 +172,11 @@ int syNetPeerOsSetsockoptReuseAddr(syNetPeerOsSocket s, int reuse_bool)
 	int v = reuse_bool;
 
 	return setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &v, (socklen_t)sizeof(v));
+}
+
+int syNetPeerOsSetsockoptRecvBuf(syNetPeerOsSocket s, int bytes)
+{
+	return setsockopt(s, SOL_SOCKET, SO_RCVBUF, &bytes, (socklen_t)sizeof(bytes));
 }
 
 int syNetPeerOsBind(syNetPeerOsSocket s, const struct sockaddr_in *addr)

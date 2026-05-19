@@ -87,6 +87,8 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NETPLAY_INPUT_PREDICT_DIAG`** — Level 1/2 predicted-remote diagnostics.
 - **`SSB64_NETPLAY_FRAME_COMMIT_DIAG`** — Admission path logging level.
 - **`SSB64_NETPLAY_FRAME_COMMIT_SUMMARY`** — Frame-commit summary logging.
+- **`SSB64_NETPLAY_FRAME_COMMIT_RECV_LOG_MAX`** — Rate-limited `FRAME_COMMIT_RECV_DROP` lines when **`FRAME_COMMIT_TOKEN`** or **`FRAME_COMMIT_DIAG`** is on (default **16**). Session summary adds `recv_drop_size` / `recv_drop_header` / `recv_drop_checksum` counters.
+- **`SSB64_NETPLAY_UDP_RCVBUF_BYTES`** — `SO_RCVBUF` on the VS datagram socket (default **1048576**, clamp **256 KiB–16 MiB**). Sized for wire **V4 INPUT** bundles (**200 B** each); NetPeer `stg=` in stats is cumulative remote **input frames** staged, not unread datagram count. Tune only after soak if `fc_recv` stays 0.
 - **`SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG`** — With strict slack 0, force advance after sustained strict-R miss (diagnostic).
 - **`SSB64_NETPLAY_DELAY_SYNC_DIAG`** — Delay / wire alignment trace (`0` / `1` / `2`); see **Delay Sync Test Preset** above.
 - **`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`** — Integer **1–16** (default **2**). How many **local** sim ticks after the decision to queue a change before **`INPUT_DELAY_SYNC`** / host delay-ramp commits take effect (`syNetInputGetTick() + N`, saturating). Starvation adaptive bumps use the same lead. Larger **`N`** defers committed wire delay changes (less aggressive “next boundary” apply). Lazy cache reset when `syNetPeerRefreshCachedNetplayEnvForNewMatch` runs (re-read per match).

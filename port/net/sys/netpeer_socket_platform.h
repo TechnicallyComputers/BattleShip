@@ -46,6 +46,7 @@ syNetPeerOsSocket syNetPeerOsSocketCreateDgram(void);
 void syNetPeerOsSocketDestroy(syNetPeerOsSocket *sock_ptr);
 
 int syNetPeerOsSetsockoptReuseAddr(syNetPeerOsSocket s, int reuse_bool);
+int syNetPeerOsSetsockoptRecvBuf(syNetPeerOsSocket s, int bytes);
 int syNetPeerOsBind(syNetPeerOsSocket s, const struct sockaddr_in *addr);
 int syNetPeerOsSetNonBlocking(syNetPeerOsSocket s);
 
