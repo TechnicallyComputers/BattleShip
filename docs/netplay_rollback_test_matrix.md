@@ -111,7 +111,21 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | `peer symmetric rollback deferred` | `ROLLBACK_SYNC` held until baseline echo/gate quiesced |
 | `BASELINE_ECHO_RETRY_DEFER … snapshot_not_ready` | `load_tick >= sim_tick` or ring not committed — wait for `AfterBattleUpdate` save |
 | `remote_encoding_switch` then immediate `pred=1` neutral | Quasi-digital / grace prediction regression |
+| `pred sy=85` / `pred sx=85` vs remote neutral or partial analog | False digital promotion — see `netinput_false_digital_prediction_2026-05-18.md` |
 | `ROLLBACK_IDENTITY_DRIFT` after keyboard onset resim | Resim replay non-determinism or wrong confirmed span |
+
+## Integrity-first re-soak (2026-05-18)
+
+Run **both** peers with false-digital fix + mixed-input env from [`netinput_false_digital_prediction_2026-05-18.md`](bugs/netinput_false_digital_prediction_2026-05-18.md).
+
+| Env / log | Pass |
+|-----------|------|
+| No `pred sx=85` / `pred sy=85` | False-digital regression absent |
+| `SSB64_NETPLAY_ITEM_HASH_TRACE=1` at resim target tick | Host/client walk order + final hash match |
+| `RESIM_POST_MATCH` at each resim boundary | Cross-peer post-resim digests agree |
+| NetSync validation from ~3900+ | No sustained `figh` diff while `all` matches |
+| `FRAME_COMMIT_DIAG compared > 0` | Frame-commit pairing ran (`SSB64_NETPLAY_FRAME_COMMIT_TOKEN=1`) |
+| Host closes window | Peer receives `VS_SESSION_END` and stops in ≪180 render frames (not `STRICT MISS` stall) |
 
 ## Out of scope (longer term)
 

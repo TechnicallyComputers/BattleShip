@@ -458,12 +458,15 @@ void syNetDesyncClassifierOnVerifyStrictUnchanged(u32 mismatch_tick)
 	syNetDesyncMaybeLogLeadingChange();
 }
 
+extern void syNetPeerEmitFrameCommitDiagReport(void);
+
 void syNetDesyncClassifierEmitFrameCommitReportOnVsStop(void)
 {
 	if (syNetDesyncFrameCommitWireEnabled() == FALSE)
 	{
 		return;
 	}
+	syNetPeerEmitFrameCommitDiagReport();
 	port_log("SSB64 FRAME COMMIT REPORT\n");
 	port_log("-------------------------\n");
 	port_log("First mismatch validation_tick: %u\n", s_trace.first_commit_token_mismatch_validation_tick);
