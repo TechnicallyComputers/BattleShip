@@ -107,21 +107,36 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
 ################################################################################
-# MinHook - runtime function-detouring lib used by the mod loader.
+# funchook - cross-platform runtime function-detouring lib used by the mod
+# loader. Replaces MinHook (which is x86/x64-Windows-only) so the hook system
+# works on every release target: Windows x64, Linux x64/arm64, and
+# macOS arm64 (Apple Silicon). funchook does the prologue rewrite +
+# trampoline emit; HookManager layers the per-target hot-reload chain on top.
 #
-# Mods install hooks on engine functions at runtime; MinHook does the
-# prologue rewrite + trampoline emit. Pulled in via FetchContent so the
-# repo doesn't carry a vendored copy.
+# funchook pulls its disassembler backend itself (distorm on x86, capstone
+# on arm64). Its hardcoded capstone (aquynh/capstone @ 4.0.2) is patched up
+# to capstone-engine/capstone @ 5.0.1 via the PATCH_COMMAND below — 4.0.2's
+# `cmake_policy(CMP0048 OLD)` is rejected outright by CMake >=4.
+# Pinned to v1.1.3 (latest release; the project is archived but the
+# instruction sets it rewrites are stable). GPLv2 + linking exception —
+# the exception means it does NOT impose GPL on the rest of the codebase.
 ################################################################################
 
 include(FetchContent)
+set(FUNCHOOK_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(FUNCHOOK_BUILD_STATIC ON  CACHE BOOL "" FORCE)
+set(FUNCHOOK_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
+set(FUNCHOOK_INSTALL      OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
-    minhook
-    GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG        master
-    GIT_SHALLOW    TRUE
+    funchook
+    GIT_REPOSITORY https://github.com/kubo/funchook.git
+    GIT_TAG        v1.1.3
+    PATCH_COMMAND  ${CMAKE_COMMAND}
+                   -DCAPSTONE_TMPL=cmake/capstone.cmake.in
+                   -DFUNCHOOK_CML=CMakeLists.txt
+                   -P ${CMAKE_SOURCE_DIR}/cmake/funchook_capstone_bump.cmake
 )
-FetchContent_MakeAvailable(minhook)
+FetchContent_MakeAvailable(funchook)
 
 ExternalProject_Add(TorchExternal
     PREFIX TorchExternal
@@ -484,7 +499,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
-target_link_libraries(${PROJECT_NAME} PRIVATE libultraship minhook)
+target_link_libraries(${PROJECT_NAME} PRIVATE libultraship funchook-static)
 
 ################################################################################
 # Mod-system linkage requirements
