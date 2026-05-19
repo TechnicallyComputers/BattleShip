@@ -10,7 +10,10 @@
 #
 # What it does:
 #   1. Creates a worktree at .claude/worktrees/<slug> on new branch agent/<slug>
-#   2. Symlinks baserom.us.z64 (gitignored, too big to duplicate)
+#   2. Symlinks every baserom.{us,jp}.{z64,n64,v64} that exists in the main
+#      tree (gitignored, too big to duplicate). The compiled binary picks
+#      its region's baserom at first-run; symlinking both means the same
+#      worktree can build either flavor without re-linking.
 #   3. Clones libultraship, torch, and decomp as independent repos inside
 #      the worktree:
 #        - Source = main tree's local submodule checkout (picks up pinned SHAs
@@ -68,23 +71,30 @@ step()  { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail()  { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
 
 [[ -e "$WT_DIR" ]] && fail "$WT_DIR already exists. Remove it or pick a different slug."
-ROM_SRC=""
-for ext in z64 n64 v64; do
-    if [[ -f "$ROOT/baserom.us.$ext" ]]; then
-        ROM_SRC="$ROOT/baserom.us.$ext"
-        ROM_EXT="$ext"
-        break
-    fi
+
+# Discover every baserom variant present in the main tree. The worktree
+# inherits whatever the user has, so a US-only or JP-only setup still
+# works — only a tree with neither US nor JP fails.
+declare -a ROMS=()
+for region in us jp; do
+    for ext in z64 n64 v64; do
+        if [[ -f "$ROOT/baserom.$region.$ext" ]]; then
+            ROMS+=("baserom.$region.$ext")
+            break  # first extension wins per region
+        fi
+    done
 done
-[[ -n "$ROM_SRC" ]] || fail "baserom.us.{z64,n64,v64} missing from $ROOT"
+[[ ${#ROMS[@]} -gt 0 ]] || fail "no baserom.{us,jp}.{z64,n64,v64} in $ROOT"
 
 # ── 1. Worktree + branch ──
 step "Creating worktree $WT_DIR on branch $BRANCH (base: $BASE)"
 git -C "$ROOT" worktree add "$WT_DIR" -b "$BRANCH" "$BASE"
 
-# ── 2. ROM symlink (gitignored, ~12 MB) ──
-step "Symlinking baserom.us.$ROM_EXT"
-ln -sf "$ROM_SRC" "$WT_DIR/baserom.us.$ROM_EXT"
+# ── 2. ROM symlinks (gitignored, ~12 MB each) ──
+step "Symlinking baseroms (${ROMS[*]})"
+for rom in "${ROMS[@]}"; do
+    ln -sf "$ROOT/$rom" "$WT_DIR/$rom"
+done
 
 # ── 3. Independent submodule clones ──
 # Submodules pin SHAs to JRickey/libultraship and JRickey/Torch on `ssb64`.
