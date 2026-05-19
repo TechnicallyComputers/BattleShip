@@ -47,10 +47,6 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-<<<<<<< HEAD
-DIST_DIR="$ROOT/dist"
-APP_NAME="BattleShip"
-=======
 # ROM version: us (default) or jp. The JP build is a SEPARATE
 # application — own binary name, AppImage, app-data dir — so a user can
 # keep both and they never touch each other's ROM/o2r/saves. APP_NAME
@@ -64,7 +60,6 @@ DIST_DIR="$ROOT/dist"
 [[ "$VER" == "jp" ]] && APP_NAME="BattleShip-JP" || APP_NAME="BattleShip"
 APPDIR="$DIST_DIR/$APP_NAME.AppDir"
 APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 # Extra CMake configure arguments (forwarded to CMake). Use --netplay for the Netplay AppImage
@@ -138,11 +133,8 @@ step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMEN
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
-<<<<<<< HEAD
-    "${EXTRA_CMAKE_ARGS[@]}" \
-=======
     -DSSB64_VERSION="$VER" \
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
+    "${EXTRA_CMAKE_ARGS[@]}" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -239,11 +231,7 @@ EOF
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-<<<<<<< HEAD
 Name=$DESKTOP_DISPLAY_NAME
-=======
-Name=$APP_NAME
->>>>>>> 83fc0a76a85e2166e2e961209f6f60ffb78ea4a4
 Exec=$APP_NAME
 Icon=$APP_NAME
 Categories=Game;ArcadeGame;
