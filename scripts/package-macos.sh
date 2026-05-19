@@ -111,7 +111,13 @@ cp "$F3D_O2R"    "$APP/Contents/Resources/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APP/Contents/Resources/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APP/Contents/Resources/config.yml"
 cp "$ROOT/yamls/$VER/"*.yml "$APP/Contents/Resources/yamls/$VER/"
-cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# Region-aware app icon: US uses assets/icon.icns, JP uses
+# assets/icon-jp.icns (added with the JP bifurcation so a user with
+# both .app bundles sees distinct icons in Finder / Dock). The bundle
+# always names it AppIcon.icns to match Info.plist's CFBundleIconFile.
+ICNS_SRC="$ROOT/assets/icon.icns"
+[[ "$VER" == "jp" ]] && ICNS_SRC="$ROOT/assets/icon-jp.icns"
+cp "$ICNS_SRC" "$APP/Contents/Resources/AppIcon.icns"
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
 # RealAppBundlePath() (= Contents/Resources inside an .app on macOS)

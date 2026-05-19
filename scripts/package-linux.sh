@@ -171,11 +171,14 @@ EOF
 
 # Application icon. AppImage looks for <Icon>.png at the AppDir root and
 # (for hicolor integration) under usr/share/icons/hicolor/<size>/apps/.
-# Source is assets/icon.png; we downscale a 256x256 copy for the AppDir
-# root (kept small to keep the AppImage lean) and ship the full-resolution
-# PNG in the hicolor 512x512 slot.
-ICON_SRC="$ROOT/assets/icon.png"
-[[ -f "$ICON_SRC" ]] || fail "missing assets/icon.png"
+# Source is region-aware: US picks assets/icon.png, JP picks
+# assets/icon-jp.png (added with the JP application bifurcation so a
+# user with both installs sees distinct icons). We downscale a 256x256
+# copy for the AppDir root (kept small to keep the AppImage lean) and
+# ship the full-resolution PNG in the hicolor 512x512 slot.
+ICON_SUFFIX=""; [[ "$VER" == "jp" ]] && ICON_SUFFIX="-jp"
+ICON_SRC="$ROOT/assets/icon${ICON_SUFFIX}.png"
+[[ -f "$ICON_SRC" ]] || fail "missing assets/icon${ICON_SUFFIX}.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/512x512/apps" \
          "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 ICON_ROOT="$APPDIR/$APP_NAME.png"
@@ -201,6 +204,15 @@ else
     cp "$ICON_SRC" "$ICON_HI256"
 fi
 cp "$ICON_SRC" "$ICON_HI512"
+
+# .DirIcon is the canonical file most file managers (Nautilus / Dolphin /
+# Thunar / etc.) and AppImage launchers read FIRST to render the icon
+# alongside the AppImage file. Without it, the file manager falls back
+# to the generic "executable" icon (blue gear w/ download arrow) even
+# though <APP_NAME>.png + hicolor/* are present. appimagetool will
+# auto-create it on some builds and not others — explicit copy keeps
+# the integration deterministic across appimagetool versions.
+cp "$ICON_ROOT" "$APPDIR/.DirIcon"
 
 # ── 6. Bundle .so dependencies via linuxdeploy ──
 # linuxdeploy populates AppDir/usr/lib/ with the binary's NEEDED libs
