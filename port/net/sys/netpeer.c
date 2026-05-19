@@ -1,6 +1,7 @@
 #include <sys/netpeer.h>
 
 #include <ft/fighter.h>
+#include <gm/gmdef.h>
 #include <gr/ground.h>
 #include <mp/map.h>
 #include <sc/scmanager.h>
@@ -289,6 +290,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_VS_SESSION_END  21
 #define SYNETPEER_PACKET_SESSION_PARAMS 22
 #define SYNETPEER_PACKET_SESSION_PARAMS_ACK 23
+#define SYNETPEER_PACKET_ROLLBACK_SYNC 24
 /* header(12) + rtt_ms(4) + nine u8 knobs(9) + checksum(4) = 29 (wire v2) */
 #define SYNETPEER_SESSION_PARAMS_WIRE_BYTES (4 + 2 + 2 + 4 + 4 + 9 + 4)
 #define SYNETPEER_UDP_SYNC_PACKET_BYTES (4 + 2 + 2 + 4 + 2 + 2 + 4)
@@ -311,7 +313,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
 /* Frame commit token (NetSync validation cadence). */
 #define SYNETPEER_FRAME_COMMIT_BYTES (56)
-#define SYNETPEER_ROLLBACK_BASELINE_BYTES (56)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES (68)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
+#define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
 #define SYNETPEER_BARRIER_SKEW_RETRY_MAX 3U
 
 typedef struct SYNetPeerPacketFrame
@@ -7062,6 +7066,7 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 #if defined(PORT)
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size);
+static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size);
 #endif
 
 void syNetPeerHandlePacket(const u8 *buffer, s32 size)
@@ -7200,9 +7205,18 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				break;
 
 			case SYNETPEER_PACKET_ROLLBACK_BASELINE:
-				if (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES)
+				if ((size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ||
+				    (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY))
 				{
 					syNetPeerHandleRollbackBaselinePacket(buffer, size);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_ROLLBACK_SYNC:
+				if (size == (s32)SYNETPEER_ROLLBACK_SYNC_BYTES)
+				{
+					syNetPeerHandleRollbackSyncPacket(buffer, size);
 					return;
 				}
 				break;
@@ -7895,15 +7909,19 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	u32 weapon;
 	u32 map;
 	u32 camera;
+	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
 	u32 chk;
+	s32 si;
+	int sent;
 
 	if (syNetRollbackTakePeerBaselineDigestForSend(&load_tick, &figh, &world, &item, &rng, &anim, &weapon, &map,
-						     &camera) == FALSE)
+						     &camera, fighter_slot, GMCOMMON_PLAYERS_MAX) == FALSE)
 	{
 		return;
 	}
 	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
 	{
+		port_log("SSB64 NetPeer: RESIM_BASELINE_SEND_FAIL load_tick=%u reason=invalid_socket\n", load_tick);
 		return;
 	}
 	cursor = buf;
@@ -7920,14 +7938,143 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	syNetPeerWriteU32(&cursor, weapon);
 	syNetPeerWriteU32(&cursor, map);
 	syNetPeerWriteU32(&cursor, camera);
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		syNetPeerWriteU32(&cursor, fighter_slot[si]);
+	}
 	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
 	syNetPeerWriteU32(&cursor, chk);
-	if (syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress) != (int)sizeof(buf))
+	sent = syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress);
+	if (sent != (int)sizeof(buf))
 	{
+		port_log(
+		    "SSB64 NetPeer: RESIM_BASELINE_SEND_FAIL load_tick=%u figh=0x%08X sent=%d expected=%u\n",
+		    load_tick,
+		    figh,
+		    sent,
+		    (unsigned int)sizeof(buf));
 		return;
 	}
 	sSYNetPeerPacketsSent++;
+	port_log(
+	    "SSB64 NetPeer: RESIM_BASELINE_SEND load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X bytes=%u\n",
+	    load_tick,
+	    figh,
+	    world,
+	    item,
+	    rng,
+	    (unsigned int)sizeof(buf));
 	syNetRollbackNotePeerBaselineDigestSent();
+}
+
+void syNetPeerTrySendRollbackSyncNotice(void)
+{
+	u8 buf[SYNETPEER_ROLLBACK_SYNC_BYTES];
+	s32 conn_symmetric_tick[MAXCONTROLLERS];
+	s32 conn_symmetric_target[MAXCONTROLLERS];
+	s32 slot;
+
+	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
+	{
+		return;
+	}
+	memset(conn_symmetric_tick, 0, sizeof(conn_symmetric_tick));
+	memset(conn_symmetric_target, 0, sizeof(conn_symmetric_target));
+	syNetRollbackExportPeerSymmetricNotify(conn_symmetric_tick, conn_symmetric_target, MAXCONTROLLERS);
+	for (slot = 0; slot < MAXCONTROLLERS; slot++)
+	{
+		u8 *cursor;
+		u32 mismatch_tick;
+		u32 target_tick;
+		u32 chk;
+		int sent;
+
+		if (conn_symmetric_tick[slot] <= 0)
+		{
+			continue;
+		}
+		mismatch_tick = (u32)conn_symmetric_tick[slot];
+		target_tick = (conn_symmetric_target[slot] > 0) ? (u32)conn_symmetric_target[slot] : 0U;
+		cursor = buf;
+		syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+		syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+		syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_ROLLBACK_SYNC);
+		syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+		syNetPeerWriteU32(&cursor, mismatch_tick);
+		syNetPeerWriteU32(&cursor, target_tick);
+		syNetPeerWriteU8(&cursor, (u8)slot);
+		syNetPeerWriteU8(&cursor, 1U);
+		syNetPeerWriteU16(&cursor, 0);
+		chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+		syNetPeerWriteU32(&cursor, chk);
+		sent = syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress);
+		if (sent == (int)sizeof(buf))
+		{
+			sSYNetPeerPacketsSent++;
+			port_log(
+			    "SSB64 NetPeer: ROLLBACK_SYNC_SEND slot=%d mismatch_tick=%u target_tick=%u bytes=%u\n",
+			    (int)slot,
+			    mismatch_tick,
+			    target_tick,
+			    (unsigned int)sizeof(buf));
+		}
+	}
+}
+
+static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
+{
+	const u8 *c;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 mismatch_tick;
+	u32 target_tick;
+	u8 slot;
+	u8 flags;
+	u16 reserved;
+	u32 checksum;
+	u32 expected;
+
+	if (size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	c = buffer;
+	magic = syNetPeerReadU32(&c);
+	wire_version = syNetPeerReadU16(&c);
+	packet_type = syNetPeerReadU16(&c);
+	session_id = syNetPeerReadU32(&c);
+	mismatch_tick = syNetPeerReadU32(&c);
+	target_tick = syNetPeerReadU32(&c);
+	slot = syNetPeerReadU8(&c);
+	flags = syNetPeerReadU8(&c);
+	reserved = syNetPeerReadU16(&c);
+	checksum = syNetPeerReadU32(&c);
+	(void)flags;
+	(void)reserved;
+	if ((magic != SYNETPEER_MAGIC) || (packet_type != (u16)SYNETPEER_PACKET_ROLLBACK_SYNC) ||
+	    (session_id != sSYNetPeerSessionID) || (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		port_log(
+		    "SSB64 NetPeer: ROLLBACK_SYNC_RECV_DROP mismatch_tick=%u chk=0x%08X expected=0x%08X session=%u\n",
+		    mismatch_tick,
+		    checksum,
+		    expected,
+		    (session_id != sSYNetPeerSessionID) ? 1U : 0U);
+		return;
+	}
+	sSYNetPeerPacketsReceived++;
+	port_log(
+	    "SSB64 NetPeer: ROLLBACK_SYNC_RECV slot=%d mismatch_tick=%u target_tick=%u wire=%u\n",
+	    (int)slot,
+	    mismatch_tick,
+	    target_tick,
+	    (unsigned int)wire_version);
+	syNetRollbackOnPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick);
 }
 
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
@@ -7946,14 +8093,20 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	u32 weapon;
 	u32 map;
 	u32 camera;
+	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
 	u32 checksum;
 	u32 expected;
+	sb32 has_fighter_slots;
+	s32 si;
 
-	if (size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES)
+	if ((size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) &&
+	    (size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY))
 	{
 		sSYNetPeerPacketsDropped++;
+		port_log("SSB64 NetPeer: RESIM_BASELINE_RECV_DROP reason=size size=%d\n", (int)size);
 		return;
 	}
+	has_fighter_slots = (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ? TRUE : FALSE;
 	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
 	c = buffer;
 	magic = syNetPeerReadU32(&c);
@@ -7969,16 +8122,38 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	weapon = syNetPeerReadU32(&c);
 	map = syNetPeerReadU32(&c);
 	camera = syNetPeerReadU32(&c);
+	if (has_fighter_slots != FALSE)
+	{
+		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+		{
+			fighter_slot[si] = syNetPeerReadU32(&c);
+		}
+	}
 	checksum = syNetPeerReadU32(&c);
 	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
 	    (packet_type != (u16)SYNETPEER_PACKET_ROLLBACK_BASELINE) || (session_id != sSYNetPeerSessionID) ||
 	    (checksum != expected))
 	{
 		sSYNetPeerPacketsDropped++;
+		port_log(
+		    "SSB64 NetPeer: RESIM_BASELINE_RECV_DROP load_tick=%u reason=header chk=0x%08X expected=0x%08X session=%u\n",
+		    load_tick,
+		    checksum,
+		    expected,
+		    session_id);
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
-	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng, anim, weapon, map, camera);
+	port_log(
+	    "SSB64 NetPeer: RESIM_BASELINE_RECV load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X fighter_slots=%d\n",
+	    load_tick,
+	    figh,
+	    world,
+	    item,
+	    rng,
+	    (has_fighter_slots != FALSE) ? 1 : 0);
+	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng, anim, weapon, map, camera,
+					  (has_fighter_slots != FALSE) ? fighter_slot : NULL);
 }
 
 static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_begin, u32 win_len)
@@ -8852,8 +9027,14 @@ void syNetPeerUpdate(void)
 	{
 		if (sSYNetPeerIsActive != FALSE)
 		{
-			syNetPeerUpdateBattleGate();
-			syNetPeerPumpIngressTransport("resim");
+			/*
+			 * Rollback coordination transport during resim: symmetric notify (INPUT padding or
+			 * ROLLBACK_SYNC), baseline echo/recv. PumpIngressTransport is a no-op while resimming.
+			 */
+			syNetPeerReceiveRemoteInput();
+			syNetPeerSendLocalInput();
+			syNetRollbackPumpResimBaselineIfAwaiting();
+			syNetPeerTrySendRollbackSyncNotice();
 		}
 		syNetRollbackUpdate();
 		return;

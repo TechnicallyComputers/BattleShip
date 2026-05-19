@@ -20,7 +20,7 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN 4U
 #define SYNETSESSION_PARAMS_ROLLBACK_D_MIN 2U
 #define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 10U
-#define SYNETSESSION_PARAMS_PREDICTION_MAX 8U
+#define SYNETSESSION_PARAMS_PREDICTION_MAX 7U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 48U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 128U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
@@ -101,6 +101,10 @@ static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
 	u32 frames;
 
 	frames = 24U + (rtt_ms / 25U);
+	if ((rtt_ms >= 80U) && (rtt_ms < 150U) && (frames < 64U))
+	{
+		frames = 64U;
+	}
 	if (frames < SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN)
 	{
 		frames = SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN;
@@ -112,9 +116,26 @@ static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
 	return frames;
 }
 
+static const char *syNetSessionParamsRttTierName(u32 rtt_ms)
+{
+	if (rtt_ms < 80U)
+	{
+		return "excellent";
+	}
+	if (rtt_ms < 150U)
+	{
+		return "good";
+	}
+	if (rtt_ms < 230U)
+	{
+		return "playable";
+	}
+	return "high";
+}
+
 /*
  * Delay vs prediction runway (phase_lock) by connection quality.
- * Ratio is delay-heavy: prediction depth <= D on excellent links, up to ~1.5x D on good, capped on high RTT.
+ * Delay-heavy: fewer rollbacks; prediction covers only remaining latency after D.
  */
 static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_ticks, u32 *out_d_ticks,
 							u32 *out_phase_lock)
@@ -131,16 +152,20 @@ static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_
 	phase_lock = one_way_ticks;
 	if (rtt_ms < 80U)
 	{
-		/* Excellent (<60–80ms RTT): D 2–4, prediction 2–4, ~1:1 delay-heavy */
-		if (d_ticks < 2U)
+		/* Excellent: D 3–4, prediction D..D+1 (cap 5) */
+		if (d_ticks < 3U)
 		{
-			d_ticks = 2U;
+			d_ticks = 3U;
 		}
 		if (d_ticks > 4U)
 		{
 			d_ticks = 4U;
 		}
-		phase_lock = d_ticks;
+		phase_lock = d_ticks + 1U;
+		if (phase_lock > 5U)
+		{
+			phase_lock = 5U;
+		}
 		if (phase_lock < 2U)
 		{
 			phase_lock = 2U;
@@ -148,61 +173,53 @@ static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_
 	}
 	else if (rtt_ms < 150U)
 	{
-		/* Good (80–150ms): D 3–5, prediction 4–6, up to ~1.5:1 */
-		d_ticks = one_way_ticks + 1U;
-		if (d_ticks < 3U)
-		{
-			d_ticks = 3U;
-		}
-		if (d_ticks > 5U)
-		{
-			d_ticks = 5U;
-		}
-		phase_lock = d_ticks + (d_ticks / 2U);
-		if (phase_lock < 4U)
-		{
-			phase_lock = 4U;
-		}
-		if (phase_lock > 6U)
-		{
-			phase_lock = 6U;
-		}
-	}
-	else if (rtt_ms < 220U)
-	{
-		/* Playable (150–220ms): D 4–7, prediction 6–8, delay-heavy */
+		/* Good (80–150ms): D 4–6, prediction 5–7 — 100ms RTT → D≈5, phase_lock≈6 */
 		d_ticks = one_way_ticks + 2U;
 		if (d_ticks < 4U)
 		{
 			d_ticks = 4U;
 		}
+		if (d_ticks > 6U)
+		{
+			d_ticks = 6U;
+		}
+		phase_lock = d_ticks + 2U;
+		if (phase_lock < 5U)
+		{
+			phase_lock = 5U;
+		}
+		if (phase_lock > 7U)
+		{
+			phase_lock = 7U;
+		}
+	}
+	else if (rtt_ms < 230U)
+	{
+		/* Playable (150–230ms): D 5–7, prediction hard cap 6 */
+		d_ticks = one_way_ticks + 2U;
+		if (d_ticks < 5U)
+		{
+			d_ticks = 5U;
+		}
 		if (d_ticks > 7U)
 		{
 			d_ticks = 7U;
 		}
-		phase_lock = d_ticks + 2U;
-		if (phase_lock < 6U)
-		{
-			phase_lock = 6U;
-		}
-		if (phase_lock > SYNETSESSION_PARAMS_PREDICTION_MAX)
-		{
-			phase_lock = SYNETSESSION_PARAMS_PREDICTION_MAX;
-		}
+		phase_lock = 6U;
 	}
 	else
 	{
-		/* High (>220ms): D 6–10+, prediction capped ~6–8, strongly delay-heavy */
+		/* High (>230ms): D 7–10, prediction 6–7 */
 		d_ticks = one_way_ticks + 4U;
-		if (d_ticks < 6U)
+		if (d_ticks < 7U)
 		{
-			d_ticks = 6U;
+			d_ticks = 7U;
 		}
 		if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
 		{
 			d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
 		}
-		phase_lock = 8U;
+		phase_lock = 7U;
 	}
 	pred_cap = d_ticks + (d_ticks / 2U);
 	if (phase_lock > pred_cap)
@@ -420,9 +437,10 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	}
 	syNetRollbackApplySessionNegotiated(params);
 	port_log(
-	    "SSB64 NetSession: apply tag=%s rtt_ms=%u D=%u phase_lock=%u redundancy=%u pumps=%u fuzz=%u "
+	    "SSB64 NetSession: apply tag=%s tier=%s rtt_ms=%u D=%u phase_lock=%u redundancy=%u pumps=%u fuzz=%u "
 	    "rb_snap=%u rb_resim=%u rb_flags=0x%02X ceil=%u manual_D=%d\n",
 	    (tag != NULL) ? tag : "?",
+	    syNetSessionParamsRttTierName((u32)params->rtt_ms),
 	    (unsigned int)params->rtt_ms,
 	    (unsigned int)params->input_delay,
 	    (unsigned int)params->phase_lock_ticks,

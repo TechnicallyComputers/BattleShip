@@ -122,6 +122,8 @@ extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 extern void syNetPeerTrySendRollbackBaselineDigest(void);
+extern void syNetPeerTrySendRollbackSyncNotice(void);
+extern void syNetPeerSendLocalInput(void);
 /* Best-effort notify before local rollback fatal teardown so peer stops without strict-input stall. */
 extern void syNetPeerSendVsSessionEndNotifyPeer(void);
 /* Committed VS input delay (wire tick = sim tick + delay for GatherHistoryBundle / staged INPUT). */

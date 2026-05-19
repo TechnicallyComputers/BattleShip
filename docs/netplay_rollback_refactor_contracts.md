@@ -22,8 +22,12 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 
 - **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`.
 - **Conservative remote button prediction** — remote human slots: hold-last sticks, buttons default 0 (`SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` for legacy hold-last).
+- **No patch-only correction (2026-05-18)** — significant predicted-remote mismatch queues deferred symmetric resim; no live `PatchPublishedFromRemoteConfirmed` on that tick. Prediction recovery disabled unless `SSB64_NETPLAY_PREDICTION_RECOVERY=1`. Digital tap patch-without-rollback disabled during active rollback.
 - **Symmetric resim execution** — wire-locked `target_tick` when symmetric follower is active (no per-peer `highest_remote + D + 1` shrink); post-load **baseline gate** (`figh`/`world`/`item`/`rng`) before `AdvanceResimBudget`; skip snapshot save during `resim_pending` / episode cooldown; cosmetic RNG reset on snapshot load; confirmed-only remote rows during resim (no predicted fallback). See [`netrollback_rng_item_identity_drift_2026-05-17.md`](bugs/netrollback_rng_item_identity_drift_2026-05-17.md).
-- **Symmetric peer notices** — auto session enables follower resim (`symmetric_diag_only=0`); `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only.
+- **Symmetric peer notices** — follower resim on by default when rollback is active (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0` disables; `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only).
+- **Resim RNG verify** — log after each completed resim by default (`SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables).
+- **Resim coordination transport (2026-05-18)** — while `ResimPending`, peers still run `ReceiveRemoteInput` + `SendLocalInput` + `ROLLBACK_BASELINE` + `ROLLBACK_SYNC` (type 24) so symmetric notify and baseline echo are not blocked. Exception to the “no network during forward resim” target below.
+- **Rollback episode** — `SYNetRollbackEpisode` tracks mismatch/load/target and phase (`AwaitingBaseline` / `ForwardResim`); syncs to legacy `ResimPending` / baseline gate flags.
 
 **Out of scope (longer term):** full snapshot byte exchange; disabling symmetric notify for pure independent GGPO until independent detection is proven symmetric; hard-blocking resim on anim-only `LOAD_HASH_DRIFT` (soft-continue policy remains). See [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md#out-of-scope-longer-term).
 
@@ -40,9 +44,9 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 ## Resimulation (target)
 
 - **Pure sim step**: publish historical inputs + `scVSBattleFuncUpdate` battle sim only.
-- **Excluded during resim**: `syNetPeerUpdate`, fresh HID, `syNetReplayUpdate`, network send/receive, presentation/audio driven by new sim.
+- **Excluded during forward resim sim loop**: fresh HID, adaptive delay bumps, full `syNetPeerUpdate` gameplay path.
 
-Current path still runs `syNetInputFuncRead()` (which may pump ingress) + full `scVSBattleFuncUpdate()` including `syNetPeerUpdate()` — see Phase 3 of the refactor plan.
+**Current (2026-05-18):** Resim branch pumps coordination I/O only (`ReceiveRemoteInput`, `SendLocalInput`, baseline/sync). Forward resim still uses `scVSBattleFuncUpdateBattleSimOnly()`. `syNetInputFuncRead()` may still run inside battle update paths.
 
 ## Snapshot restore (target)
 
@@ -59,6 +63,8 @@ Current path still runs `syNetInputFuncRead()` (which may pump ingress) + full `
 | `REMOTE_CONFIRMED_CONFLICT` | Two authoritative confirmed packets disagree on same wire tick |
 | `remote_gap_fill` | Synthetic hold-last wire row (admission-only target) |
 | `peer symmetric rollback` | Peer notice queued resim (transitional gameplay contract) |
+| `ROLLBACK_SYNC_SEND` / `ROLLBACK_SYNC_RECV` | Dedicated symmetric rollback notice packet (type 24) |
+| `RESIM_BASELINE_ECHO` | Passive peer echoed baseline digest without local resim episode |
 | `STRICT MISS (R)` | Strict admission stall on missing exact wire row |
 
 ## Related bug write-ups

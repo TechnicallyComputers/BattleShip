@@ -37,7 +37,7 @@ static u32 sSYNetInputRemotePacketSeqHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_
 static ub8 sSYNetInputRemotePacketSeqValid[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 static u32 sSYNetInputRemoteConfirmedConflictLogsRemaining;
 #define SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT 4
-#define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 2
+#define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 6
 static s32 sSYNetInputGgpoStickDeadband = -1;
 static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
 /* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
@@ -903,6 +903,10 @@ sb32 syNetInputShouldPatchDigitalTapWithoutRollback(s32 player, u32 sim_tick, co
 	{
 		return FALSE;
 	}
+	if ((syNetRollbackIsActive() != FALSE) && (syNetRollbackPredictionRecoveryEnabled() == FALSE))
+	{
+		return FALSE;
+	}
 	if (published->is_predicted == FALSE)
 	{
 		return FALSE;
@@ -1211,6 +1215,13 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 	syNetInputStoreRemotePacketSeq(player, wire_tick, packet_seq);
 	syNetInputTimelineOnRemoteConfirmedWire(player, wire_tick, frame);
 	sim_tick = syNetPeerDelaySimTickFromWire(wire_tick);
+	if ((had_prior_ring != FALSE) && (prior_ring != NULL) && (prior_ring->is_predicted != FALSE) &&
+	    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
+	    (syNetInputGameplayCorrectionIsSignificantEx(prior_ring, frame, TRUE) != FALSE))
+	{
+		syNetRollbackRequestInputCorrection(player, sim_tick);
+		return;
+	}
 	if ((had_prior_ring != FALSE) && (prior_ring != NULL) &&
 	    (syNetInputGameplayCorrectionIsSignificant(prior_ring, frame) == FALSE))
 	{
@@ -1565,6 +1576,9 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 	u16 buttons;
 	s8 stick_x;
 	s8 stick_y;
+	u32 neutral_guard;
+	u32 lead_ticks;
+	u32 d_ticks;
 
 	buttons = 0;
 	stick_x = 0;
@@ -1583,6 +1597,36 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 		if (last_confirmed->is_valid != FALSE)
 		{
 			stick_x = last_confirmed->stick_x;
+			stick_y = last_confirmed->stick_y;
+		}
+	}
+	if ((last_confirmed->is_valid != FALSE) && (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE))
+	{
+		neutral_guard = syNetPeerGetPhaseLockPredictionWindowTicks();
+		d_ticks = syNetPeerGetCommittedInputDelay();
+		if ((d_ticks > 0U) && (d_ticks < neutral_guard))
+		{
+			neutral_guard = d_ticks;
+		}
+		if ((neutral_guard > 0U) && (tick > last_confirmed->tick))
+		{
+			lead_ticks = tick - last_confirmed->tick;
+			if ((lead_ticks > 0U) && (lead_ticks <= neutral_guard) &&
+			    (syNetInputTryGetPredictionStickSeed(player, tick, &stick_x, &stick_y) == FALSE))
+			{
+				stick_x = 0;
+				stick_y = 0;
+			}
+		}
+	}
+	if (last_confirmed->is_valid != FALSE)
+	{
+		if (syNetInputStickAxisIsDigital(last_confirmed->stick_x) != FALSE)
+		{
+			stick_x = last_confirmed->stick_x;
+		}
+		if (syNetInputStickAxisIsDigital(last_confirmed->stick_y) != FALSE)
+		{
 			stick_y = last_confirmed->stick_y;
 		}
 	}
