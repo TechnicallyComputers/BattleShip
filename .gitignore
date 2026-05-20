@@ -63,6 +63,11 @@ assets/*
 !assets/custom/fonts/*
 __pycache__
 bin/
+# Hi-res texture pack drops — port/hires/HiResPack scans CWD-relative
+# `mods/` on Linux dev launches before falling back to <app-data>/mods/,
+# so it's common to end up with a pack folder at the repo root during
+# pack-authoring sessions. Always user-private content, never tracked.
+mods/
 relocAssets/
 undefined*
 ctx.c
