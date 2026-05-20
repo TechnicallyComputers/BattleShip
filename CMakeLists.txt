@@ -520,8 +520,20 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
-    # Embed the application icon (Explorer / taskbar / window).
-    target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
+    # Embed the application icon (Explorer / taskbar / window). The .rc
+    # is generated per-region from port/ssb64.rc.in: US embeds
+    # assets/icon.ico, JP embeds assets/icon-jp.ico. The icon also
+    # surfaces as the .exe's Explorer thumbnail because RC resources
+    # carry over to the PE's icon group.
+    set(SSB64_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+    if(SSB64_VERSION STREQUAL "jp")
+        set(SSB64_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/icon-jp.ico")
+    endif()
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/port/ssb64.rc.in
+        ${CMAKE_BINARY_DIR}/port/ssb64.rc
+        @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/port/ssb64.rc)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
 endif()

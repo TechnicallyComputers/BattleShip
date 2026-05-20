@@ -1,4 +1,0 @@
-// Windows resource: embeds the application icon into ssb64.exe so Explorer
-// and the taskbar pick it up without needing an external .ico.
-// Built only on Windows (see CMakeLists.txt).
-IDI_ICON1 ICON "../assets/icon.ico"
