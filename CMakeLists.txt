@@ -381,9 +381,11 @@ if(SSB64_NETMENU)
 else()
     # Decomp VS scenes include <sys/net*.h>; add trailing -I port/net on these TUs only so decomp/src stays
     # ahead for <sc/scene.h> and port/net/sys supplies net headers.
+    set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     set(_SSB64_DECOMP_NETINCLUDE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/sccommon/scvsbattle.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/objman.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/taskman.c")
     if(MSVC)
         set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}

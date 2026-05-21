@@ -28,7 +28,7 @@
 
 extern "C" {
 int syNetPeerIsVSSessionActive(void);
-void syNetPeerSendVsSessionEndNotifyPeer(void);
+void syNetPeerEndVSSessionLocally(void);
 unsigned int syNetPeerGetVsContractViHz(void);
 void syNetRollbackApplyPortSimPacing(unsigned int refresh_hz);
 #ifdef PORT
@@ -850,9 +850,7 @@ void PortPushFrame(void)
 
 void PortGameShutdown(void)
 {
-	if (syNetPeerIsVSSessionActive() != 0) {
-		syNetPeerSendVsSessionEndNotifyPeer();
-	}
+	syNetPeerEndVSSessionLocally();
 	port_watchdog_shutdown();
 	if (sGameCoroutine != NULL) {
 		port_coroutine_destroy(sGameCoroutine);

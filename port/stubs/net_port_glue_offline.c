@@ -1,10 +1,23 @@
 /*
- * Satisfies symbols referenced from port/gameloop.cpp and port-only declarations in
- * port/net/sys/netpeer.h when SSB64_NETMENU=OFF (stock decomp netpeer.c has no host-frame pump /
- * VS-active helpers; netrollback.c is not linked).
+ * Satisfies symbols referenced from port/gameloop.cpp, decomp/src/sys/objman.c (PORT diagnostics),
+ * and port-only declarations in port/net/sys/*.h when SSB64_NETMENU=OFF (stock decomp netpeer.c
+ * has no host-frame pump / VS-active helpers; netinput.c / netrollback.c are not linked).
  */
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
+
+u32 syNetInputGetTick(void)
+{
+	return 0U;
+}
+
+void syNetPeerSendVsSessionEndNotifyPeer(void)
+{
+}
+
+void syNetPeerEndVSSessionLocally(void)
+{
+}
 
 sb32 syNetPeerIsVSSessionActive(void)
 {

@@ -85,8 +85,10 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL`** — Non-zero: after logging mismatch, call `abort()` (for CI / bisect).
 - **`SSB64_NETPLAY_STALL_UNTIL_REMOTE`** — Stall-until-remote path; cached.
 - **`SSB64_NETPLAY_INPUT_PREDICT_DIAG`** — Level 1/2 predicted-remote diagnostics.
-- **`SSB64_NETPLAY_FRAME_COMMIT_DIAG`** — Admission path logging level.
+- **`SSB64_NETPLAY_FRAME_COMMIT_DIAG`** — Admission path logging level. Also enables extended NetSync input diag (`remote_ring_hist_win`, `pub_vs_remote_summary` per player) on validation ticks.
 - **`SSB64_NETPLAY_FRAME_COMMIT_SUMMARY`** — Frame-commit summary logging.
+- **`SSB64_NETPLAY_PATCH_PUBLISH_LOG`** — **`1`**: log silent published-history rewrites and defer-without-patch decisions on remote wire confirm. Tags: **`patch_publish`** (`reason=insignificant|no_ggpo|digital_tap|post_queue|unknown`) and **`defer_analog_correction`** (`reason=analog_onset|ggpo_queued`). Grep separately; pair with **`SSB64_NETPLAY_ANALOG_ONSET_LOG=1`** for onset prediction lines.
+- **`SSB64_NETPLAY_RESIM_RECONCILE_LOG`** — **`1`**: log `resim_reconcile_span` and `resim_reconcile_post_complete` when published history is reconciled from wire/transmitted (resim begin, post-resim complete, and each frame-commit validation window).
 - **`SSB64_NETPLAY_FRAME_COMMIT_RECV_LOG_MAX`** — Rate-limited `FRAME_COMMIT_RECV_DROP` lines when **`FRAME_COMMIT_TOKEN`** or **`FRAME_COMMIT_DIAG`** is on (default **16**). Session summary adds `recv_drop_size` / `recv_drop_header` / `recv_drop_checksum` counters.
 - **`SSB64_NETPLAY_UDP_RCVBUF_BYTES`** — `SO_RCVBUF` on the VS datagram socket (default **1048576**, clamp **256 KiB–16 MiB**). Sized for wire **V4 INPUT** bundles (**200 B** each); NetPeer `stg=` in stats is cumulative remote **input frames** staged, not unread datagram count. Tune only after soak if `fc_recv` stays 0.
 - **`SSB64_NETPLAY_STRICT_R_STUCK_FORCE_DIAG`** — With strict slack 0, force advance after sustained strict-R miss (diagnostic).
@@ -181,6 +183,12 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_NETPLAY_ROLLBACK_VERIFY_STRICT`**, **`SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY`**
 - **`SSB64_NETPLAY_ROLLBACK_MISMATCH_REMOTE_WITHOUT_PUBLISHED`**, **`SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH_PLAYER`**
 - **`SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES`** — Rollback snapshot ring depth (default **32**, clamp **1–64**). Independent of input history length.
+- **`SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`** — After each save, load `tick-1` and verify subsystem hashes (no rebind); `SYNCTEST_OK` / `SYNCTEST_FAIL` every 120 ticks.
+- **`SSB64_NETPLAY_ROLLBACK_EPISODE_AUTHORITY=1`** (default on) — Symmetric follower executes initiator `ROLLBACK_SYNC` `(epoch, load, mismatch, target)` verbatim; `=0` restores legacy follower re-derivation (`follower_local_auth`, frontier clamp, `LOAD_TICK_ADJUST` mismatch shift).
+- **`SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1`** (default off) — Unified episode FSM (`SealInputs` → `AwaitingBaseline` → `Replay` → `Verify` → `Commit|Abort`); sealed replay + replay-log POST. When on, enables bidirectional **`SYNETPEER_PACKET_EPISODE_SEAL_ROWS`** (26): each peer sends locally-authoritative sealed input rows; `Replay` starts only after baseline match and all required peer seal rows received (retransmit with baseline). Stays **default off** until soak pass (including remote analog authority); no default-on flip in the authority fix PR.
+- **`SSB64_NETPLAY_REMOTE_ANALOG_ONSET_PRED=1`** — When **`ROLLBACK_EPISODE_FSM=1`**, restores legacy optimistic `analog_onset_predict` for remote humans (bisect only). Default: off under FSM (authoritative wire/hold-last for sim + published history).
+- **`SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`** — On `LOAD_HASH_DRIFT`, log `fighter_load_verify` (live vs slot `figh`/`anim`) plus per-player `fighter_slot` (`status`, `motion`, `fhash_light`). [`netrollbacksnapshot.c`](port/net/sys/netrollbacksnapshot.c)
+- **`SSB64_NETPLAY_SNAPSHOT_ITEM_DIAG=1`** — Save `item_count`/`truncated`; apply `ejected`/`matched`/`respawned`. [`netrollbacksnapshot.c`](port/net/sys/netrollbacksnapshot.c)
 - **`SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME`** — Max authoritative sim ticks to replay per NetPeer update during catch-up (default **4**, max **32**).
 - **`SSB64_NETPLAY_RESIM_TICK_TRACE`**, **`SSB64_NETPLAY_ROLLBACK_SCAN_DIAG`**
 - **`SSB64_NETPLAY_SIM_HZ`** — Sim Hz hint for rollback-related timing.

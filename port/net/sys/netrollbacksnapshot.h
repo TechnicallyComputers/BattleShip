@@ -9,10 +9,12 @@
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
 
+struct GObj;
+
 #define SYNETRB_SNAPSHOT_RING_DEFAULT 64
 #define SYNETRB_SNAPSHOT_RING_MAX     128
 #define SYNETRB_SNAPSHOT_MAX_YAKU     64
-#define SYNETRB_SNAPSHOT_MAX_ITEMS    16
+#define SYNETRB_SNAPSHOT_MAX_ITEMS    32
 #define SYNETRB_SNAPSHOT_MAX_WEAPONS  32
 #define SYNETRB_SNAPSHOT_MAX_MAPOBJS  16
 
@@ -29,10 +31,20 @@ extern sb32 syNetRbSnapshotLoad(u32 completed_sim_tick);
 /* All-or-nothing load safety: capture live world before rollback load, restore on verify failure. */
 extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
 extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
+/* Rebind status procs after load verify (not during apply — rebind mutates hashed fighter state). */
+extern void syNetRbSnapshotRebindAllFighters(void);
+/* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
+extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 #endif
 
 /* After load+apply hook; animation AObj/MObj chains stay live so figatree playback survives rollback. */
 extern void syNetRbSnapshotAfterApplyCleanup(void);
+
+/*
+ * Collect active item GObjs (valid ITStruct), insertion-sorted by gobj->id.
+ * out must hold at least max entries. Returns count stored; *truncated_out TRUE if link has more than max.
+ */
+extern s32 syNetRbEnumerateActiveItemsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 
 #ifdef PORT
 /* Subsystem hashes stored on the slot (for load verify / diagnostics). */
