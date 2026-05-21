@@ -18,7 +18,7 @@
 
 ## Verify
 
-Same soak env as frame-commit diagnostics. Pass: no `FRAME_COMMIT_TOKEN_MISMATCH` through 5+ min mixed Fox/Yoshi; host `p1` `hist_win` matches client `remote_ring p1` at validation 480. Optional: `SSB64_NETPLAY_RESIM_RECONCILE_LOG=1` for `resim_reconcile_post_complete` lines.
+Same soak env as frame-commit diagnostics. Pass: no `FRAME_COMMIT_TOKEN_MISMATCH` through 5+ min mixed Fox/Yoshi; host `p1` `hist_win` matches client `remote_ring p1` at validation 480. Optional: `SSB64_NETPLAY_RESIM_RECONCILE_LOG=1` for `resim_reconcile_span`, `commit_window_reconcile`, and `resim_reconcile_post_complete` lines.
 
 ## Related
 

@@ -138,6 +138,85 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	return h;
 }
 
+static u32 syNetSyncFoldFighterSlotFullContribution(const FTStruct *fp)
+{
+	u32 contribution;
+	s32 ji;
+
+	contribution = syNetSyncHashFighterStructLight(fp);
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->shield_health);
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->jumps_used);
+	contribution = syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->physics.vel_jostle_x));
+	contribution = syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->physics.vel_jostle_z));
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->motion_attack_id);
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->hitstatus);
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->invincible_tics);
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)(fp->is_hitstun != FALSE));
+	contribution = syNetSyncFnvAccumulateU32(contribution, (u32)(fp->is_shield != FALSE));
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.x));
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.y));
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.z));
+		}
+	}
+	return contribution;
+}
+
+u32 syNetSyncHashFighterSlotFull(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return 2166136261U;
+	}
+	return syNetSyncFoldFighterSlotFullContribution(fp);
+}
+
+u32 syNetSyncHashFighterSlotAnim(const FTStruct *fp, GObj *fighter_gobj)
+{
+	u32 fold;
+	s32 ji;
+
+	if ((fp == NULL) || (fighter_gobj == NULL))
+	{
+		return 2166136261U;
+	}
+	fold = 2166136261U;
+	fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			AObj *aobj;
+			u32 aobj_steps;
+
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
+			for (aobj = fp->joints[ji]->aobj, aobj_steps = 0U;
+			     (aobj != NULL) && (aobj_steps < (u32)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
+			     aobj = aobj->next, aobj_steps++)
+			{
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
+			}
+		}
+	}
+	return fold;
+}
+
 /* Walk active fighter GObj list; fold selected scalars per player slot, then merge slots deterministically. */
 u32 syNetSyncHashBattleFighters(void)
 {
@@ -295,28 +374,7 @@ u32 syNetSyncHashBattleFightersFull(void)
 		{
 			continue;
 		}
-		contribution = syNetSyncHashFighterStructLight(fp);
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->shield_health);
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->jumps_used);
-		contribution = syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->physics.vel_jostle_x));
-		contribution = syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->physics.vel_jostle_z));
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->motion_attack_id);
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->hitstatus);
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)fp->invincible_tics);
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)(fp->is_hitstun != FALSE));
-		contribution = syNetSyncFnvAccumulateU32(contribution, (u32)(fp->is_shield != FALSE));
-		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
-		{
-			if (fp->joints[ji] != NULL)
-			{
-				contribution =
-				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.x));
-				contribution =
-				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.y));
-				contribution =
-				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.z));
-			}
-		}
+		contribution = syNetSyncFoldFighterSlotFullContribution(fp);
 		slot = fp->player;
 		if ((slot >= 0) && (slot < GMCOMMON_PLAYERS_MAX))
 		{
@@ -1060,6 +1118,181 @@ void syNetSyncJointTranslateTraceOnFighStep(u32 tick, u32 figh)
 	syNetSyncLogFighterJointTranslateTrace(tick);
 	sSYNetSyncJointTranslateTracePrevTick = tick;
 	sSYNetSyncJointTranslateTracePrevFigh = figh;
+}
+
+void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX])
+{
+	GObj *fighter_gobj;
+	s32 si;
+
+	if (out_slot_hash == NULL)
+	{
+		return;
+	}
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		out_slot_hash[si] = 2166136261U;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot = fp->player;
+		if ((slot >= 0) && (slot < GMCOMMON_PLAYERS_MAX))
+		{
+			out_slot_hash[slot] = syNetSyncHashFighterStructLight(fp);
+		}
+	}
+}
+
+static sb32 syNetSyncFighterSlotHashLogEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_FIGHTER_SLOT_HASH_LOG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (syNetSyncEnvParseInt(e, 0) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncFighterSlotHashLogTickInWindow(u32 tick)
+{
+	static int s_min_cache = -999999;
+	static int s_max_cache = -999999;
+	const char *e;
+	s32 min_tick;
+	s32 max_tick;
+
+	if (s_min_cache == -999999)
+	{
+		min_tick = 0;
+		max_tick = 0;
+		e = getenv("SSB64_NETPLAY_FIGHTER_SLOT_HASH_TICK_MIN");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			min_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		e = getenv("SSB64_NETPLAY_FIGHTER_SLOT_HASH_TICK_MAX");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			max_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		if (max_tick <= 0)
+		{
+			max_tick = 0;
+			s_min_cache = 0;
+			s_max_cache = 0;
+			return TRUE;
+		}
+		if (min_tick < 0)
+		{
+			min_tick = 0;
+		}
+		s_min_cache = min_tick;
+		s_max_cache = max_tick;
+	}
+	if (s_max_cache == 0)
+	{
+		return TRUE;
+	}
+	return ((tick >= (u32)s_min_cache) && (tick <= (u32)s_max_cache)) ? TRUE : FALSE;
+}
+
+void syNetSyncLogFighterSlotHashes(u32 tick)
+{
+	GObj *fighter_gobj;
+
+	if ((syNetSyncFighterSlotHashLogEnabled() == FALSE) || (syNetSyncFighterSlotHashLogTickInWindow(tick) == FALSE))
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		port_log(
+		    "SSB64 NetSync: fighter_slot_hash tick=%u player=%d fkind=%d status=%d motion=%d "
+		    "fhash_light=0x%08X fhash_full=0x%08X anim_hash=0x%08X camera_mode=%u\n",
+		    tick,
+		    (int)fp->player,
+		    (int)fp->fkind,
+		    (int)fp->status_id,
+		    (int)fp->motion_id,
+		    syNetSyncHashFighterStructLight(fp),
+		    syNetSyncHashFighterSlotFull(fp),
+		    syNetSyncHashFighterSlotAnim(fp, fighter_gobj),
+		    (unsigned int)fp->camera_mode);
+	}
+}
+
+void syNetSyncLogBaselineUniverseDiff(u32 load_tick, u32 peer_figh, u32 local_figh, u32 peer_world, u32 local_world,
+				      u32 peer_rng, u32 local_rng)
+{
+	u32 hash_camera;
+	GObj *fighter_gobj;
+	s32 si;
+
+	if (syNetSyncPeerDivergeDetailEnabled() == FALSE)
+	{
+		return;
+	}
+	hash_camera = syNetSyncHashGMCamera();
+	port_log(
+	    "SSB64 NetRollback: BASELINE_UNIVERSE_DIFF load_tick=%u peer figh=0x%08X local figh=0x%08X world=0x%08X rng=0x%08X cam=0x%08X\n",
+	    load_tick,
+	    peer_figh,
+	    local_figh,
+	    peer_world,
+	    peer_rng,
+	    hash_camera);
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		si = fp->player;
+		if ((si < 0) || (si >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		port_log(
+		    "SSB64 NetRollback: BASELINE_UNIVERSE_DIFF load_tick=%u player=%d status=%d motion=%d "
+		    "fhash_light=0x%08X fhash_full=0x%08X anim_hash=0x%08X camera_mode=%u\n",
+		    load_tick,
+		    (int)si,
+		    (int)fp->status_id,
+		    (int)fp->motion_id,
+		    syNetSyncHashFighterStructLight(fp),
+		    syNetSyncHashFighterSlotFull(fp),
+		    syNetSyncHashFighterSlotAnim(fp, fighter_gobj),
+		    (unsigned int)fp->camera_mode);
+	}
+	syNetSyncLogFighterDetail("baseline_universe", load_tick);
+	syNetRbSnapshotLogFighterFieldDiffAtTick(load_tick, "baseline_universe");
 }
 #endif
 

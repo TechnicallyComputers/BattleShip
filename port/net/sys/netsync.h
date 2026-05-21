@@ -29,6 +29,10 @@ extern u32 syNetSyncHashMapCollisionKinematics(void);
 extern u32 syNetSyncHashGcRunAllTraversalFingerprint(void);
 /* Narrow per-fighter fingerprint for phase tracing (subset of battle fighter hash). */
 extern u32 syNetSyncHashFighterStructLight(const struct FTStruct *fp);
+/* Per-slot Full hash contribution (matches one fighter fold inside `syNetSyncHashBattleFightersFull`). */
+extern u32 syNetSyncHashFighterSlotFull(const struct FTStruct *fp);
+/* Per-slot rollback animation fold (matches one fighter in `syNetSyncHashFighterAnimationStateForRollback`). */
+extern u32 syNetSyncHashFighterSlotAnim(const struct FTStruct *fp, struct GObj *fighter_gobj);
 
 /* Rollback CSI subsystem hashes (canonical field sampling; PORT). */
 extern u32 syNetSyncHashBattleFightersFull(void);
@@ -49,7 +53,8 @@ extern u32 syNetSyncHashFighterAnimationState(void);
  * Animation fingerprint constrained to rollback snapshot coverage: first SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX
  * AObj nodes per joint, same fields as `SYNetRbSnapAObjNodeBlob`. Must match `netrollbacksnapshot.c` capture/apply.
  */
-#define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 6
+/* Yoshi grab/throw (and similar) can reach 9+ AObj nodes per joint; 8 truncated resim (joint4/6 @ tick 569). */
+#define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 12
 extern u32 syNetSyncHashFighterAnimationStateForRollback(void);
 #ifdef PORT
 /* Rollback-world hash partitions (see syNetSyncHashRollbackWorld). */
@@ -97,6 +102,12 @@ extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);
 extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
 /* `SSB64_NETPLAY_ITEM_HASH_TRACE=1`: log GObj walk order + per-item fold at hash-compute time. */
 extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
+/* Per-player `syNetSyncHashFighterStructLight` at `sim_state_tick` (`SSB64_NETPLAY_FIGHTER_SLOT_HASH_LOG`). */
+extern void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX]);
+extern void syNetSyncLogFighterSlotHashes(u32 tick);
+/* Field-level baseline mismatch when world/rng/item agree but figh differs. */
+extern void syNetSyncLogBaselineUniverseDiff(u32 load_tick, u32 peer_figh, u32 local_figh, u32 peer_world,
+					     u32 local_world, u32 peer_rng, u32 local_rng);
 #endif
 
 #endif /* _SYNETSYNC_H_ */

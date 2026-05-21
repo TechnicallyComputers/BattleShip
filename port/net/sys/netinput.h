@@ -285,11 +285,21 @@ extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot
 extern void syNetInputStorePublishedHistoryFrame(s32 player, const SYNetInputFrame *frame);
 /* Episode seal: local-authority row from transmitted ring (wire source of truth), else non-predicted published. */
 extern sb32 syNetInputCopyEpisodeLocalAuthoritySealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+extern sb32 syNetInputCopyEpisodeRemoteAuthoritySealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern sb32 syNetInputCopyEpisodeRemoteHumanSealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+extern void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick);
+extern void syNetInputPromoteAllRemoteHumanAuthoritySlots(u32 tick);
+extern u32 syNetInputFindEarliestRemoteAuthorityMismatch(s32 remote_slot, u32 from_tick, u32 to_tick);
 /* TRUE when episode FSM has sealed inputs and tick is inside the active span. */
 extern sb32 syNetInputEpisodeSealedSpanBlocksPatch(u32 sim_tick);
 /* Earliest t in [from,to) where published(slot,t) != transmitted(slot,t); ~(u32)0 if none. */
 extern u32 syNetInputFindEarliestLocalAuthorityMismatch(s32 authority_slot, u32 from_tick, u32 to_tick);
+/* Local authority: resolve transmitted → delay → HID latch; promote into published history for commit/seal. */
+extern sb32 syNetInputResolveLocalAuthorityFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+extern void syNetInputPromoteLocalAuthorityPublished(s32 player, u32 tick);
+extern void syNetInputPromoteAllLocalAuthoritySlots(u32 tick);
+extern void syNetInputMaybeLogFrameCommitLocalAuthorityDiag(u32 validation_tick, u32 win_begin);
+extern void syNetInputMaybeLogFrameCommitSealLocalMismatch(u32 validation_tick, u32 win_begin, u32 win_end);
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
 extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick,
 						      const SYNetInputFrame *confirmed);

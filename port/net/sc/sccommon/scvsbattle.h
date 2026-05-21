@@ -12,7 +12,7 @@
 
 extern void scVSBattleFuncUpdate(void);
 #ifdef PORT
-extern void scVSBattleFuncUpdateBattleSimOnly(void); /* Deterministic sim step for rollback resim (no peer/replay). */
+extern void scVSBattleFuncUpdateBattleSimOnly(void); /* Rollback resim: ifCommonBattleUpdateInterfaceAll + net rollback hooks; omits replay/HID/frame-commit (see scvsbattle.c). */
 #endif
 extern s32 scVSBattleGetStartPlayerLR(s32 this_player);
 extern void scVSBattleStartBattle(void);

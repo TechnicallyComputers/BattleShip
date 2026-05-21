@@ -146,7 +146,8 @@ typedef struct SYNetRbSnapDObjAnimBlob
 	f32 anim_speed;
 	f32 anim_frame;
 	u8 aobj_count;
-	u8 pad[3];
+	u8 aobj_chain_total;
+	u8 pad[2];
 	SYNetRbSnapAObjNodeBlob aobj[SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX];
 
 } SYNetRbSnapDObjAnimBlob;
@@ -856,13 +857,23 @@ static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 	dst->anim_wait = dobj->anim_wait;
 	dst->anim_speed = dobj->anim_speed;
 	dst->anim_frame = dobj->anim_frame;
-	count = 0U;
-	for (aobj = dobj->aobj; (aobj != NULL) && (count < SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX); aobj = aobj->next)
 	{
-		syNetRbSnapCaptureAObjNode(&dst->aobj[count], aobj);
-		count++;
+		u8 chain_total;
+
+		count = 0U;
+		chain_total = 0U;
+		for (aobj = dobj->aobj; aobj != NULL; aobj = aobj->next)
+		{
+			if (count < SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX)
+			{
+				syNetRbSnapCaptureAObjNode(&dst->aobj[count], aobj);
+				count++;
+			}
+			chain_total++;
+		}
+		dst->aobj_count = count;
+		dst->aobj_chain_total = chain_total;
 	}
-	dst->aobj_count = count;
 }
 
 static void syNetRbSnapApplyDObjAnim(DObj *dobj, const SYNetRbSnapDObjAnimBlob *src)
@@ -1308,6 +1319,164 @@ void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u
 		    (int)fp->shield_health,
 		    syNetSyncHashFighterStructLight(fp));
 	}
+}
+
+static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick);
+static u32 syNetRbSnapF32DiagBits(f32 value);
+
+static u32 syNetRbSnapF32DiagBits(f32 value)
+{
+	union
+	{
+		f32 fv;
+		u32 uv;
+	} reinterpret;
+
+	reinterpret.fv = value;
+	return reinterpret.uv;
+}
+
+static sb32 syNetRbSnapFighterFieldDiffEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static void syNetRbSnapLogFieldDiffScalar(const char *tag, u32 tick, s32 player, const char *field, u32 live_bits,
+                                          u32 blob_bits)
+{
+	if (live_bits != blob_bits)
+	{
+		port_log("SSB64 NetRbSnapshot: fighter_field_diff tag=%s tick=%u player=%d field=%s live=0x%08X blob=0x%08X\n",
+		         tag, tick, (int)player, field, live_bits, blob_bits);
+	}
+}
+
+void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
+{
+	SYNetRbSnapshotSlot *slot;
+	GObj *fighter_gobj;
+	const char *reason;
+
+	if (syNetRbSnapFighterFieldDiffEnabled() == FALSE)
+	{
+		return;
+	}
+	reason = (tag != NULL) ? tag : "unknown";
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		const SYNetRbSnapFighterBlob *blob;
+		s32 slot_index;
+		s32 ji;
+		DObj *dobj;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX) ||
+		    (slot->fighters[slot_index].is_valid == FALSE))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		{
+			u32 live_light;
+			u32 live_full;
+			u32 live_anim;
+
+			live_light = syNetSyncHashFighterStructLight(fp);
+			live_full = syNetSyncHashFighterSlotFull(fp);
+			live_anim = syNetSyncHashFighterSlotAnim(fp, fighter_gobj);
+			port_log(
+			    "SSB64 NetRbSnapshot: fighter_field_diff tag=%s tick=%u player=%d live_fhash_light=0x%08X "
+			    "live_fhash_full=0x%08X live_anim_hash=0x%08X status=%d motion=%d\n",
+			    reason, tick, (int)slot_index, live_light, live_full, live_anim, (int)fp->status_id,
+			    (int)fp->motion_id);
+		}
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_id", (u32)fp->status_id,
+		                              (u32)blob->status_id);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "motion_id", (u32)fp->motion_id,
+		                              (u32)blob->motion_id);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "motion_attack_id", (u32)fp->motion_attack_id,
+		                              (u32)blob->motion_attack_id);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "hitstatus", (u32)fp->hitstatus,
+		                              (u32)blob->hitstatus);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "camera_mode", (u32)fp->camera_mode,
+		                              (u32)blob->camera_mode);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "shield_health", (u32)fp->shield_health,
+		                              (u32)blob->shield_health);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "jumps_used", (u32)fp->jumps_used,
+		                              (u32)blob->jumps_used);
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "is_hitstun", (u32)(fp->is_hitstun != FALSE),
+		                              (u32)(blob->is_hitstun != FALSE));
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "is_shield", (u32)(fp->is_shield != FALSE),
+		                              (u32)(blob->is_shield != FALSE));
+		syNetRbSnapLogFieldDiffScalar(
+		    reason, tick, slot_index, "vel_jostle_x",
+		    syNetRbSnapF32DiagBits(fp->physics.vel_jostle_x), syNetRbSnapF32DiagBits(blob->physics.vel_jostle_x));
+		syNetRbSnapLogFieldDiffScalar(
+		    reason, tick, slot_index, "vel_jostle_z",
+		    syNetRbSnapF32DiagBits(fp->physics.vel_jostle_z), syNetRbSnapF32DiagBits(blob->physics.vel_jostle_z));
+		syNetRbSnapLogFieldDiffScalar(
+		    reason, tick, slot_index, "vel_air_y", syNetRbSnapF32DiagBits(fp->physics.vel_air.y),
+		    syNetRbSnapF32DiagBits(blob->physics.vel_air.y));
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "gobj_anim_frame",
+		                              syNetRbSnapF32DiagBits(fighter_gobj->anim_frame),
+		                              syNetRbSnapF32DiagBits(blob->gobj_anim_frame));
+		if (fp->joints[nFTPartsJointTopN] != NULL)
+		{
+			syNetRbSnapLogFieldDiffScalar(
+			    reason, tick, slot_index, "top_joint_y",
+			    syNetRbSnapF32DiagBits(fp->joints[nFTPartsJointTopN]->translate.vec.f.y),
+			    syNetRbSnapF32DiagBits(blob->joint_translate[nFTPartsJointTopN].y));
+		}
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "coll_pos_prev_y",
+		                              syNetRbSnapF32DiagBits(fp->coll_data.pos_prev.y),
+		                              syNetRbSnapF32DiagBits(blob->coll.pos_prev.y));
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+		{
+			dobj = fp->joints[ji];
+			if (dobj == NULL)
+			{
+				continue;
+			}
+			if (blob->joint_anim[ji].aobj_chain_total > blob->joint_anim[ji].aobj_count)
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: fighter_field_diff tag=%s tick=%u player=%d field=joint%u_aobj_trunc "
+				    "stored=%u total=%u\n",
+				    reason, tick, (int)slot_index, (unsigned int)ji,
+				    (unsigned int)blob->joint_anim[ji].aobj_count,
+				    (unsigned int)blob->joint_anim[ji].aobj_chain_total);
+			}
+			syNetRbSnapLogFieldDiffScalar(
+			    reason, tick, slot_index, "joint_anim_frame",
+			    syNetRbSnapF32DiagBits(dobj->anim_frame), syNetRbSnapF32DiagBits(blob->joint_anim[ji].anim_frame));
+		}
+	}
+}
+
+void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick)
+{
+	syNetRbSnapshotLogFighterFieldDiffAtTick(tick, "load_drift");
 }
 #endif /* PORT */
 
@@ -2416,7 +2585,6 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapRebindFighterCoupledGObjs(slot);
 #endif
 	syNetRbSnapApplyCamera(&slot->camera);
-	syNetRbSnapshotAfterApplyCleanup();
 }
 
 sb32 syNetRbSnapshotCaptureLiveEmergency(void)
@@ -2493,13 +2661,72 @@ sb32 syNetRbSnapshotLoad(u32 completed_sim_tick)
 #endif
 }
 
-void syNetRbSnapshotAfterApplyCleanup(void)
+#ifdef PORT
+static sb32 syNetRbSnapFighterCleanupForceLegacySetStatus(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (sb32)s_env_cache;
+	}
+	s_env_cache = 0;
+	e = getenv("SSB64_NETPLAY_SNAPSHOT_FIGHTER_CLEANUP");
+	if ((e != NULL) &&
+	    ((strcmp(e, "force") == 0) || (strcmp(e, "full") == 0) || (strcmp(e, "1") == 0)))
+	{
+		s_env_cache = 1;
+	}
+	return (sb32)s_env_cache;
+}
+#endif /* PORT */
+
+/*
+ * Post-verify presentation sync when a rollback load commits to the live world (syNetRollbackLoadPostTick).
+ * Not invoked from syNetRbSnapApplySlotToLive — save/verify hashes are pre-sync; synctest emergency probes skip this.
+ *
+ * Default: figatree resolve + lbCommonAddFighterPartsFigatree at gobj->anim_frame only (no proc_status,
+ * no motion event replay). Status entry via ftMainSetStatus on rollback load is incorrect in every phase
+ * (intro flicker during Wait; figatree/anim drift class bugs during Go).
+ *
+ * syNetRbSnapshotRebindAllFighters runs after this on the commit path.
+ *
+ * SSB64_NETPLAY_SNAPSHOT_FIGHTER_CLEANUP=force|full|1 — legacy ftMainSetStatus path for bisect only.
+ */
+void syNetRbSnapshotSyncFighterPresentation(void)
 {
 #ifdef PORT
-	/*
-	 * Keep active AObj/MObj chains intact. They are part of the live animation state restored above; stripping them
-	 * here leaves fighters with a valid motion/status but no figatree playback until the next status transition.
-	 */
+	GObj *fighter_gobj;
+
+	if (syNetRbSnapFighterCleanupForceLegacySetStatus() != FALSE)
+	{
+		u32 preserve_flags = FTSTATUS_PRESERVE_HIT | FTSTATUS_PRESERVE_COLANIM | FTSTATUS_PRESERVE_EFFECT |
+		                     FTSTATUS_PRESERVE_FASTFALL | FTSTATUS_PRESERVE_HITSTATUS |
+		                     FTSTATUS_PRESERVE_MODELPART | FTSTATUS_PRESERVE_SLOPECONTOUR |
+		                     FTSTATUS_PRESERVE_TEXTUREPART | FTSTATUS_PRESERVE_PLAYERTAG |
+		                     FTSTATUS_PRESERVE_THROWPOINTER | FTSTATUS_PRESERVE_SHUFFLETIME |
+		                     FTSTATUS_PRESERVE_LOOPSFX | FTSTATUS_PRESERVE_DAMAGEPLAYER |
+		                     FTSTATUS_PRESERVE_AFTERIMAGE | FTSTATUS_PRESERVE_RUMBLE;
+
+		for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+		     fighter_gobj = fighter_gobj->link_next)
+		{
+			FTStruct *fp = ftGetStruct(fighter_gobj);
+
+			if (fp != NULL)
+			{
+				ftMainSetStatus(fighter_gobj, fp->status_id, fighter_gobj->anim_frame, 1.0F, preserve_flags);
+			}
+		}
+		return;
+	}
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		ftMainRefreshFigatreeVisual(fighter_gobj);
+	}
 #else
 	(void)0;
 #endif

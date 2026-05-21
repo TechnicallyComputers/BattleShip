@@ -177,7 +177,22 @@ Both peers converge on **semantic equality**, not **memory equality**.
 
 ---
 
-## 14. Minimal implementation task (for agents)
+## 14. Fighter snapshot blob vs NetSync hash coverage (rollback)
+
+Rollback save uses **`SYNetRbSnapFighterBlob`** in `port/net/sys/netrollbacksnapshot.c`. Cross-peer oracles use **`syNetSyncHashFighterStructLight`** (per-slot, partial) and **`syNetSyncHashBattleFightersFull`** (all joints + extended physics). Divergence with matching inputs usually means either **blob round-trip omission** (synctest / `LOAD_HASH_DRIFT` + `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`) or **live forward-sim nondeterminism** (synctest passes locally, peers split on `fighter_slot_hash` before next FC).
+
+| Surface | In fighter blob | In `HashFighterStructLight` | In `HashBattleFightersFull` |
+|---------|-----------------|------------------------------|-----------------------------|
+| Top joint translate | `joint_translate[]` (all joints saved) | top joint only | all joints |
+| `motion_attack_id`, `hitstatus`, jostle | yes | partial / via gameplay | yes |
+| Joint `event32`, `gobj_anim_frame` | yes | no (use `anim` partition) | anim hash separate |
+| Coupled weapon / item gobj IDs | yes (2026-05-19) | via gameplay / weapon hash | weapon hash |
+
+Probe ticks **870, 880, 890, 899** with `SSB64_NETPLAY_ROLLBACK_SYNCTEST=1` and `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1` before editing blob fields.
+
+---
+
+## 15. Minimal implementation task (for agents)
 
 Replace (or augment) rollback / NetSync **cross-peer** comparison paths that still depend on **implicit struct memory** with:
 
