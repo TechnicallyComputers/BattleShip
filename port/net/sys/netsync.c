@@ -22,6 +22,7 @@
 #ifdef PORT
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netrollback.h>
 
 #include <stdlib.h>
 
@@ -398,6 +399,7 @@ void syNetSyncResetNetplayBattleClock(void)
 {
 	sSYNetSyncBattleGoSimTick = ~(u32)0;
 	syNetSyncResetJointTranslateTraceSession();
+	syNetSyncResetFhashLightMismatchTriggerSession();
 }
 
 void syNetSyncOnNetplayBattleGo(void)
@@ -506,6 +508,14 @@ static s32 sSYNetSyncJointTranslateTraceFkindFilter = -1;
 static sb32 sSYNetSyncJointTranslateTraceTriggerFired = FALSE;
 static u32 sSYNetSyncJointTranslateTracePrevTick = ~(u32)0;
 static u32 sSYNetSyncJointTranslateTracePrevFigh = 0U;
+
+static sb32 sSYNetSyncFhashLightTriggerCache = -999;
+static sb32 sSYNetSyncFhashLightTriggerFirstFired = FALSE;
+static sb32 sSYNetSyncFhashLightTriggerSecondFired = FALSE;
+static u32 sSYNetSyncFhashLightTriggerPrevTick = ~(u32)0;
+static u32 sSYNetSyncFhashLightTriggerPrevFigh = 0U;
+static u32 sSYNetSyncFhashLightTriggerPrevSlot[GMCOMMON_PLAYERS_MAX];
+static int sSYNetSyncFhashLightTriggerSecondMinTick = -999999;
 
 static int syNetSyncEnvParseInt(const char *e, int default_val)
 {
@@ -1118,6 +1128,182 @@ void syNetSyncJointTranslateTraceOnFighStep(u32 tick, u32 figh)
 	syNetSyncLogFighterJointTranslateTrace(tick);
 	sSYNetSyncJointTranslateTracePrevTick = tick;
 	sSYNetSyncJointTranslateTracePrevFigh = figh;
+}
+
+static sb32 syNetSyncFhashLightMismatchTriggerEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_FHASH_LIGHT_MISMATCH_TRIGGER");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (syNetSyncEnvParseInt(e, 0) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncFhashLightMismatchTriggerTickInWindow(u32 tick)
+{
+	static int s_min_cache = -999999;
+	static int s_max_cache = -999999;
+	const char *e;
+	s32 min_tick;
+	s32 max_tick;
+
+	if (s_min_cache == -999999)
+	{
+		min_tick = 0;
+		max_tick = 0;
+		e = getenv("SSB64_NETPLAY_FHASH_LIGHT_MISMATCH_TICK_MIN");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			min_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		e = getenv("SSB64_NETPLAY_FHASH_LIGHT_MISMATCH_TICK_MAX");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			max_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		if (max_tick <= 0)
+		{
+			s_min_cache = 0;
+			s_max_cache = 0;
+			return TRUE;
+		}
+		if (min_tick < 0)
+		{
+			min_tick = 0;
+		}
+		s_min_cache = min_tick;
+		s_max_cache = max_tick;
+	}
+	if (s_max_cache == 0)
+	{
+		return TRUE;
+	}
+	return ((tick >= (u32)s_min_cache) && (tick <= (u32)s_max_cache)) ? TRUE : FALSE;
+}
+
+static s32 syNetSyncFhashLightMismatchTriggerSecondMinTick(void)
+{
+	const char *e;
+
+	if (sSYNetSyncFhashLightTriggerSecondMinTick != -999999)
+	{
+		return sSYNetSyncFhashLightTriggerSecondMinTick;
+	}
+	e = getenv("SSB64_NETPLAY_FHASH_LIGHT_MISMATCH_TRIGGER_SECOND_MIN");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		sSYNetSyncFhashLightTriggerSecondMinTick = syNetSyncEnvParseInt(e, 473);
+	}
+	else
+	{
+		sSYNetSyncFhashLightTriggerSecondMinTick = 473;
+	}
+	return sSYNetSyncFhashLightTriggerSecondMinTick;
+}
+
+void syNetSyncResetFhashLightMismatchTriggerSession(void)
+{
+	sSYNetSyncFhashLightTriggerFirstFired = FALSE;
+	sSYNetSyncFhashLightTriggerSecondFired = FALSE;
+	sSYNetSyncFhashLightTriggerPrevTick = ~(u32)0;
+	sSYNetSyncFhashLightTriggerPrevFigh = 0U;
+}
+
+static void syNetSyncFhashLightMismatchTriggerFire(u32 tick, u32 prev_tick, u32 cur_slot[GMCOMMON_PLAYERS_MAX],
+						   const char *phase_tag)
+{
+	s32 si;
+
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		if (cur_slot[si] != sSYNetSyncFhashLightTriggerPrevSlot[si])
+		{
+			port_log(
+			    "SSB64 NetSync: fhash_light_trigger phase=%s tick=%u prev_tick=%u player=%d fhash_light_old=0x%08X fhash_light_new=0x%08X\n",
+			    phase_tag,
+			    tick,
+			    prev_tick,
+			    (int)si,
+			    sSYNetSyncFhashLightTriggerPrevSlot[si],
+			    cur_slot[si]);
+		}
+	}
+	syNetSyncLogFighterDetail("fhash_light_pre", prev_tick);
+	syNetSyncLogFighterDetail("fhash_light_step", tick);
+}
+
+void syNetSyncFhashLightMismatchTriggerOnTick(u32 tick)
+{
+	u32 cur_slot[GMCOMMON_PLAYERS_MAX];
+	u32 cur_figh;
+	s32 si;
+	s32 second_min;
+	sb32 any_light_step;
+	sb32 figh_step;
+	sb32 want_first;
+	sb32 want_second;
+
+	if ((syNetSyncFhashLightMismatchTriggerEnabled() == FALSE) ||
+	    (syNetSyncFhashLightMismatchTriggerTickInWindow(tick) == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	if ((syNetRollbackIsResimulating() != FALSE) || (syNetRollbackGetAppliedResimCount() != 0U))
+	{
+		return;
+	}
+	if (tick == 0U)
+	{
+		return;
+	}
+	syNetSyncCollectFighterSlotHashes(cur_slot);
+	cur_figh = syNetSyncHashBattleFighters();
+	if ((sSYNetSyncFhashLightTriggerPrevTick != ~(u32)0) && (tick == (sSYNetSyncFhashLightTriggerPrevTick + 1U)))
+	{
+		any_light_step = FALSE;
+		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+		{
+			if (cur_slot[si] != sSYNetSyncFhashLightTriggerPrevSlot[si])
+			{
+				any_light_step = TRUE;
+				break;
+			}
+		}
+		figh_step = (cur_figh != sSYNetSyncFhashLightTriggerPrevFigh) ? TRUE : FALSE;
+		if ((any_light_step != FALSE) && (figh_step != FALSE))
+		{
+			second_min = syNetSyncFhashLightMismatchTriggerSecondMinTick();
+			want_first = (sSYNetSyncFhashLightTriggerFirstFired == FALSE) ? TRUE : FALSE;
+			want_second =
+			    (want_first == FALSE) && (sSYNetSyncFhashLightTriggerSecondFired == FALSE) &&
+			    ((s32)tick >= second_min) ? TRUE : FALSE;
+			if ((want_first != FALSE) || (want_second != FALSE))
+			{
+				syNetSyncFhashLightMismatchTriggerFire(
+				    tick, sSYNetSyncFhashLightTriggerPrevTick, cur_slot,
+				    (want_first != FALSE) ? "first" : "second");
+				if (want_first != FALSE)
+				{
+					sSYNetSyncFhashLightTriggerFirstFired = TRUE;
+				}
+				else
+				{
+					sSYNetSyncFhashLightTriggerSecondFired = TRUE;
+				}
+			}
+		}
+	}
+	sSYNetSyncFhashLightTriggerPrevTick = tick;
+	sSYNetSyncFhashLightTriggerPrevFigh = cur_figh;
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		sSYNetSyncFhashLightTriggerPrevSlot[si] = cur_slot[si];
+	}
 }
 
 void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX])

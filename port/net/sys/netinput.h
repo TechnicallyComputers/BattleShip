@@ -289,6 +289,10 @@ extern sb32 syNetInputCopyEpisodeRemoteAuthoritySealFrame(s32 player, u32 tick, 
 extern sb32 syNetInputCopyEpisodeRemoteHumanSealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick);
 extern void syNetInputPromoteAllRemoteHumanAuthoritySlots(u32 tick);
+/* TRUE when every remote-human slot has strict wire-confirmed input for `sim_tick` (authoritative contract). */
+extern sb32 syNetInputRemoteHumanWireReadyForSimTick(u32 sim_tick);
+/* Pump ingress + rewrite remote `gSYControllerDevices` for `tick` immediately before battle sim (wire after FuncRead). */
+extern sb32 syNetInputRepublishRemoteHumanControllersForTick(u32 tick);
 extern u32 syNetInputFindEarliestRemoteAuthorityMismatch(s32 remote_slot, u32 from_tick, u32 to_tick);
 /* TRUE when episode FSM has sealed inputs and tick is inside the active span. */
 extern sb32 syNetInputEpisodeSealedSpanBlocksPatch(u32 sim_tick);

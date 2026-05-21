@@ -33,6 +33,8 @@ extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
 extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
 /* Rebind status procs after load verify (not during apply — rebind mutates hashed fighter state). */
 extern void syNetRbSnapshotRebindAllFighters(void);
+/* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
+extern sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */

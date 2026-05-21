@@ -14,6 +14,7 @@
 
 #include <sys/controller.h>
 #include <sys/netpeer.h>
+#include <sys/netpeer_transport.h>
 #include <sys/netrollback.h>
 #include <sys/netrollback_episode.h>
 #include <sys/netsession_params.h>
@@ -1001,6 +1002,108 @@ void syNetInputPromoteAllRemoteHumanAuthoritySlots(u32 tick)
 		}
 		syNetInputPromoteRemoteHumanAuthorityPublished(slot, tick);
 	}
+}
+
+void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+
+/*
+ * Drain UDP and promote wire-confirmed remote rows into published history for sim ticks leading up to `tick`.
+ * Packets often land after FuncRead but before gcRunAll; without this, the host simulates with hold-last sticks.
+ */
+static void syNetInputPumpIngressAndPromoteRemoteThroughTick(u32 tick)
+{
+	s32 i;
+	s32 n;
+	s32 slot;
+	u32 begin;
+	u32 delay;
+	u32 t;
+
+	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetRollbackIsResimulating() != FALSE) || (tick == 0U))
+	{
+		return;
+	}
+	syNetPeerPumpIngressTransport("remote_sim_ready");
+	delay = syNetPeerGetCommittedInputDelay();
+	begin = 1U;
+	if (tick > (delay + 4U))
+	{
+		begin = tick - delay - 4U;
+	}
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		for (t = begin; t <= tick; t++)
+		{
+			syNetInputPromoteRemoteHumanAuthorityPublished(slot, t);
+		}
+	}
+}
+
+/*
+ * Authoritative wire contract: every remote-human slot must have a strict confirmed remote row for `sim_tick`
+ * before battle may consume it. Phase-lock prediction may advance shared commit while resolve still falls back to
+ * hold-last/neutral — that path desyncs (client Fox @421 soak).
+ */
+sb32 syNetInputRemoteHumanWireReadyForSimTick(u32 sim_tick)
+{
+	s32 i;
+	s32 n;
+	s32 slot;
+
+	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetRollbackIsResimulating() != FALSE) || (sim_tick == 0U))
+	{
+		return TRUE;
+	}
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, sim_tick, NULL) == FALSE)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+sb32 syNetInputRepublishRemoteHumanControllersForTick(u32 tick)
+{
+	SYNetInputFrame frame;
+	s32 i;
+	s32 n;
+	s32 slot;
+
+	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetRollbackIsResimulating() != FALSE) || (tick == 0U))
+	{
+		return TRUE;
+	}
+	syNetInputPumpIngressAndPromoteRemoteThroughTick(tick);
+	if (syNetInputRemoteHumanWireReadyForSimTick(tick) == FALSE)
+	{
+		return FALSE;
+	}
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		syNetInputResolveFrame(slot, tick, &frame);
+		syNetInputPublishFrame(slot, &frame);
+	}
+	return TRUE;
 }
 
 u32 syNetInputFindEarliestRemoteAuthorityMismatch(s32 remote_slot, u32 from_tick, u32 to_tick)
@@ -5126,6 +5229,23 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			syNetInputMaybeIngressExtraPumpsOnStall();
 			return;
 		}
+		if (syNetInputRemoteHumanWireReadyForSimTick(tick) == FALSE)
+		{
+			out->allow_full_input_publish = FALSE;
+			out->allow_battle_sim_step = FALSE;
+			out->suppress_scene_update = TRUE;
+			out->strict_partial_publish_local = TRUE;
+			out->admission_letter = 'R';
+			syNetInputMaybeIngressExtraPumpsOnStall();
+			if (syNetInputStrictRemoteMissAbortIfStuck(tick) != FALSE)
+			{
+				syNetTickCommitVerdictAllowAll(out);
+				return;
+			}
+			syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
+			                            syNetPeerGetHighestRemoteTick(), TRUE);
+			return;
+		}
 		if (shared.uses_prediction != FALSE)
 		{
 			syNetInputStrictReadyCacheInvalidate();
@@ -5249,6 +5369,12 @@ void syNetInputFuncRead(void)
 	syControllerFuncRead();
 #endif
 
+#ifdef PORT
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() == FALSE))
+	{
+		syNetInputPumpIngressAndPromoteRemoteThroughTick(tick);
+	}
+#endif
 	syNetInputSynchronizeInputsForTick(tick, synchronized);
 #ifdef PORT
 	syNetInputNoteSimTickPredictedRemoteUsage(tick, synchronized);

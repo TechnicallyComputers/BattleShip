@@ -6,6 +6,8 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-20 | [netplay_grab_synctest_throw_segv](netplay_grab_synctest_throw_segv_2026-05-20.md) | **FIX SHIPPED (soak pending)** — Fox grab/throw @1752: SYNCTEST @1739 mid-grab broke victim `capture_gobj`; `ReleaseThrownUpdateStats` NULL deref. Skip synctest for any fighter link with catch/capture; bidirectional rebind all slots; throw null guard. |
+| 2026-05-20 | [netplay_item_drop_orphan_sweep_segv](netplay_item_drop_orphan_sweep_segv_2026-05-20.md) | **FIX SHIPPED (soak pending)** — @2458 Z-drop bat: Wait sweep + reconcile matched `owner && !is_hold`, stripped DObj from live dropped item; `itVisualsUpdateSpin` NULL deref. Orphan-hold wrapper joint detection via `itMainItemHasOrphanHoldDisplay`. |
 | 2026-05-21 | [netrollback_fc_input_agree_reanchor](netrollback_fc_input_agree_reanchor_2026-05-21.md) | **FIX SHIPPED (soak pending)** — Post-GO @450: FC state diverge, agreed `inp`, load 449 poisoned; episode authority skipped last-agreed reanchor (420). Reanchor from `LastFrameCommitStateAgreedTick`; fix `RESIM_ANCHOR_PROBE` load-first order. |
 | 2026-05-21 | [fighter_snapshot_fidelity](fighter_snapshot_fidelity_2026-05-21.md) | **PHASE 6d SHIPPED** — Field diff oracle (baseline/anchor/load); AObj cap 8 + truncation meta; figatree refresh after load verify; prior diagnostics retained. Soak pending. |
 | 2026-05-21 | [netinput_remote_analog_authority](netinput_remote_analog_authority_2026-05-20.md) | **PHASE 2c SHIPPED** — Remote wire→published promotion (`REMOTE_PUBLISH`, seal pre-promote, `FC_REMOTE_AUTH_MISMATCH`); combined with Phase 2b. Soak @1700+ pending. |
@@ -137,6 +139,7 @@ This directory documents significant bugs encountered during the port, their sym
 | 2026-04-19 | [rumble_event_bitfield_init](rumble_event_bitfield_init_2026-04-19.md) | Battle-start hang: positional initializers on endian-conditional bitfield stored opcode as param; gmRumbleUpdateEventExecute spins on phantom End |
 | 2026-04-18 | [aobjevent32_halfswap](aobjevent32_halfswap_2026-04-18.md) | Fighter figatree u16-halfswap corrupts AObjEvent32 command bitfields; lazy per-stream un-halfswap walker at EVENT32 reader entry |
 | 2026-04-14 | [title_border_right_edge_slice](title_border_right_edge_slice_2026-04-14.md) | ce89700's zero-fill of sprite trailing columns dimmed the right edge of the title-screen border sprite; fix replicates edge pixel instead |
+| 2026-05-20 | [netplay_remote_apply_before_sim](netplay_remote_apply_before_sim_2026-05-20.md) | Remote UDP rows applied in `syNetPeerUpdate` after battle sim; host used hold-last sticks while wire matched (P1 split @548) |
 | 2026-04-13 | [samus_charge_shot_hit_detection](samus_charge_shot_hit_detection_2026-04-13.md) | **SUPERSEDED** by the 04-20 `WPAttributes` bitfield fix: `attack_count` was being decoded from the wrong bits (read 0 instead of the true 1), so the hit loop never iterated. The bypass-path theory was a red herring |
 | 2026-04-11 | [mpvertex_byte_swap](mpvertex_byte_swap_2026-04-11.md) | MPVertexData / MPVertexIDs byte-swap deferral broke Jungle floor collision |
 | 2026-04-11 | [controller_motorevt_lp64](controller_motorevt_lp64_2026-04-11.md) | Unk80045268 ContMotorEvt struct pun faults on LP64 |

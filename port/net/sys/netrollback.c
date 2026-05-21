@@ -4533,26 +4533,34 @@ void syNetRollbackAfterBattleUpdate(void)
 		sb32 emergency_ok;
 		sb32 verify_ok;
 
-		probe_tick = completed_tick - 1U;
-		emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
-		verify_ok = FALSE;
-		if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
+		if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
 		{
-			verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
-		}
-		if (emergency_ok != FALSE)
-		{
-			(void)syNetRbSnapshotRestoreLiveEmergency();
-		}
-		if (verify_ok == FALSE)
-		{
-			port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
+			port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=grab_coupling\n", completed_tick);
+			sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
 		}
 		else
 		{
-			port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
+			probe_tick = completed_tick - 1U;
+			emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
+			verify_ok = FALSE;
+			if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
+			{
+				verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
+			}
+			if (emergency_ok != FALSE)
+			{
+				(void)syNetRbSnapshotRestoreLiveEmergency();
+			}
+			if (verify_ok == FALSE)
+			{
+				port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
+			}
+			else
+			{
+				port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
+			}
+			sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
 		}
-		sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
 	}
 #endif
 }

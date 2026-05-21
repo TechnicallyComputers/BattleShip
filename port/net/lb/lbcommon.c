@@ -1670,6 +1670,10 @@ sb32 func_ovl0_800C99CC(Mtx *mtx, DObj *dobj, Gfx **dls)
 // 0x800C9A38
 void func_ovl0_800C9A38(Mtx44f mtx, DObj *dobj)
 {
+    if (dobj == NULL)
+    {
+        return;
+    }
     FTParts *parts = ftGetParts(dobj);
     FTStruct *fp = ftGetStruct(dobj->parent_gobj);
     Mtx44f *p;
