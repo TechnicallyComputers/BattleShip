@@ -4364,6 +4364,7 @@ static void syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		}
 		return;
 	}
+	syNetRbSnapshotFinalizeLoadCoupling(load_tick);
 	syNetRbSnapshotRebindAllFighters();
 	syNetSyncReconcileBattleTimePassedForSimTick(load_tick);
 	syNetInputSetTick(probe_tick);
@@ -4399,6 +4400,7 @@ static void syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	else
 	{
 		syNetRbSnapshotLoad(load_tick);
+		syNetRbSnapshotFinalizeLoadCoupling(load_tick);
 		syNetRbSnapshotRebindAllFighters();
 		syNetSyncReconcileBattleTimePassedForSimTick(load_tick);
 		syNetInputSetTick(probe_tick);
@@ -4426,6 +4428,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 	}
 #ifdef PORT
 	syNetSyncReconcileBattleTimePassedForSimTick(tick);
+	syNetRbSnapshotFinalizeLoadCoupling(tick);
 #endif
 	if (syNetRollbackVerifyLoadedSlot(tick) == FALSE)
 	{
@@ -4439,7 +4442,6 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 			port_log(
 			    "SSB64 NetRollback: LOAD_HASH_DRIFT soft-ignored (baseline storm) tick=%u\n",
 			    tick);
-			syNetRbSnapshotSyncFighterPresentation();
 			syNetRbSnapshotRebindAllFighters();
 			return TRUE;
 		}
@@ -4447,7 +4449,6 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 		{
 			port_log("SSB64 NetRollback: LOAD_HASH_DRIFT soft — continuing resim without session stop (tick %u)\n",
 			         tick);
-			syNetRbSnapshotSyncFighterPresentation();
 			syNetRbSnapshotRebindAllFighters();
 			return TRUE;
 		}
@@ -4463,7 +4464,9 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 #endif
 		return FALSE;
 	}
+#ifdef PORT
 	syNetRbSnapshotSyncFighterPresentation();
+#endif
 	syNetRbSnapshotRebindAllFighters();
 	return TRUE;
 }
@@ -4529,6 +4532,7 @@ void syNetRollbackAfterBattleUpdate(void)
 	if ((sSYNetRollbackSynctestEnabled != FALSE) && (completed_tick >= sSYNetRollbackSynctestNextProbeTick) &&
 	    (completed_tick > 0U))
 	{
+		const char *skip_reason;
 		u32 probe_tick;
 		sb32 emergency_ok;
 		sb32 verify_ok;
@@ -4538,6 +4542,13 @@ void syNetRollbackAfterBattleUpdate(void)
 			port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=grab_coupling\n", completed_tick);
 			sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
 		}
+		else if (syNetRbSnapshotSynctestShouldSkip(&skip_reason) != FALSE)
+		{
+			port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=%s\n",
+			         completed_tick,
+			         (skip_reason != NULL) ? skip_reason : "unknown");
+			sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
+		}
 		else
 		{
 			probe_tick = completed_tick - 1U;
@@ -4545,6 +4556,7 @@ void syNetRollbackAfterBattleUpdate(void)
 			verify_ok = FALSE;
 			if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 			{
+				syNetRbSnapshotFinalizeLoadCoupling(probe_tick);
 				verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 			}
 			if (emergency_ok != FALSE)

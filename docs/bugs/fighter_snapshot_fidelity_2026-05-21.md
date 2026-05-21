@@ -66,7 +66,9 @@ export SSB64_NETPLAY_RESIM_ANCHOR_PROBE=1
 
 1. **`syNetRbSnapshotLogFighterFieldDiffAtTick`** — named scalar diff vs ring blob; tags: `load_drift`, `baseline_universe`, `resim_anchor_probe`, `seal_authority_mismatch`.
 2. **AObj chain** — `SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX` 6→8→**12** (soak @569: `joint4/6_aobj_trunc stored=8 total=9`); `aobj_chain_total` on capture; log `jointN_aobj_trunc` when truncated.
-3. **Presentation sync** — `syNetRbSnapshotSyncFighterPresentation` after load verify in `syNetRollbackLoadPostTick` (apply → verify → presentation → rebind; save/verify stay pre-sync). Synctest emergency load/restore skips presentation. Legacy `ftMainSetStatus` only when `SNAPSHOT_FIGHTER_CLEANUP=force`.
+3. **Presentation sync** — `syNetRbSnapshotSyncFighterPresentation` after load verify in `syNetRollbackLoadPostTick` (apply → coupling rebind → verify → presentation → proc rebind). Synctest probe/restore: coupling only, no presentation. Legacy `ftMainSetStatus` only when `SNAPSHOT_FIGHTER_CLEANUP=force`.
+4. **Synctest gating** — skip during `intro_wait`, `item_hold`, `fighter_throw`, `item_throw` (`syNetRbSnapshotSynctestShouldSkip`).
+5. **Anim hash** — rollback fold includes `status_id`/`motion_id`, per-joint AObj chain total (detects cap truncation), shared with `syNetSyncHashFighterSlotAnim`.
 
 ## Re-soak result (fill after run)
 

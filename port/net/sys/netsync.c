@@ -169,6 +169,84 @@ static u32 syNetSyncFoldFighterSlotFullContribution(const FTStruct *fp)
 	return contribution;
 }
 
+static u32 syNetSyncFoldFighterAnimJointContribution(DObj *joint, u32 fold)
+{
+	AObj *aobj;
+	u32 aobj_steps;
+	u32 chain_total;
+
+	if (joint == NULL)
+	{
+		return fold;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(joint->anim_frame));
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(joint->anim_wait));
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(joint->anim_speed));
+	chain_total = 0U;
+	for (aobj = joint->aobj; aobj != NULL; aobj = aobj->next)
+	{
+		chain_total++;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, chain_total);
+	for (aobj = joint->aobj, aobj_steps = 0U;
+	     (aobj != NULL) && (aobj_steps < (u32)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
+	     aobj = aobj->next, aobj_steps++)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
+	}
+	return fold;
+}
+
+static u32 syNetSyncFoldFighterAnimRollback(const FTStruct *fp, GObj *fighter_gobj)
+{
+	u32 fold;
+	s32 ji;
+
+	if ((fp == NULL) || (fighter_gobj == NULL))
+	{
+		return 2166136261U;
+	}
+	fold = 2166136261U;
+	fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)fp->status_id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)fp->motion_id);
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		fold = syNetSyncFoldFighterAnimJointContribution(fp->joints[ji], fold);
+	}
+	return fold;
+}
+
+static u32 syNetSyncFoldAttackRecordSlots(const GMAttackRecord *records, s32 count, u32 fold)
+{
+	s32 i;
+
+	if (records == NULL)
+	{
+		return fold;
+	}
+	for (i = 0; i < count; i++)
+	{
+		const GMAttackRecord *rec = &records[i];
+
+		fold = syNetSyncFnvAccumulateU32(fold, (rec->victim_gobj != NULL) ? (u32)rec->victim_gobj->id : 0U);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_hurt);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_shield);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_reflect);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.group_id);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.timer_rehit);
+	}
+	return fold;
+}
+
 u32 syNetSyncHashFighterSlotFull(const FTStruct *fp)
 {
 	if (fp == NULL)
@@ -180,42 +258,7 @@ u32 syNetSyncHashFighterSlotFull(const FTStruct *fp)
 
 u32 syNetSyncHashFighterSlotAnim(const FTStruct *fp, GObj *fighter_gobj)
 {
-	u32 fold;
-	s32 ji;
-
-	if ((fp == NULL) || (fighter_gobj == NULL))
-	{
-		return 2166136261U;
-	}
-	fold = 2166136261U;
-	fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
-	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
-	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
-	{
-		if (fp->joints[ji] != NULL)
-		{
-			AObj *aobj;
-			u32 aobj_steps;
-
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
-			for (aobj = fp->joints[ji]->aobj, aobj_steps = 0U;
-			     (aobj != NULL) && (aobj_steps < (u32)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
-			     aobj = aobj->next, aobj_steps++)
-			{
-				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
-				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
-			}
-		}
-	}
-	return fold;
+	return syNetSyncFoldFighterAnimRollback(fp, fighter_gobj);
 }
 
 /* Walk active fighter GObj list; fold selected scalars per player slot, then merge slots deterministically. */
@@ -1556,8 +1599,8 @@ static u32 syNetSyncFoldActiveItemGobj(GObj *gobj)
 /*
  * Rollback load-verify item fold (must match snapshot blob semantics after apply).
  *
- * Included: kind, type, lifetime, percent_damage, lr, player, team, owner_gobj->id (0 if NULL),
- *           DObj translate x/y/z (syNetSyncHashF32).
+ * Included: kind, type, lifetime, percent_damage, lr, player, team, owner/damage/reflect gobj ids,
+ *           hold/thrown/damage-all flags, attack_state, attack_records[], DObj translate x/y/z.
  *
  * Omitted: gobj->id — snapshot apply may eject/respawn via itManagerMakeItemSetupCommon and allocate
  * fresh GObj ids; folding the item's own id caused false LOAD_HASH_DRIFT after respawn. Apply still
@@ -1583,6 +1626,14 @@ static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->player);
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->team);
 	fold = syNetSyncFnvAccumulateU32(fold, (ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, (ip->damage_gobj != NULL) ? (u32)ip->damage_gobj->id : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, (ip->reflect_gobj != NULL) ? (u32)ip->reflect_gobj->id : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, ip->is_hold ? 1U : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, ip->is_allow_pickup ? 1U : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, ip->is_thrown ? 1U : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, ip->is_damage_all ? 1U : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->attack_coll.attack_state);
+	fold = syNetSyncFoldAttackRecordSlots(ip->attack_coll.attack_records, GMATTACKREC_NUM_MAX, fold);
 	dobj = DObjGetStruct(gobj);
 	if (dobj != NULL)
 	{
@@ -1776,11 +1827,51 @@ u32 syNetSyncHashActiveWeaponsForRollback(void)
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(scl.y));
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(scl.z));
 		}
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->physics.vel_air.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->physics.vel_air.y));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->physics.vel_air.z));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->physics.vel_ground));
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->ga);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->attack_coll.attack_state);
+		fold = syNetSyncFoldAttackRecordSlots(wp->attack_coll.attack_records, GMATTACKREC_NUM_MAX, fold);
 		if (wp->kind == nWPKindEggThrow)
 		{
 			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.egg_throw.is_throw ? 1U : 0U);
 			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.egg_throw.is_spin ? 1U : 0U);
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->weapon_vars.egg_throw.throw_force));
+		}
+		else if (wp->kind == nWPKindFireball)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.fireball.index);
+		}
+		else if (wp->kind == nWPKindChargeShot)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.charge_shot.is_release ? 1U : 0U);
+			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.charge_shot.is_full_charge ? 1U : 0U);
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.charge_shot.charge_size);
+		}
+		else if ((wp->kind == nWPKindThunderJoltAir) || (wp->kind == nWPKindThunderJoltGround))
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.thunder_jolt.line_type);
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->weapon_vars.thunder_jolt.rotate.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->weapon_vars.thunder_jolt.rotate.y));
+		}
+		else if (wp->kind == nWPKindThunderHead)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.thunder.thunder_state);
+		}
+		else if ((wp->kind == nWPKindPKThunderHead) || (wp->kind == nWPKindPKThunderTrail))
+		{
+			if (wp->kind == nWPKindPKThunderHead)
+			{
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.pkthunder.status);
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->weapon_vars.pkthunder.angle));
+			}
+			else
+			{
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.pkthunder_trail.status);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)wp->weapon_vars.pkthunder_trail.trail_id);
+			}
 		}
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, 0x5A5A5A5AU);
@@ -1858,45 +1949,18 @@ u32 syNetSyncHashFighterAnimationStateForRollback(void)
 {
 	GObj *fighter_gobj;
 	u32 hash = 2166136261U;
-	s32 ji;
 
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
 	     fighter_gobj = fighter_gobj->link_next)
 	{
 		FTStruct *fp = ftGetStruct(fighter_gobj);
-		u32 fold = 2166136261U;
+		u32 fold;
 
 		if (fp == NULL)
 		{
 			continue;
 		}
-		fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
-		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
-		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
-		{
-			if (fp->joints[ji] != NULL)
-			{
-				AObj *aobj;
-				u32 aobj_steps;
-
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
-				for (aobj = fp->joints[ji]->aobj, aobj_steps = 0U;
-				     (aobj != NULL) && (aobj_steps < (u32)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
-				     aobj = aobj->next, aobj_steps++)
-				{
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
-				}
-			}
-		}
+		fold = syNetSyncFoldFighterAnimRollback(fp, fighter_gobj);
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, (u32)fp->player);
 	}
