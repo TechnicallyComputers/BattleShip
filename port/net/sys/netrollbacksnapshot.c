@@ -8,16 +8,32 @@
 
 #include <ft/fighter.h>
 #include <ft/ftchar/ftkirby/ftkirby.h>
+#include <ft/ftchar/ftkirby/ftkirbyfunctions.h>
 #include <ft/ftchar/ftlink/ftlink.h>
+#include <ft/ftchar/ftpikachu/ftpikachu.h>
+#include <ft/ftchar/ftness/ftness.h>
+#include <ft/ftchar/ftsamus/ftsamus.h>
+#include <ft/ftchar/ftsamus/ftsamusfunctions.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftchar/ftyoshi/ftyoshifunctions.h>
 #include <ft/ftdef.h>
 #include <ft/ftmain.h>
 #include <ft/fttypes.h>
 #include <wp/wpdef.h>
+#include <wp/wpfox/wpfoxblaster.h>
+#include <wp/wpkirby/wpkirbycutter.h>
 #include <wp/wplink/wplinkboomerang.h>
 #include <wp/wplink/wplinkspinattack.h>
+#include <wp/wpmario/wpmariofireball.h>
+#include <wp/wpness/wpnesspkfire.h>
+#include <wp/wpness/wpnesspkthunder.h>
+#include <wp/wppikachu/wppikachuthunder.h>
+#include <wp/wppikachu/wppikachuthunderjolt.h>
+#include <wp/wpsamus/wpsamusbomb.h>
+#include <wp/wpsamus/wpsamuschargeshot.h>
 #include <wp/wpyoshi/wpyoshieggthrow.h>
+#include <wp/wpyoshi/wpyoshistar.h>
+#include <wp/wpvars.h>
 #include <gm/gmdef.h>
 #include <gm/gmcamera.h>
 #include <it/item.h>
@@ -29,6 +45,7 @@
 #include <mp/mptypes.h>
 #include <sc/scmanager.h>
 #include <sc/sctypes.h>
+#include <wp/wpprocess.h>
 #include <wp/wpmanager.h>
 #include <wp/wptypes.h>
 
@@ -37,6 +54,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <it/itmain.h>
+#include <it/itcommon/itfflower.h>
+#include <it/itcommon/itlgun.h>
+#include <it/itcommon/itstarrod.h>
+#include <it/itvars.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -249,6 +270,9 @@ typedef struct SYNetRbSnapFighterBlob
 	u32 coupled_egg_weapon_gobj_id;
 	u32 coupled_boomerang_weapon_gobj_id;
 	u32 coupled_spin_attack_weapon_gobj_id;
+	u32 coupled_charge_weapon_gobj_id;
+	u32 coupled_pkthunder_weapon_gobj_id;
+	u32 coupled_thunder_weapon_gobj_id;
 
 } SYNetRbSnapFighterBlob;
 
@@ -309,6 +333,7 @@ typedef struct SYNetRbSnapItemBlob
 	u8 item_flags;
 	u8 item_flags_pad[3];
 	u8 item_vars[sizeof(union ITStatusVars)];
+	u32 attack_record_victim_gobj_id[GMATTACKREC_NUM_MAX];
 
 } SYNetRbSnapItemBlob;
 
@@ -335,8 +360,19 @@ typedef struct SYNetRbSnapWeaponBlob
 	Vec3f scale;
 	SYNetRbSnapDObjAnimBlob anim;
 	u8 weapon_vars[sizeof(union wpStatusVars)];
+	u32 attack_record_victim_gobj_id[GMATTACKREC_NUM_MAX];
+	u32 spawn_parent_gobj_id;
+	u32 var_parent_gobj_id;
+	u32 var_head_gobj_id;
+	u32 var_trail_gobj_id[WPPKTHUNDER_PARTS_COUNT];
+	u8 spawn_profile;
+	u8 pad[3];
 
 } SYNetRbSnapWeaponBlob;
+
+#define SYNETRB_WEAPON_SPAWN_DEFAULT           0U
+#define SYNETRB_WEAPON_SPAWN_PK_REFLECT_HEAD   1U
+#define SYNETRB_WEAPON_SPAWN_PK_REFLECT_TRAIL  2U
 
 typedef struct SYNetRbSnapCameraBlob
 {
@@ -497,6 +533,9 @@ static u32 syNetRbSnapGobjId(const GObj *gobj)
 }
 
 #ifdef PORT
+static void syNetRbSnapshotFinalizeLoadCouplingFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot, sb32 sync_presentation);
+
 static sb32 syNetRbSnapWeaponDiagEnabled(void)
 {
 	static int s_env_cache = -999;
@@ -551,6 +590,9 @@ static void syNetRbSnapCaptureFighterCoupledIds(SYNetRbSnapFighterBlob *blob, co
 	blob->coupled_egg_weapon_gobj_id = 0U;
 	blob->coupled_boomerang_weapon_gobj_id = 0U;
 	blob->coupled_spin_attack_weapon_gobj_id = 0U;
+	blob->coupled_charge_weapon_gobj_id = 0U;
+	blob->coupled_pkthunder_weapon_gobj_id = 0U;
+	blob->coupled_thunder_weapon_gobj_id = 0U;
 
 	if (fp->fkind == nFTKindYoshi)
 	{
@@ -571,6 +613,42 @@ static void syNetRbSnapCaptureFighterCoupledIds(SYNetRbSnapFighterBlob *blob, co
 	if (fp->fkind == nFTKindKirby)
 	{
 		blob->coupled_boomerang_weapon_gobj_id = syNetRbSnapGobjId(fp->passive_vars.kirby.copylink_boomerang_gobj);
+		if ((fp->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
+		    (fp->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
+		    (fp->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
+		{
+			blob->coupled_charge_weapon_gobj_id =
+			    syNetRbSnapGobjId(fp->status_vars.kirby.copysamus_specialn.charge_gobj);
+		}
+	}
+	if (fp->fkind == nFTKindSamus)
+	{
+		if ((fp->status_id == nFTSamusStatusSpecialNStart) || (fp->status_id == nFTSamusStatusSpecialNLoop) ||
+		    (fp->status_id == nFTSamusStatusSpecialAirNStart))
+		{
+			blob->coupled_charge_weapon_gobj_id = syNetRbSnapGobjId(fp->status_vars.samus.specialn.charge_gobj);
+		}
+	}
+	if (fp->fkind == nFTKindNess)
+	{
+		if ((fp->status_id == nFTNessStatusSpecialHiStart) || (fp->status_id == nFTNessStatusSpecialHiHold) ||
+		    (fp->status_id == nFTNessStatusSpecialAirHiStart) ||
+		    (fp->status_id == nFTNessStatusSpecialAirHiHold))
+		{
+			blob->coupled_pkthunder_weapon_gobj_id =
+			    syNetRbSnapGobjId(fp->status_vars.ness.specialhi.pkthunder_gobj);
+		}
+	}
+	if (fp->fkind == nFTKindPikachu)
+	{
+		if ((fp->status_id == nFTPikachuStatusSpecialLwStart) ||
+		    (fp->status_id == nFTPikachuStatusSpecialLwLoop) ||
+		    (fp->status_id == nFTPikachuStatusSpecialAirLwStart) ||
+		    (fp->status_id == nFTPikachuStatusSpecialAirLwLoop))
+		{
+			blob->coupled_thunder_weapon_gobj_id =
+			    syNetRbSnapGobjId(fp->status_vars.pikachu.speciallw.thunder_gobj);
+		}
 	}
 }
 
@@ -597,6 +675,39 @@ static void syNetRbSnapScrubCoupledPointersInBlob(SYNetRbSnapFighterBlob *blob)
 	if (blob->fkind == nFTKindKirby)
 	{
 		passive_vars->kirby.copylink_boomerang_gobj = NULL;
+		if ((blob->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
+		    (blob->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
+		    (blob->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
+		{
+			status_vars->kirby.copysamus_specialn.charge_gobj = NULL;
+		}
+	}
+	if (blob->fkind == nFTKindSamus)
+	{
+		if ((blob->status_id == nFTSamusStatusSpecialNStart) || (blob->status_id == nFTSamusStatusSpecialNLoop) ||
+		    (blob->status_id == nFTSamusStatusSpecialAirNStart))
+		{
+			status_vars->samus.specialn.charge_gobj = NULL;
+		}
+	}
+	if (blob->fkind == nFTKindNess)
+	{
+		if ((blob->status_id == nFTNessStatusSpecialHiStart) || (blob->status_id == nFTNessStatusSpecialHiHold) ||
+		    (blob->status_id == nFTNessStatusSpecialAirHiStart) ||
+		    (blob->status_id == nFTNessStatusSpecialAirHiHold))
+		{
+			status_vars->ness.specialhi.pkthunder_gobj = NULL;
+		}
+	}
+	if (blob->fkind == nFTKindPikachu)
+	{
+		if ((blob->status_id == nFTPikachuStatusSpecialLwStart) ||
+		    (blob->status_id == nFTPikachuStatusSpecialLwLoop) ||
+		    (blob->status_id == nFTPikachuStatusSpecialAirLwStart) ||
+		    (blob->status_id == nFTPikachuStatusSpecialAirLwLoop))
+		{
+			status_vars->pikachu.speciallw.thunder_gobj = NULL;
+		}
 	}
 }
 
@@ -620,6 +731,39 @@ static void syNetRbSnapScrubCoupledPointersInFighter(FTStruct *fp, const SYNetRb
 	if (fp->fkind == nFTKindKirby)
 	{
 		fp->passive_vars.kirby.copylink_boomerang_gobj = NULL;
+		if ((blob->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
+		    (blob->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
+		    (blob->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
+		{
+			fp->status_vars.kirby.copysamus_specialn.charge_gobj = NULL;
+		}
+	}
+	if (fp->fkind == nFTKindSamus)
+	{
+		if ((blob->status_id == nFTSamusStatusSpecialNStart) || (blob->status_id == nFTSamusStatusSpecialNLoop) ||
+		    (blob->status_id == nFTSamusStatusSpecialAirNStart))
+		{
+			fp->status_vars.samus.specialn.charge_gobj = NULL;
+		}
+	}
+	if (fp->fkind == nFTKindNess)
+	{
+		if ((blob->status_id == nFTNessStatusSpecialHiStart) || (blob->status_id == nFTNessStatusSpecialHiHold) ||
+		    (blob->status_id == nFTNessStatusSpecialAirHiStart) ||
+		    (blob->status_id == nFTNessStatusSpecialAirHiHold))
+		{
+			fp->status_vars.ness.specialhi.pkthunder_gobj = NULL;
+		}
+	}
+	if (fp->fkind == nFTKindPikachu)
+	{
+		if ((blob->status_id == nFTPikachuStatusSpecialLwStart) ||
+		    (blob->status_id == nFTPikachuStatusSpecialLwLoop) ||
+		    (blob->status_id == nFTPikachuStatusSpecialAirLwStart) ||
+		    (blob->status_id == nFTPikachuStatusSpecialAirLwLoop))
+		{
+			fp->status_vars.pikachu.speciallw.thunder_gobj = NULL;
+		}
 	}
 }
 
@@ -639,6 +783,161 @@ sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void)
 		}
 	}
 	return FALSE;
+}
+
+static sb32 syNetRbSnapshotAnyFighterItemThrowActive(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		if ((fp->status_id >= nFTCommonStatusLightThrowStart) &&
+		    (fp->status_id <= nFTCommonStatusLightThrowEnd))
+		{
+			return TRUE;
+		}
+		if ((fp->status_id >= nFTCommonStatusHeavyThrowStart) &&
+		    (fp->status_id <= nFTCommonStatusHeavyThrowEnd))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapshotAnyItemThrowInFlight(void)
+{
+	GObj *item_gobj;
+
+	for (item_gobj = gGCCommonLinks[nGCCommonLinkIDItem]; item_gobj != NULL; item_gobj = item_gobj->link_next)
+	{
+		ITStruct *ip = itGetStruct(item_gobj);
+
+		if ((ip != NULL) && (ip->is_thrown != FALSE) && (ip->owner_gobj != NULL))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out)
+{
+	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "intro_wait";
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapshotAnyItemHoldCouplingActive() != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "item_hold";
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapshotAnyFighterItemThrowActive() != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "fighter_throw";
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapshotAnyItemThrowInFlight() != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "item_throw";
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* Any live held item or fighter item_gobj coupling (all link slots). */
+sb32 syNetRbSnapshotAnyItemHoldCouplingActive(void)
+{
+	GObj *fighter_gobj;
+	GObj *item_gobj;
+
+	for (item_gobj = gGCCommonLinks[nGCCommonLinkIDItem]; item_gobj != NULL; item_gobj = item_gobj->link_next)
+	{
+		ITStruct *ip = itGetStruct(item_gobj);
+
+		if ((ip != NULL) && (ip->is_hold != FALSE))
+		{
+			return TRUE;
+		}
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if ((fp != NULL) && (fp->item_gobj != NULL))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* Restore bidirectional item_gobj <-> owner_gobj for held items (all fighters/items). */
+static void syNetRbSnapRebindFighterItemHoldCoupling(void)
+{
+	GObj *fighter_gobj;
+	GObj *item_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		GObj *held_item_gobj;
+		ITStruct *ip;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		held_item_gobj = fp->item_gobj;
+		if (held_item_gobj == NULL)
+		{
+			continue;
+		}
+		ip = itGetStruct(held_item_gobj);
+		if ((ip != NULL) && (ip->is_hold != FALSE))
+		{
+			ip->owner_gobj = fighter_gobj;
+		}
+	}
+	for (item_gobj = gGCCommonLinks[nGCCommonLinkIDItem]; item_gobj != NULL; item_gobj = item_gobj->link_next)
+	{
+		ITStruct *ip;
+		FTStruct *fp;
+
+		ip = itGetStruct(item_gobj);
+		if ((ip == NULL) || (ip->is_hold == FALSE) || (ip->owner_gobj == NULL))
+		{
+			continue;
+		}
+		fp = ftGetStruct(ip->owner_gobj);
+		if (fp != NULL)
+		{
+			fp->item_gobj = item_gobj;
+		}
+	}
 }
 
 /* Restore bidirectional catch_gobj <-> capture_gobj after snapshot apply (all fighters). */
@@ -795,6 +1094,110 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 			{
 				fp->status_vars.link.specialhi.spin_attack_gobj = spin_gobj;
 			}
+		}
+
+		if (blob->coupled_charge_weapon_gobj_id != 0U)
+		{
+			GObj *charge_gobj = syNetRbSnapResolveLiveGobj(blob->coupled_charge_weapon_gobj_id);
+
+			if ((charge_gobj == NULL) && (syNetRbSnapCoupledDiagEnabled() != FALSE))
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: SNAPSHOT_COUPLED_GOBJ_MISS tick=%u player=%d kind=charge id=%u\n",
+				    (unsigned int)slot->tick,
+				    (int)fp->player,
+				    (unsigned int)blob->coupled_charge_weapon_gobj_id);
+			}
+			if (fp->fkind == nFTKindSamus)
+			{
+				if ((fp->status_id == nFTSamusStatusSpecialNStart) ||
+				    (fp->status_id == nFTSamusStatusSpecialNLoop) ||
+				    (fp->status_id == nFTSamusStatusSpecialAirNStart))
+				{
+					fp->status_vars.samus.specialn.charge_gobj = charge_gobj;
+					if (charge_gobj != NULL)
+					{
+						ftSamusSpecialNSetChargeShotPosition(fp);
+					}
+				}
+			}
+			if (fp->fkind == nFTKindKirby)
+			{
+				if ((fp->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
+				    (fp->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
+				    (fp->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
+				{
+					fp->status_vars.kirby.copysamus_specialn.charge_gobj = charge_gobj;
+					if (charge_gobj != NULL)
+					{
+						ftKirbyCopySamusSpecialNSetChargeShotPosition(fp);
+					}
+				}
+			}
+		}
+
+		if (blob->coupled_pkthunder_weapon_gobj_id != 0U)
+		{
+			GObj *pkthunder_gobj = syNetRbSnapResolveLiveGobj(blob->coupled_pkthunder_weapon_gobj_id);
+
+			if ((pkthunder_gobj == NULL) && (syNetRbSnapCoupledDiagEnabled() != FALSE))
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: SNAPSHOT_COUPLED_GOBJ_MISS tick=%u player=%d kind=pkthunder id=%u\n",
+				    (unsigned int)slot->tick,
+				    (int)fp->player,
+				    (unsigned int)blob->coupled_pkthunder_weapon_gobj_id);
+			}
+			if (fp->fkind == nFTKindNess)
+			{
+				if ((fp->status_id == nFTNessStatusSpecialHiStart) ||
+				    (fp->status_id == nFTNessStatusSpecialHiHold) ||
+				    (fp->status_id == nFTNessStatusSpecialAirHiStart) ||
+				    (fp->status_id == nFTNessStatusSpecialAirHiHold))
+				{
+					fp->status_vars.ness.specialhi.pkthunder_gobj = pkthunder_gobj;
+				}
+			}
+		}
+
+		if (blob->coupled_thunder_weapon_gobj_id != 0U)
+		{
+			GObj *thunder_gobj = syNetRbSnapResolveLiveGobj(blob->coupled_thunder_weapon_gobj_id);
+
+			if ((thunder_gobj == NULL) && (syNetRbSnapCoupledDiagEnabled() != FALSE))
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: SNAPSHOT_COUPLED_GOBJ_MISS tick=%u player=%d kind=thunder id=%u\n",
+				    (unsigned int)slot->tick,
+				    (int)fp->player,
+				    (unsigned int)blob->coupled_thunder_weapon_gobj_id);
+			}
+			if (fp->fkind == nFTKindPikachu)
+			{
+				if ((fp->status_id == nFTPikachuStatusSpecialLwStart) ||
+				    (fp->status_id == nFTPikachuStatusSpecialLwLoop) ||
+				    (fp->status_id == nFTPikachuStatusSpecialAirLwStart) ||
+				    (fp->status_id == nFTPikachuStatusSpecialAirLwLoop))
+				{
+					fp->status_vars.pikachu.speciallw.thunder_gobj = thunder_gobj;
+				}
+			}
+		}
+	}
+}
+
+static void syNetRbSnapRefreshWeaponHitPositions(void)
+{
+	GObj *weapon_gobj;
+
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		WPStruct *wp = wpGetStruct(weapon_gobj);
+
+		if ((wp != NULL) && (wp->attack_coll.attack_state != nGMAttackStateOff))
+		{
+			wpProcessUpdateHitPositions(weapon_gobj);
 		}
 	}
 }
@@ -1342,6 +1745,7 @@ void syNetRbSnapshotRebindAllFighters(void)
 		}
 	}
 	syNetRbSnapRebindFighterGrabCoupling();
+	syNetRbSnapRebindFighterItemHoldCoupling();
 }
 
 void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a)
@@ -1851,6 +2255,9 @@ static sb32 syNetRbSnapSnapshotItemDiagEnabled(void)
 }
 #endif
 
+static void syNetRbSnapCaptureItemBlobMeta(SYNetRbSnapItemBlob *blob, const ITStruct *ip);
+static void syNetRbSnapApplyItemBlobMeta(ITStruct *ip, const SYNetRbSnapItemBlob *blob);
+
 static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
 {
 	GObj *sorted[SYNETRB_SNAPSHOT_MAX_ITEMS];
@@ -1915,6 +2322,9 @@ static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
 			blob->item_flags |= 0x02U;
 		}
 		memcpy(blob->item_vars, &ip->item_vars, sizeof(blob->item_vars));
+#ifdef PORT
+		syNetRbSnapCaptureItemBlobMeta(blob, ip);
+#endif
 	}
 	slot->item_count = count;
 #ifdef PORT
@@ -1934,6 +2344,36 @@ static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
 		return FALSE;
 	}
 	return TRUE;
+}
+
+static void syNetRbSnapCaptureItemBlobMeta(SYNetRbSnapItemBlob *blob, const ITStruct *ip)
+{
+	s32 i;
+
+	if ((blob == NULL) || (ip == NULL))
+	{
+		return;
+	}
+	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
+	{
+		blob->attack_record_victim_gobj_id[i] = syNetRbSnapGobjId(ip->attack_coll.attack_records[i].victim_gobj);
+		blob->attack_coll.attack_records[i].victim_gobj = NULL;
+	}
+}
+
+static void syNetRbSnapApplyItemBlobMeta(ITStruct *ip, const SYNetRbSnapItemBlob *blob)
+{
+	s32 i;
+
+	if ((ip == NULL) || (blob == NULL))
+	{
+		return;
+	}
+	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
+	{
+		ip->attack_coll.attack_records[i].victim_gobj =
+		    syNetRbSnapResolveLiveGobj(blob->attack_record_victim_gobj_id[i]);
+	}
 }
 
 static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob *blob)
@@ -1965,6 +2405,7 @@ static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob
 	syNetRbSnapApplyMPColl(&ip->coll_data, &blob->coll, topn, &ip->lr);
 	ip->ga = blob->ga;
 	ip->attack_coll = blob->attack_coll;
+	syNetRbSnapApplyItemBlobMeta(ip, blob);
 	ip->damage_coll = blob->damage_coll;
 	ip->lifetime = blob->lifetime;
 	ip->owner_gobj = syNetRbSnapResolveLiveGobj(blob->owner_gobj_id);
@@ -2094,6 +2535,7 @@ static void syNetRbSnapReconcileOrphanHeldItems(const SYNetRbSnapshotSlot *slot)
 			itMainDetachOrphanHoldDisplay(item_gobj);
 		}
 	}
+	syNetRbSnapRebindFighterItemHoldCoupling();
 }
 #endif
 
@@ -2202,6 +2644,317 @@ static void syNetRbSnapApplyItems(const SYNetRbSnapshotSlot *slot)
 #endif
 }
 
+#ifdef PORT
+static u8 syNetRbSnapWeaponSpawnProfile(const WPStruct *wp)
+{
+	if (wp == NULL)
+	{
+		return SYNETRB_WEAPON_SPAWN_DEFAULT;
+	}
+	if (wp->proc_update == wpNessPKReflectHeadProcUpdate)
+	{
+		return SYNETRB_WEAPON_SPAWN_PK_REFLECT_HEAD;
+	}
+	if (wp->proc_update == wpNessPKReflectTrailProcUpdate)
+	{
+		return SYNETRB_WEAPON_SPAWN_PK_REFLECT_TRAIL;
+	}
+	return SYNETRB_WEAPON_SPAWN_DEFAULT;
+}
+
+static f32 syNetRbSnapVec3DistSq(const Vec3f *a, const Vec3f *b)
+{
+	f32 dx;
+	f32 dy;
+	f32 dz;
+
+	dx = a->x - b->x;
+	dy = a->y - b->y;
+	dz = a->z - b->z;
+	return (dx * dx) + (dy * dy) + (dz * dz);
+}
+
+static u32 syNetRbSnapFindWeaponGobjIdByKindGroupPlayer(const SYNetRbSnapshotSlot *slot, s32 kind, u32 group_id,
+                                                        u8 player, u32 skip_gobj_id)
+{
+	s32 si;
+
+	if (slot == NULL)
+	{
+		return 0U;
+	}
+	for (si = 0; si < slot->weapon_count; si++)
+	{
+		const SYNetRbSnapWeaponBlob *other = &slot->weapons[si];
+
+		if ((other->is_valid == FALSE) || (other->gobj_id == skip_gobj_id))
+		{
+			continue;
+		}
+		if ((other->kind == kind) && (other->group_id == group_id) && (other->player == player))
+		{
+			return other->gobj_id;
+		}
+	}
+	return 0U;
+}
+
+static u32 syNetRbSnapFindThunderJoltAirParentGobjId(const SYNetRbSnapshotSlot *slot, const SYNetRbSnapWeaponBlob *blob)
+{
+	s32 si;
+	u32 best_id;
+	f32 best_dist;
+
+	best_id = 0U;
+	best_dist = 1.0e30F;
+	for (si = 0; si < slot->weapon_count; si++)
+	{
+		const SYNetRbSnapWeaponBlob *other = &slot->weapons[si];
+		f32 dist;
+
+		if ((other->is_valid == FALSE) || (other->gobj_id == blob->gobj_id))
+		{
+			continue;
+		}
+		if ((other->kind != nWPKindThunderJoltAir) || (other->player != blob->player) ||
+		    (other->owner_gobj_id != blob->owner_gobj_id))
+		{
+			continue;
+		}
+		dist = syNetRbSnapVec3DistSq(&blob->translate, &other->translate);
+		if (dist < best_dist)
+		{
+			best_dist = dist;
+			best_id = other->gobj_id;
+		}
+	}
+	return best_id;
+}
+
+static u32 syNetRbSnapInferWeaponSpawnParentGobjId(const SYNetRbSnapshotSlot *slot, const SYNetRbSnapWeaponBlob *blob)
+{
+	switch (blob->kind)
+	{
+	case nWPKindThunderJoltGround:
+		return syNetRbSnapFindThunderJoltAirParentGobjId(slot, blob);
+
+	case nWPKindThunderTrail:
+	case nWPKindPKThunderTrail:
+		if (blob->var_head_gobj_id != 0U)
+		{
+			return blob->var_head_gobj_id;
+		}
+		if (blob->var_parent_gobj_id != 0U)
+		{
+			return blob->var_parent_gobj_id;
+		}
+		return syNetRbSnapFindWeaponGobjIdByKindGroupPlayer(slot, nWPKindThunderHead, blob->group_id, blob->player,
+		                                                  blob->gobj_id);
+
+	case nWPKindPKThunderHead:
+		if (blob->spawn_profile == SYNETRB_WEAPON_SPAWN_PK_REFLECT_HEAD)
+		{
+			u32 pk_head_id;
+
+			pk_head_id = syNetRbSnapFindWeaponGobjIdByKindGroupPlayer(slot, nWPKindPKThunderHead, blob->group_id,
+			                                                          blob->player, blob->gobj_id);
+			if (pk_head_id != 0U)
+			{
+				return pk_head_id;
+			}
+		}
+		return blob->owner_gobj_id;
+
+	default:
+		return blob->owner_gobj_id;
+	}
+}
+
+static void syNetRbSnapScrubWeaponVarsInBlob(SYNetRbSnapWeaponBlob *blob)
+{
+	union wpStatusVars *vars = (union wpStatusVars *)blob->weapon_vars;
+	s32 i;
+
+	switch (blob->kind)
+	{
+	case nWPKindChargeShot:
+		vars->charge_shot.owner_gobj = NULL;
+		break;
+
+	case nWPKindBoomerang:
+		vars->boomerang.parent_gobj = NULL;
+		break;
+
+	case nWPKindPKThunderHead:
+		vars->pkthunder.parent_gobj = NULL;
+		for (i = 0; i < WPPKTHUNDER_PARTS_COUNT; i++)
+		{
+			vars->pkthunder.trail_gobj[i] = NULL;
+		}
+		break;
+
+	case nWPKindPKThunderTrail:
+		vars->pkthunder_trail.parent_gobj = NULL;
+		vars->pkthunder_trail.head_gobj = NULL;
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void syNetRbSnapCaptureWeaponBlobMeta(SYNetRbSnapshotSlot *slot, SYNetRbSnapWeaponBlob *blob, GObj *gobj,
+                                             const WPStruct *wp)
+{
+	s32 i;
+
+	if ((blob == NULL) || (wp == NULL))
+	{
+		return;
+	}
+	blob->spawn_profile = syNetRbSnapWeaponSpawnProfile(wp);
+	blob->spawn_parent_gobj_id = syNetRbSnapGobjId(wp->owner_gobj);
+	blob->var_parent_gobj_id = 0U;
+	blob->var_head_gobj_id = 0U;
+	for (i = 0; i < WPPKTHUNDER_PARTS_COUNT; i++)
+	{
+		blob->var_trail_gobj_id[i] = 0U;
+	}
+	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
+	{
+		blob->attack_record_victim_gobj_id[i] = syNetRbSnapGobjId(wp->attack_coll.attack_records[i].victim_gobj);
+		blob->attack_coll.attack_records[i].victim_gobj = NULL;
+	}
+	switch (blob->kind)
+	{
+	case nWPKindChargeShot:
+		blob->var_parent_gobj_id = syNetRbSnapGobjId(wp->weapon_vars.charge_shot.owner_gobj);
+		break;
+
+	case nWPKindBoomerang:
+		blob->var_parent_gobj_id = syNetRbSnapGobjId(wp->weapon_vars.boomerang.parent_gobj);
+		break;
+
+	case nWPKindPKThunderHead:
+		blob->var_parent_gobj_id = syNetRbSnapGobjId(wp->weapon_vars.pkthunder.parent_gobj);
+		for (i = 0; i < WPPKTHUNDER_PARTS_COUNT; i++)
+		{
+			blob->var_trail_gobj_id[i] = syNetRbSnapGobjId(wp->weapon_vars.pkthunder.trail_gobj[i]);
+		}
+		break;
+
+	case nWPKindPKThunderTrail:
+		blob->var_parent_gobj_id = syNetRbSnapGobjId(wp->weapon_vars.pkthunder_trail.parent_gobj);
+		blob->var_head_gobj_id = syNetRbSnapGobjId(wp->weapon_vars.pkthunder_trail.head_gobj);
+		break;
+
+	default:
+		break;
+	}
+	syNetRbSnapScrubWeaponVarsInBlob(blob);
+}
+
+static void syNetRbSnapFinalizeWeaponBlobParents(SYNetRbSnapshotSlot *slot)
+{
+	s32 si;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (si = 0; si < slot->weapon_count; si++)
+	{
+		if (slot->weapons[si].is_valid != FALSE)
+		{
+			slot->weapons[si].spawn_parent_gobj_id =
+			    syNetRbSnapInferWeaponSpawnParentGobjId(slot, &slot->weapons[si]);
+		}
+	}
+}
+
+static void syNetRbSnapApplyWeaponBlobMeta(WPStruct *wp, const SYNetRbSnapWeaponBlob *blob)
+{
+	s32 i;
+
+	if ((wp == NULL) || (blob == NULL))
+	{
+		return;
+	}
+	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
+	{
+		wp->attack_coll.attack_records[i].victim_gobj =
+		    syNetRbSnapResolveLiveGobj(blob->attack_record_victim_gobj_id[i]);
+	}
+	switch (blob->kind)
+	{
+	case nWPKindChargeShot:
+		wp->weapon_vars.charge_shot.owner_gobj = syNetRbSnapResolveLiveGobj(blob->var_parent_gobj_id);
+		if (wp->weapon_vars.charge_shot.owner_gobj == NULL)
+		{
+			wp->weapon_vars.charge_shot.owner_gobj = wp->owner_gobj;
+		}
+		break;
+
+	case nWPKindBoomerang:
+		wp->weapon_vars.boomerang.parent_gobj = syNetRbSnapResolveLiveGobj(blob->var_parent_gobj_id);
+		if (wp->weapon_vars.boomerang.parent_gobj == NULL)
+		{
+			wp->weapon_vars.boomerang.parent_gobj = wp->owner_gobj;
+		}
+		break;
+
+	case nWPKindPKThunderHead:
+		wp->weapon_vars.pkthunder.parent_gobj = syNetRbSnapResolveLiveGobj(blob->var_parent_gobj_id);
+		if (wp->weapon_vars.pkthunder.parent_gobj == NULL)
+		{
+			wp->weapon_vars.pkthunder.parent_gobj = wp->owner_gobj;
+		}
+		for (i = 0; i < WPPKTHUNDER_PARTS_COUNT; i++)
+		{
+			wp->weapon_vars.pkthunder.trail_gobj[i] = syNetRbSnapResolveLiveGobj(blob->var_trail_gobj_id[i]);
+		}
+		break;
+
+	case nWPKindPKThunderTrail:
+		wp->weapon_vars.pkthunder_trail.parent_gobj = syNetRbSnapResolveLiveGobj(blob->var_parent_gobj_id);
+		wp->weapon_vars.pkthunder_trail.head_gobj = syNetRbSnapResolveLiveGobj(blob->var_head_gobj_id);
+		if (wp->weapon_vars.pkthunder_trail.head_gobj == NULL)
+		{
+			wp->weapon_vars.pkthunder_trail.head_gobj = wp->weapon_vars.pkthunder_trail.parent_gobj;
+		}
+		break;
+
+	default:
+		break;
+	}
+}
+
+static GObj *syNetRbSnapResolveWeaponSpawnParent(const SYNetRbSnapWeaponBlob *blob)
+{
+	GObj *parent_gobj;
+
+	if (blob == NULL)
+	{
+		return NULL;
+	}
+	parent_gobj = syNetRbSnapResolveLiveGobj(blob->spawn_parent_gobj_id);
+	if (parent_gobj == NULL)
+	{
+		parent_gobj = syNetRbSnapResolveLiveGobj(blob->owner_gobj_id);
+	}
+	return parent_gobj;
+}
+
+static f32 syNetRbSnapPKFireAngleFromBlob(const SYNetRbSnapWeaponBlob *blob)
+{
+	if ((blob == NULL) || (blob->lr == 0))
+	{
+		return 0.0F;
+	}
+	return (blob->rotate.z / (f32)blob->lr) - F_CST_DTOR32(90.0F);
+}
+#endif /* PORT */
+
 static sb32 syNetRbSnapCaptureWeapons(SYNetRbSnapshotSlot *slot)
 {
 	GObj *gobj;
@@ -2257,9 +3010,15 @@ static sb32 syNetRbSnapCaptureWeapons(SYNetRbSnapshotSlot *slot)
 			syNetRbSnapCaptureDObjAnim(&blob->anim, dobj);
 		}
 		memcpy(blob->weapon_vars, &wp->weapon_vars, sizeof(blob->weapon_vars));
+#ifdef PORT
+		syNetRbSnapCaptureWeaponBlobMeta(slot, blob, gobj, wp);
+#endif
 		count++;
 	}
 	slot->weapon_count = count;
+#ifdef PORT
+	syNetRbSnapFinalizeWeaponBlobParents(slot);
+#endif
 	if (truncated != FALSE)
 	{
 		port_log("SSB64 NetRbSnapshot: weapon cap overflow (max=%d) tick=%u — save failed\n",
@@ -2270,32 +3029,126 @@ static sb32 syNetRbSnapCaptureWeapons(SYNetRbSnapshotSlot *slot)
 	return TRUE;
 }
 
+static ub8 syNetRbSnapStarRodIsSmashFromBlob(const SYNetRbSnapWeaponBlob *blob)
+{
+	f32 vel_x;
+
+	if (blob == NULL)
+	{
+		return FALSE;
+	}
+	vel_x = blob->physics.vel_air.x;
+	if (vel_x < 0.0F)
+	{
+		vel_x = -vel_x;
+	}
+	return (vel_x >= (ITSTARROD_AMMO_SMASH_VEL_X - 1.0F)) ? TRUE : FALSE;
+}
+
 static GObj *syNetRbSnapSpawnWeaponFromBlob(const SYNetRbSnapWeaponBlob *blob)
 {
 	GObj *owner_gobj;
+	GObj *parent_gobj;
+	Vec3f spawn_pos;
+	Vec3f vel;
+	union wpStatusVars *vars;
 
 	if ((blob == NULL) || (blob->is_valid == FALSE))
 	{
 		return NULL;
 	}
-	Vec3f spawn_pos;
-
 	owner_gobj = syNetRbSnapResolveLiveGobj(blob->owner_gobj_id);
+	parent_gobj = syNetRbSnapResolveWeaponSpawnParent(blob);
 	if (owner_gobj == NULL)
 	{
 		return NULL;
 	}
 	spawn_pos = blob->translate;
+	vel = blob->physics.vel_air;
+	vars = (union wpStatusVars *)blob->weapon_vars;
 	switch (blob->kind)
 	{
+	case nWPKindFireball:
+		return wpMarioFireballMakeWeapon(owner_gobj, &spawn_pos, vars->fireball.index);
+
+	case nWPKindBlaster:
+		return wpFoxBlasterMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindChargeShot:
+		return wpSamusChargeShotMakeWeapon(owner_gobj, &spawn_pos, vars->charge_shot.charge_size,
+		                                   vars->charge_shot.is_release);
+
+	case nWPKindSamusBomb:
+		return wpSamusBombMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindCutter:
+		return wpKirbyCutterMakeWeapon(owner_gobj, &spawn_pos);
+
 	case nWPKindEggThrow:
 		return wpYoshiEggThrowMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindYoshiStar:
+		return wpYoshiStarMakeWeapon(owner_gobj, &spawn_pos, blob->lr);
 
 	case nWPKindBoomerang:
 		return wpLinkBoomerangMakeWeapon(owner_gobj, &spawn_pos);
 
 	case nWPKindSpinAttack:
 		return wpLinkSpinAttackMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindThunderJoltAir:
+		return wpPikachuThunderJoltAirMakeWeapon(owner_gobj, &spawn_pos, &vel);
+
+	case nWPKindThunderJoltGround:
+		if (parent_gobj == NULL)
+		{
+			return NULL;
+		}
+		return wpPikachuThunderJoltGroundMakeWeapon(parent_gobj, &spawn_pos, vars->thunder_jolt.line_type);
+
+	case nWPKindThunderHead:
+		return wpPikachuThunderHeadMakeWeapon(owner_gobj, &spawn_pos, &vel);
+
+	case nWPKindThunderTrail:
+		if (parent_gobj == NULL)
+		{
+			return NULL;
+		}
+		return wpPikachuThunderTrailMakeWeapon(parent_gobj, &spawn_pos);
+
+	case nWPKindPKFire:
+		return wpNessPKFireMakeWeapon(owner_gobj, &spawn_pos, &vel, syNetRbSnapPKFireAngleFromBlob(blob));
+
+	case nWPKindPKThunderHead:
+		if (blob->spawn_profile == SYNETRB_WEAPON_SPAWN_PK_REFLECT_HEAD)
+		{
+			if (parent_gobj == NULL)
+			{
+				return NULL;
+			}
+			return wpNessPKReflectHeadMakeWeapon(parent_gobj, &spawn_pos, vars->pkthunder.angle);
+		}
+		return wpNessPKThunderHeadMakeWeapon(owner_gobj, &spawn_pos, &vel);
+
+	case nWPKindPKThunderTrail:
+		if (parent_gobj == NULL)
+		{
+			return NULL;
+		}
+		if (blob->spawn_profile == SYNETRB_WEAPON_SPAWN_PK_REFLECT_TRAIL)
+		{
+			return wpNessPKReflectTrailMakeWeapon(parent_gobj, &spawn_pos, vars->pkthunder_trail.trail_id);
+		}
+		return wpNessPKThunderTrailMakeWeapon(parent_gobj, &spawn_pos, vars->pkthunder_trail.trail_id);
+
+	case nWPKindLGunAmmo:
+		return itLGunWeaponAmmoMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindFFlowerFlame:
+		return itFFlowerWeaponFlameMakeWeapon(owner_gobj, &spawn_pos, &vel);
+
+	case nWPKindStarRodStar:
+		return itStarRodWeaponStarMakeWeapon(owner_gobj, &spawn_pos, syNetRbSnapStarRodIsSmashFromBlob(blob));
 
 	default:
 #ifdef PORT
@@ -2344,12 +3197,14 @@ static void syNetRbSnapApplyWeaponBlobToGObj(GObj *gobj, const SYNetRbSnapWeapon
 		syNetRbSnapApplyDObjAnim(dobj, &blob->anim);
 	}
 	memcpy(&wp->weapon_vars, blob->weapon_vars, sizeof(wp->weapon_vars));
+	syNetRbSnapApplyWeaponBlobMeta(wp, blob);
 }
 
 static void syNetRbSnapApplyWeapons(const SYNetRbSnapshotSlot *slot)
 {
 	GObj *gobj;
 	s32 si;
+	s32 pass;
 	sb32 matched[SYNETRB_SNAPSHOT_MAX_WEAPONS];
 	s32 ejected_count;
 	s32 matched_count;
@@ -2398,29 +3253,71 @@ static void syNetRbSnapApplyWeapons(const SYNetRbSnapshotSlot *slot)
 		gobj = next_gobj;
 	}
 
+	for (pass = 0; pass <= slot->weapon_count; pass++)
+	{
+		sb32 any_spawned;
+
+		any_spawned = FALSE;
+		for (si = 0; si < slot->weapon_count; si++)
+		{
+			const SYNetRbSnapWeaponBlob *blob;
+			GObj *spawned;
+
+			if ((matched[si] != FALSE) || (slot->weapons[si].is_valid == FALSE))
+			{
+				continue;
+			}
+			blob = &slot->weapons[si];
+			spawned = syNetRbSnapSpawnWeaponFromBlob(blob);
+			if (spawned != NULL)
+			{
+				respawned_count++;
+				any_spawned = TRUE;
+				syNetRbSnapApplyWeaponBlobToGObj(spawned, blob);
+				matched[si] = TRUE;
+			}
+		}
+		if (any_spawned == FALSE)
+		{
+			break;
+		}
+	}
 	for (si = 0; si < slot->weapon_count; si++)
 	{
-		const SYNetRbSnapWeaponBlob *blob;
-		GObj *spawned;
-
-		if ((matched[si] != FALSE) || (slot->weapons[si].is_valid == FALSE))
-		{
-			continue;
-		}
-		blob = &slot->weapons[si];
-		spawned = syNetRbSnapSpawnWeaponFromBlob(blob);
-		if (spawned == NULL)
+		if ((matched[si] == FALSE) && (slot->weapons[si].is_valid != FALSE))
 		{
 #ifdef PORT
-			port_log("SSB64 NetRbSnapshot: weapon respawn failed tick=%u kind=%d owner_id=%u\n",
+			port_log("SSB64 NetRbSnapshot: weapon respawn failed tick=%u kind=%d owner_id=%u parent_id=%u\n",
 			         (unsigned int)slot->tick,
-			         (int)blob->kind,
-			         (unsigned int)blob->owner_gobj_id);
+			         (int)slot->weapons[si].kind,
+			         (unsigned int)slot->weapons[si].owner_gobj_id,
+			         (unsigned int)slot->weapons[si].spawn_parent_gobj_id);
 #endif
+		}
+	}
+
+	for (gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; gobj != NULL; gobj = gobj->link_next)
+	{
+		WPStruct *wp = wpGetStruct(gobj);
+		s32 found;
+
+		if (wp == NULL)
+		{
 			continue;
 		}
-		respawned_count++;
-		syNetRbSnapApplyWeaponBlobToGObj(spawned, blob);
+		found = -1;
+		for (si = 0; si < slot->weapon_count; si++)
+		{
+			if ((slot->weapons[si].is_valid != FALSE) && (slot->weapons[si].gobj_id == gobj->id))
+			{
+				found = si;
+				break;
+			}
+		}
+		if (found >= 0)
+		{
+			syNetRbSnapApplyWeaponBlobMeta(wp, &slot->weapons[found]);
+		}
 	}
 
 #ifdef PORT
@@ -2615,6 +3512,8 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	/*
 	 * Mirror syNetRbSnapFillSlotFromLive capture order (fighters before map/world) so MPColl/floor state
 	 * applied from map does not run before fighter joint/coll restore — avoids LOAD_HASH_DRIFT on figh.
+	 * Fighter-coupled weapon rebind runs in syNetRbSnapshotFinalizeLoadCoupling (before load-hash verify);
+	 * figatree presentation sync runs after verify passes (syNetRbSnapshotSyncFighterPresentation).
 	 * ftMainRebindStatusProcs runs only after load verify (syNetRbSnapshotRebindAllFighters).
 	 */
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
@@ -2641,8 +3540,8 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapApplyItems(slot);
 	syNetRbSnapApplyWeapons(slot);
 #ifdef PORT
-	syNetRbSnapRebindFighterCoupledGObjs(slot);
 	syNetRbSnapRebindFighterGrabCoupling();
+	syNetRbSnapRebindFighterItemHoldCoupling();
 #endif
 	syNetRbSnapApplyCamera(&slot->camera);
 }
@@ -2665,6 +3564,7 @@ sb32 syNetRbSnapshotRestoreLiveEmergency(void)
 		return FALSE;
 	}
 	syNetRbSnapApplySlotToLive(&sSYNetRbEmergencySlot);
+	syNetRbSnapshotFinalizeLoadCouplingFromSlot(&sSYNetRbEmergencySlot);
 	syNetRbSnapshotRebindAllFighters();
 	sSYNetRbEmergencyValid = FALSE;
 	return TRUE;
@@ -2743,14 +3643,11 @@ static sb32 syNetRbSnapFighterCleanupForceLegacySetStatus(void)
 #endif /* PORT */
 
 /*
- * Post-verify presentation sync when a rollback load commits to the live world (syNetRollbackLoadPostTick).
- * Not invoked from syNetRbSnapApplySlotToLive — save/verify hashes are pre-sync; synctest emergency probes skip this.
+ * Figatree presentation sync (default: ftMainRefreshFigatreeVisual only).
+ * Invoked from syNetRbSnapshotFinalizeLoad before load-hash verify so fighter-coupled weapons
+ * (Yoshi egg vectors, Samus charge shot position, etc.) can query part world positions.
  *
- * Default: figatree resolve + lbCommonAddFighterPartsFigatree at gobj->anim_frame only (no proc_status,
- * no motion event replay). Status entry via ftMainSetStatus on rollback load is incorrect in every phase
- * (intro flicker during Wait; figatree/anim drift class bugs during Go).
- *
- * syNetRbSnapshotRebindAllFighters runs after this on the commit path.
+ * syNetRbSnapshotRebindAllFighters runs after successful verify — proc pointers are not hashed.
  *
  * SSB64_NETPLAY_SNAPSHOT_FIGHTER_CLEANUP=force|full|1 — legacy ftMainSetStatus path for bisect only.
  */
@@ -2791,6 +3688,55 @@ void syNetRbSnapshotSyncFighterPresentation(void)
 	(void)0;
 #endif
 }
+
+#ifdef PORT
+static void syNetRbSnapshotFinalizeLoadCouplingFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	if ((slot == NULL) || (slot->is_valid == FALSE))
+	{
+		return;
+	}
+	syNetRbSnapRebindFighterCoupledGObjs(slot);
+	syNetRbSnapRefreshWeaponHitPositions();
+}
+
+static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot, sb32 sync_presentation)
+{
+	if ((slot == NULL) || (slot->is_valid == FALSE))
+	{
+		return;
+	}
+	syNetRbSnapshotFinalizeLoadCouplingFromSlot(slot);
+	if (sync_presentation != FALSE)
+	{
+		syNetRbSnapshotSyncFighterPresentation();
+	}
+}
+
+void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != completed_sim_tick))
+	{
+		return;
+	}
+	syNetRbSnapshotFinalizeLoadCouplingFromSlot(slot);
+}
+
+void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != completed_sim_tick))
+	{
+		return;
+	}
+	syNetRbSnapshotFinalizeLoadFromSlot(slot, TRUE);
+}
+#endif /* PORT */
 
 #ifdef PORT
 u32 syNetRbSnapshotGetSlotHashFighter(u32 tick)

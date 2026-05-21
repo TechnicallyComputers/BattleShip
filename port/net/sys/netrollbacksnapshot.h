@@ -31,20 +31,27 @@ extern sb32 syNetRbSnapshotLoad(u32 completed_sim_tick);
 /* All-or-nothing load safety: capture live world before rollback load, restore on verify failure. */
 extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
 extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
-/* Rebind status procs after load verify (not during apply — rebind mutates hashed fighter state). */
+/* Presentation sync + fighter-coupled weapon rebind before load-hash verify. */
+extern void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick);
+/* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
 extern sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void);
+/* TRUE if any item is held or any fighter has item_gobj set (all slots). */
+extern sb32 syNetRbSnapshotAnyItemHoldCouplingActive(void);
+/* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
+extern void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick);
+/* TRUE when periodic synctest must defer (intro wait, item hold/throw, fighter throw anim). */
+extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
 extern void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick);
 extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
 #endif
-
 /*
- * After load verify commits to live world: figatree presentation sync only (no status entry / motion
- * events on default path). Not run during synctest emergency load/restore or raw syNetRbSnapshotLoad probes.
+ * Figatree presentation sync only (no status entry / motion event replay on default path).
+ * Prefer syNetRbSnapshotFinalizeLoad for rollback commit paths — it runs this plus coupled-weapon rebind.
  */
 extern void syNetRbSnapshotSyncFighterPresentation(void);
 

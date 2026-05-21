@@ -1,7 +1,7 @@
 # Fighter-coupled GObj snapshot (rollback)
 
 **Date:** 2026-05-19  
-**Status:** FIX SHIPPED (soak pending)  
+**Status:** FIX SHIPPED (load pipeline + expanded couplings; soak pending)  
 **Subsystem:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netsync.c`
 
 ## Symptom
@@ -18,11 +18,12 @@ Yoshi **SpecialHi** (`status=0xDE`) with GGPO analog correction mid-charge (~tic
 
 | Area | Change |
 |------|--------|
-| Fighter blob | `coupled_egg_weapon_gobj_id`, `coupled_boomerang_weapon_gobj_id`, `coupled_spin_attack_weapon_gobj_id` — capture ID, scrub pointers in blob + live apply, rebind after weapons |
-| Apply order | fighters → map/world → items → **weapons** → **coupled rebind** → camera |
+| Fighter blob | `coupled_*_weapon_gobj_id` for egg, boomerang, spin, **Samus/Kirby charge**, **Ness PK Thunder**, **Pikachu Thunder** — capture ID, scrub pointers in blob + live apply |
+| Load pipeline | **Core apply** (fighters → map/world → items → weapons → grab/item-hold → camera) then **`syNetRbSnapshotFinalizeLoad`** (presentation sync → coupled rebind → weapon hit refresh) **before** load-hash verify; status proc rebind after verify |
 | Weapons | Item-style match/eject/**respawn**; DObj translate + rotate + scale + `SYNetRbSnapDObjAnimBlob` |
 | Respawn | `wpYoshiEggThrowMakeWeapon`, `wpLinkBoomerangMakeWeapon`, `wpLinkSpinAttackMakeWeapon`; egg fallback scan by owner+kind when gobj id changes |
 | Yoshi | `ftYoshiSpecialHiUpdateEggVectors` after rebind when egg attached and not thrown |
+| Samus / Kirby copy-Samus | `ftSamusSpecialNSetChargeShotPosition` / `ftKirbyCopySamusSpecialNSetChargeShotPosition` after charge_gobj rebind |
 | Hash | `syNetSyncHashActiveWeaponsForRollback` includes rotate, scale, egg_throw scalars |
 
 ## Coupled-pointer audit
@@ -33,6 +34,14 @@ Yoshi **SpecialHi** (`status=0xDE`) with GGPO analog correction mid-charge (~tic
 | Link | `boomerang_gobj` | `passive_vars.link` | `coupled_boomerang_weapon_gobj_id` | Always when Link | Yes |
 | Link | `spin_attack_gobj` | `status_vars.link.specialhi` | `coupled_spin_attack_weapon_gobj_id` | SpecialHi / SpecialAirHi | Yes |
 | Kirby | `copylink_boomerang_gobj` | `passive_vars.kirby` | `coupled_boomerang_weapon_gobj_id` | Always when Kirby | Yes |
+| Samus | `charge_gobj` | `status_vars.samus.specialn` | `coupled_charge_weapon_gobj_id` | SpecialN* / SpecialAirNStart | Yes (+ position update) |
+| Kirby | `copysamus_specialn.charge_gobj` | `status_vars.kirby` | `coupled_charge_weapon_gobj_id` | CopySamus SpecialN* | Yes (+ position update) |
+| Ness | `pkthunder_gobj` | `status_vars.ness.specialhi` | `coupled_pkthunder_weapon_gobj_id` | SpecialHi* / SpecialAirHi* | Yes (pointer) |
+| Pikachu | `thunder_gobj` | `status_vars.pikachu.speciallw` | `coupled_thunder_weapon_gobj_id` | SpecialLw* / SpecialAirLw* | Yes (pointer) |
+
+## Related
+
+Load-hash drift when coupled rebind ran **before** figatree presentation sync: [`netrollback_weapon_load_finalize_order_2026-05-20.md`](netrollback_weapon_load_finalize_order_2026-05-20.md).
 
 ## Diagnostics
 

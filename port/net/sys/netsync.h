@@ -54,7 +54,7 @@ extern u32 syNetSyncHashFighterAnimationState(void);
  * AObj nodes per joint, same fields as `SYNetRbSnapAObjNodeBlob`. Must match `netrollbacksnapshot.c` capture/apply.
  */
 /* Yoshi grab/throw (and similar) can reach 9+ AObj nodes per joint; 8 truncated resim (joint4/6 @ tick 569). */
-#define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 12
+#define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 16
 extern u32 syNetSyncHashFighterAnimationStateForRollback(void);
 #ifdef PORT
 /* Rollback-world hash partitions (see syNetSyncHashRollbackWorld). */
