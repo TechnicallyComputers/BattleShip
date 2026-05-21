@@ -9938,6 +9938,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 		u32 figh_full = syNetSyncHashBattleFightersFull();
 
 		syNetSyncJointTranslateTraceOnFighStep(tick, figh_full);
+		syNetSyncFhashLightMismatchTriggerOnTick(tick);
 	}
 
 	e_min = getenv("SSB64_NETPLAY_SIM_TRACE_NEEDLE_MIN");

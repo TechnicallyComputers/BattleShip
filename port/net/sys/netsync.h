@@ -95,6 +95,9 @@ extern void syNetSyncResetJointTranslateTraceSession(void);
 extern void syNetSyncRefreshJointTranslateTraceEnvCache(void);
 extern void syNetSyncLogFighterJointTranslateTrace(u32 tick);
 extern void syNetSyncJointTranslateTraceOnFighStep(u32 tick, u32 figh);
+/* First per-slot `fhash_light` step on live forward sim: bookmark + fighter_detail at prev_tick and tick. */
+extern void syNetSyncResetFhashLightMismatchTriggerSession(void);
+extern void syNetSyncFhashLightMismatchTriggerOnTick(u32 tick);
 /* Netplay: battle clock tied to authoritative sim tick (not wall-clock scheduler tics). */
 extern void syNetSyncResetNetplayBattleClock(void);
 extern void syNetSyncOnNetplayBattleGo(void);

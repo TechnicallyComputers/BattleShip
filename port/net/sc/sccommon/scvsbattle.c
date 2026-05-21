@@ -147,6 +147,14 @@ void scVSBattleFuncUpdate(void)
 		syNetPeerUpdate();
 		return;
 	}
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() == FALSE))
+	{
+		if (syNetInputRepublishRemoteHumanControllersForTick(syNetInputGetTick()) == FALSE)
+		{
+			syNetPeerUpdate();
+			return;
+		}
+	}
 #endif
 	ifCommonBattleUpdateInterfaceAll();
 #ifdef PORT

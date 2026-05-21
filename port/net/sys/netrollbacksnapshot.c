@@ -623,6 +623,64 @@ static void syNetRbSnapScrubCoupledPointersInFighter(FTStruct *fp, const SYNetRb
 	}
 }
 
+/* Any live fighter with catch/capture GObj coupling (all link slots, not just human players). */
+sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if ((fp != NULL) && ((fp->catch_gobj != NULL) || (fp->capture_gobj != NULL)))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* Restore bidirectional catch_gobj <-> capture_gobj after snapshot apply (all fighters). */
+static void syNetRbSnapRebindFighterGrabCoupling(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		GObj *catch_gobj;
+		GObj *capture_gobj;
+		FTStruct *catch_fp;
+		FTStruct *capture_fp;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		catch_gobj = fp->catch_gobj;
+		if (catch_gobj != NULL)
+		{
+			catch_fp = ftGetStruct(catch_gobj);
+			if (catch_fp != NULL)
+			{
+				catch_fp->capture_gobj = fighter_gobj;
+			}
+		}
+		capture_gobj = fp->capture_gobj;
+		if (capture_gobj != NULL)
+		{
+			capture_fp = ftGetStruct(capture_gobj);
+			if (capture_fp != NULL)
+			{
+				capture_fp->catch_gobj = fighter_gobj;
+			}
+		}
+	}
+}
+
 static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot)
 {
 	GObj *fighter_gobj;
@@ -1283,6 +1341,7 @@ void syNetRbSnapshotRebindAllFighters(void)
 			syNetRbSnapRebindFighterStatusProcs(fighter_gobj, fp);
 		}
 	}
+	syNetRbSnapRebindFighterGrabCoupling();
 }
 
 void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a)
@@ -2023,7 +2082,7 @@ static void syNetRbSnapReconcileOrphanHeldItems(const SYNetRbSnapshotSlot *slot)
 				fp->item_gobj = item_gobj;
 			}
 		}
-		else if ((ip->owner_gobj != NULL) && (ip->is_hold == FALSE))
+		else if (itMainItemHasOrphanHoldDisplay(item_gobj) != FALSE)
 		{
 			if (syNetRbSnapSnapshotItemDiagEnabled() != FALSE)
 			{
@@ -2583,6 +2642,7 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapApplyWeapons(slot);
 #ifdef PORT
 	syNetRbSnapRebindFighterCoupledGObjs(slot);
+	syNetRbSnapRebindFighterGrabCoupling();
 #endif
 	syNetRbSnapApplyCamera(&slot->camera);
 }
