@@ -1,5 +1,7 @@
 #include <sys/netsync.h>
 
+#include <sys/netrollbacksnapshot.h>
+
 #include <ft/fighter.h>
 #include <ft/ftdef.h>
 #include <gm/gmdef.h>
@@ -13,6 +15,7 @@
 #include <sys/objman_gcport.h>
 #include <sys/utils.h>
 #include <wp/weapon.h>
+#include <wp/wpdef.h>
 
 #include <it/itmanager.h>
 
@@ -25,6 +28,7 @@
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
+static sb32 sSYNetSyncItemHashTruncationLogged = FALSE;
 
 #endif
 
@@ -349,6 +353,7 @@ void syNetSyncOnNetplayBattleGo(void)
 		return;
 	}
 	sSYNetSyncBattleGoSimTick = syNetInputGetTick();
+	sSYNetSyncItemHashTruncationLogged = FALSE;
 }
 
 void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
@@ -1129,50 +1134,72 @@ static u32 syNetSyncFoldActiveItemGobj(GObj *gobj)
 	return fold;
 }
 
-#define SYNET_SYNC_ITEM_HASH_SORT_MAX 48U
+/*
+ * Rollback load-verify item fold (must match snapshot blob semantics after apply).
+ *
+ * Included: kind, type, lifetime, percent_damage, lr, player, team, owner_gobj->id (0 if NULL),
+ *           DObj translate x/y/z (syNetSyncHashF32).
+ *
+ * Omitted: gobj->id — snapshot apply may eject/respawn via itManagerMakeItemSetupCommon and allocate
+ * fresh GObj ids; folding the item's own id caused false LOAD_HASH_DRIFT after respawn. Apply still
+ * matches blobs by gobj_id when ids are preserved (see docs/bugs/netrollback_item_weapon_gobj_id_verify).
+ */
+static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
+{
+	DObj *dobj;
+	ITStruct *ip;
+	u32 fold;
+
+	ip = itGetStruct(gobj);
+	if (ip == NULL)
+	{
+		return 0U;
+	}
+	fold = 2166136261U;
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->kind);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->type);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lifetime);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->percent_damage);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->lr);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->player);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->team);
+	fold = syNetSyncFnvAccumulateU32(fold, (ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U);
+	dobj = DObjGetStruct(gobj);
+	if (dobj != NULL)
+	{
+		Vec3f pos = dobj->translate.vec.f;
+
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+	}
+	return fold;
+}
 
 u32 syNetSyncHashActiveItemsForRollback(void)
 {
 	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
-	GObj *gobj;
-	u32 count;
+	s32 count;
 	u32 hash;
-	u32 i;
-	u32 j;
+	s32 i;
+	sb32 truncated;
 
-	count = 0U;
-	for (gobj = gGCCommonLinks[nGCCommonLinkIDItem]; gobj != NULL; gobj = gobj->link_next)
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
+#ifdef PORT
+	if ((truncated != FALSE) && (sSYNetSyncItemHashTruncationLogged == FALSE))
 	{
-		if (itGetStruct(gobj) == NULL)
-		{
-			continue;
-		}
-		if (count < SYNET_SYNC_ITEM_HASH_SORT_MAX)
-		{
-			sorted[count++] = gobj;
-		}
+		port_log("SSB64 NetSync: item hash truncated at max=%d (snapshot cap; save will fail if overflow)\n",
+		         SYNET_SYNC_ITEM_HASH_SORT_MAX);
+		sSYNetSyncItemHashTruncationLogged = TRUE;
 	}
-	for (i = 1U; i < count; i++)
-	{
-		GObj *key_gobj;
-		u32 key_id;
-
-		key_gobj = sorted[i];
-		key_id = key_gobj->id;
-		j = i;
-		while ((j > 0U) && (sorted[j - 1U]->id > key_id))
-		{
-			sorted[j] = sorted[j - 1U];
-			j--;
-		}
-		sorted[j] = key_gobj;
-	}
+#endif
 	hash = 2166136261U;
-	for (i = 0U; i < count; i++)
+	for (i = 0; i < count; i++)
 	{
 		u32 fold;
 
-		fold = syNetSyncFoldActiveItemGobj(sorted[i]);
+		fold = syNetSyncFoldActiveItemGobjForRollback(sorted[i]);
 		if (fold == 0U)
 		{
 			continue;
@@ -1205,48 +1232,26 @@ void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 {
 	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
 	GObj *gobj;
-	u32 count;
+	s32 count;
 	u32 hash;
 	u32 idx;
-	u32 i;
-	u32 j;
+	s32 i;
+	sb32 truncated;
 
 	if (syNetSyncItemHashTraceEnabled() == FALSE)
 	{
 		return;
 	}
-	count = 0U;
-	for (gobj = gGCCommonLinks[nGCCommonLinkIDItem]; gobj != NULL; gobj = gobj->link_next)
-	{
-		if (itGetStruct(gobj) == NULL)
-		{
-			continue;
-		}
-		if (count < SYNET_SYNC_ITEM_HASH_SORT_MAX)
-		{
-			sorted[count++] = gobj;
-		}
-	}
-	for (i = 1U; i < count; i++)
-	{
-		GObj *key_gobj;
-		u32 key_id;
-
-		key_gobj = sorted[i];
-		key_id = key_gobj->id;
-		j = i;
-		while ((j > 0U) && (sorted[j - 1U]->id > key_id))
-		{
-			sorted[j] = sorted[j - 1U];
-			j--;
-		}
-		sorted[j] = key_gobj;
-	}
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
 	hash = 2166136261U;
 	idx = 0U;
-	port_log("SSB64 NetSync: item_hash_walk begin sim_tick=%u live_sim=%u\n", sim_tick,
-	         (unsigned int)syNetInputGetTick());
-	for (i = 0U; i < count; i++)
+	port_log("SSB64 NetSync: item_hash_walk begin sim_tick=%u live_sim=%u cap=%d truncated=%d\n",
+	         sim_tick,
+	         (unsigned int)syNetInputGetTick(),
+	         SYNET_SYNC_ITEM_HASH_SORT_MAX,
+	         (int)truncated);
+	for (i = 0; i < count; i++)
 	{
 		ITStruct *ip;
 		u32 fold;
@@ -1257,7 +1262,7 @@ void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 		{
 			continue;
 		}
-		fold = syNetSyncFoldActiveItemGobj(gobj);
+		fold = syNetSyncFoldActiveItemGobjForRollback(gobj);
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 		port_log(
@@ -1339,10 +1344,24 @@ u32 syNetSyncHashActiveWeaponsForRollback(void)
 		if (dobj != NULL)
 		{
 			Vec3f pos = dobj->translate.vec.f;
+			Vec3f rot = dobj->rotate.vec.f;
+			Vec3f scl = dobj->scale.vec.f;
 
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
 			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(rot.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(rot.y));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(rot.z));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(scl.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(scl.y));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(scl.z));
+		}
+		if (wp->kind == nWPKindEggThrow)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.egg_throw.is_throw ? 1U : 0U);
+			fold = syNetSyncFnvAccumulateU32(fold, wp->weapon_vars.egg_throw.is_spin ? 1U : 0U);
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(wp->weapon_vars.egg_throw.throw_force));
 		}
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, 0x5A5A5A5AU);

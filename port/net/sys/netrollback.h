@@ -25,7 +25,7 @@
  * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only). `resim_rng_verify` logs each completed resim by default
  * (`SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
  * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Anim-only drift
- * (fighter/world/RNG/item/wpn/map/cam match) always soft-continues — figatree can advance during load before verify.
+ * (fighter/world/RNG/item/wpn/map/cam match) soft-continues when verify still fails after apply ordering fixes.
  * Symmetric episodes: wire-locked resim target, post-load baseline gate before forward sim, no snapshot
  * save during resim/episode cooldown. While resim pending, coordination transport still sends INPUT padding
  * and `ROLLBACK_SYNC` (type 24) plus receives baseline/sync. Out of scope: full snapshot exchange, pure
@@ -58,8 +58,12 @@ extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_sourc
 /* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
 extern sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick);
 extern u32 syNetRollbackGetEpochId(void);
+/* Unified rollback episode FSM (`SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1`; see netrollback_episode.h). */
+extern sb32 syNetRollbackEpisodeFsmEnabled(void);
 
 extern void syNetRollbackAfterBattleUpdate(void); /* Snapshot completed tick into ring (post-`scVSBattleFuncUpdate`). */
+/* Begin deferred GGPO/state correction and load snapshot before the next battle sim step (figatree freeze). */
+extern void syNetRollbackPumpCorrectionBeforeBattleSim(void);
 extern void syNetRollbackUpdate(void);            /* NetPeer: detect mismatch, load snapshot, resim forward. */
 
 #ifdef PORT
@@ -77,12 +81,20 @@ extern sb32 syNetRollbackStickMismatchRecoveryEnabled(void);
 extern sb32 syNetRollbackPredictionRecoveryRequiresConfirmed(u32 sim_tick);
 /* Extend confirmed-only remote input window after neutral→motion stick correction. */
 extern void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32 frontier_tick);
+/* Follower runs local-authority resim on GetLocalSimSlot() (not blind peer_follower). */
+#define SYNETROLLBACK_SYM_NOTIFY_FLAG_FOLLOWER_LOCAL_AUTH 0x01U
+#define SYNETROLLBACK_SYNC_FLAG_FOLLOWER_LOCAL_AUTH SYNETROLLBACK_SYM_NOTIFY_FLAG_FOLLOWER_LOCAL_AUTH
 /* Fill per-slot symmetric rollback ticks for INPUT peer_connect_status padding (-1 = none). */
-extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_target_tick_per_slot, s32 count);
+extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_target_tick_per_slot,
+						   u8 *out_flags_per_slot, s32 count);
 /* Peer announced a correction on `slot` at `mismatch_tick` (24-bit wire); queue resim through `target_tick` (24-bit). */
 /* FALSE when notify is stale or already covered by pending/deferred symmetric rollback. */
 extern sb32 syNetRollbackAcceptPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
-extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
+extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick,
+						       sb32 follower_local_auth);
+extern void syNetRollbackOnPeerSymmetricRollbackNotifyEx(s32 slot, u32 mismatch_tick, u32 target_tick, u32 load_tick,
+						       u32 epoch_id, sb32 follower_local_auth);
+extern void syNetRollbackExportPeerSymmetricEpisode(s32 slot, u32 *out_load_tick, u32 *out_epoch_id);
 /* Queue one resim for a remote input correction that arrived during an active resim span. */
 extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
 /* GGPO-style: confirmed input corrects speculative remote input already simulated at `sim_tick`. */
@@ -106,6 +118,7 @@ extern void syNetRollbackNotePeerBaselineDigestSent(void);
 extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
 						     u32 *out_rng, u32 *out_anim, u32 *out_weapon, u32 *out_map,
 						     u32 *out_camera, u32 *out_fighter_slot, s32 fighter_slot_count);
+extern void syNetRollbackTryOpenResimReplayGate(void);
 #endif
 
 #endif /* _SYNETROLLBACK_H_ */

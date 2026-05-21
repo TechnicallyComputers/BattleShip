@@ -3968,7 +3968,7 @@ sb32 mnVSNetAutomatchAMIsError(void)
 
 void mnVSNetAutomatchAMStagingReturnToAutomatch(void)
 {
-	syNetPeerStopVSSession();
+	syNetPeerEndVSSessionLocally();
 	gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
 	gSCManagerSceneData.scene_curr = nSCKindVSNetAutomatch;
 	mnVSNetAutomatchSetSceneData();
@@ -3979,7 +3979,7 @@ void mnVSNetAutomatchAMStagingReturnToAutomatch(void)
 void mnVSNetAutomatchForceRequeueAfterBarrierTimeout(void)
 {
 	port_log("SSB64 Automatch: P2P sync barrier timeout -> match staging + re-queue\n");
-	syNetPeerStopVSSession();
+	syNetPeerEndVSSessionLocally();
 	gSCManagerSceneData.is_vs_automatch_battle = (ub8)FALSE;
 	gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
 	gSCManagerSceneData.scene_curr = nSCKindVSNetMatchStaging;

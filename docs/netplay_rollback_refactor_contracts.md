@@ -20,7 +20,7 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 
 **Implemented (2026-05-18):**
 
-- **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`.
+- **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`, **`syNetInputRollbackReconcileAfterResimCompleted`** (end of forward resim), and **`syNetInputRollbackReconcilePublishedCommitWindow`** (before each frame-commit token build).
 - **Conservative remote button prediction** — remote human slots: hold-last sticks, buttons default 0 (`SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` for legacy hold-last).
 - **No patch-only correction (2026-05-18)** — significant predicted-remote mismatch queues deferred symmetric resim; no live `PatchPublishedFromRemoteConfirmed` on that tick. Prediction recovery disabled unless `SSB64_NETPLAY_PREDICTION_RECOVERY=1`. Digital tap patch-without-rollback disabled during active rollback.
 - **Symmetric resim execution** — wire-locked `target_tick` when symmetric follower is active (no per-peer `highest_remote + D + 1` shrink); post-load **baseline gate** (`figh`/`world`/`item`/`rng`) before `AdvanceResimBudget`; skip snapshot save during `resim_pending` / episode cooldown; cosmetic RNG reset on snapshot load; confirmed-only remote rows during resim (no predicted fallback). See [`netrollback_rng_item_identity_drift_2026-05-17.md`](bugs/netrollback_rng_item_identity_drift_2026-05-17.md).
@@ -28,8 +28,44 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 - **Resim RNG verify** — log after each completed resim by default (`SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables).
 - **Resim coordination transport (2026-05-18)** — while `ResimPending`, peers still run `ReceiveRemoteInput` + `SendLocalInput` + `ROLLBACK_BASELINE` + `ROLLBACK_SYNC` (type 24) so symmetric notify and baseline echo are not blocked. Exception to the “no network during forward resim” target below.
 - **Rollback episode** — `SYNetRollbackEpisode` tracks mismatch/load/target and phase (`AwaitingBaseline` / `ForwardResim`); syncs to legacy `ResimPending` / baseline gate flags.
+- **Unified episode FSM (2026-05-20)** — `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1` enables [`port/net/sys/netrollback_episode.c`](../port/net/sys/netrollback_episode.c): `Live → SealInputs → AwaitingBaseline → Replay → Verify → Commit|Abort`. Sealed input table is the sole replay read set; per-tick replay log drives `RESIM_POST` input digest; live sim cap derived from FSM phase (not min of six legacy cap sources). Default **off** until soak validates each phase (including remote analog authority soak).
+- **EPISODE_SEAL_ROWS (2026-05-20)** — `SYNETPEER_PACKET_EPISODE_SEAL_ROWS` (26): after seal, each peer sends locally-authoritative sealed rows for `[mismatch, target)`; peer overwrites remote slots in `sealed[]`. `Replay` gated on baseline match **and** all required peer seal rows received (retransmit with `ROLLBACK_BASELINE`). Bundled with episode FSM when enabled.
+- **Remote-human analog authority (2026-05-20)** — When episode FSM is on, remote-human live sim and published history use wire-confirmed / hold-last only (`syNetInputResolveRemoteHumanAuthoritativeFrame`); no optimistic `analog_onset_predict` in authoritative paths. Precursor to full [`netinput_timeline.c`](../port/net/sys/netinput_timeline.c) rewrite. See [`netinput_remote_analog_authority_2026-05-20.md`](bugs/netinput_remote_analog_authority_2026-05-20.md).
 
-**Out of scope (longer term):** full snapshot byte exchange; disabling symmetric notify for pure independent GGPO until independent detection is proven symmetric; hard-blocking resim on anim-only `LOAD_HASH_DRIFT` (soft-continue policy remains). See [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md#out-of-scope-longer-term).
+## Unified episode FSM (target, gated)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Live
+  Live --> SealInputs: mismatch
+  SealInputs --> AwaitingBaseline: snapshot_loaded
+  AwaitingBaseline --> Replay: baseline_and_seal_rows
+  Replay --> Verify: replay_done
+  Verify --> Commit: RESIM_POST_MATCH
+  Verify --> Abort: RESIM_POST_DIVERGE
+  Commit --> Live: promote_sealed
+  Abort --> SealInputs: deeper_load
+  Abort --> Live: cleanup
+```
+
+| Phase | Live sim cap | Input authority |
+|-------|----------------|-----------------|
+| `SealInputs`…`Verify` | `target` | Sealed span only (`syNetRollbackEpisodeGetSealedFrame`); remote slots from peer `EPISODE_SEAL_ROWS` |
+| `Live` + peer convergence | `peer_target + slack` | Normal ingress |
+| `Live` | none (hr frontier) | Normal |
+
+**Out of scope (longer term):** see [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md#out-of-scope-longer-term) and deferred roadmap below.
+
+**Deferred roadmap (not in remote-analog-authority PR):**
+
+| Track | Notes |
+|-------|--------|
+| **P2P snapshot byte exchange** | Peers load local ring slots at `load_tick`; `ROLLBACK_BASELINE` digest agreement is the substitute until inputs+span fail to converge. |
+| **Full `netinput_timeline.c` rewrite** | Explicit per-tick `missing` / `predicted` / `confirmed` / `incorrect_prediction`; gap-fill admission-only. Remote analog authority is a precursor, not the full rewrite. |
+| **Mid-Replay seal-row patch / re-run replay** | Late peer seal rows use `reseal_deeper` / Abort→SealInputs, not patching `sealed[]` mid-forward-resim. |
+| **Default-on `EPISODE_FSM`** | Separate rollout PR after combined soak pass. |
+
+**Also deferred:** disabling symmetric notify for pure independent GGPO; hard-blocking resim on anim-only `LOAD_HASH_DRIFT`.
 
 **Transitional / unsafe today:**
 
@@ -39,7 +75,7 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 ## Rollback trigger (target)
 
 - **Local and input-driven** (GekkoNet `GetMinIncorrectFrame` style): rollback when confirmed input proves a prior prediction wrong.
-- **Peer symmetric rollback notices** — still the **coordination contract** for matching `mismatch_tick` / `target_tick`. Not a substitute for independent per-peer mismatch detection until that path is proven to pick the same span without notify.
+- **Peer symmetric rollback notices** — **authoritative episode contract** (2026-05-19): initiator locks `(epoch, load, mismatch, target)` in `ROLLBACK_SYNC` (type 24); follower executes that tuple verbatim (`SSB64_NETPLAY_ROLLBACK_EPISODE_AUTHORITY=0` restores legacy re-derivation). `RESIM_POST_MATCH` releases peer epoch. Not a substitute for independent per-peer mismatch detection until that path is proven to pick the same span without notify.
 
 ## Resimulation (target)
 

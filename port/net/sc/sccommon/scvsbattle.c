@@ -121,6 +121,10 @@ void scVSBattleFuncUpdate(void)
 		syNetPeerUpdate();
 		return;
 	}
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() == FALSE))
+	{
+		syNetRollbackPumpCorrectionBeforeBattleSim();
+	}
 	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() != FALSE))
 	{
 		/* Resim advances only via syNetRollbackUpdate → AdvanceResimBudget → BattleSimOnly. */
@@ -129,6 +133,16 @@ void scVSBattleFuncUpdate(void)
 	}
 	if ((syNetPeerIsVSSessionActive() != FALSE) &&
 	    (syNetRollbackShouldBlockLiveBattleAdvance(syNetInputGetTick()) != FALSE))
+	{
+		syNetPeerUpdate();
+		return;
+	}
+	/*
+	 * Atomic sim boundary: gcRunAll (map tic, fighter anim, GObj processes) must not run unless
+	 * syNetInputAdvanceAuthoritativeSimTick will also succeed for this pass.
+	 */
+	if ((syNetPeerIsVSSessionActive() != FALSE) &&
+	    (syNetInputRollbackSimAdvanceAllowed(syNetInputGetTick() + 1U) == FALSE))
 	{
 		syNetPeerUpdate();
 		return;
@@ -154,6 +168,7 @@ void scVSBattleFuncUpdate(void)
 	{
 		syNetRollbackAfterBattleUpdate();
 		syNetInputAdvanceAuthoritativeSimTick();
+		syNetPeerFrameCommitAfterCompletedSimStep();
 	}
 }
 
@@ -702,7 +717,7 @@ void scVSBattleStartScene(void)
 		gmRumbleInitPlayers();
 	}
 	syNetReplayFinishVSSession();
-	syNetPeerStopVSSession();
+	syNetPeerEndVSSessionLocally();
 	gSCManagerSceneData.scene_prev = gSCManagerSceneData.scene_curr;
 	gSCManagerSceneData.scene_curr = nSCKindVSResults;
 }

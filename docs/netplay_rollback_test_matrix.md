@@ -54,19 +54,24 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Mixed input log | `SSB64_NETPLAY_MIXED_INPUT_LOG=1` (encoding switch lines) |
 | Resim snapshot refresh | `SSB64_NETPLAY_RESIM_SNAPSHOT_REFRESH=1` (default); `=0` debug-only — disables per-tick ring refresh during resim replay |
 | Rollback epoch cap slack | `SSB64_NETPLAY_ROLLBACK_EPOCH_CAP_SLACK=1` (default); `=99` disables peer-epoch live-sim cap |
+| Unified episode FSM | `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1` (default off); expect `EPISODE_FSM` phase logs, sealed replay, `EPISODE_FSM freeze_post_inp` at replay gate, **one** `RESIM_POST_MATCH` per episode (optional when `commit_promote` closes without POST log); no `patch_publish` in active episode span; no `Live -> Commit epoch=0` after POST match; sim advances past episode `target` (no sustained `rollback_epoch_hold` with stale `peer_target` after `Commit→Live`); POST diverge must not `Commit→Live`; after `LOAD_TICK_NEGOTIATE` / deeper restart expect `EPISODE_FSM reseal_deeper` + matching seal-row tuple on wire (no sustained `SEAL_ROWS_WAIT`) |
+| Episode seal rows wire | Same FSM=1; expect `EPISODE_SEAL_ROWS_SEND/RECV` per symmetric episode, `resim replay gate open` only after `EPISODE_SEAL_ROWS_WAIT` clears; POST `inp` must match cross-peer on correction span; no `post-resim input followup deferred` at episode target when FSM on |
+| Remote analog authority (FSM) | `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1`; client P2 stick onset ~tick 947 class: matching `figh` through tick 959; no `analog_onset_predict` for remote human (unless `SSB64_NETPLAY_REMOTE_ANALOG_ONSET_PRED=1` bisect); no sustained `defer_analog_correction reason=analog_onset` with `pub_pred=1` while wire neutral; no `PEER_SNAPSHOT_DIVERGE` at episode load tick; episode closes without `BASELINE_UNIVERSE_MISMATCH` on poisoned band |
 | Analog prediction decay | `SSB64_NETPLAY_ANALOG_PRED_DECAY_TICKS=3` (default); `=0` off; `SSB64_NETPLAY_ANALOG_PRED_MIN_MAG=12` |
 | Stick mismatch recovery | `SSB64_NETPLAY_STICK_MISMATCH_RECOVERY=1` (default); `=0` off — confirmed-only window after neutral↔analog GGPO (not `PREDICTION_RECOVERY`) |
+| Weapon / coupled snapshot diag | `SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1`, `SSB64_NETPLAY_SNAPSHOT_COUPLED_DIAG=1` (Yoshi egg + projectile soak) |
 
 ## Cases
 
-1. **No-items 1v1** — no `LOAD_HASH_DRIFT` after forced resim; no `ROLLBACK_IDENTITY_DRIFT`.
+1. **No-items 1v1** — no `LOAD_HASH_DRIFT` on **figh** after forced resim through tick ~200; `SYNCTEST_OK` with `SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`; optional `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1` + `SSB64_NETPLAY_JOINT_TRANSLATE_TRACE=1` for bisect; no `ROLLBACK_IDENTITY_DRIFT`.
 2. **Projectile-heavy** — Link/Samus/Pikachu; weapon snapshot + hash stable.
-3. **Item-heavy** — item spawn/active hashes stable; no ghost items after rollback.
+12. **Yoshi egg + GGPO stick** — Dream Land automatch, client Yoshi, host Fox (or swap); hold **up+B** through charge, induce GGPO analog correction ~tick 430–440 (`SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1` + `SNAPSHOT_COUPLED_DIAG=1`). **Pass:** `fighter_anim post-load live==slot`; no instant egg explode/self-hit; `resim complete` without epoch-hold stall; optional stable `wpn` hash when egg attached. **Fail:** `SNAPSHOT_COUPLED_GOBJ_MISS`, `weapon respawn failed`, visible egg corruption.
+3. **Item-heavy** — item spawn/active hashes stable; `SYNCTEST_OK` through item phase (e.g. Saffron); no ghost items after rollback; optional `SSB64_NETPLAY_ITEM_HASH_TRACE=1` + `SSB64_NETPLAY_SNAPSHOT_ITEM_DIAG=1`.
 4. **4-player / high delay** — ring depth 64+; mismatch scan + paced resim.
 5. **Jump / stick storm** — rapid remote stick changes at prediction windows 3, 5, and 7; no equal-gameplay rollback storm; newer corrected packets may log `REMOTE_CONFIRMED_REPLACE_NEWER`, but stale older packets should be the only `REMOTE_CONFIRMED_CONFLICT` cases.
 6. **Packet loss / gap** — `tc netem` or reorder; strict `MISS (R)` should not deadlock (or session abort cleanly).
 7. **Ring underrun** — deep rollback with `SNAPSHOT_FRAMES=32` and mismatch >32 ticks ago; expect load-fail log, not SIGSEGV.
-8. **Cap overflow** (when instrumented) — >16 items or >32 weapons; loud failure, not silent truncation.
+8. **Cap overflow** (when instrumented) — >32 items or >32 weapons; loud failure, not silent truncation.
 9. **Analog onset idle→walk** — remote idle then small stick → run; prediction uses minimal facing when `last_non_neutral` valid; GGPO still resims on confirm mismatch; symmetric follower + baseline gate per case 16 env row.
 10. **Mixed keyboard vs pad** — opponents use different devices from match start; no session abort in 5+ min soak env.
 11. **Mid-match device switch** — one peer switches pad↔keyboard once; at most brief rollback visible; session continues (no `PEER_SNAPSHOT_DIVERGE`).
@@ -79,6 +84,7 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 - No `REMOTE_CONFIRMED_CONFLICT` from synthetic gap-fill replacement.
 - Gameplay continues without ghost items/weapons after rollback.
 - With `SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0`, peers still converge via independent GGPO correction; both sides should show `rb=` growth under stick churn.
+- **Authoritative episode contract:** both sides log `EPISODE_EXEC` with matching `exec_mismatch` / `exec_target`; `ROLLBACK_SYNC_SEND` includes `load_tick` + `epoch`; follower does not log `LOAD_TICK_ADJUST` mismatch shift unless `SSB64_NETPLAY_ROLLBACK_EPISODE_AUTHORITY=0`.
 - **Symmetric resim execution:** host and client log identical `target_tick` / `span` on each `resim begin` when symmetric follower is active; initiator logs `GGPO deferred input correction` then `resim begin`; follower logs `peer symmetric rollback queued` / `peer symmetric rollback at` then `resim begin`; `ROLLBACK_SYNC_SEND`/`RECV` or symmetric fields in INPUT; `resim baseline gate open` before any `resim_tick` forward sim (no `proceeding without peer digest` unless `RESIM_BASELINE_PROCEED_ON_TIMEOUT=1`); passive peer `RESIM_BASELINE_ECHO` when only one side detected GGPO; matching `figh`/`world`/`item`/`rng` on `resim baseline` at the same `load_tick`; no `RESIM_BASELINE_MISMATCH` during soak.
 - **Snapshot hygiene:** no `SNAPSHOT_SAVE_ASSERT` during resim; ring not rewritten for ticks in `(load_tick, episodeResolvedThrough]` while resim pending or episode cooldown active.
 - **Conservative correction:** significant predicted-remote mismatch → `GGPO deferred input correction resim` (not live-only patch). **`prediction recovery armed` is a soak failure.**
@@ -123,10 +129,12 @@ Run **both** peers with false-digital fix + mixed-input env from [`netinput_fals
 |-----------|------|
 | No `pred sx=85` / `pred sy=85` | False-digital regression absent |
 | `SSB64_NETPLAY_ITEM_HASH_TRACE=1` at resim target tick | Host/client walk order + final hash match |
-| `RESIM_POST_MATCH` at each resim boundary | Cross-peer post-resim digests agree (`load=` must not be `4294967295`) |
+| `RESIM_POST_MATCH` at each resim boundary | Cross-peer post-resim digests agree (`load=` must not be `4294967295`); no duplicate POST after `Commit -> Live`; sim passes target within a few frames; no `rollback_epoch_hold owner=peer_epoch` with completed episode `peer_target` after FSM Live |
 | `POST_RECOVERY_CONVERGENCE_OK` | Two consecutive frame-commit compares after recovery (`SSB64_NETPLAY_FRAME_COMMIT_TOKEN=1`) |
 | NetSync validation from ~3900+ | No sustained `figh` diff while `all` matches |
 | `FRAME_COMMIT_DIAG compared > 0` | Frame-commit pairing ran (`SSB64_NETPLAY_FRAME_COMMIT_TOKEN=1`) |
+| `pub_vs_remote_summary` per player | With `FRAME_COMMIT_DIAG=1`: P1 `kind=values` visible even when P2 presence noise exists; not masked by `pub_vs_remote_first` |
+| `PATCH_PUBLISH_LOG=1` at input divergence | Grep `defer_analog_correction` vs `patch_publish` at mismatch tick (third outcome: onset only, wire not yet confirmed) |
 | Host closes window | Peer receives `VS_SESSION_END` and stops in ≪180 render frames (not `STRICT MISS` stall) |
 
 ## Out of scope (longer term)

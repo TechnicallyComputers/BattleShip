@@ -70,6 +70,11 @@ extern void syNetPeerPumpIngressTransport(const char *caller_tag);
 extern void syNetPeerUpdate(void);
 /* Closes socket + tears down bookkeeping at VS unload / session end. */
 extern void syNetPeerStopVSSession(void);
+/*
+ * Local-initiator session end: notify peer then stop. No-op when VS session already inactive.
+ * Receive path (`VS_SESSION_END` ingress) uses `syNetPeerStopVSSession()` only — do not send back.
+ */
+extern void syNetPeerEndVSSessionLocally(void);
 extern sb32 syNetPeerIsVSSessionActive(void);
 /*
  * Barrier VI contract Hz (host default 60; guest latched from BATTLE_START_TIME wire layout).
@@ -122,6 +127,7 @@ extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 extern void syNetPeerTrySendRollbackBaselineDigest(void);
+extern void syNetPeerTrySendEpisodeSealRows(void);
 extern void syNetPeerTrySendRollbackSyncNotice(void);
 extern void syNetPeerSendLocalInput(void);
 /* Best-effort notify before local rollback fatal teardown so peer stops without strict-input stall. */
@@ -130,6 +136,7 @@ extern sb32 syNetPeerStrictTeardownFastPathActive(void);
 extern void syNetPeerTrySendResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatch_tick, u32 target_tick,
 					    u32 figh, u32 world, u32 item, u32 rng, u32 input_digest);
 extern void syNetPeerArmPostRecoveryConvergenceWatch(void);
+extern void syNetPeerFrameCommitAfterCompletedSimStep(void); /* Post-advance frame-commit token sample/send/compare. */
 extern void syNetPeerFrameCommitDiagNoteDeferredArmed(void);
 extern void syNetPeerFrameCommitDiagNoteRecoveryStarted(void);
 extern void syNetPeerFrameCommitDiagNoteRecoverySkippedNoSnap(void);

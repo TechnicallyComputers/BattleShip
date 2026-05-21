@@ -109,6 +109,7 @@ extern void syNetInputClearSessionTransportOverrides(void);
 #endif
 extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
+extern sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick); /* Pure rollback cap: next_tick <= remote_sim + D + phase_lock. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
 #ifdef PORT
 /*
@@ -196,6 +197,7 @@ extern void syNetInputSetSavedInput(s32 player, u32 tick, u16 buttons, s8 stick_
 extern sb32 syNetInputGetHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern sb32 syNetInputGetPublishedFrame(s32 player, SYNetInputFrame *out_frame);
 extern u32 syNetInputGetHistoryChecksum(s32 player, u32 tick_begin, u32 frame_count);
+extern u32 syNetInputAccumulateInputChecksum(u32 checksum, s32 player, SYNetInputFrame *frame);
 extern u32 syNetInputGetHistoryInputChecksum(u32 frame_count);
 extern u32 syNetInputGetHistoryInputValueChecksumForPlayer(s32 player, u32 tick_begin, u32 frame_count);
 extern u32 syNetInputGetRemoteHistoryValueChecksumForPlayer(s32 player, u32 tick_begin, u32 frame_count);
@@ -241,6 +243,10 @@ extern void syNetInputClearRemoteSlotPredictionState(void);
 /* Sticky per-sim-tick flag: TRUE when synchronize/publish used predicted remote input for that tick. */
 extern void syNetInputNoteSimTickPredictedRemoteUsage(u32 sim_tick, const SYNetInputFrame *synced_frames);
 extern sb32 syNetInputSimTickUsedPredictedRemote(u32 sim_tick);
+/* Earliest sim tick in [from_tick, to_tick] where live sim consumed predicted remote input; ~(u32)0 if none. */
+extern u32 syNetInputFindEarliestPredictedRemoteUsageInSpan(u32 from_tick, u32 to_tick);
+/* Per-tick published vs sim-effective vs remote-confirmed row when SSB64_NETPLAY_DIVERGENCE_INPUT_LOG=1. */
+extern void syNetInputMaybeLogDivergenceInputRow(u32 tick, const SYNetInputFrame *sim_consumed);
 #endif
 extern void syNetInputSetRecordingEnabled(sb32 is_enabled);
 extern sb32 syNetInputGetRecordingEnabled(void);
@@ -267,14 +273,29 @@ extern void syNetInputRollbackPrepareForResim(u32 resim_start_tick); /* Reseed l
 #ifdef PORT
 extern void syNetInputPublishSynchronizedTick(u32 tick); /* Resolve+publish only (pure rollback resim; no HID/network). */
 extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to_tick); /* Remote slots: wire-confirmed rows for [from,to). */
+extern void syNetInputRollbackReconcilePublishedCommitWindow(u32 win_begin, u32 win_end); /* Stamp published before frame-commit digest. */
+extern void syNetInputRollbackReconcileAfterResimCompleted(u32 mismatch_tick, u32 target_tick,
+                                                         s32 correction_player); /* Post-resim published tail reconcile. */
 extern sb32 syNetInputIsRemoteHumanSlot(s32 player); /* TRUE for opponent human sim slots (GGPO remote prediction/correction). */
 extern void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick,
                                                   s32 correction_player); /* GGPO unified resim inputs: remote=wire, local=transmitted/per-tick published. */
-extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick,
-							      u32 to_tick); /* Deprecated wrapper: calls ReconcileResimSpan. */
+/* Local authority: stamp published history from transmitted rows only (no published fallback). */
+extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick, u32 to_tick);
+/* Copy one reconciled frame into published history (episode FSM commit promote). */
+extern void syNetInputStorePublishedHistoryFrame(s32 player, const SYNetInputFrame *frame);
+/* Episode seal: local-authority row from transmitted ring (wire source of truth), else non-predicted published. */
+extern sb32 syNetInputCopyEpisodeLocalAuthoritySealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+extern sb32 syNetInputCopyEpisodeRemoteHumanSealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+/* TRUE when episode FSM has sealed inputs and tick is inside the active span. */
+extern sb32 syNetInputEpisodeSealedSpanBlocksPatch(u32 sim_tick);
+/* Earliest t in [from,to) where published(slot,t) != transmitted(slot,t); ~(u32)0 if none. */
+extern u32 syNetInputFindEarliestLocalAuthorityMismatch(s32 authority_slot, u32 from_tick, u32 to_tick);
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
 extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick,
 						      const SYNetInputFrame *confirmed);
+/* Per-player published vs remote-confirmed mismatch summary for one NetSync validation window. */
+extern void syNetInputLogPubVsRemoteWindowDiag(u32 validation_tick, u32 tick_begin, u32 frame_count,
+                                               s32 local_sim_slot, s32 extra_local_sim_slot);
 /*
  * TRUE when confirmed remote input differs enough from `old` to warrant GGPO rollback (buttons any change;
  * sticks when |delta| > deadband, neutral→non-neutral onset, horizontal sign flip, or large delta).

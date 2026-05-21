@@ -11,6 +11,10 @@
 #include <PR/ultratypes.h>
 
 #include <gm/gmdef.h>
+#include <sys/netrollbacksnapshot.h>
+
+/* Item rollback hash uses the same active-item cap as snapshot blobs (no silent hash-only extras). */
+#define SYNET_SYNC_ITEM_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_ITEMS
 
 struct FTStruct;
 
@@ -33,8 +37,8 @@ extern u32 syNetSyncHashActiveItems(void);
 extern u32 syNetSyncHashActiveWeapons(void);
 /*
  * Item / weapon fingerprints for rollback load-verify: **omit item/weapon GObj id** (respawn after snapshot
- * allocates fresh ids).Traversal order matches the common link walk. Includes item `type` so the fold aligns
- * with snapshot blobs better than the diagnostic hash.
+ * allocates fresh ids). Item walk uses syNetRbEnumerateActiveItemsSorted (same cap/order as snapshot blobs).
+ * Includes item `type` so the fold aligns with snapshot blobs better than the diagnostic hash.
  */
 extern u32 syNetSyncHashActiveItemsForRollback(void);
 extern u32 syNetSyncHashActiveWeaponsForRollback(void);
