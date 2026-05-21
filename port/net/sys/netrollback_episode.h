@@ -102,6 +102,7 @@ extern sb32 syNetRollbackEpisodeGetSealedFrame(s32 player, u32 tick, SYNetInputF
 extern void syNetRollbackEpisodeReplayLogAppend(u32 tick, u32 input_digest, u32 figh, u32 item, u32 rng);
 extern sb32 syNetRollbackEpisodeReplayLogGetPostDigest(SYNetRollbackEpisodePostDigest *out_digest);
 extern u32 syNetRollbackEpisodeReplayLogTickInputDigest(u32 tick);
+extern void syNetRollbackEpisodeReplayLogCheckInternalDiverge(void);
 
 extern void syNetRollbackEpisodeCommitPromoteSealed(void);
 

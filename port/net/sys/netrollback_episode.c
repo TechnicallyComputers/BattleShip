@@ -516,6 +516,14 @@ void syNetRollbackEpisodeSealInputs(u32 mismatch_tick, u32 target_tick, s32 corr
 		return;
 	}
 	syNetInputRollbackReconcileResimSpan(mismatch_tick, target_tick, correction_player);
+	{
+		u32 promote_t;
+
+		for (promote_t = mismatch_tick; promote_t < target_tick; promote_t++)
+		{
+			syNetInputPromoteAllRemoteHumanAuthoritySlots(promote_t);
+		}
+	}
 	if (syNetRollbackEpisodeFsmIsFromPeerNotify() != FALSE)
 	{
 		s32 authority_slot;
@@ -551,7 +559,7 @@ void syNetRollbackEpisodeSealInputs(u32 mismatch_tick, u32 target_tick, s32 corr
 				continue;
 			}
 			if ((syNetInputIsRemoteHumanSlot(player) != FALSE) &&
-			    (syNetInputCopyEpisodeRemoteHumanSealFrame(player, t, &frame) != FALSE))
+			    (syNetInputCopyEpisodeRemoteAuthoritySealFrame(player, t, &frame) != FALSE))
 			{
 				syNetRollbackEpisodeNormalizeSealedFrameTick(&frame, t);
 				sSYNetRollbackEpisodeFsm.sealed[idx][player] = frame;
@@ -734,6 +742,36 @@ u32 syNetRollbackEpisodeReplayLogTickInputDigest(u32 tick)
 #else
 	(void)tick;
 	return 0U;
+#endif
+}
+
+void syNetRollbackEpisodeReplayLogCheckInternalDiverge(void)
+{
+#ifdef PORT
+	u32 i;
+
+	if (syNetRollbackEpisodeFsmEnabled() == FALSE)
+	{
+		return;
+	}
+	for (i = 1U; i < sSYNetRollbackEpisodeFsm.replay_log_count; i++)
+	{
+		const SYNetRollbackEpisodeReplayLogEntry *prev;
+		const SYNetRollbackEpisodeReplayLogEntry *cur;
+
+		prev = &sSYNetRollbackEpisodeFsm.replay_log[i - 1U];
+		cur = &sSYNetRollbackEpisodeFsm.replay_log[i];
+		if ((prev->input_digest == cur->input_digest) && (prev->figh != cur->figh))
+		{
+			port_log(
+			    "SSB64 NetRollback: EPISODE_REPLAY_DIVERGE tick=%u prev_tick=%u inp=0x%08X figh_old=0x%08X figh_new=0x%08X\n",
+			    cur->tick,
+			    prev->tick,
+			    cur->input_digest,
+			    prev->figh,
+			    cur->figh);
+		}
+	}
 #endif
 }
 
@@ -1527,6 +1565,9 @@ void syNetRollbackEpisodeReplayLogAppend(u32 a, u32 b, u32 c, u32 d, u32 e)
 	(void)c;
 	(void)d;
 	(void)e;
+}
+void syNetRollbackEpisodeReplayLogCheckInternalDiverge(void)
+{
 }
 void syNetRollbackEpisodeCommitPromoteSealed(void)
 {

@@ -8030,17 +8030,33 @@ static void syNetPeerNotePostRecoveryConvergenceEpoch(sb32 matched, u32 validati
 	}
 }
 
-static sb32 syNetPeerFrameCommitDiagEnabled(void)
+static s32 syNetPeerFrameCommitDiagLevel(void)
 {
 	const char *e;
 
 	if (sSYNetPeerFrameCommitDiagEnvCache != -999)
 	{
-		return (sSYNetPeerFrameCommitDiagEnvCache != 0) ? TRUE : FALSE;
+		return sSYNetPeerFrameCommitDiagEnvCache;
 	}
 	e = getenv("SSB64_NETPLAY_FRAME_COMMIT_DIAG");
-	sSYNetPeerFrameCommitDiagEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
-	return (sSYNetPeerFrameCommitDiagEnvCache != 0) ? TRUE : FALSE;
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		sSYNetPeerFrameCommitDiagEnvCache = 0;
+	}
+	else
+	{
+		sSYNetPeerFrameCommitDiagEnvCache = atoi(e);
+		if (sSYNetPeerFrameCommitDiagEnvCache < 0)
+		{
+			sSYNetPeerFrameCommitDiagEnvCache = 0;
+		}
+	}
+	return sSYNetPeerFrameCommitDiagEnvCache;
+}
+
+static sb32 syNetPeerFrameCommitDiagEnabled(void)
+{
+	return (syNetPeerFrameCommitDiagLevel() >= 1) ? TRUE : FALSE;
 }
 
 static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void)
@@ -8354,6 +8370,24 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	}
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
 	{
+		if (syNetPeerFrameCommitDiagLevel() >= 2)
+		{
+			u32 live_figh = syNetSyncHashBattleFightersFull();
+			u32 live_world = syNetSyncHashRollbackWorld();
+
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_STATE_DIVERGE_DETAIL validation=%u token_figh_local=0x%08X token_figh_peer=0x%08X "
+			    "live_figh=0x%08X token_world_local=0x%08X token_world_peer=0x%08X live_world=0x%08X inp_local=0x%08X inp_peer=0x%08X\n",
+			    vtick,
+			    local->fighter_digest,
+			    peer->fighter_digest,
+			    live_figh,
+			    local->world_digest,
+			    peer->world_digest,
+			    live_world,
+			    local->input_digest,
+			    peer->input_digest);
+		}
 		sSYNetPeerFrameCommitDiag.fc_state_diverge++;
 		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
@@ -9027,8 +9061,10 @@ static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_beg
 		return;
 	}
 	syNetInputRollbackReconcilePublishedCommitWindow(win_begin, validation_tick);
+	syNetInputMaybeLogFrameCommitLocalAuthorityDiag(validation_tick, win_begin);
 	syNetFrameCommitBuildToken(&tok, validation_tick, win_begin, win_len, sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer,
 				  sSYNetPeerExtraLocalSenderSlot, sSYNetPeerPeerSenderCount, sSYNetPeerPeerSenderSlots);
+	syNetInputMaybeLogFrameCommitSealLocalMismatch(validation_tick, win_begin, validation_tick);
 	syNetPeerFrameCommitStoreLocal(validation_tick, &tok);
 	syNetPeerSendFrameCommitPacket(validation_tick, &tok);
 	sSYNetPeerFrameCommitValidationsSincePeer++;
@@ -10073,6 +10109,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			    remote_sim,
 			    remote_cap,
 			    (hr > 0U) ? (int)((s32)tick - (s32)remote_cap) : 0);
+			syNetSyncLogFighterSlotHashes(tick);
 		}
 	}
 }

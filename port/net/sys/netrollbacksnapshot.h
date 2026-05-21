@@ -35,10 +35,16 @@ extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
+/* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
+extern void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick);
+extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
 #endif
 
-/* After load+apply hook; animation AObj/MObj chains stay live so figatree playback survives rollback. */
-extern void syNetRbSnapshotAfterApplyCleanup(void);
+/*
+ * After load verify commits to live world: figatree presentation sync only (no status entry / motion
+ * events on default path). Not run during synctest emergency load/restore or raw syNetRbSnapshotLoad probes.
+ */
+extern void syNetRbSnapshotSyncFighterPresentation(void);
 
 /*
  * Collect active item GObjs (valid ITStruct), insertion-sorted by gobj->id.
