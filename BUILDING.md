@@ -49,7 +49,7 @@ Packaging scripts:
 | `scripts/package-macos.sh` | Offline (`--netplay` for netmenu) |
 | `scripts/package-linux.sh` | Offline (`--netplay` for netmenu) |
 | `scripts/package-mingw-windows.sh` | Offline (`--netplay` for netmenu) |
-| `scripts/package-windows.ps1` | Release MSVC (configure flags vary) |
+| `scripts/package-windows.ps1` | Offline MSVC (`-Netplay` for netmenu) |
 
 See [`docs/build_and_tooling.md`](docs/build_and_tooling.md) for CMake/platform details and [`docs/netplay_environment_variables.md`](docs/netplay_environment_variables.md) for netplay knobs.
 

@@ -1,6 +1,12 @@
 # Builds BattleShip as a self-contained Windows release zip.
 #
-# Output: <repo-root>\dist\BattleShip-windows.zip
+# Usage:
+#   pwsh scripts/package-windows.ps1
+#   pwsh scripts/package-windows.ps1 -Netplay
+#
+# Output:
+#   Default:  dist\BattleShip-windows.zip
+#   Netplay:  dist\BattleShip-Netplay-windows.zip  (JP: BattleShip-JP-Netplay-windows.zip)
 #
 # Layout produced (extracted):
 #   BattleShip\
@@ -30,6 +36,10 @@
 # (LUS Context::GetAppBundlePath, _WIN32 branch) and saves via the same
 # mechanism, so the only paths the binary ever touches are exe-relative.
 
+param(
+    [switch]$Netplay
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -41,15 +51,40 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 # unaffected.
 $Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
 if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
-$BuildDir = Join-Path $Root "build-bundle-win-$Ver"
-$DistDir = Join-Path $Root "dist"
 $AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
-$StageDir = Join-Path $DistDir $AppName
-$ZipPath = Join-Path $DistDir "$AppName-windows.zip"
+if ($Netplay) {
+    $BuildDir = Join-Path $Root "build-bundle-win-netplay-$Ver"
+    $StageLabel = if ($Ver -eq "jp") { "BattleShip-JP-Netplay" } else { "BattleShip-Netplay" }
+    $ZipPath = Join-Path $Root "dist\$StageLabel-windows.zip"
+} else {
+    $BuildDir = Join-Path $Root "build-bundle-win-$Ver"
+    $StageLabel = $AppName
+    $ZipPath = Join-Path $Root "dist\$AppName-windows.zip"
+}
+$DistDir = Join-Path $Root "dist"
+$StageDir = Join-Path $DistDir $StageLabel
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
+
+function Copy-CaBundle($DestDir) {
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    $Candidates = @(
+        (Join-Path $BuildDir "vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt")
+    )
+    foreach ($c in $Candidates) {
+        if (Test-Path $c) {
+            Copy-Item $c (Join-Path $DestDir "cacert.pem")
+            Write-Host "   CA bundle: $c"
+            return
+        }
+    }
+    Fail "Could not find a CA certificate bundle for HTTPS matchmaking (build with vcpkg curl)"
+}
 
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in decomp/src/credits/),
@@ -69,16 +104,20 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-Write-Step "Configuring release build (portable)"
+$CmakeArgs = @(
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DSSB64_VERSION=$Ver"
+)
+if ($Netplay) {
+    $CmakeArgs += "-DSSB64_NETMENU=ON"
+}
+Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
 # (= BattleShip.exe's directory when launched normally). See the file
 # header for the v0.7.2 crash this avoids.
-cmake -B $BuildDir $Root `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DSSB64_VERSION=$Ver" `
-    | Out-Null
+& cmake -B $BuildDir $Root @CmakeArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 Write-Step "Building BattleShip + torch"
@@ -153,6 +192,24 @@ Copy-Item (Join-Path $Root "assets\custom\fonts\Montserrat-OFL.txt")      $Fonts
 Copy-Item (Join-Path $Root "assets\custom\fonts\Inconsolata-Regular.ttf") $FontsDir
 Copy-Item (Join-Path $Root "assets\custom\fonts\Inconsolata-OFL.txt")     $FontsDir
 
+if ($Netplay) {
+    $NetAssets = $null
+    foreach ($cand in @(
+        (Join-Path $BuildDir "port\net\assets"),
+        (Join-Path $Root "port\net\assets")
+    )) {
+        if (Test-Path $cand) { $NetAssets = $cand; break }
+    }
+    if ($NetAssets) {
+        $NetDest = Join-Path $StageDir "port\net\assets"
+        New-Item -ItemType Directory -Path $NetDest -Force | Out-Null
+        Copy-Item -Path (Join-Path $NetAssets "*") -Destination $NetDest -Recurse -Force
+    } else {
+        Write-Host "WARN: netmenu build but port\net\assets not found — VS menu PNGs may be missing" -ForegroundColor Yellow
+    }
+    Copy-CaBundle (Join-Path $StageDir "ssl")
+}
+
 # Project LICENSE + verbatim upstream LICENSE files for the submodules
 # whose compiled code is in this distribution. MIT requires the upstream
 # copyright + permission notice to ride along with redistributed copies.
@@ -199,5 +256,9 @@ if (-not (Test-Path $ZipPath)) { Fail "zip was not created" }
 
 $ZipKB = [int]((Get-Item $ZipPath).Length / 1024)
 Write-Host "`n✓ Release zip ready: $ZipPath ($ZipKB KB)" -ForegroundColor Green
+Write-Host "   Variant: $(if ($Netplay) { 'netmenu/netplay' } else { 'offline' })"
 Write-Host "   Portable: extract anywhere; save data lives next to BattleShip.exe."
 Write-Host "   First launch will prompt for your ROM via the ImGui wizard."
+if ($Netplay) {
+    Write-Host "   Netplay: automatch uses HTTPS matchmaking (vcpkg curl + ssl\cacert.pem)."
+}

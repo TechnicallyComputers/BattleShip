@@ -103,9 +103,13 @@ for a in "${EXTRA_CMAKE_ARGS[@]}"; do
 done
 
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
-	BUILD_DIR="$ROOT/build-bundle-linux-netplay"
+	BUILD_DIR="$ROOT/build-bundle-linux-netplay-$VER"
 	APPDIR="$DIST_DIR/BattleShip-Netplay.AppDir"
-	APPIMAGE="$DIST_DIR/BattleShip-Netplay-x86_64.AppImage"
+	if [[ "$VER" == "jp" ]]; then
+		APPIMAGE="$DIST_DIR/BattleShip-JP-Netplay-x86_64.AppImage"
+	else
+		APPIMAGE="$DIST_DIR/BattleShip-Netplay-x86_64.AppImage"
+	fi
 	DESKTOP_DISPLAY_NAME="BattleShip Netplay"
 else
 	BUILD_DIR="$ROOT/build-bundle-linux"

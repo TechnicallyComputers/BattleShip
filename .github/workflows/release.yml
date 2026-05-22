@@ -4,8 +4,9 @@ name: Release
 #   - Pushing a tag matching v* (e.g. v1.0.0, v0.1-test)
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
-# Three platform jobs (offline), each matrixed over us/jp, plus macOS netplay.
-# A final `release` job stitches artifacts into a GitHub Release on tag push.
+# Three platform jobs (offline), each matrixed over us/jp, plus netplay variants for
+# macOS, Linux, and Windows. A final `release` job stitches artifacts into a GitHub
+# Release on tag push.
 #
 # US keeps the historical artifact names (BattleShip.dmg, …-x86_64.AppImage,
 # …-windows.zip) so existing links and the in-app updater are unaffected;
@@ -100,6 +101,52 @@ jobs:
         with:
           name: BattleShip-macos-netplay-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay.dmg
+          if-no-files-found: error
+
+  build-linux-netplay:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build zip clang \
+            libsdl2-dev libzip-dev libglew-dev \
+            nlohmann-json3-dev libtinyxml2-dev libspdlog-dev \
+            libcurl4-openssl-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            python3 imagemagick file
+          sudo touch /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+          sudo chmod +x /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+      - name: Use clang as the C/C++ compiler
+        run: |
+          echo "CC=clang"   >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+      - name: Install AppImage tooling
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O /usr/local/bin/appimagetool
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            -O /usr/local/bin/linuxdeploy
+          chmod +x /usr/local/bin/appimagetool /usr/local/bin/linuxdeploy
+      - name: Package Linux netplay AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SSB64_VERSION: ${{ matrix.version }}
+        run: bash scripts/package-linux.sh --netplay
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-linux-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-x86_64.AppImage
           if-no-files-found: error
 
   build-linux:
@@ -227,9 +274,35 @@ jobs:
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-windows.zip
           if-no-files-found: error
 
+  build-windows-netplay:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        run: |
+          choco install ninja -y
+        shell: pwsh
+      - name: Package Windows netplay zip
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -Netplay
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-windows-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-windows.zip
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-macos-netplay, build-linux, build-windows]
+    needs: [build-macos, build-macos-netplay, build-linux, build-linux-netplay, build-windows, build-windows-netplay]
     if: startsWith(github.ref, 'refs/tags/v')   # only on tag pushes
     runs-on: ubuntu-latest
     steps:
@@ -247,8 +320,12 @@ jobs:
             artifacts/BattleShip-JP-Netplay.dmg
             artifacts/BattleShip-x86_64.AppImage
             artifacts/BattleShip-JP-x86_64.AppImage
+            artifacts/BattleShip-Netplay-x86_64.AppImage
+            artifacts/BattleShip-JP-Netplay-x86_64.AppImage
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
+            artifacts/BattleShip-Netplay-windows.zip
+            artifacts/BattleShip-JP-Netplay-windows.zip
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.
