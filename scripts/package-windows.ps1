@@ -233,6 +233,9 @@ if ($Netplay) {
     # Force OFF — stale CMakeCache from a netplay configure must not pull in mm_matchmaking/curl.
     $CmakeArgs += "-DSSB64_NETMENU=OFF"
 }
+if ($env:SSB64_KSGUID_LIB) {
+    $CmakeArgs += "-DSSB64_KSGUID_LIB=$($env:SSB64_KSGUID_LIB)"
+}
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
 if ($env:GITHUB_ACTIONS -eq 'true' -and (Test-Path -LiteralPath $BuildDir)) {

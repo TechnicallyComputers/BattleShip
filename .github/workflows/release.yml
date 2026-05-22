@@ -264,21 +264,19 @@ jobs:
           choco install ninja -y
         shell: pwsh
       - name: Setup MSVC
-        # vcvars for cl/link; ksguid.lib path is embedded at CMake configure (WindowsSdkUmLib.cmake).
+        # Pin an SDK that still ships um\x64 import libs (26100 often omits ksguid.lib).
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
           vsversion: '2022'
-      - name: Verify MSVC environment
-        shell: cmd
-        run: |
-          where cl
-          where link
-          echo LIB=%LIB%
-          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib >nul || exit /b 1
+        env:
+          WindowsSDKVersion: 10.0.22621.0\
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1
+      - name: Verify MSVC environment
+        shell: pwsh
+        run: ./scripts/ci-verify-windows-msvc.ps1
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -311,16 +309,14 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
-      - name: Verify MSVC environment
-        shell: cmd
-        run: |
-          where cl
-          where link
-          echo LIB=%LIB%
-          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib >nul || exit /b 1
+        env:
+          WindowsSDKVersion: 10.0.22621.0\
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1
+      - name: Verify MSVC environment
+        shell: pwsh
+        run: ./scripts/ci-verify-windows-msvc.ps1
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
