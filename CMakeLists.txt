@@ -108,6 +108,17 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND USE_AUTO_VCPKG)
     set(LUS_VCPKG_EXTRA_PACKAGES curl CACHE INTERNAL "")
 endif()
 
+# Resolve ksguid.lib before libultraship configure (disk GLOB; does not need vcvars/LIB).
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsSdkUmLib.cmake)
+    windows_sdk_um_find_lib(ksguid SSB64_KSGUID_LIB)
+    if(SSB64_KSGUID_LIB)
+        set(SSB64_KSGUID_LIB "${SSB64_KSGUID_LIB}" CACHE INTERNAL
+            "Full path to Windows SDK ksguid.lib (WASAPI); shared with libultraship ImGui")
+        message(STATUS "SSB64 ksguid.lib: ${SSB64_KSGUID_LIB}")
+    endif()
+endif()
+
 ################################################################################
 # Subdirectories: libultraship
 ################################################################################

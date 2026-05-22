@@ -1,8 +1,11 @@
 # Builds BattleShip as a self-contained Windows release zip.
 #
 # Usage:
-#   pwsh scripts/package-windows.ps1
-#   pwsh scripts/package-windows.ps1 -Netplay
+#   pwsh scripts/package-windows.ps1              # offline (SSB64_NETMENU=OFF, no curl)
+#   pwsh scripts/package-windows.ps1 -Netplay     # netplay (SSB64_NETMENU=ON, vcpkg curl)
+#
+# Offline and netplay use separate build dirs (build-bundle-win-* vs build-bundle-win-netplay-*).
+# Do not pass -DSSB64_NETMENU=* on the command line; this script sets OFF|ON explicitly.
 #
 # Output:
 #   Default:  dist\BattleShip-windows.zip
@@ -81,17 +84,39 @@ function Test-KsguidLibOnLibPath {
     return $false
 }
 
-function Reset-StaleNetplayCmakeCache {
+function Reset-StaleCmakeCache {
     param([string]$Dir, [bool]$WantNetmenu)
     $cache = Join-Path $Dir "CMakeCache.txt"
     if (-not (Test-Path -LiteralPath $cache)) { return }
     $raw = Get-Content -LiteralPath $cache -Raw
     $hasNetmenu = $raw -match 'SSB64_NETMENU:BOOL=ON'
     if ($WantNetmenu -and -not $hasNetmenu) {
-        Write-Host "   Clearing CMake cache (was configured without SSB64_NETMENU)"
+        Write-Host "   Clearing CMake cache (reconfigure with SSB64_NETMENU=ON)"
         Remove-Item -LiteralPath $cache -Force
         Remove-Item -LiteralPath (Join-Path $Dir "CMakeFiles") -Recurse -Force -ErrorAction SilentlyContinue
     }
+    if (-not $WantNetmenu -and $hasNetmenu) {
+        Write-Host "   Clearing CMake cache (offline build had SSB64_NETMENU=ON)"
+        Remove-Item -LiteralPath $cache -Force
+        Remove-Item -LiteralPath (Join-Path $Dir "CMakeFiles") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-OfflineWindowsConfigured {
+    param([string]$Dir)
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) { return }
+    $raw = Get-Content -LiteralPath $cache -Raw
+    if ($raw -match 'SSB64_NETMENU:BOOL=ON') {
+        Fail "Offline Windows build has SSB64_NETMENU=ON in CMakeCache — should be OFF (no curl/mm_matchmaking)"
+    }
+    $ninja = Join-Path $Dir "build.ninja"
+    if (Test-Path -LiteralPath $ninja) {
+        if (Select-String -LiteralPath $ninja -Pattern 'mm_matchmaking\.c' -Quiet) {
+            Fail "Offline build compiles mm_matchmaking.c — SSB64_NETMENU must be OFF"
+        }
+    }
+    Write-Host "   Offline: SSB64_NETMENU=OFF (no matchmaking/curl)"
 }
 
 function Test-NetplayCurlConfigured {
@@ -204,6 +229,9 @@ $CmakeArgs = @(
 )
 if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
+} else {
+    # Force OFF — stale CMakeCache from a netplay configure must not pull in mm_matchmaking/curl.
+    $CmakeArgs += "-DSSB64_NETMENU=OFF"
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
@@ -222,9 +250,7 @@ if (Test-KsguidLibOnLibPath) {
 # Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
 Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
 Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
-if ($Netplay) {
-    Reset-StaleNetplayCmakeCache $BuildDir $true
-}
+Reset-StaleCmakeCache $BuildDir $Netplay.IsPresent
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
@@ -239,35 +265,42 @@ if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 if ($Netplay) {
     Test-NetplayCurlConfigured $BuildDir
+} else {
+    Test-OfflineWindowsConfigured $BuildDir
 }
 
-function Test-MsvcKsguidConfigure {
+function Test-KsguidConfigureAndLinkInputs {
     param([string]$Dir)
     $cache = Join-Path $Dir "CMakeCache.txt"
-    if (-not (Test-Path -LiteralPath $cache)) { return }
-    $raw = Get-Content -LiteralPath $cache -Raw
-    if ($raw -notmatch 'CMAKE_CXX_COMPILER_ID:STRING=MSVC') {
-        Fail "CMake did not select MSVC (ImGui would link bare ksguid). Ensure vcvars64/cl and -DCMAKE_CXX_COMPILER=cl."
+    if (Test-Path -LiteralPath $cache) {
+        $raw = Get-Content -LiteralPath $cache -Raw
+        if ($raw -notmatch 'SSB64_KSGUID_LIB:INTERNAL=') {
+            Fail "CMakeCache missing SSB64_KSGUID_LIB — push CMakeLists.txt with pre-libultraship ksguid resolve"
+        }
+        if ($raw -match 'SSB64_KSGUID_LIB:INTERNAL=(.*)') {
+            $p = $Matches[1].Trim()
+            if (-not (Test-Path -LiteralPath $p)) {
+                Fail "Cached SSB64_KSGUID_LIB does not exist: $p"
+            }
+            Write-Host "   SSB64_KSGUID_LIB: $p"
+        }
     }
-    Write-Host "   CMake compiler: MSVC (WindowsSdkUmLib full-path ksguid expected)"
-}
-
-Test-MsvcKsguidConfigure $BuildDir
-
-if ($env:GITHUB_ACTIONS -eq 'true') {
-    $ninjaFiles = Get-ChildItem -Path $BuildDir -Recurse -Filter build.ninja -ErrorAction SilentlyContinue
-    $ksLines = $ninjaFiles | Select-String -Pattern 'ksguid' -SimpleMatch
-    if (-not $ksLines) {
-        Write-Host "   (no ksguid in build.ninja yet — may link via response files)"
-    } else {
-        foreach ($line in $ksLines) {
-            if ($line.Line -match 'ksguid\.lib' -and $line.Line -notmatch 'Windows Kits') {
-                Fail "build.ninja uses bare ksguid.lib (WindowsSdkUmLib.cmake missing?). Ensure libultraship submodule includes cmake/WindowsSdkUmLib.cmake"
+    $bareHits = @()
+    foreach ($file in (Get-ChildItem -Path $Dir -Recurse -Include 'build.ninja', '*.rsp', 'link.txt' -ErrorAction SilentlyContinue)) {
+        Select-String -LiteralPath $file.FullName -Pattern 'ksguid' -SimpleMatch -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Line -match 'ksguid\.lib' -and $_.Line -notmatch 'Windows Kits' -and $_.Line -notmatch 'Program Files') {
+                $bareHits += "$($file.FullName): $($_.Line.Trim())"
             }
         }
-        Write-Host "   ksguid link uses full Windows SDK path in build.ninja"
     }
+    if ($bareHits.Count -gt 0) {
+        $bareHits | ForEach-Object { Write-Host "   $_" }
+        Fail "Linker uses bare ksguid.lib — bump libultraship (windows.cmake + WindowsSdkUmLib.cmake)"
+    }
+    Write-Host "   ksguid: full SDK path in CMake cache (no bare ksguid in ninja/rsp)"
 }
+
+Test-KsguidConfigureAndLinkInputs $BuildDir
 
 Write-Step "Building BattleShip + torch"
 cmake --build $BuildDir --config Release -j $Jobs
