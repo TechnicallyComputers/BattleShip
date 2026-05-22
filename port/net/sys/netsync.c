@@ -4,6 +4,7 @@
 
 #include <ft/fighter.h>
 #include <ft/ftdef.h>
+#include <ft/ftchar/ftness/ftness.h>
 #include <gm/gmdef.h>
 #include <gm/gmcamera.h>
 #include <it/item.h>
@@ -1474,6 +1475,155 @@ void syNetSyncLogFighterSlotHashes(u32 tick)
 	}
 }
 
+static sb32 syNetSyncPKThunderHoldDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_PKTHUNDER_HOLD_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (syNetSyncEnvParseInt(e, 0) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncPKThunderHoldDiagTickInWindow(u32 tick)
+{
+	static int s_min_cache = -999999;
+	static int s_max_cache = -999999;
+	const char *e;
+	s32 min_tick;
+	s32 max_tick;
+
+	if (s_min_cache == -999999)
+	{
+		min_tick = 0;
+		max_tick = 0;
+		e = getenv("SSB64_NETPLAY_PKTHUNDER_HOLD_DIAG_TICK_MIN");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			min_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		e = getenv("SSB64_NETPLAY_PKTHUNDER_HOLD_DIAG_TICK_MAX");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			max_tick = syNetSyncEnvParseInt(e, 0);
+		}
+		if (max_tick <= 0)
+		{
+			max_tick = 0;
+			s_min_cache = 0;
+			s_max_cache = 0;
+			return TRUE;
+		}
+		if (min_tick < 0)
+		{
+			min_tick = 0;
+		}
+		s_min_cache = min_tick;
+		s_max_cache = max_tick;
+	}
+	if (s_max_cache == 0)
+	{
+		return TRUE;
+	}
+	return ((tick >= (u32)s_min_cache) && (tick <= (u32)s_max_cache)) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncFighterIsInPKThunderHold(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	return ((fp->fkind == nFTKindNess) &&
+	        ((fp->status_id == nFTNessStatusSpecialHiHold) || (fp->status_id == nFTNessStatusSpecialAirHiHold))) ?
+	           TRUE :
+	           FALSE;
+}
+
+static s32 syNetSyncCountOwnedPKThunderWeapons(GObj *fighter_gobj)
+{
+	GObj *weapon_gobj;
+	s32 count;
+
+	count = 0;
+	if (fighter_gobj == NULL)
+	{
+		return 0;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		WPStruct *wp = wpGetStruct(weapon_gobj);
+
+		if ((wp != NULL) &&
+		    ((wp->kind == nWPKindPKThunderHead) || (wp->kind == nWPKindPKThunderTrail)) &&
+		    (wp->owner_gobj == fighter_gobj))
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
+void syNetSyncLogPKThunderHoldDiag(u32 tick)
+{
+	GObj *fighter_gobj;
+
+	if ((syNetSyncPKThunderHoldDiagEnabled() == FALSE) || (syNetSyncPKThunderHoldDiagTickInWindow(tick) == FALSE))
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		GObj *head_gobj;
+		WPStruct *head_wp;
+		DObj *top_joint;
+		f32 top_x;
+		f32 top_y;
+
+		if ((fp == NULL) || (syNetSyncFighterIsInPKThunderHold(fp) == FALSE))
+		{
+			continue;
+		}
+		head_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
+		head_wp = (head_gobj != NULL) ? wpGetStruct(head_gobj) : NULL;
+		top_joint = (fp->joints[nFTPartsJointTopN] != NULL) ? fp->joints[nFTPartsJointTopN] : NULL;
+		top_x = (top_joint != NULL) ? top_joint->translate.vec.f.x : 0.0F;
+		top_y = (top_joint != NULL) ? top_joint->translate.vec.f.y : 0.0F;
+		port_log(
+		    "SSB64 NetSync: pkthunder_hold tick=%u player=%d status=%d top=(0x%08X,0x%08X) vel_y=0x%08X "
+		    "gravity_delay=%d end_delay=%d destroy=%d trail_id=%d wpn_count=%d coupled_id=%u head_angle=0x%08X "
+		    "fhash=0x%08X wpn=0x%08X stick=(%d,%d)\n",
+		    tick,
+		    (int)fp->player,
+		    (int)fp->status_id,
+		    syNetSyncHashF32(top_x),
+		    syNetSyncHashF32(top_y),
+		    syNetSyncHashF32(fp->physics.vel_air.y),
+		    (int)fp->status_vars.ness.specialhi.pkthunder_gravity_delay,
+		    (int)fp->status_vars.ness.specialhi.pkthunder_end_delay,
+		    (int)(fp->passive_vars.ness.is_thunder_destroy & TRUE),
+		    (int)fp->passive_vars.ness.pkthunder_trail_id,
+		    (int)syNetSyncCountOwnedPKThunderWeapons(fighter_gobj),
+		    (head_gobj != NULL) ? (unsigned int)head_gobj->id : 0U,
+		    (head_wp != NULL) ? syNetSyncHashF32(head_wp->weapon_vars.pkthunder.angle) : 0U,
+		    syNetSyncHashFighterStructLight(fp),
+		    syNetSyncHashActiveWeaponsForRollback(),
+		    (int)fp->input.pl.stick_range.x,
+		    (int)fp->input.pl.stick_range.y);
+	}
+}
+
 void syNetSyncLogBaselineUniverseDiff(u32 load_tick, u32 peer_figh, u32 local_figh, u32 peer_world, u32 local_world,
 				      u32 peer_rng, u32 local_rng)
 {
@@ -1789,11 +1939,30 @@ u32 syNetSyncHashActiveWeapons(void)
 
 u32 syNetSyncHashActiveWeaponsForRollback(void)
 {
-	GObj *gobj;
-	u32 hash = 2166136261U;
+	GObj *sorted[SYNET_SYNC_WEAPON_HASH_SORT_MAX];
+	s32 count;
+	u32 hash;
+	s32 i;
+	sb32 truncated;
 
-	for (gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; gobj != NULL; gobj = gobj->link_next)
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveWeaponsSorted(sorted, SYNET_SYNC_WEAPON_HASH_SORT_MAX, &truncated);
+#ifdef PORT
 	{
+		static sb32 sSYNetSyncWeaponHashTruncationLogged = FALSE;
+
+		if ((truncated != FALSE) && (sSYNetSyncWeaponHashTruncationLogged == FALSE))
+		{
+			port_log("SSB64 NetSync: weapon hash truncated at max=%d (snapshot cap; save will fail if overflow)\n",
+			         SYNET_SYNC_WEAPON_HASH_SORT_MAX);
+			sSYNetSyncWeaponHashTruncationLogged = TRUE;
+		}
+	}
+#endif
+	hash = 2166136261U;
+	for (i = 0; i < count; i++)
+	{
+		GObj *gobj = sorted[i];
 		DObj *dobj;
 		WPStruct *wp = wpGetStruct(gobj);
 		u32 fold;

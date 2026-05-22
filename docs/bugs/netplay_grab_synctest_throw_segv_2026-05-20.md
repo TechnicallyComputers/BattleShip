@@ -1,7 +1,7 @@
 # Netplay grab/throw SYNCTEST SIGSEGV (all slots)
 
 **Date:** 2026-05-20  
-**Status:** FIX SHIPPED (soak pending)
+**Status:** FIX SHIPPED (coupling rebind + throw guards; synctest skip superseded 2026-05-22)
 
 ## Symptoms
 
@@ -22,7 +22,7 @@ Synctest emergency restore during active grab broke **bidirectional** `catch_gob
 | Change | Location |
 |--------|----------|
 | `syNetRbSnapshotAnyFighterGrabCouplingActive()` — scan **all** fighter link GObjs | [`port/net/sys/netrollbacksnapshot.c`](port/net/sys/netrollbacksnapshot.c) |
-| Skip synctest while any slot has `catch_gobj` or `capture_gobj`; retry next tick | [`port/net/sys/netrollback.c`](port/net/sys/netrollback.c) |
+| Skip synctest while any slot has `catch_gobj` or `capture_gobj`; retry next tick | [`port/net/sys/netrollback.c`](port/net/sys/netrollback.c) *(removed 2026-05-22 — see [`netplay_grab_synctest_roundtrip_2026-05-22.md`](netplay_grab_synctest_roundtrip_2026-05-22.md))* |
 | `syNetRbSnapRebindFighterGrabCoupling()` — repair both directions for every fighter after apply + on `RebindAllFighters` | `netrollbacksnapshot.c` |
 | NULL guard on `capture_gobj` / `capture_fp` / `throw_desc` in throw release | [`decomp/src/ft/ftcommon/ftcommonthrown2.c`](decomp/src/ft/ftcommon/ftcommonthrown2.c) |
 

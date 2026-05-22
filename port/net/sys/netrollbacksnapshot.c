@@ -13,12 +13,15 @@
 #include <ft/ftchar/ftlink/ftlink.h>
 #include <ft/ftchar/ftpikachu/ftpikachu.h>
 #include <ft/ftchar/ftness/ftness.h>
+#include <ft/ftchar/ftness/ftnessfunctions.h>
 #include <ft/ftchar/ftsamus/ftsamus.h>
 #include <ft/ftchar/ftsamus/ftsamusfunctions.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftchar/ftyoshi/ftyoshifunctions.h>
 #include <ft/ftdef.h>
 #include <ft/ftmain.h>
+#include <ft/ftparam.h>
+#include <ft/ftcommon/ftcommonfunctions.h>
 #include <ft/fttypes.h>
 #include <wp/wpdef.h>
 #include <wp/wpfox/wpfoxblaster.h>
@@ -51,6 +54,7 @@
 #include <wp/wptypes.h>
 
 #ifdef PORT
+#include <sys/netrollback.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -265,6 +269,7 @@ typedef struct SYNetRbSnapFighterBlob
 	u32 capture_gobj_id;
 	u32 item_gobj_id;
 	u32 search_gobj_id;
+	uintptr_t throw_desc_ptr;
 
 	FTMotionScript motion_scripts[2][2];
 	Vec3f joint_translate[FTPARTS_JOINT_NUM_MAX];
@@ -922,11 +927,16 @@ static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot,
 static sb32 syNetRbSnapLiveWeaponIsFighterCoupledReference(GObj *weapon_gobj);
 static sb32 syNetRbSnapLiveWeaponIsFireballThrowPreserve(GObj *weapon_gobj);
 static sb32 syNetRbSnapLiveWeaponIsThunderJoltThrowPreserve(GObj *weapon_gobj);
+static sb32 syNetRbSnapLiveWeaponIsPKThunderPreserve(GObj *weapon_gobj);
+static sb32 syNetRbSnapLiveWeaponIsPKFirePreserve(GObj *weapon_gobj);
+static void syNetRbSnapPreEjectPKThunderWeapon(GObj *weapon_gobj, WPStruct *wp);
 static void syNetRbSnapEjectUnmatchedWeaponsAfterCoupling(const SYNetRbSnapshotSlot *slot);
 void syNetRbSnapCullYoshiChargeEggsForFighter(GObj *fighter_gobj, GObj *keep_egg_gobj);
 void syNetRbSnapCullSamusChargeShotsForFighter(GObj *fighter_gobj, GObj *keep_charge_gobj);
 GObj *syNetRbSnapReacquireFireballForFighter(GObj *fighter_gobj);
 void syNetRbSnapCullOwnedFireballsNearPose(GObj *fighter_gobj, GObj *keep_fireball_gobj, const Vec3f *pos, f32 radius_sq);
+void syNetRbSnapCullOwnedPKThunderForFighter(GObj *fighter_gobj, GObj *keep_head_gobj);
+GObj *syNetRbSnapReacquirePKThunderHeadForFighter(GObj *fighter_gobj);
 
 static sb32 syNetRbSnapWeaponDiagEnabled(void)
 {
@@ -1647,6 +1657,62 @@ static void syNetRbSnapRebindFighterItemHoldCoupling(void)
 	}
 }
 
+/*
+ * Recompute coupled victim pose from grabber joint transforms after grabber parts are current.
+ *
+ * Load path: after presentation sync + joint anim reapply (finalize phase).
+ * Forward path: after gcRunAll each rollback sim tick (syNetRollbackAfterBattleUpdate).
+ *
+ * Covers standard grab hold (CaptureWait/Pulled), throw arc (Thrown*), and DK cargo
+ * (Shouldered on victim + ThrowF* on grabber — victim uses ftCommonThrownProcPhysics).
+ */
+void syNetRbSnapshotRefreshGrabCouplingGeometry(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		GObj *grabber_gobj;
+		FTStruct *grabber_fp;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		grabber_gobj = fp->capture_gobj;
+		if (grabber_gobj == NULL)
+		{
+			continue;
+		}
+		grabber_fp = ftGetStruct(grabber_gobj);
+		if (grabber_fp == NULL)
+		{
+			continue;
+		}
+
+		ftParamInvalidateFighterTransformFromRoot(grabber_gobj);
+
+		if (fp->status_id == nFTCommonStatusCaptureWait)
+		{
+			ftCommonCapturePulledProcPhysics(fighter_gobj);
+			ftCommonCaptureWaitProcMap(fighter_gobj);
+		}
+		else if (fp->status_id == nFTCommonStatusCapturePulled)
+		{
+			ftCommonCapturePulledProcPhysics(fighter_gobj);
+			ftCommonCapturePulledProcMap(fighter_gobj);
+		}
+		else if ((fp->status_id >= nFTCommonStatusThrownStart) && (fp->status_id <= nFTCommonStatusThrownEnd))
+		{
+			ftCommonThrownProcPhysics(fighter_gobj);
+			ftCommonThrownProcMap(fighter_gobj);
+		}
+	}
+}
+
 /* Restore bidirectional catch_gobj <-> capture_gobj after snapshot apply (all fighters). */
 static void syNetRbSnapRebindFighterGrabCoupling(void)
 {
@@ -1883,6 +1949,10 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 				    slot, blob->coupled_pkthunder_weapon_gobj_id, fighter_gobj, nWPKindPKThunderHead, NULL,
 				    syNetRbSnapWeaponOwnedByGObj);
 
+				if (pkthunder_gobj == NULL)
+				{
+					pkthunder_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(fighter_gobj);
+				}
 				if ((pkthunder_gobj == NULL) && (blob->coupled_pkthunder_weapon_gobj_id != 0U))
 				{
 					syNetRbSnapLogCoupledWeaponMiss(slot, (int)fp->player, "pkthunder",
@@ -1891,6 +1961,12 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 				fp->status_vars.ness.specialhi.pkthunder_gobj = pkthunder_gobj;
 				syNetRbSnapLogCoupledWeaponDiag(slot, (int)fp->player, "pkthunder",
 				                                blob->coupled_pkthunder_weapon_gobj_id, pkthunder_gobj);
+				syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, pkthunder_gobj);
+			}
+			else
+			{
+				fp->status_vars.ness.specialhi.pkthunder_gobj = NULL;
+				syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, NULL);
 			}
 		}
 
@@ -2261,6 +2337,7 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	blob->capture_gobj_id = syNetRbSnapGobjId(fp->capture_gobj);
 	blob->item_gobj_id = syNetRbSnapGobjId(fp->item_gobj);
 	blob->search_gobj_id = syNetRbSnapGobjId(fp->search_gobj);
+	blob->throw_desc_ptr = (fp->throw_desc != NULL) ? (uintptr_t)fp->throw_desc : 0U;
 
 	memcpy(blob->motion_scripts, fp->motion_scripts, sizeof(blob->motion_scripts));
 	memcpy(blob->status_vars, &fp->status_vars, sizeof(blob->status_vars));
@@ -2395,6 +2472,7 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	fp->capture_gobj = syNetRbSnapResolveLiveGobj(blob->capture_gobj_id);
 	fp->item_gobj = syNetRbSnapResolveItemGobj(blob->item_gobj_id);
 	fp->search_gobj = syNetRbSnapResolveLiveGobj(blob->search_gobj_id);
+	fp->throw_desc = (blob->throw_desc_ptr != 0U) ? (FTThrowHitDesc *)blob->throw_desc_ptr : NULL;
 
 	memcpy(fp->motion_scripts, blob->motion_scripts, sizeof(fp->motion_scripts));
 	memcpy(&fp->status_vars, blob->status_vars, sizeof(fp->status_vars));
@@ -2443,6 +2521,9 @@ static sb32 syNetRbSnapFighterDiagEnabled(void)
 	return (s_env_cache != 0) ? TRUE : FALSE;
 }
 
+static sb32 syNetRbSnapFighterIsInThunderJoltThrowStatus(const FTStruct *fp);
+static sb32 syNetRbSnapFighterIsInFireballThrowStatus(const FTStruct *fp);
+
 static void syNetRbSnapRebindFighterStatusProcs(GObj *fighter_gobj, FTStruct *fp)
 {
 	if ((fighter_gobj == NULL) || (fp == NULL))
@@ -2460,6 +2541,33 @@ static void syNetRbSnapRebindFighterStatusProcs(GObj *fighter_gobj, FTStruct *fp
 	fp->proc_lagupdate = NULL;
 	fp->proc_lagstart = NULL;
 	fp->proc_lagend = NULL;
+	if (syNetRbSnapFighterIsInThunderJoltThrowStatus(fp) != FALSE)
+	{
+		if (fp->fkind == nFTKindKirby)
+		{
+			fp->proc_accessory = ftKirbyCopyPikachuSpecialNProcAccessory;
+		}
+		else if (fp->fkind == nFTKindPikachu)
+		{
+			fp->proc_accessory = ftPikachuSpecialNProcAccessory;
+		}
+	}
+	else if ((fp->fkind == nFTKindNess) &&
+	         ((fp->status_id == nFTNessStatusSpecialN) || (fp->status_id == nFTNessStatusSpecialAirN)))
+	{
+		fp->proc_accessory = ftNessSpecialNProcAccessory;
+	}
+	else if (syNetRbSnapFighterIsInFireballThrowStatus(fp) != FALSE)
+	{
+		if (fp->fkind == nFTKindKirby)
+		{
+			fp->proc_accessory = ftKirbyCopyMarioSpecialNProcAccessory;
+		}
+		else
+		{
+			fp->proc_accessory = ftMarioSpecialNProcAccessory;
+		}
+	}
 }
 
 void syNetRbSnapshotRebindAllFighters(void)
@@ -2959,6 +3067,73 @@ s32 syNetRbEnumerateActiveItemsSorted(GObj **out, s32 max, sb32 *truncated_out)
 		j = i;
 		while ((j > 0) && (out[j - 1]->id > key_id))
 		{
+			out[j] = out[j - 1];
+			j--;
+		}
+		out[j] = key_gobj;
+	}
+	if ((truncated_out != NULL) && (saw_extra != FALSE))
+	{
+		*truncated_out = TRUE;
+	}
+	return count;
+}
+
+s32 syNetRbEnumerateActiveWeaponsSorted(GObj **out, s32 max, sb32 *truncated_out)
+{
+	GObj *gobj;
+	s32 count;
+	s32 i;
+	s32 j;
+	sb32 saw_extra;
+
+	if (truncated_out != NULL)
+	{
+		*truncated_out = FALSE;
+	}
+	if ((out == NULL) || (max <= 0))
+	{
+		return 0;
+	}
+	count = 0;
+	saw_extra = FALSE;
+	for (gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; gobj != NULL; gobj = gobj->link_next)
+	{
+		if (wpGetStruct(gobj) == NULL)
+		{
+			continue;
+		}
+		if (count < max)
+		{
+			out[count++] = gobj;
+		}
+		else
+		{
+			saw_extra = TRUE;
+		}
+	}
+	for (i = 1; i < count; i++)
+	{
+		GObj *key_gobj;
+		WPStruct *key_wp;
+		u32 key_id;
+
+		key_gobj = out[i];
+		key_wp = wpGetStruct(key_gobj);
+		key_id = (key_wp != NULL) && (key_wp->instance_id != 0U) ? key_wp->instance_id : (u32)key_gobj->id;
+		j = i;
+		while (j > 0)
+		{
+			WPStruct *prev_wp;
+			u32 prev_id;
+
+			prev_wp = wpGetStruct(out[j - 1]);
+			prev_id = (prev_wp != NULL) && (prev_wp->instance_id != 0U) ? prev_wp->instance_id :
+			                                                              (u32)out[j - 1]->id;
+			if (prev_id <= key_id)
+			{
+				break;
+			}
 			out[j] = out[j - 1];
 			j--;
 		}
@@ -4368,6 +4543,7 @@ static void syNetRbSnapEjectUnmatchedWeaponsAfterCoupling(const SYNetRbSnapshotS
 				gobj = next_gobj;
 				continue;
 			}
+			syNetRbSnapPreEjectPKThunderWeapon(gobj, wp);
 			gcEjectGObj(gobj);
 			ejected_count++;
 			gobj = next_gobj;
@@ -4388,6 +4564,17 @@ static void syNetRbSnapEjectUnmatchedWeaponsAfterCoupling(const SYNetRbSnapshotS
 			gobj = next_gobj;
 			continue;
 		}
+		if (syNetRbSnapLiveWeaponIsPKThunderPreserve(gobj) != FALSE)
+		{
+			gobj = next_gobj;
+			continue;
+		}
+		if (syNetRbSnapLiveWeaponIsPKFirePreserve(gobj) != FALSE)
+		{
+			gobj = next_gobj;
+			continue;
+		}
+		syNetRbSnapPreEjectPKThunderWeapon(gobj, wp);
 		gcEjectGObj(gobj);
 		ejected_count++;
 		gobj = next_gobj;
@@ -4624,8 +4811,8 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	/*
 	 * Mirror syNetRbSnapFillSlotFromLive capture order (fighters before map/world) so MPColl/floor state
 	 * applied from map does not run before fighter joint/coll restore — avoids LOAD_HASH_DRIFT on figh.
-	 * Geometry-dependent finalize (presentation → joint anim reapply → coupled pointer rebind → weapon hit
-	 * refresh) runs in syNetRbSnapshotFinalizeLoad before load-hash verify. Coupled weapon geometry refresh
+	 * Geometry-dependent finalize (presentation → joint anim reapply → grab coupling geometry →
+	 * coupled pointer rebind → weapon hit refresh) runs in syNetRbSnapshotFinalizeLoad before load-hash verify. Coupled weapon geometry refresh
 	 * (Yoshi egg vectors, Samus charge shot position) is deferred until emergency restore; forward sim
 	 * status physics restores geometry on the next tick. ftMainRebindStatusProcs runs only after successful
 	 * verify (syNetRbSnapshotRebindAllFighters).
@@ -4914,6 +5101,7 @@ static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot,
 	{
 		syNetRbSnapshotSyncFighterPresentation();
 		syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
+		syNetRbSnapshotRefreshGrabCouplingGeometry();
 	}
 	syNetRbSnapshotFinalizeLoadCouplingFromSlot(slot, refresh_coupled_weapon_geometry);
 	syNetRbSnapEjectUnmatchedWeaponsAfterCoupling(slot);
@@ -5206,18 +5394,26 @@ static sb32 syNetRbSnapFighterIsInFireballThrowStatus(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	switch (fp->status_id)
+	switch (fp->fkind)
 	{
-	/* Mario + Luigi SpecialN/AirN share numeric status IDs (parallel enums). */
-	case nFTMarioStatusSpecialN:
-	case nFTMarioStatusSpecialAirN:
-		return TRUE;
+	case nFTKindMario:
+	case nFTKindMMario:
+	case nFTKindNMario:
+	case nFTKindLuigi:
+	case nFTKindNLuigi:
+		switch (fp->status_id)
+		{
+		/* Mario + Luigi SpecialN/AirN share numeric status IDs (parallel enums). */
+		case nFTMarioStatusSpecialN:
+		case nFTMarioStatusSpecialAirN:
+			return TRUE;
 
-	default:
+		default:
+			break;
+		}
 		break;
-	}
-	if (fp->fkind == nFTKindKirby)
-	{
+
+	case nFTKindKirby:
 		switch (fp->status_id)
 		{
 		case nFTKirbyStatusCopyMarioSpecialN:
@@ -5229,6 +5425,10 @@ static sb32 syNetRbSnapFighterIsInFireballThrowStatus(const FTStruct *fp)
 		default:
 			break;
 		}
+		break;
+
+	default:
+		break;
 	}
 	return FALSE;
 }
@@ -5443,6 +5643,31 @@ sb32 syNetRbSnapFireballProcAccessoryWillRun(GObj *fighter_gobj)
 	return FALSE;
 }
 
+/*
+ * Emergency spawn replaces missed anim flag0 after rollback load/resim, or when ProcUpdate
+ * fallback runs because proc_accessory is skipped (physics-map gap). Forward sim with a
+ * live accessory proc uses anim flag0 only — avoids emergency+anim double spawn per B.
+ */
+static sb32 syNetRbSnapFireballEmergencySpawnAllowed(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return TRUE;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp != NULL) && (fp->proc_accessory == NULL))
+	{
+		return TRUE;
+	}
+	if (syNetRbSnapFireballProcAccessoryWillRun(fighter_gobj) == FALSE)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 void syNetRbSnapTrySpawnFireballFromAccessory(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -5467,12 +5692,8 @@ void syNetRbSnapTrySpawnFireballFromAccessory(GObj *fighter_gobj)
 
 	if (fp->motion_vars.flags.flag1 != 0)
 	{
-		if (syNetRbSnapFireballOwnedByFighter(fighter_gobj) != FALSE)
-		{
-			syNetRbSnapFireballSpawnDiag("latched", fp, anim_frame);
-			return;
-		}
-		fp->motion_vars.flags.flag1 = 0;
+		syNetRbSnapFireballSpawnDiag("latched", fp, anim_frame);
+		return;
 	}
 
 	should_spawn = FALSE;
@@ -5484,7 +5705,8 @@ void syNetRbSnapTrySpawnFireballFromAccessory(GObj *fighter_gobj)
 		should_spawn = TRUE;
 		spawn_path = "anim";
 	}
-	else if (anim_frame >= SYNETRB_SNAP_FIREBALL_EMERGENCY_FRAME)
+	else if ((anim_frame >= SYNETRB_SNAP_FIREBALL_EMERGENCY_FRAME) &&
+	         (syNetRbSnapFireballEmergencySpawnAllowed(fighter_gobj) != FALSE))
 	{
 		should_spawn = TRUE;
 		spawn_path = "emergency";
@@ -5588,17 +5810,21 @@ static sb32 syNetRbSnapFighterIsInThunderJoltThrowStatus(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	switch (fp->status_id)
+	switch (fp->fkind)
 	{
-	case nFTPikachuStatusSpecialN:
-	case nFTPikachuStatusSpecialAirN:
-		return TRUE;
+	case nFTKindPikachu:
+		switch (fp->status_id)
+		{
+		case nFTPikachuStatusSpecialN:
+		case nFTPikachuStatusSpecialAirN:
+			return TRUE;
 
-	default:
+		default:
+			break;
+		}
 		break;
-	}
-	if (fp->fkind == nFTKindKirby)
-	{
+
+	case nFTKindKirby:
 		switch (fp->status_id)
 		{
 		case nFTKirbyStatusCopyPikachuSpecialN:
@@ -5608,6 +5834,10 @@ static sb32 syNetRbSnapFighterIsInThunderJoltThrowStatus(const FTStruct *fp)
 		default:
 			break;
 		}
+		break;
+
+	default:
+		break;
 	}
 	return FALSE;
 }
@@ -5950,6 +6180,498 @@ static sb32 syNetRbSnapLiveWeaponIsThunderJoltThrowPreserve(GObj *weapon_gobj)
 	return syNetRbSnapThunderJoltNearFighterHand(fighter_gobj, weapon_gobj, SYNETRB_SNAP_THUNDERJOLT_HAND_RADIUS_SQ);
 }
 
+static sb32 syNetRbSnapFighterIsInPKThunderSpecialHiStatus(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTNessStatusSpecialHiStart:
+	case nFTNessStatusSpecialHiHold:
+	case nFTNessStatusSpecialAirHiStart:
+	case nFTNessStatusSpecialAirHiHold:
+		return TRUE;
+
+	default:
+		break;
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapWeaponPKThunderHeadIsActive(const WPStruct *wp, GObj *owner_gobj)
+{
+	(void)owner_gobj;
+
+	if (wp == NULL)
+	{
+		return FALSE;
+	}
+	return ((wp->weapon_vars.pkthunder.status & nWPNessPKThunderStatusDestroy) == 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetRbSnapPKThunderTrailBelongsToHead(const WPStruct *wp, GObj *head_gobj)
+{
+	if ((wp == NULL) || (head_gobj == NULL))
+	{
+		return FALSE;
+	}
+	if (wp->weapon_vars.pkthunder_trail.head_gobj == head_gobj)
+	{
+		return TRUE;
+	}
+	return (wp->weapon_vars.pkthunder_trail.parent_gobj == head_gobj) ? TRUE : FALSE;
+}
+
+static sb32 syNetRbSnapLiveWeaponIsPKThunderPreserve(GObj *weapon_gobj)
+{
+	WPStruct *wp;
+	GObj *owner_gobj;
+	FTStruct *fp;
+	GObj *coupled_head_gobj;
+
+	wp = wpGetStruct(weapon_gobj);
+	if ((wp == NULL) ||
+	    ((wp->kind != nWPKindPKThunderHead) && (wp->kind != nWPKindPKThunderTrail)))
+	{
+		return FALSE;
+	}
+	owner_gobj = wp->owner_gobj;
+	if ((owner_gobj == NULL) || (syNetRbSnapWeaponOwnedByFighterGObj(wp, owner_gobj) == FALSE))
+	{
+		if ((wp->player < 0) || (wp->player >= GMCOMMON_PLAYERS_MAX))
+		{
+			return FALSE;
+		}
+		owner_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)wp->player);
+	}
+	if (owner_gobj == NULL)
+	{
+		return FALSE;
+	}
+	fp = ftGetStruct(owner_gobj);
+	if ((fp == NULL) || (fp->fkind != nFTKindNess) ||
+	    (syNetRbSnapFighterIsInPKThunderSpecialHiStatus(fp) == FALSE))
+	{
+		return FALSE;
+	}
+	coupled_head_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
+	if (coupled_head_gobj == NULL)
+	{
+		coupled_head_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(owner_gobj);
+	}
+	if (coupled_head_gobj == NULL)
+	{
+		return FALSE;
+	}
+	if (wp->kind == nWPKindPKThunderHead)
+	{
+		return (weapon_gobj == coupled_head_gobj) ? TRUE : FALSE;
+	}
+	return syNetRbSnapPKThunderTrailBelongsToHead(wp, coupled_head_gobj);
+}
+
+void syNetRbSnapCullOwnedPKThunderForFighter(GObj *fighter_gobj, GObj *keep_head_gobj)
+{
+	GObj *weapon_gobj;
+	FTStruct *fp;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (fp == NULL)
+	{
+		return;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;)
+	{
+		GObj *next_gobj;
+		WPStruct *wp;
+		sb32 should_destroy;
+
+		next_gobj = weapon_gobj->link_next;
+		wp = wpGetStruct(weapon_gobj);
+		should_destroy = FALSE;
+		if ((wp == NULL) || (syNetRbSnapWeaponOwnedByFighterGObj(wp, fighter_gobj) == FALSE))
+		{
+			weapon_gobj = next_gobj;
+			continue;
+		}
+		if (wp->kind == nWPKindPKThunderHead)
+		{
+			should_destroy = (weapon_gobj != keep_head_gobj) ? TRUE : FALSE;
+		}
+		else if (wp->kind == nWPKindPKThunderTrail)
+		{
+			should_destroy = ((keep_head_gobj == NULL) ||
+			                  (syNetRbSnapPKThunderTrailBelongsToHead(wp, keep_head_gobj) == FALSE)) ?
+			                     TRUE :
+			                     FALSE;
+		}
+		if (should_destroy != FALSE)
+		{
+			if (fp->status_vars.ness.specialhi.pkthunder_gobj == weapon_gobj)
+			{
+				fp->status_vars.ness.specialhi.pkthunder_gobj = NULL;
+			}
+			if (wp->kind == nWPKindPKThunderHead)
+			{
+				wp->weapon_vars.pkthunder.status = nWPNessPKThunderStatusDestroy;
+				wpNessPKThunderHeadSetDestroyTrails(weapon_gobj, TRUE);
+			}
+			else
+			{
+				wpNessPKThunderHeadOrphanTrailReference(weapon_gobj);
+				wp->weapon_vars.pkthunder_trail.status = nWPNessPKThunderStatusDestroy;
+			}
+			wpMainDestroyWeapon(weapon_gobj);
+		}
+		weapon_gobj = next_gobj;
+	}
+}
+
+GObj *syNetRbSnapReacquirePKThunderHeadForFighter(GObj *fighter_gobj)
+{
+	return syNetRbSnapFindLiveWeaponForOwner(fighter_gobj, nWPKindPKThunderHead,
+	                                         syNetRbSnapWeaponPKThunderHeadIsActive);
+}
+
+static void syNetRbSnapPreEjectPKThunderWeapon(GObj *weapon_gobj, WPStruct *wp)
+{
+	if ((weapon_gobj == NULL) || (wp == NULL))
+	{
+		return;
+	}
+	wpNessPKThunderPreDestroyWeapon(weapon_gobj);
+}
+
+#define SYNETRB_SNAP_PKFIRE_EMERGENCY_FRAME          15.0F
+#define SYNETRB_SNAP_PKFIRE_SPAWN_RADIUS_SQ           8100.0F
+#define SYNETRB_SNAP_PKFIRE_THROW_PRESERVE_FRAMES     25.0F
+
+static sb32 syNetRbSnapFighterIsInPKFireSpecialNStatus(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	return ((fp->fkind == nFTKindNess) &&
+	        ((fp->status_id == nFTNessStatusSpecialN) || (fp->status_id == nFTNessStatusSpecialAirN))) ?
+	           TRUE :
+	           FALSE;
+}
+
+static void syNetRbSnapPKFireSpawnPoseForFighter(const FTStruct *fp, Vec3f *pos, Vec3f *vel, f32 *angle)
+{
+	pos->x = 0.0F;
+	pos->y = 0.0F;
+	pos->z = 0.0F;
+	gmCollisionGetFighterPartsWorldPosition(fp->joints[FTNESS_PKFIRE_SPAWN_JOINT], pos);
+	pos->x += FTNESS_PKFIRE_SPAWN_OFF_X * fp->lr;
+	pos->y += FTNESS_PKFIRE_SPAWN_OFF_Y;
+	pos->z = 0.0F;
+
+	if (fp->ga == nMPKineticsAir)
+	{
+		vel->z = 0.0F;
+		*angle = FTNESS_PKFIRE_SPARK_ANGLE_AIR;
+		vel->x = __cosf(FTNESS_PKFIRE_SPARK_ANGLE_AIR) * FTNESS_PKFIRE_SPARK_VEL_AIR * fp->lr;
+		vel->y = __sinf(FTNESS_PKFIRE_SPARK_ANGLE_AIR) * FTNESS_PKFIRE_SPARK_VEL_AIR;
+	}
+	else
+	{
+		vel->z = 0.0F;
+		*angle = FTNESS_PKFIRE_SPARK_ANGLE_GROUND;
+		vel->x = __cosf(FTNESS_PKFIRE_SPARK_ANGLE_GROUND) * FTNESS_PKFIRE_SPARK_VEL_GROUND * fp->lr;
+		vel->y = __sinf(FTNESS_PKFIRE_SPARK_ANGLE_GROUND) * FTNESS_PKFIRE_SPARK_VEL_GROUND;
+	}
+}
+
+static void syNetRbSnapPKFireSpawnDiag(const char *reason, const FTStruct *fp, f32 anim_frame)
+{
+	if (syNetRbSnapWeaponDiagEnabled() != FALSE)
+	{
+		if (fp == NULL)
+		{
+			port_log("SSB64 NetRbSnapshot: pkfire_spawn skip=%s\n", reason);
+		}
+		else
+		{
+			port_log("SSB64 NetRbSnapshot: pkfire_spawn skip=%s owner_player=%d status=%d anim_frame=%.1f\n",
+			         reason, (int)fp->player, (int)fp->status_id, anim_frame);
+		}
+	}
+}
+
+sb32 syNetRbSnapPKFireOwnedByFighter(GObj *fighter_gobj)
+{
+	GObj *weapon_gobj;
+
+	if (fighter_gobj == NULL)
+	{
+		return FALSE;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		WPStruct *wp = wpGetStruct(weapon_gobj);
+
+		if ((wp != NULL) && (wp->kind == nWPKindPKFire) &&
+		    (syNetRbSnapWeaponOwnedByFighterGObj(wp, fighter_gobj) != FALSE))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapPKFireNeedsSpawnAtPose(GObj *fighter_gobj, const Vec3f *spawn_pos)
+{
+	GObj *weapon_gobj;
+
+	if ((fighter_gobj == NULL) || (spawn_pos == NULL))
+	{
+		return TRUE;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		WPStruct *wp;
+		DObj *dobj;
+		f32 dx;
+		f32 dy;
+		f32 dz;
+
+		wp = wpGetStruct(weapon_gobj);
+		if ((wp == NULL) || (wp->kind != nWPKindPKFire) ||
+		    (syNetRbSnapWeaponOwnedByFighterGObj(wp, fighter_gobj) == FALSE))
+		{
+			continue;
+		}
+		dobj = DObjGetStruct(weapon_gobj);
+		if (dobj == NULL)
+		{
+			return FALSE;
+		}
+		dx = dobj->translate.vec.f.x - spawn_pos->x;
+		dy = dobj->translate.vec.f.y - spawn_pos->y;
+		dz = dobj->translate.vec.f.z - spawn_pos->z;
+		if (((dx * dx) + (dy * dy) + (dz * dz)) <= SYNETRB_SNAP_PKFIRE_SPAWN_RADIUS_SQ)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static GObj *syNetRbSnapReacquirePKFireAtPose(GObj *fighter_gobj, const Vec3f *pos, f32 radius_sq)
+{
+	GObj *weapon_gobj;
+
+	if ((fighter_gobj == NULL) || (pos == NULL))
+	{
+		return NULL;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		WPStruct *wp;
+		DObj *dobj;
+		f32 dx;
+		f32 dy;
+		f32 dz;
+
+		wp = wpGetStruct(weapon_gobj);
+		if ((wp == NULL) || (wp->kind != nWPKindPKFire) ||
+		    (syNetRbSnapWeaponOwnedByFighterGObj(wp, fighter_gobj) == FALSE))
+		{
+			continue;
+		}
+		dobj = DObjGetStruct(weapon_gobj);
+		if (dobj == NULL)
+		{
+			continue;
+		}
+		dx = dobj->translate.vec.f.x - pos->x;
+		dy = dobj->translate.vec.f.y - pos->y;
+		dz = dobj->translate.vec.f.z - pos->z;
+		if (((dx * dx) + (dy * dy) + (dz * dz)) <= radius_sq)
+		{
+			wp->owner_gobj = fighter_gobj;
+			return weapon_gobj;
+		}
+	}
+	return NULL;
+}
+
+static void syNetRbSnapCullOwnedPKFiresNearPose(GObj *fighter_gobj, GObj *keep_pkfire_gobj, const Vec3f *pos,
+                                                f32 radius_sq)
+{
+	GObj *weapon_gobj;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;)
+	{
+		GObj *next_gobj;
+		WPStruct *wp;
+		DObj *dobj;
+		f32 dx;
+		f32 dy;
+		f32 dz;
+
+		next_gobj = weapon_gobj->link_next;
+		wp = wpGetStruct(weapon_gobj);
+		if ((wp == NULL) || (wp->kind != nWPKindPKFire) || (weapon_gobj == keep_pkfire_gobj) ||
+		    (syNetRbSnapWeaponOwnedByFighterGObj(wp, fighter_gobj) == FALSE))
+		{
+			weapon_gobj = next_gobj;
+			continue;
+		}
+		dobj = DObjGetStruct(weapon_gobj);
+		if (dobj == NULL)
+		{
+			wpMainDestroyWeapon(weapon_gobj);
+			weapon_gobj = next_gobj;
+			continue;
+		}
+		dx = dobj->translate.vec.f.x - pos->x;
+		dy = dobj->translate.vec.f.y - pos->y;
+		dz = dobj->translate.vec.f.z - pos->z;
+		if (((dx * dx) + (dy * dy) + (dz * dz)) <= radius_sq)
+		{
+			wpMainDestroyWeapon(weapon_gobj);
+		}
+		weapon_gobj = next_gobj;
+	}
+}
+
+static sb32 syNetRbSnapLiveWeaponIsPKFirePreserve(GObj *weapon_gobj)
+{
+	WPStruct *wp;
+	GObj *owner_gobj;
+	FTStruct *fp;
+
+	wp = wpGetStruct(weapon_gobj);
+	if ((wp == NULL) || (wp->kind != nWPKindPKFire))
+	{
+		return FALSE;
+	}
+	owner_gobj = wp->owner_gobj;
+	if ((owner_gobj == NULL) || (syNetRbSnapWeaponOwnedByFighterGObj(wp, owner_gobj) == FALSE))
+	{
+		if ((wp->player < 0) || (wp->player >= GMCOMMON_PLAYERS_MAX))
+		{
+			return FALSE;
+		}
+		owner_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)wp->player);
+	}
+	if (owner_gobj == NULL)
+	{
+		return FALSE;
+	}
+	fp = ftGetStruct(owner_gobj);
+	if (syNetRbSnapFighterIsInPKFireSpecialNStatus(fp) == FALSE)
+	{
+		return FALSE;
+	}
+	if (fp->motion_vars.flags.flag1 == 0)
+	{
+		return TRUE;
+	}
+	return (owner_gobj->anim_frame < SYNETRB_SNAP_PKFIRE_THROW_PRESERVE_FRAMES) ? TRUE : FALSE;
+}
+
+void syNetRbSnapTrySpawnPKFireFromAccessory(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f pos;
+	Vec3f vel;
+	f32 angle;
+	sb32 should_spawn;
+	const char *spawn_path;
+	f32 anim_frame;
+	GObj *pkfire_gobj;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetRbSnapFighterIsInPKFireSpecialNStatus(fp) == FALSE))
+	{
+		return;
+	}
+	anim_frame = fighter_gobj->anim_frame;
+
+	if (fp->motion_vars.flags.flag1 != 0)
+	{
+		syNetRbSnapPKFireSpawnDiag("latched", fp, anim_frame);
+		return;
+	}
+
+	should_spawn = FALSE;
+	spawn_path = NULL;
+	if (fp->motion_vars.flags.flag0 != 0)
+	{
+		fp->motion_vars.flags.flag0 = 0;
+		should_spawn = TRUE;
+		spawn_path = "anim";
+	}
+	else if (anim_frame >= SYNETRB_SNAP_PKFIRE_EMERGENCY_FRAME)
+	{
+		should_spawn = TRUE;
+		spawn_path = "emergency";
+	}
+	if (should_spawn == FALSE)
+	{
+		syNetRbSnapPKFireSpawnDiag("wait_frame", fp, anim_frame);
+		return;
+	}
+	if (fp->joints[FTNESS_PKFIRE_SPAWN_JOINT] == NULL)
+	{
+		syNetRbSnapPKFireSpawnDiag("spawn_joint_null", fp, anim_frame);
+		return;
+	}
+	syNetRbSnapPKFireSpawnPoseForFighter(fp, &pos, &vel, &angle);
+	if (syNetRbSnapPKFireNeedsSpawnAtPose(fighter_gobj, &pos) == FALSE)
+	{
+		pkfire_gobj = syNetRbSnapReacquirePKFireAtPose(fighter_gobj, &pos, SYNETRB_SNAP_PKFIRE_SPAWN_RADIUS_SQ);
+		if (pkfire_gobj != NULL)
+		{
+			syNetRbSnapCullOwnedPKFiresNearPose(fighter_gobj, pkfire_gobj, &pos, SYNETRB_SNAP_PKFIRE_SPAWN_RADIUS_SQ);
+			fp->motion_vars.flags.flag1 = 1;
+			spawn_path = "reacquire";
+		}
+		else
+		{
+			syNetRbSnapPKFireSpawnDiag("skip_dedup", fp, anim_frame);
+			return;
+		}
+	}
+	else
+	{
+		pkfire_gobj = wpNessPKFireMakeWeapon(fighter_gobj, &pos, &vel, angle);
+		if (pkfire_gobj == NULL)
+		{
+			syNetRbSnapPKFireSpawnDiag("make_weapon_null", fp, anim_frame);
+			return;
+		}
+		syNetRbSnapCullOwnedPKFiresNearPose(fighter_gobj, pkfire_gobj, &pos, SYNETRB_SNAP_PKFIRE_SPAWN_RADIUS_SQ);
+		fp->motion_vars.flags.flag1 = 1;
+	}
+	if (syNetRbSnapWeaponDiagEnabled() != FALSE)
+	{
+		port_log("SSB64 NetRbSnapshot: pkfire_spawn path=%s owner_player=%d anim_frame=%.1f\n",
+		         (spawn_path != NULL) ? spawn_path : "spawn", (int)fp->player, anim_frame);
+	}
+}
+
 sb32 syNetRbSnapThunderJoltProcAccessoryWillRun(GObj *fighter_gobj)
 {
 	return syNetRbSnapFireballProcAccessoryWillRun(fighter_gobj);
@@ -5989,7 +6711,9 @@ void syNetRbSnapTrySpawnThunderJoltFromAccessory(GObj *fighter_gobj)
 			syNetRbSnapThunderJoltSpawnDiag("throw_preserve", fp, anim_frame);
 			return;
 		}
-		fp->motion_vars.flags.flag1 = 0;
+		/* Spawn committed for this throw; deferred eject can destroy the jolt mid-recovery. */
+		syNetRbSnapThunderJoltSpawnDiag("spawn_done", fp, anim_frame);
+		return;
 	}
 
 	should_spawn = FALSE;

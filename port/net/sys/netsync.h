@@ -15,6 +15,7 @@
 
 /* Item rollback hash uses the same active-item cap as snapshot blobs (no silent hash-only extras). */
 #define SYNET_SYNC_ITEM_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_ITEMS
+#define SYNET_SYNC_WEAPON_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_WEAPONS
 
 struct FTStruct;
 
@@ -108,6 +109,8 @@ extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
 /* Per-player `syNetSyncHashFighterStructLight` at `sim_state_tick` (`SSB64_NETPLAY_FIGHTER_SLOT_HASH_LOG`). */
 extern void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX]);
 extern void syNetSyncLogFighterSlotHashes(u32 tick);
+/* Ness PK Thunder hold: per-tick coupling/physics (`SSB64_NETPLAY_PKTHUNDER_HOLD_DIAG=1`). */
+extern void syNetSyncLogPKThunderHoldDiag(u32 tick);
 /* Field-level baseline mismatch when world/rng/item agree but figh differs. */
 extern void syNetSyncLogBaselineUniverseDiff(u32 load_tick, u32 peer_figh, u32 local_figh, u32 peer_world,
 					     u32 local_world, u32 peer_rng, u32 local_rng);

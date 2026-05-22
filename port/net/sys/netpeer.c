@@ -10111,6 +10111,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			    remote_cap,
 			    (hr > 0U) ? (int)((s32)tick - (s32)remote_cap) : 0);
 			syNetSyncLogFighterSlotHashes(tick);
+			syNetSyncLogPKThunderHoldDiag(tick);
 		}
 	}
 }
