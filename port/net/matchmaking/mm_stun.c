@@ -18,7 +18,9 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#if defined(__linux__)
 #include <sys/random.h>
+#endif
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -50,12 +52,18 @@ static void mmStunFillTxId(u8 *pkt)
 		pkt[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 7919U));
 	}
 #else
-	if (getrandom(pkt, 12U, 0) != 12)
+#if defined(__linux__)
+	if (getrandom(pkt, 12U, 0) == 12)
 	{
-		for (i = 0; i < 12; i++)
-		{
-			pkt[i] = (u8)((u32)getpid() ^ ((u32)i * 7919U));
-		}
+		return;
+	}
+#elif defined(__APPLE__)
+	arc4random_buf(pkt, 12U);
+	return;
+#endif
+	for (i = 0; i < 12; i++)
+	{
+		pkt[i] = (u8)((u32)getpid() ^ ((u32)i * 7919U));
 	}
 #endif
 }
