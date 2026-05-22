@@ -264,13 +264,14 @@ jobs:
           choco install ninja -y
         shell: pwsh
       - name: Setup MSVC
-        # Pin an SDK that still ships um\x64 import libs (26100 often omits ksguid.lib).
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
           vsversion: '2022'
-        env:
-          WindowsSDKVersion: 10.0.22621.0\
+      - name: Refresh vcvars for SDK with ksguid.lib
+        # 26100 um\x64 often lacks ksguid.lib; re-run vcvars on an SDK that has it.
+        shell: pwsh
+        run: ./scripts/ci-refresh-vcvars-windows-sdk.ps1
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1
@@ -309,8 +310,9 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
-        env:
-          WindowsSDKVersion: 10.0.22621.0\
+      - name: Refresh vcvars for SDK with ksguid.lib
+        shell: pwsh
+        run: ./scripts/ci-refresh-vcvars-windows-sdk.ps1
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1

@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-22 | [windows_ci_ksguid_sdk](windows_ci_ksguid_sdk_2026-05-22.md) | **FIX SHIPPED** — Windows release CI: SDK 10.0.26100.0 `um\x64` without `ksguid.lib`; refresh vcvars on older SDK + multi-version scan + `WindowsSdkUmLib.cmake` full path. Re-tag after merging scripts. |
 | 2026-05-22 | [linux_menu_rendering_fixes](../linux_menu_rendering_fixes_2026-05-22.md) | **INDEX — Linux menu rendering family** — Umbrella doc for intermittent Linux/OpenGL menu corruption (CSS, pause, training, HUD sprites): scene heap recycle, reloc/sprite fixups, forked libultraship SETTIMG/G_VTX/PrimDepth/IA4/OGL FB deltas. Links all related bug slugs; upstream Kenix3/libultraship still missing several Fast3D fixes. |
 | 2026-05-22 | [netplay_grab_geometry_stale_joint](netplay_grab_geometry_stale_joint_2026-05-22.md) | **FIX SHIPPED (soak pending)** — Ness→DK hold: inverted/clipped victim from stale grabber hand matrix + floor Y split; geometry refresh in finalize-after-joint-anim + transform invalidate + ProcMap NULL guards. |
 | 2026-05-22 | [netplay_grab_synctest_roundtrip](netplay_grab_synctest_roundtrip_2026-05-22.md) | **FIX SHIPPED (soak pending)** — Grab synctest: finalize-order fix (Yoshi-egg class) + `throw_desc_ptr` blob round-trip; removed grab-coupling synctest skip; DK cargo (`Shouldered`) same thrown geometry path. |
