@@ -71,19 +71,6 @@ $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else {
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 
-# ilammy/msvc-dev-cmd sets LIB for cmd steps, but pwsh often starts without Windows
-# SDK um paths — link.exe then fails LNK1181 on ksguid.lib (libultraship WASAPI).
-# A coarse "Windows Kits" match can pass while um\x64 (where ksguid.lib lives) is missing.
-function Test-KsguidLibOnLibPath {
-    if (-not $env:LIB) { return $false }
-    foreach ($dir in ($env:LIB -split ';')) {
-        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir 'ksguid.lib'))) {
-            return $true
-        }
-    }
-    return $false
-}
-
 function Reset-StaleCmakeCache {
     param([string]$Dir, [bool]$WantNetmenu)
     $cache = Join-Path $Dir "CMakeCache.txt"
@@ -140,15 +127,14 @@ function Test-NetplayCurlConfigured {
 }
 
 function Import-VcVars64IfNeeded {
-    # CI: always re-import so pwsh gets the full vcvars64 LIB (um + ucrt), not a partial inherit.
-    if ($env:GITHUB_ACTIONS -ne 'true' -and (Test-KsguidLibOnLibPath)) { return }
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) { return }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path -LiteralPath $vswhere)) {
         Fail "MSVC not found (vswhere missing). Run from a Developer Command Prompt or install VS Build Tools."
     }
     $vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if (-not $vsPath) {
-        Fail "Visual Studio C++ tools not installed (required for ksguid.lib / WASAPI)."
+        Fail "Visual Studio C++ tools not installed."
     }
     $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
     if (-not (Test-Path -LiteralPath $vcvars)) {
@@ -160,8 +146,8 @@ function Import-VcVars64IfNeeded {
             Set-Item -Path "Env:$($Matches.key)" -Value $Matches.val
         }
     }
-    if (-not (Test-KsguidLibOnLibPath)) {
-        Fail "vcvars64 did not put ksguid.lib on LIB (um\x64 path missing; WASAPI link will fail)"
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        Fail "vcvars64 did not expose cl.exe on PATH"
     }
 }
 
@@ -216,14 +202,12 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-# Ninja + x64 MSVC (libultraship links ksguid for WASAPI). GHA sets
-# vcvars via ilammy/msvc-dev-cmd; local builds need a Developer Command Prompt.
+# Ninja + x64 MSVC. GHA sets vcvars via ilammy/msvc-dev-cmd; local builds need a Developer Command Prompt.
 $CmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
     "-DSSB64_VERSION=$Ver",
     "-GNinja",
     "-DCMAKE_VS_PLATFORM_NAME=x64",
-    # Force MSVC so libultraship uses WindowsSdkUmLib (full ksguid path), not bare ksguid.
     "-DCMAKE_C_COMPILER=cl",
     "-DCMAKE_CXX_COMPILER=cl"
 )
@@ -233,22 +217,11 @@ if ($Netplay) {
     # Force OFF — stale CMakeCache from a netplay configure must not pull in mm_matchmaking/curl.
     $CmakeArgs += "-DSSB64_NETMENU=OFF"
 }
-if ($env:SSB64_KSGUID_LIB) {
-    $CmakeArgs += "-DSSB64_KSGUID_LIB=$($env:SSB64_KSGUID_LIB)"
-}
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
 if ($env:GITHUB_ACTIONS -eq 'true' -and (Test-Path -LiteralPath $BuildDir)) {
-    Write-Host "   CI: removing prior build tree for clean MSVC/ksguid configure"
+    Write-Host "   CI: removing prior build tree for clean MSVC configure"
     Remove-Item -LiteralPath $BuildDir -Recurse -Force
-}
-if (Test-KsguidLibOnLibPath) {
-    foreach ($dir in ($env:LIB -split ';')) {
-        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir 'ksguid.lib'))) {
-            Write-Host "   ksguid.lib on LIB: $(Join-Path $dir 'ksguid.lib')"
-            break
-        }
-    }
 }
 # Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
 Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
@@ -271,44 +244,6 @@ if ($Netplay) {
 } else {
     Test-OfflineWindowsConfigured $BuildDir
 }
-
-function Test-KsguidConfigureAndLinkInputs {
-    param([string]$Dir)
-    $cache = Join-Path $Dir "CMakeCache.txt"
-    if (Test-Path -LiteralPath $cache) {
-        $raw = Get-Content -LiteralPath $cache -Raw
-        if ($raw -notmatch 'SSB64_KSGUID_LIB:INTERNAL=') {
-            Fail "CMakeCache missing SSB64_KSGUID_LIB — push CMakeLists.txt with pre-libultraship ksguid resolve"
-        }
-        if ($raw -match 'SSB64_KSGUID_LIB:INTERNAL=(.*)') {
-            $p = $Matches[1].Trim()
-            if (-not (Test-Path -LiteralPath $p)) {
-                Fail "Cached SSB64_KSGUID_LIB does not exist: $p"
-            }
-            if ($p -notmatch '(?i)[\\/]um[\\/]x64[\\/]ksguid\.lib$') {
-                Fail "Cached SSB64_KSGUID_LIB is not desktop um/x64: $p"
-            }
-            Write-Host "   SSB64_KSGUID_LIB: $p"
-        }
-    }
-    $bareHits = @()
-    foreach ($file in (Get-ChildItem -Path $Dir -Recurse -Include 'build.ninja', '*.rsp', 'link.txt' -ErrorAction SilentlyContinue)) {
-        Select-String -LiteralPath $file.FullName -Pattern 'ksguid' -SimpleMatch -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_.Line -match 'ksguid\.lib' -and $_.Line -notmatch '(?i)[\\/]um[\\/]x64[\\/]ksguid\.lib') {
-                $snippet = $_.Line
-                if ($snippet.Length -gt 240) { $snippet = $snippet.Substring(0, 240) + "..." }
-                $bareHits += "$($file.FullName): $snippet"
-            }
-        }
-    }
-    if ($bareHits.Count -gt 0) {
-        $bareHits | ForEach-Object { Write-Host "   $_" }
-        Fail "Linker missing um/x64 ksguid.lib full path — check WindowsSdkUmLib.cmake and ci-append"
-    }
-    Write-Host "   ksguid: um/x64 full path in CMake cache and ninja/rsp"
-}
-
-Test-KsguidConfigureAndLinkInputs $BuildDir
 
 Write-Step "Building BattleShip + torch"
 cmake --build $BuildDir --config Release -j $Jobs
