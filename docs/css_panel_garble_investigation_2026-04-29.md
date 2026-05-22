@@ -1,14 +1,19 @@
 # CSS Panel Backdrop Garbled — Investigation Handoff (2026-04-29)
 
+> **SUPERSEDED — RESOLVED 2026-04-29.** Root cause and fix:
+> [css_gate_palette_overlap_fixup_2026-04-29.md](bugs/css_gate_palette_overlap_fixup_2026-04-29.md).
+> Broader Linux menu rendering family index:
+> [linux_menu_rendering_fixes_2026-05-22.md](linux_menu_rendering_fixes_2026-05-22.md).
+> This file is kept as pre-fix investigation notes only.
+
 **Issue:** [#3 Character Select backdrop behind each port renders garbled
 sometimes](https://github.com/JRickey/BattleShip/issues/3) — reporter
 demonstrates garble that varies depending on what HMN/CPU changes were
 made before re-entering VS mode.
 
-**Status:** Not fixed in this pass. Symptom is state-dependent and
-needs in-game reproduction before any change is made. This document
-captures the leading theories and the code paths a future session
-should instrument.
+**Status (historical):** Not fixed when this handoff was written. Fixed
+subsequently via per-word TLUT fixup idempotency (`sTexFixupWords`). See
+superseding doc above.
 
 ## Reproduction signal from the reporter's video
 
