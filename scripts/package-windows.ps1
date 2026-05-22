@@ -69,9 +69,21 @@ function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 
 # ilammy/msvc-dev-cmd sets LIB for cmd steps, but pwsh often starts without Windows
-# SDK paths — link.exe then fails LNK1181 on ksguid.lib (libultraship WASAPI).
+# SDK um paths — link.exe then fails LNK1181 on ksguid.lib (libultraship WASAPI).
+# A coarse "Windows Kits" match can pass while um\x64 (where ksguid.lib lives) is missing.
+function Test-KsguidLibOnLibPath {
+    if (-not $env:LIB) { return $false }
+    foreach ($dir in ($env:LIB -split ';')) {
+        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir 'ksguid.lib'))) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Import-VcVars64IfNeeded {
-    if ($env:LIB -and $env:LIB -match 'Windows Kits') { return }
+    # CI: always re-import so pwsh gets the full vcvars64 LIB (um + ucrt), not a partial inherit.
+    if ($env:GITHUB_ACTIONS -ne 'true' -and (Test-KsguidLibOnLibPath)) { return }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path -LiteralPath $vswhere)) {
         Fail "MSVC not found (vswhere missing). Run from a Developer Command Prompt or install VS Build Tools."
@@ -90,8 +102,8 @@ function Import-VcVars64IfNeeded {
             Set-Item -Path "Env:$($Matches.key)" -Value $Matches.val
         }
     }
-    if (-not $env:LIB -or $env:LIB -notmatch 'Windows Kits') {
-        Fail "vcvars64 did not set LIB with Windows SDK paths (ksguid.lib will not link)"
+    if (-not (Test-KsguidLibOnLibPath)) {
+        Fail "vcvars64 did not put ksguid.lib on LIB (um\x64 path missing; WASAPI link will fail)"
     }
 }
 

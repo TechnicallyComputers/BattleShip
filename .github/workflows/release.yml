@@ -275,7 +275,10 @@ jobs:
         run: |
           where cl
           where link
-          echo %LIB% | findstr /i /c:"Windows Kits" >nul || (echo LIB missing Windows SDK paths & exit /b 1)
+          echo LIB=%LIB%
+          echo INCLUDE=%INCLUDE%
+          where /R "C:\Program Files (x86)\Windows Kits\10\Lib" ksguid.lib || (echo ksguid.lib not in Windows SDK & exit /b 1)
+          echo %LIB% | findstr /i /c:"um\x64" >nul || echo WARN: LIB may omit um\x64 — CMake resolves ksguid at configure time
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -312,7 +315,10 @@ jobs:
         run: |
           where cl
           where link
-          echo %LIB% | findstr /i /c:"Windows Kits" >nul || (echo LIB missing Windows SDK paths & exit /b 1)
+          echo LIB=%LIB%
+          echo INCLUDE=%INCLUDE%
+          where /R "C:\Program Files (x86)\Windows Kits\10\Lib" ksguid.lib || (echo ksguid.lib not in Windows SDK & exit /b 1)
+          echo %LIB% | findstr /i /c:"um\x64" >nul || echo WARN: LIB may omit um\x64 — CMake resolves ksguid at configure time
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}

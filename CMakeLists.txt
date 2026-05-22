@@ -676,7 +676,9 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(${PROJECT_NAME} PRIVATE shell32 ksguid)
+    include(WindowsSdkUmLib)
+    target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    windows_sdk_um_link_lib(${PROJECT_NAME} PRIVATE ksguid)
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
