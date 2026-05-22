@@ -20,6 +20,9 @@ Usage examples:
     # Generate a fully-completed save (every char, stage, option)
     python tools/save_editor.py write --all
 
+    # Open the save in $EDITOR / xdg-open (skip Windows cmd.exe lookup)
+    python tools/save_editor.py --linux edit
+
     # Just unlock the four hidden characters and item switch
     python tools/save_editor.py write --unlock-chars --item-switch
 
@@ -33,7 +36,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
+import shutil
 import struct
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -432,7 +438,7 @@ def _is_portable_build() -> bool:
     return False
 
 
-def default_save_path() -> Path:
+def default_save_path(*, use_linux: bool = False) -> Path:
     """Resolve the save file path with the same precedence the running
     game uses (port_save.cpp::resolveSavePath):
 
@@ -443,18 +449,28 @@ def default_save_path() -> Path:
          relative to cwd, which is the repo root when launched as
          `build/BattleShip` from there.
       4. NON_PORTABLE app-data dir (the default for release bundles).
+
+    When ``use_linux`` is True, always pick the Linux/macOS app-data layout
+    (never %APPDATA%) and prefer POSIX tools for external open/edit helpers.
+    Useful on MSYS/WSL or when a Windows Python install should target the
+    Linux BattleShip save under ~/.local/share/BattleShip/.
     """
     env = os.environ.get("SSB64_SAVE_PATH")
     if env:
         return Path(env).expanduser()
 
-    if sys.platform != "win32":
+    if use_linux or sys.platform != "win32":
         ship_home = os.environ.get("SHIP_HOME")
         if ship_home:
             return Path(ship_home).expanduser() / "ssb64_save.bin"
 
     if _is_portable_build():
         return _PROJECT_ROOT / "ssb64_save.bin"
+
+    if use_linux:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) / "BattleShip" if xdg else Path.home() / ".local" / "share" / "BattleShip"
+        return base / "ssb64_save.bin"
 
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support" / "BattleShip"
@@ -465,6 +481,79 @@ def default_save_path() -> Path:
         xdg = os.environ.get("XDG_DATA_HOME")
         base = Path(xdg) / "BattleShip" if xdg else Path.home() / ".local" / "share" / "BattleShip"
     return base / "ssb64_save.bin"
+
+
+def resolve_save_path(args: argparse.Namespace) -> Path:
+    if args.file:
+        return Path(args.file).expanduser()
+    return default_save_path(use_linux=getattr(args, "linux", False))
+
+
+def _which(name: str) -> Optional[str]:
+    return shutil.which(name)
+
+
+def open_save_externally(path: Path, *, use_linux: bool, editor: Optional[str] = None) -> int:
+    """Open ``path`` in an external editor or file manager.
+
+    With ``use_linux=True``, never invoke ``cmd.exe`` / ``start`` — use
+    ``$EDITOR``, ``$SSB64_SAVE_EDITOR``, ``xdg-open``, or ``gio open`` instead.
+    """
+    path = path.expanduser().resolve()
+    if not path.exists():
+        print(f"Save file does not exist: {path}", file=sys.stderr)
+        return 1
+
+    editor_spec = editor or os.environ.get("SSB64_SAVE_EDITOR") or os.environ.get("EDITOR")
+    if editor_spec:
+        try:
+            cmd = shlex.split(editor_spec, posix=(use_linux or os.name != "nt"))
+        except ValueError as exc:
+            print(f"Invalid editor command {editor_spec!r}: {exc}", file=sys.stderr)
+            return 1
+        subprocess.Popen([*cmd, str(path)])
+        print(f"Opened with: {' '.join(cmd)} {path}")
+        return 0
+
+    prefer_posix = use_linux or sys.platform != "win32"
+    if prefer_posix:
+        if _which("xdg-open"):
+            subprocess.Popen(["xdg-open", str(path)])
+            print(f"Opened with: xdg-open {path}")
+            return 0
+        if _which("gio"):
+            subprocess.Popen(["gio", "open", str(path)])
+            print(f"Opened with: gio open {path}")
+            return 0
+        if sys.platform == "darwin" and _which("open"):
+            subprocess.Popen(["open", str(path)])
+            print(f"Opened with: open {path}")
+            return 0
+        print(
+            "No POSIX opener found (set $EDITOR, $SSB64_SAVE_EDITOR, or install xdg-open).\n"
+            f"  Save path: {path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if hasattr(os, "startfile"):
+        os.startfile(str(path))
+        print(f"Opened with: startfile {path}")
+        return 0
+
+    cmd_path = _which("cmd")
+    if cmd_path is None:
+        print(
+            "Could not find cmd.exe and no $EDITOR is set.\n"
+            f"  Save path: {path}\n"
+            "  Pass --linux to use xdg-open/$EDITOR instead of Windows cmd.",
+            file=sys.stderr,
+        )
+        return 1
+
+    subprocess.Popen([cmd_path, "/c", "start", "", str(path)], shell=False)
+    print(f"Opened with: cmd /c start {path}")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +687,7 @@ def fresh_default() -> BackupData:
 # ---------------------------------------------------------------------------
 
 def cmd_dump(args: argparse.Namespace) -> int:
-    path = Path(args.file) if args.file else default_save_path()
+    path = resolve_save_path(args)
     data = read_save(path)
     if data is None:
         print(f"No save file at: {path}")
@@ -646,7 +735,7 @@ def cmd_dump(args: argparse.Namespace) -> int:
 
 
 def cmd_write(args: argparse.Namespace) -> int:
-    path = Path(args.file) if args.file else default_save_path()
+    path = resolve_save_path(args)
 
     if args.from_existing and path.exists():
         data = read_save(path) or fresh_default()
@@ -740,6 +829,11 @@ def cmd_write(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_edit(args: argparse.Namespace) -> int:
+    path = resolve_save_path(args)
+    return open_save_externally(path, use_linux=args.linux, editor=args.editor)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -774,10 +868,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--file", help="Override path to ssb64_save.bin (default: SDL pref dir).")
+    p.add_argument(
+        "--linux",
+        action="store_true",
+        help="Use Linux save path (~/.local/share/BattleShip/) and POSIX open "
+             "commands ($EDITOR, xdg-open) instead of Windows %%APPDATA%% / cmd.exe.",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pdump = sub.add_parser("dump", help="Print the contents of an existing save.")
     pdump.set_defaults(func=cmd_dump)
+
+    pedit = sub.add_parser("edit", help="Open the save file in $EDITOR or xdg-open.")
+    pedit.add_argument(
+        "--editor",
+        help="Editor command (default: $SSB64_SAVE_EDITOR or $EDITOR). "
+             "Example: --editor 'hexedit -R'",
+    )
+    pedit.set_defaults(func=cmd_edit)
 
     pw = sub.add_parser("write", help="Generate / mutate a save.")
     pw.set_defaults(func=cmd_write)

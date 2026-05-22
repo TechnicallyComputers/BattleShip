@@ -55,12 +55,18 @@ extern sb32 syNetRbSnapFireballNeedsSpawnAtHand(struct GObj *fighter_gobj, const
 extern struct GObj *syNetRbSnapReacquireFireballAtHand(struct GObj *fighter_gobj, const Vec3f *pos, f32 radius_sq);
 extern void syNetRbSnapCullOwnedFireballsNearPose(struct GObj *fighter_gobj, struct GObj *keep_fireball_gobj,
                                                   const Vec3f *pos, f32 radius_sq);
+extern sb32 syNetRbSnapFireballProcAccessoryWillRun(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnFireballFromAccessory(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapThunderJoltProcAccessoryWillRun(struct GObj *fighter_gobj);
+extern void syNetRbSnapTrySpawnThunderJoltFromAccessory(struct GObj *fighter_gobj);
+extern void syNetRbSnapTrySpawnThunderFromSpecialLw(struct GObj *fighter_gobj);
 /* Skip held-item spawn when rollback already restored a matching projectile at this pose. */
 extern sb32 syNetRbSnapHeldItemWeaponNeedsSpawn(struct GObj *owner_gobj, s32 kind, const Vec3f *spawn_pos,
                                                 const Vec3f *spawn_vel);
 /* TRUE when periodic synctest must defer (intro wait, item hold/throw, fighter throw anim). */
 extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
+/* TRUE when live weapon link count != probe snapshot weapon_count (destroy/spawn boundary). */
+extern sb32 syNetRbSnapshotSynctestProbeWeaponMismatch(u32 probe_tick);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */

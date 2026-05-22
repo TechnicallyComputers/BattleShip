@@ -19,15 +19,17 @@ Netplay soak: Mario/Luigi and Kirby (copy Mario/Luigi) neutral-B could play thro
 
 | Area | Change |
 |------|--------|
-| **Shared spawn** | `syNetRbSnapTrySpawnFireballFromAccessory()` — anim + frame-6 emergency, hand dedup/reacquire/cull, flag1 latch; resolves Mario/Luigi fkind and Kirby `copy_id`; joint 16 vs 17. |
-| **Mario** | `ftMarioSpecialNProcAccessory` calls shared helper (removed local duplicate). |
-| **Kirby copy** | Same helper + `flag1` cleared on SpecialN entry. |
+| **Shared spawn** | `syNetRbSnapTrySpawnFireballFromAccessory()` — anim + frame-3 emergency (was 6), hand dedup/reacquire/cull, flag1 latch; Mario/Luigi fkind + Kirby copy Mario/Luigi (`copy_id` + status fallback); joint 16 vs 17. |
+| **Mario / Luigi** | `ftMarioSpecialNProcAccessory` + gated `ProcUpdate` in `ftmariospecialn.c` (Luigi reuses same callbacks). |
+| **Kirby copy** | `ftkirbycopymariospecialn.c` — Copy Mario and Copy Luigi SpecialN/AirN; `flag1` cleared on entry. |
 | **Deferred eject** | `syNetRbSnapLiveWeaponIsFireballThrowPreserve()` skips eject for owner fireballs during throw status when `flag1==0`, `anim_frame < 25`, or near spawn hand. |
-| **Diag** | `SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1`: `fireball_spawn path=anim|emergency|reacquire|skip_dedup|spawn`. |
+| **Diag** | `SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1`: `fireball_spawn path=…` and `skip=wait_frame|resolve_index|…`. |
+
+See [fireball_spawn_phase5b_2026-05-22.md](fireball_spawn_phase5b_2026-05-22.md) for ground Kirby / spam-cap follow-up.
 
 ## Verification
 
-Soak Mario vs Kirby copy-Mario B-spam with rollback: no multi-frame SpecialN with empty `wpn`; deferred eject should not destroy throw-window fireballs. Optional weapon diag for spawn path lines.
+Soak Mario vs Kirby copy-Mario B-spam with rollback: no multi-frame SpecialN with empty `wpn`; deferred eject should not destroy throw-window fireballs. Repeat for Luigi and Kirby copy-Luigi (green fireball, index 1). Optional weapon diag for spawn path lines.
 
 ## Related
 
