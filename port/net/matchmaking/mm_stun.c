@@ -21,7 +21,8 @@
 #if defined(__linux__)
 #include <sys/random.h>
 #elif defined(__APPLE__)
-#include <bsd/stdlib.h>
+/* Native on macOS; avoid <bsd/stdlib.h> (not in the GHA SDK). */
+void arc4random_buf(void *buf, size_t nbytes);
 #endif
 #include <sys/select.h>
 #include <sys/socket.h>

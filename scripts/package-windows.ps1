@@ -119,9 +119,13 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
+# Ninja + x64 MSVC (libultraship ImGui links ksguid for WASAPI). GHA sets
+# vcvars via ilammy/msvc-dev-cmd; local builds need a Developer Command Prompt.
 $CmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
-    "-DSSB64_VERSION=$Ver"
+    "-DSSB64_VERSION=$Ver",
+    "-GNinja",
+    "-DCMAKE_VS_PLATFORM_NAME=x64"
 )
 if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
