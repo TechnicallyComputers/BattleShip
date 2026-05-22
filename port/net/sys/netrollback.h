@@ -73,8 +73,6 @@ extern u32 syNetRollbackGetAppliedResimCount(void);
 extern u32 syNetRollbackGetLoadFailCount(void);
 /* Load snapshot for completed sim tick T (same ring index as SavePostTick(T)). */
 extern sb32 syNetRollbackLoadSnapshotAfterCompletedTick(u32 completed_sim_tick);
-/* Netplay pause: rewind sim to `boundary_tick` when pause/unpause packet arrives late (load post tick boundary-1). */
-extern sb32 syNetRollbackRewindToPauseBoundary(u32 boundary_tick);
 /* TRUE when `SSB64_NETPLAY_PREDICTION_RECOVERY=1` (debug); default off — significant mismatches use full resim. */
 extern sb32 syNetRollbackPredictionRecoveryEnabled(void);
 /* Default on: short confirmed-only window after neutral↔analog GGPO correction (`STICK_MISMATCH_RECOVERY=0` off). */

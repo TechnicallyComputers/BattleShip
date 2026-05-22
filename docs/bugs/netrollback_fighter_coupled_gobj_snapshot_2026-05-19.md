@@ -1,7 +1,7 @@
 # Fighter-coupled GObj snapshot (rollback)
 
 **Date:** 2026-05-19  
-**Status:** FIX SHIPPED (load pipeline + expanded couplings; soak pending)  
+**Status:** FIX SHIPPED (ownership backfill + unconditional rebind 2026-05-20; soak pending)  
 **Subsystem:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netsync.c`
 
 ## Symptom
@@ -19,7 +19,9 @@ Yoshi **SpecialHi** (`status=0xDE`) with GGPO analog correction mid-charge (~tic
 | Area | Change |
 |------|--------|
 | Fighter blob | `coupled_*_weapon_gobj_id` for egg, boomerang, spin, **Samus/Kirby charge**, **Ness PK Thunder**, **Pikachu Thunder** — capture ID, scrub pointers in blob + live apply |
-| Load pipeline | **Core apply** (fighters → map/world → items → weapons → grab/item-hold → camera) then **`syNetRbSnapshotFinalizeLoad`** (presentation sync → coupled rebind → weapon hit refresh) **before** load-hash verify; status proc rebind after verify |
+| Load pipeline | **Core apply** (fighters → map/world → items → weapons → grab/item-hold → camera) then **`syNetRbSnapshotFinalizeLoad`** (presentation sync → joint reapply → coupled rebind → weapon hit refresh) **before** load-hash verify; status proc rebind after verify; **post-verify** `syNetRbSnapshotFinalizeLoadCoupling` geometry refresh |
+| Capture | After weapon capture, **`syNetRbSnapBackfillFighterCoupledIdsFromWeapons`** infers missing `coupled_*_id` from weapon blobs when fighter pointer was NULL |
+| Rebind | **`syNetRbSnapResolveCoupledWeaponGobj`**: stored id → live owner scan → slot weapon scan; runs in relevant status even when `coupled_*_id == 0` |
 | Weapons | Item-style match/eject/**respawn**; DObj translate + rotate + scale + `SYNetRbSnapDObjAnimBlob` |
 | Respawn | `wpYoshiEggThrowMakeWeapon`, `wpLinkBoomerangMakeWeapon`, `wpLinkSpinAttackMakeWeapon`; egg fallback scan by owner+kind when gobj id changes |
 | Yoshi | `ftYoshiSpecialHiUpdateEggVectors` after rebind when egg attached and not thrown |
@@ -42,6 +44,8 @@ Yoshi **SpecialHi** (`status=0xDE`) with GGPO analog correction mid-charge (~tic
 ## Related
 
 Load-hash drift when coupled rebind ran **before** figatree presentation sync: [`netrollback_weapon_load_finalize_order_2026-05-20.md`](netrollback_weapon_load_finalize_order_2026-05-20.md).
+
+Egg ownership / `blob_id=0` rebind gap: [`yoshi_egg_ownership_coupling_2026-05-20.md`](yoshi_egg_ownership_coupling_2026-05-20.md).
 
 ## Diagnostics
 

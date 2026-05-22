@@ -28,6 +28,7 @@ extern sb32 syNetRbSnapshotSave(u32 completed_sim_tick);
 extern sb32 syNetRbSnapshotSaveMarked(u32 completed_sim_tick, sb32 is_load_safe);
 extern sb32 syNetRbSnapshotLoad(u32 completed_sim_tick);
 #ifdef PORT
+#include <ft/ftdef.h>
 /* All-or-nothing load safety: capture live world before rollback load, restore on verify failure. */
 extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
 extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
@@ -41,6 +42,13 @@ extern sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void);
 extern sb32 syNetRbSnapshotAnyItemHoldCouplingActive(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
 extern void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick);
+/* Live mid-sim reacquire when fighter coupling pointer was cleared but weapon still exists. */
+extern struct GObj *syNetRbSnapReacquireYoshiChargeEgg(struct GObj *fighter_gobj);
+extern struct GObj *syNetRbSnapReacquireChargeShotForFP(FTStruct *fp);
+/* Destroy duplicate/orphan charge eggs (attack_state Off); keep keep_egg_gobj if non-NULL. */
+extern void syNetRbSnapCullYoshiChargeEggsForFighter(struct GObj *fighter_gobj, struct GObj *keep_egg_gobj);
+/* Destroy duplicate/orphan Samus/Kirby-copy charge shots (is_release FALSE); keep if non-NULL. */
+extern void syNetRbSnapCullSamusChargeShotsForFighter(struct GObj *fighter_gobj, struct GObj *keep_charge_gobj);
 /* TRUE when periodic synctest must defer (intro wait, item hold/throw, fighter throw anim). */
 extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
