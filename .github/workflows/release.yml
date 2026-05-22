@@ -270,11 +270,17 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Verify MSVC environment
+        shell: cmd
+        run: |
+          where cl
+          where link
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
+        # cmd shell inherits ilammy/msvc-dev-cmd LIB/PATH; pwsh as a child keeps them.
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
-        shell: pwsh
+        shell: cmd
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-${{ matrix.version }}
@@ -300,11 +306,16 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Verify MSVC environment
+        shell: cmd
+        run: |
+          where cl
+          where link
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -Netplay
-        shell: pwsh
+        shell: cmd
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-netplay-${{ matrix.version }}
