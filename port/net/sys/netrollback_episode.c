@@ -284,8 +284,14 @@ sb32 syNetRollbackEpisodeFsmEnabled(void)
 	if (sSYNetRollbackEpisodeFsmEnvCache == -999)
 	{
 		env = getenv("SSB64_NETPLAY_ROLLBACK_EPISODE_FSM");
-		sSYNetRollbackEpisodeFsmEnvCache =
-		    ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? 1 : 0;
+		if ((env != NULL) && (env[0] != '\0') && (atoi(env) == 0))
+		{
+			sSYNetRollbackEpisodeFsmEnvCache = 0;
+		}
+		else
+		{
+			sSYNetRollbackEpisodeFsmEnvCache = 1;
+		}
 	}
 	return (sSYNetRollbackEpisodeFsmEnvCache != 0) ? TRUE : FALSE;
 #else

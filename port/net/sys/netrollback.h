@@ -58,7 +58,7 @@ extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_sourc
 /* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
 extern sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick);
 extern u32 syNetRollbackGetEpochId(void);
-/* Unified rollback episode FSM (`SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=1`; see netrollback_episode.h). */
+/* Unified rollback episode FSM (default on; `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=0` disables; see netrollback_episode.h). */
 extern sb32 syNetRollbackEpisodeFsmEnabled(void);
 
 extern void syNetRollbackAfterBattleUpdate(void); /* Snapshot completed tick into ring (post-`scVSBattleFuncUpdate`). */
