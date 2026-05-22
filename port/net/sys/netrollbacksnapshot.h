@@ -49,6 +49,16 @@ extern struct GObj *syNetRbSnapReacquireChargeShotForFP(FTStruct *fp);
 extern void syNetRbSnapCullYoshiChargeEggsForFighter(struct GObj *fighter_gobj, struct GObj *keep_egg_gobj);
 /* Destroy duplicate/orphan Samus/Kirby-copy charge shots (is_release FALSE); keep if non-NULL. */
 extern void syNetRbSnapCullSamusChargeShotsForFighter(struct GObj *fighter_gobj, struct GObj *keep_charge_gobj);
+extern struct GObj *syNetRbSnapReacquireFireballForFighter(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapFireballOwnedByFighter(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapFireballNeedsSpawnAtHand(struct GObj *fighter_gobj, const Vec3f *spawn_pos);
+extern struct GObj *syNetRbSnapReacquireFireballAtHand(struct GObj *fighter_gobj, const Vec3f *pos, f32 radius_sq);
+extern void syNetRbSnapCullOwnedFireballsNearPose(struct GObj *fighter_gobj, struct GObj *keep_fireball_gobj,
+                                                  const Vec3f *pos, f32 radius_sq);
+extern void syNetRbSnapTrySpawnFireballFromAccessory(struct GObj *fighter_gobj);
+/* Skip held-item spawn when rollback already restored a matching projectile at this pose. */
+extern sb32 syNetRbSnapHeldItemWeaponNeedsSpawn(struct GObj *owner_gobj, s32 kind, const Vec3f *spawn_pos,
+                                                const Vec3f *spawn_vel);
 /* TRUE when periodic synctest must defer (intro wait, item hold/throw, fighter throw anim). */
 extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */

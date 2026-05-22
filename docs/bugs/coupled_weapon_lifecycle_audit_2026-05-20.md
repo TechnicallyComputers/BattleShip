@@ -28,9 +28,20 @@ Snapshot layer already stores coupled weapon gobj ids ([`netrollback_fighter_cou
 
 | Character | Move | Coupled field | Weapon kind | Risk | Snapshot rebind | Phase 4 runtime |
 |-----------|------|---------------|-------------|------|-----------------|-----------------|
+| **Mario / Luigi** | Neutral B | — | `nWPKindFireball` | **Fixed** | Emergency spawn + dedup | **Shipped** |
 | **Yoshi** | Up+B (egg) | `status_vars.yoshi.specialhi.egg_gobj` | `nWPKindEggThrow` | **Fixed** | Yes + cull | **Shipped** (Phase 4 / 4.1 / 4.2) |
-| **Samus** | Neutral B | `status_vars.samus.specialn.charge_gobj` | `nWPKindChargeShot` | **Fixed** | Yes + charging predicate + cull | **Shipped** |
+| **Samus** | Neutral B | `status_vars.samus.specialn.charge_gobj` | `nWPKindChargeShot` | **Fixed** | Yes + charging predicate + cull + orb gfx refresh | **Shipped** |
 | **Kirby** | Copy Samus N-B | `status_vars.kirby.copysamus_specialn.charge_gobj` | `nWPKindChargeShot` | **Fixed** | Yes (same as Samus) | **Shipped** |
+
+### Item weapons (snapshot + spawn guard — not Phase 4 coupled)
+
+| Source | Weapon kinds | Snapshot respawn | Spawn guard | Notes |
+|--------|--------------|------------------|-------------|-------|
+| Held items (Ray Gun, Fire Flower, Star Rod) | `0x14`–`0x16` | **Shipped** (prior) | **Shipped** — `syNetRbSnapHeldItemWeaponNeedsSpawn` | Fire-and-forget; pos/vel dedup on anim event |
+| Monster / stage items | `0x17`–`0x1F` | **Shipped** | N/A (AI/event spawn) | Item-parent owner resolve; see [`netrollback_item_monster_weapon_respawn_2026-05-20.md`](netrollback_item_monster_weapon_respawn_2026-05-20.md) |
+
+| Character | Move | Coupled field | Weapon kind | Risk | Snapshot rebind | Phase 4 runtime |
+|-----------|------|---------------|-------------|------|-----------------|-----------------|
 | **Link** | Neutral B | `passive_vars.link.boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** — see below |
 | **Kirby** | Copy Link N-B | `passive_vars.kirby.copylink_boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** |
 | **Link** | Up+B (spin) | `status_vars.link.specialhi.spin_attack_gobj` | `nWPKindSpinAttack` | Medium | Pointer rebind only | **Partial** — spawn guarded on NULL |
