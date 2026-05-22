@@ -11,6 +11,7 @@
 #include <sys/netrollback.h>
 #ifdef PORT
 #include <sys/netdesyncclassifier.h>
+#include <sys/netpause.h>
 #include <sys/netpeer_frame_commit.h>
 #include <sys/netrollback_episode.h>
 #endif
@@ -325,6 +326,10 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_ROLLBACK_SYNC 24
 #define SYNETPEER_PACKET_RESIM_POST 25
 #define SYNETPEER_PACKET_EPISODE_SEAL_ROWS 26
+#define SYNETPEER_PACKET_BATTLE_PAUSE 27
+#define SYNETPEER_PACKET_BATTLE_UNPAUSE 28
+#define SYNETPEER_BATTLE_PAUSE_BYTES (4 + 2 + 2 + 4 + 4 + 1 + 3 + 4)
+#define SYNETPEER_BATTLE_UNPAUSE_BYTES (4 + 2 + 2 + 4 + 4 + 4)
 /* header(12) + rtt_ms(4) + nine u8 knobs(9) + checksum(4) = 29 (wire v2) */
 #define SYNETPEER_SESSION_PARAMS_WIRE_BYTES (4 + 2 + 2 + 4 + 4 + 9 + 4)
 #define SYNETPEER_UDP_SYNC_PACKET_BYTES (4 + 2 + 2 + 4 + 2 + 2 + 4)
@@ -496,6 +501,8 @@ static void syNetPeerHostFinalizeSessionParamsFromRtt(u32 rtt_ms);
 static void syNetPeerHostFinalizeSessionParamsFromRttProbe(void);
 static void syNetPeerSendSessionParamsPacket(const SYNetSessionParams *params, u16 packet_type);
 static void syNetPeerHandleSessionParamsPacket(const u8 *buffer, s32 size, u16 expected_type);
+static void syNetPeerHandleBattlePausePacket(const u8 *buffer, s32 size);
+static void syNetPeerHandleBattleUnpausePacket(const u8 *buffer, s32 size);
 
 static int syNetPeerGetDelaySyncDiagLevel(void)
 {
@@ -7442,6 +7449,22 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				}
 				break;
 
+			case SYNETPEER_PACKET_BATTLE_PAUSE:
+				if (size == (s32)SYNETPEER_BATTLE_PAUSE_BYTES)
+				{
+					syNetPeerHandleBattlePausePacket(buffer, size);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_BATTLE_UNPAUSE:
+				if (size == (s32)SYNETPEER_BATTLE_UNPAUSE_BYTES)
+				{
+					syNetPeerHandleBattleUnpausePacket(buffer, size);
+					return;
+				}
+				break;
+
 			case SYNETPEER_PACKET_UDP_SYNC_REQ:
 			case SYNETPEER_PACKET_UDP_SYNC_REP:
 				if (size == (s32)SYNETPEER_UDP_SYNC_PACKET_BYTES)
@@ -8370,6 +8393,10 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 	}
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
 	{
+		if (syNetPauseShouldHoldSimTick() != FALSE)
+		{
+			return;
+		}
 		if (syNetPeerFrameCommitDiagLevel() >= 2)
 		{
 			u32 live_figh = syNetSyncHashBattleFightersFull();
@@ -8634,6 +8661,143 @@ void syNetPeerTrySendRollbackSyncNotice(void)
 			    (unsigned int)sizeof(buf));
 		}
 	}
+}
+
+void syNetPeerSendBattlePausePacket(u32 sim_tick, u8 pause_player)
+{
+	u8 buf[SYNETPEER_BATTLE_PAUSE_BYTES];
+	u8 *cursor;
+	u32 checksum;
+	int sent;
+
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
+	{
+		return;
+	}
+	cursor = buf;
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_BATTLE_PAUSE);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, sim_tick);
+	syNetPeerWriteU8(&cursor, pause_player);
+	syNetPeerWriteU8(&cursor, 0U);
+	syNetPeerWriteU8(&cursor, 0U);
+	syNetPeerWriteU8(&cursor, 0U);
+	checksum = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+	syNetPeerWriteU32(&cursor, checksum);
+	sent = syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress);
+	if (sent == (int)sizeof(buf))
+	{
+		sSYNetPeerPacketsSent++;
+	}
+}
+
+void syNetPeerSendBattleUnpausePacket(u32 sim_tick)
+{
+	u8 buf[SYNETPEER_BATTLE_UNPAUSE_BYTES];
+	u8 *cursor;
+	u32 checksum;
+	int sent;
+
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE)
+	{
+		return;
+	}
+	cursor = buf;
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_BATTLE_UNPAUSE);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, sim_tick);
+	checksum = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
+	syNetPeerWriteU32(&cursor, checksum);
+	sent = syNetPeerOsSendTo(sSYNetPeerSocket, buf, (size_t)sizeof(buf), &sSYNetPeerPeerAddress);
+	if (sent == (int)sizeof(buf))
+	{
+		sSYNetPeerPacketsSent++;
+	}
+}
+
+static void syNetPeerHandleBattlePausePacket(const u8 *buffer, s32 size)
+{
+	const u8 *cursor;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 sim_tick;
+	u8 pause_player;
+	u32 checksum;
+	u32 expected;
+
+	if (size != (s32)SYNETPEER_BATTLE_PAUSE_BYTES)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	cursor = buffer;
+	magic = syNetPeerReadU32(&cursor);
+	wire_version = syNetPeerReadU16(&cursor);
+	packet_type = syNetPeerReadU16(&cursor);
+	session_id = syNetPeerReadU32(&cursor);
+	sim_tick = syNetPeerReadU32(&cursor);
+	pause_player = syNetPeerReadU8(&cursor);
+	(void)syNetPeerReadU8(&cursor);
+	(void)syNetPeerReadU8(&cursor);
+	(void)syNetPeerReadU8(&cursor);
+	checksum = syNetPeerReadU32(&cursor);
+	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
+	    (packet_type != (u16)SYNETPEER_PACKET_BATTLE_PAUSE) || (session_id != sSYNetPeerSessionID) ||
+	    (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	syNetPauseOnRemotePausePacket(sim_tick, (s32)pause_player);
+}
+
+static void syNetPeerHandleBattleUnpausePacket(const u8 *buffer, s32 size)
+{
+	const u8 *cursor;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 sim_tick;
+	u32 checksum;
+	u32 expected;
+
+	if (size != (s32)SYNETPEER_BATTLE_UNPAUSE_BYTES)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	cursor = buffer;
+	magic = syNetPeerReadU32(&cursor);
+	wire_version = syNetPeerReadU16(&cursor);
+	packet_type = syNetPeerReadU16(&cursor);
+	session_id = syNetPeerReadU32(&cursor);
+	sim_tick = syNetPeerReadU32(&cursor);
+	checksum = syNetPeerReadU32(&cursor);
+	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
+	    (packet_type != (u16)SYNETPEER_PACKET_BATTLE_UNPAUSE) || (session_id != sSYNetPeerSessionID) ||
+	    (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	syNetPauseOnRemoteUnpausePacket(sim_tick);
 }
 
 static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)

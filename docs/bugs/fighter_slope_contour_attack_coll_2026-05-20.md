@@ -1,21 +1,47 @@
-# Fighter Slope Contour Stale Tilt on Attack Colliders (2026-05-20)
+# Fighter Slope Contour — Port Stale Tilt + N64 Grab Policy (2026-05-20)
 
-**Symptoms:** Yoshi Egg Lay tongue grab hitbox follows floor slope angle instead of extending horizontally. Reproduces after run/brake on sloped stages (Peach's Castle roof, etc.); tongue reach tilts up/down with the slope.
+**Port symptoms (original):** After run/idle on slopes, grab reach or tongue could look wrong when `slope_contour` cleared but root `rotate.x` or `FTParts` transform caches stayed stale (LP64 foot IK was a separate fix).
 
-**Root cause:** Full-body slope contour (`SetSlopeContour(4)` / `FTSLOPECONTOUR_FLAG_FULL`) writes the fighter root `DObj->rotate.vec.f.x` from `floor_angle` each frame in `mpCommonUpdateFighterSlopeContour`. Attack collider world positions inherit that tilt via `gmCollisionGetFighterPartsWorldPosition` in `ftMainProcAccessory`.
+**N64 reference (hardware, 2026-05-20):**
+- Most standing grabs (Mario, Link, Samus, …) use `SetSlopeContour(3)` — feet follow slope, torso stays upright; reach is effectively horizontal.
+- **Yoshi standing grab (`0x0D34`) uses `SetSlopeContour(4)` (FULL)** — body and tongue reach **tilt with the slope** on stock hardware. Do not “fix” Yoshi to Mario’s `(3)` pattern.
 
-When a new status clears `fp->slope_contour` through `ftMainSetStatus` (without `FTSTATUS_PRESERVE_SLOPECONTOUR`), the flag was zeroed but **root tilt was not reset**. Only the motion-script `SetSlopeContour(0)` event path zeroes `rotate.vec.f.x`. Egg Lay entry uses `FTSTATUS_PRESERVE_NONE`, so stale tilt from run/brake persisted into the tongue submotion (`dYoshiMainMotion_0x1730`), which never managed slope contour.
+**Root cause (port-only stale tilt):**
+- `FTSLOPECONTOUR_FLAG_FULL` sets root `DObj->rotate.vec.f.x` from floor angle in `mpCommonUpdateFighterSlopeContour`.
+- Stale root tilt could persist when `slope_contour` cleared without zeroing rotate or invalidating `unk_dobjtrans_0x5` caches.
 
-**Fix:**
+## Fixes kept (engine)
 
-1. **`decomp/src/ft/ftmain.c`** — When clearing `slope_contour` on status change, also zero root `rotate.vec.f.x` if `FTSLOPECONTOUR_FLAG_FULL` was active (same semantics as `SetSlopeContour(0)` motion events). Fixes all fighters on status transitions from slope-contoured locomotion.
+| Fix | File | Purpose |
+|-----|------|---------|
+| `ftMainApplySlopeContourFlags` | `ftmain.c` | When FULL clears via motion event, zero root pitch + invalidate transforms |
+| `ftParamInvalidateFighterTransformFromRoot` | `ftparam.c` | Rebuild joint world matrices after root rotate changes |
+| Stale FULL guard | `ftmain.c` | After `proc_slope`, if FULL flag off but `rotate.x` ≠ 0, clear it |
+| Per-frame invalidate after slope proc | `mpcommon.c` | Ensures attack-coll sampling sees updated transforms |
 
-2. **`decomp/src/relocData/246_YoshiMainMotion.c`** — `SetSlopeContour(0)` at start of tongue submotion `dYoshiMainMotion_0x1730` (matches regular grab ending pattern in `dYoshiMainMotion_0x0D34`).
+## Reverted overcorrections (2026-05-20)
 
-3. **`decomp/src/relocData/228_KirbyMainMotion.c`** — Same for Kirby copy-Yoshi tongue (`dKirbyMainMotion_0x21D8`) and inhale vacuum window (`dKirbyMainMotion_0x1CCC`).
+These were based on a false “all grabs horizontal on N64” assumption. **ROM and engine restored to vanilla policy:**
 
-**Verification:** Build `ssb64`. Manual: run on Peach's Castle slope → Egg Lay; tongue should reach horizontally. Repeat for Kirby inhale and Kirby copy-Yoshi Egg Lay. Compare wait-on-slope → Egg Lay (should already be fine pre-fix).
+| Change | Revert |
+|--------|--------|
+| Yoshi `0x0D34` `(4)` → `(3)` | **Restored `(4)`** (vanilla FULL during standing grab search) |
+| Yoshi `0x0EE0` added `SetSlopeContour(0)` | **Removed** (vanilla: subroutine only) |
+| Kirby/Pikachu/Purin added `(3)` at standing grab | **Removed** (vanilla: no explicit contour in grab script) |
+| Captain `0x1C8C` added `(0)` before SpecialHi 361 colls | **Removed** |
+| `ftMainIsCatchSearchCollActive` catch-search upright gate | **Removed** — forced upright root during FULL+361 catch; blocked Yoshi `(4)` |
 
-**Related:** Foot-only contour LP64 alias — `docs/bugs/fighter_slope_contour_lp64_alias_2026-04-29.md` (separate issue).
+**Unchanged (already vanilla):** Yoshi tongue `0x1730` `SetSlopeContour(0)`; Kirby inhale/copy `(0)` scripts.
 
-**Audit note:** Other horizontal grab/search colls (common grab scripts, Captain Falcon grab, etc.) benefit from the global `ftMainSetStatus` fix when entered from a prior full-contour state. Moves that enable `SetSlopeContour(4)` during their own hitbox window (e.g. dash attack) are unchanged.
+## Tooling
+
+- [`scripts/audit-slope-contour.py`](../../scripts/audit-slope-contour.py) — triage CSV; **do not** treat class B alone as “change to `(3)`” when `slope_flags` differs (Yoshi `0x0D34` is `(4)` by design).
+- [`docs/slope_contour_audit_2026-05-20.md`](../slope_contour_audit_2026-05-20.md)
+
+## Verification
+
+- **Build:** `cmake --build build --target ssb64 -j 4`
+- **Manual vs N64 / footage:** Peach's Castle slope — Mario/Link/Samus standing grab (upright + horizontal reach); **Yoshi standing grab + Egg Lay (slope-aligned reach)**; feet still contour on all chars.
+- **Class D (~100 sites):** No ROM edits without per-move N64 calibration.
+
+**Related:** [`fighter_slope_contour_lp64_alias_2026-04-29.md`](fighter_slope_contour_lp64_alias_2026-04-29.md) (foot IK LP64 alias).
