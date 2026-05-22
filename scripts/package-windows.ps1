@@ -81,6 +81,39 @@ function Test-KsguidLibOnLibPath {
     return $false
 }
 
+function Reset-StaleNetplayCmakeCache {
+    param([string]$Dir, [bool]$WantNetmenu)
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) { return }
+    $raw = Get-Content -LiteralPath $cache -Raw
+    $hasNetmenu = $raw -match 'SSB64_NETMENU:BOOL=ON'
+    if ($WantNetmenu -and -not $hasNetmenu) {
+        Write-Host "   Clearing CMake cache (was configured without SSB64_NETMENU)"
+        Remove-Item -LiteralPath $cache -Force
+        Remove-Item -LiteralPath (Join-Path $Dir "CMakeFiles") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-NetplayCurlConfigured {
+    param([string]$Dir)
+    $curlHeader = Get-ChildItem -Path (Join-Path $Dir "libultraship\vcpkg\installed") -Recurse -Filter "curl.h" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\include\\curl\\curl\.h$' } |
+        Select-Object -First 1
+    if (-not $curlHeader) {
+        Fail "vcpkg curl not installed (no include/curl/curl.h under $Dir\libultraship\vcpkg\installed). Check LUS_VCPKG_EXTRA_PACKAGES and vcpkg install log."
+    }
+    Write-Host "   vcpkg curl.h: $($curlHeader.FullName)"
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (Test-Path -LiteralPath $cache) {
+        if ((Get-Content -LiteralPath $cache -Raw) -notmatch 'SSB64_NETMENU:BOOL=ON') {
+            Fail "CMakeCache has SSB64_NETMENU=OFF; expected ON for netplay package"
+        }
+        if ((Get-Content -LiteralPath $cache -Raw) -notmatch 'SSB64_VCPKG_CURL_PREFIX') {
+            Fail "CMakeCache missing SSB64_VCPKG_CURL_PREFIX — push latest CMakeLists.txt / cmake/Ssb64NetmenuDeps.cmake"
+        }
+    }
+}
+
 function Import-VcVars64IfNeeded {
     # CI: always re-import so pwsh gets the full vcvars64 LIB (um + ucrt), not a partial inherit.
     if ($env:GITHUB_ACTIONS -ne 'true' -and (Test-KsguidLibOnLibPath)) { return }
@@ -164,13 +197,20 @@ $CmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
     "-DSSB64_VERSION=$Ver",
     "-GNinja",
-    "-DCMAKE_VS_PLATFORM_NAME=x64"
+    "-DCMAKE_VS_PLATFORM_NAME=x64",
+    # Force MSVC so libultraship uses WindowsSdkUmLib (full ksguid path), not bare ksguid.
+    "-DCMAKE_C_COMPILER=cl",
+    "-DCMAKE_CXX_COMPILER=cl"
 )
 if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
+if ($env:GITHUB_ACTIONS -eq 'true' -and (Test-Path -LiteralPath $BuildDir)) {
+    Write-Host "   CI: removing prior build tree for clean MSVC/ksguid configure"
+    Remove-Item -LiteralPath $BuildDir -Recurse -Force
+}
 if (Test-KsguidLibOnLibPath) {
     foreach ($dir in ($env:LIB -split ';')) {
         if ($dir -and (Test-Path -LiteralPath (Join-Path $dir 'ksguid.lib'))) {
@@ -182,6 +222,9 @@ if (Test-KsguidLibOnLibPath) {
 # Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
 Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
 Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
+if ($Netplay) {
+    Reset-StaleNetplayCmakeCache $BuildDir $true
+}
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
@@ -193,6 +236,23 @@ if ($Netplay) {
     & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
 }
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
+
+if ($Netplay) {
+    Test-NetplayCurlConfigured $BuildDir
+}
+
+function Test-MsvcKsguidConfigure {
+    param([string]$Dir)
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) { return }
+    $raw = Get-Content -LiteralPath $cache -Raw
+    if ($raw -notmatch 'CMAKE_CXX_COMPILER_ID:STRING=MSVC') {
+        Fail "CMake did not select MSVC (ImGui would link bare ksguid). Ensure vcvars64/cl and -DCMAKE_CXX_COMPILER=cl."
+    }
+    Write-Host "   CMake compiler: MSVC (WindowsSdkUmLib full-path ksguid expected)"
+}
+
+Test-MsvcKsguidConfigure $BuildDir
 
 if ($env:GITHUB_ACTIONS -eq 'true') {
     $ninjaFiles = Get-ChildItem -Path $BuildDir -Recurse -Filter build.ninja -ErrorAction SilentlyContinue

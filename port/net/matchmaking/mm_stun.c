@@ -71,14 +71,21 @@ static void mmStunFillTxId(u8 *pkt)
 #endif
 }
 
+/* Socket recv/select lengths: Winsock uses int; POSIX uses ssize_t. */
+#ifdef _WIN32
+typedef int mm_sock_len_t;
+#else
+typedef ssize_t mm_sock_len_t;
+#endif
+
 /* Parse XOR-MAPPED-ADDRESS (RFC 5389) inside a STUN Binding success response. */
-static void mmStunParseXorMapped(const u8 *pkt, ssize_t total_len, struct sockaddr_in *out)
+static void mmStunParseXorMapped(const u8 *pkt, mm_sock_len_t total_len, struct sockaddr_in *out)
 {
 	u16 msg_len = (u16)((pkt[2] << 8) | pkt[3]);
 	u32 pos;
 
 	memset(out, 0, sizeof(*out));
-	if ((total_len < 20) || (msg_len > 548) || ((ssize_t)(20 + msg_len) > total_len))
+	if ((total_len < 20) || (msg_len > 548) || ((mm_sock_len_t)(20 + msg_len) > total_len))
 	{
 		return;
 	}
@@ -116,7 +123,7 @@ static void mmStunParseXorMapped(const u8 *pkt, ssize_t total_len, struct sockad
 sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 {
 	u32 s;
-	ssize_t n;
+	mm_sock_len_t n;
 	fd_set rfds;
 	struct timeval tv;
 	struct sockaddr_in stun_serv;
@@ -179,7 +186,7 @@ sb32 mmStunGetReflexiveIpv4Endpoint(s32 udp_fd, char *buf, u32 bufsize)
 #else
 			n = recvfrom(sock, pkt, sizeof(pkt), MSG_DONTWAIT, NULL, NULL);
 #endif
-			if ((n < 24) || (n >= (ssize_t)sizeof(pkt)))
+			if ((n < 24) || (n >= (mm_sock_len_t)sizeof(pkt)))
 			{
 				continue;
 			}
