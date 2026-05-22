@@ -664,6 +664,9 @@ add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 if(SSB64_NETMENU)
+    # Netmenu TUs (mm_matchmaking.c, etc.) compile into ssb64_game OBJECT, not ${PROJECT_NAME}.
+    # CURL::libcurl must be linked here so INTERFACE include dirs reach the compiler.
+    target_link_libraries(ssb64_game PRIVATE CURL::libcurl)
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
     # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -676,7 +679,7 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    include(WindowsSdkUmLib)
+    include(${CMAKE_SOURCE_DIR}/libultraship/cmake/WindowsSdkUmLib.cmake)
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
     windows_sdk_um_link_lib(${PROJECT_NAME} PRIVATE ksguid)
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.

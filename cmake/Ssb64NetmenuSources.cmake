@@ -7,7 +7,7 @@
 #   so port-only files like netinput.c/netpeer.c are never omitted).
 # - matchmaking/* and bootstrap/mm_server_barrier.c are included on all platforms when
 #   SSB64_NETMENU=ON (including MinGW Windows). Automatch parity with Linux; CMake links
-#   curl + iphlpapi on Windows via the parent CMakeLists.txt.
+#   curl (ssb64_game + exe) + iphlpapi on Windows via the parent CMakeLists.txt.
 #
 # Inputs:  CMAKE_CURRENT_SOURCE_DIR, SSB64_DECOMP_SOURCES (list, modified in place)
 # Outputs: SSB64_PORT_NETMENU_SOURCES (list of absolute .c paths under port/net)

@@ -42,8 +42,9 @@ function(windows_sdk_um_link_lib target visibility lib_name)
         message(STATUS "Windows SDK: linking ${lib_name} from ${_wsu_path}")
         target_link_libraries(${target} ${visibility} "${_wsu_path}")
     else()
-        message(WARNING "Windows SDK: ${lib_name}.lib not found under LIB or "
-                        "Windows Kits/10/Lib/*/um/x64 — link may fail LNK1181")
-        target_link_libraries(${target} ${visibility} ${lib_name})
+        message(FATAL_ERROR
+            "Windows SDK: ${lib_name}.lib not found under LIB or "
+            "Windows Kits/10/Lib/*/um/x64 (required for WASAPI). "
+            "Run from a vcvars64 Developer shell or fix CI MSVC setup.")
     endif()
 endfunction()
