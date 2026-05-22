@@ -275,6 +275,7 @@ jobs:
         run: |
           where cl
           where link
+          echo %LIB% | findstr /i /c:"Windows Kits" >nul || (echo LIB missing Windows SDK paths & exit /b 1)
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -311,6 +312,7 @@ jobs:
         run: |
           where cl
           where link
+          echo %LIB% | findstr /i /c:"Windows Kits" >nul || (echo LIB missing Windows SDK paths & exit /b 1)
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}

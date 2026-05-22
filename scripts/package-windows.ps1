@@ -68,6 +68,33 @@ $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else {
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 
+# ilammy/msvc-dev-cmd sets LIB for cmd steps, but pwsh often starts without Windows
+# SDK paths — link.exe then fails LNK1181 on ksguid.lib (libultraship WASAPI).
+function Import-VcVars64IfNeeded {
+    if ($env:LIB -and $env:LIB -match 'Windows Kits') { return }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        Fail "MSVC not found (vswhere missing). Run from a Developer Command Prompt or install VS Build Tools."
+    }
+    $vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsPath) {
+        Fail "Visual Studio C++ tools not installed (required for ksguid.lib / WASAPI)."
+    }
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (-not (Test-Path -LiteralPath $vcvars)) {
+        Fail "vcvars64.bat not found under $vsPath"
+    }
+    Write-Host "   Importing MSVC environment from vcvars64.bat"
+    cmd.exe /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+        if ($_ -match '^(?<key>[^=]+)=(?<val>.*)$') {
+            Set-Item -Path "Env:$($Matches.key)" -Value $Matches.val
+        }
+    }
+    if (-not $env:LIB -or $env:LIB -notmatch 'Windows Kits') {
+        Fail "vcvars64 did not set LIB with Windows SDK paths (ksguid.lib will not link)"
+    }
+}
+
 # automate-vcpkg.cmake runs git pull when ${BuildDir}/libultraship/vcpkg exists.
 # A partial/failed prior configure leaves a non-git directory and configure dies with
 # "fatal: not a git repository" before README.md exists.
@@ -131,6 +158,7 @@ if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
+Import-VcVars64IfNeeded
 # Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
 Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
 Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
