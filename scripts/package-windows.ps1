@@ -131,13 +131,19 @@ if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
+# Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
+Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
 Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
 # (= BattleShip.exe's directory when launched normally). See the file
 # header for the v0.7.2 crash this avoids.
-& cmake -B $BuildDir $Root @CmakeArgs | Out-Null
+if ($Netplay) {
+    & cmake -B $BuildDir $Root @CmakeArgs
+} else {
+    & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 Write-Step "Building BattleShip + torch"
