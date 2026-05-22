@@ -4543,6 +4543,10 @@ void syNetRollbackAfterBattleUpdate(void)
 	}
 	completed_tick = syNetInputGetTick();
 #ifdef PORT
+	if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
+	{
+		syNetRbSnapshotRefreshGrabCouplingGeometry();
+	}
 	if (sSYNetRollbackResimPending != FALSE)
 	{
 		return;
@@ -4564,12 +4568,7 @@ void syNetRollbackAfterBattleUpdate(void)
 		sb32 emergency_ok;
 		sb32 verify_ok;
 
-		if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
-		{
-			port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=grab_coupling\n", completed_tick);
-			sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
-		}
-		else if (syNetRbSnapshotSynctestShouldSkip(&skip_reason) != FALSE)
+		if (syNetRbSnapshotSynctestShouldSkip(&skip_reason) != FALSE)
 		{
 			port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=%s\n",
 			         completed_tick,
@@ -7483,6 +7482,7 @@ static void syNetRollbackLogResimTickTrace(u32 tick)
 	    h.animation);
 	syNetSyncLogItemHashWalkTrace(tick);
 	syNetSyncLogFighterSlotHashes(tick);
+	syNetSyncLogPKThunderHoldDiag(tick);
 }
 
 static void syNetRollbackLogResimComplete(void)

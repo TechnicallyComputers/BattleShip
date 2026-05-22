@@ -45,7 +45,7 @@ Snapshot layer already stores coupled weapon gobj ids ([`netrollback_fighter_cou
 | **Link** | Neutral B | `passive_vars.link.boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** — see below |
 | **Kirby** | Copy Link N-B | `passive_vars.kirby.copylink_boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** |
 | **Link** | Up+B (spin) | `status_vars.link.specialhi.spin_attack_gobj` | `nWPKindSpinAttack` | Medium | Pointer rebind only | **Partial** — spawn guarded on NULL |
-| **Ness** | Up+B (PK Thunder) | `status_vars.ness.specialhi.pkthunder_gobj` | `nWPKindPKThunderHead` | Medium–High | Pointer rebind only | **Not done** |
+| **Ness** | Up+B (PK Thunder) | `status_vars.ness.specialhi.pkthunder_gobj` | `nWPKindPKThunderHead` | Medium–High | Pointer rebind + cull | **Shipped** (Phase 4 — see [`netplay_ness_pkthunder_upb_segv_2026-05-22.md`](netplay_ness_pkthunder_upb_segv_2026-05-22.md)) |
 | **Pikachu** | Down+B (Thunder) | `status_vars.pikachu.speciallw.thunder_gobj` | `nWPKindPikachuThunderHead` | Medium | Pointer rebind only | **Not done** |
 
 ### Low risk — fire-and-forget projectiles

@@ -29,7 +29,7 @@ Mario logs showed `fireball_spawn path=emergency`; Pikachu had no equivalent hel
 | Area | Change |
 |------|--------|
 | **Spawn helper** | `syNetRbSnapTrySpawnThunderJoltFromAccessory()` — flag0 + emergency at frame ≥4, flag1 latch, hand dedup, `jolt_spawn` diag. |
-| **ProcUpdate fallback** | New `ftPikachuSpecialNProcUpdate` / `SpecialAirNProcUpdate` (+ Kirby copy) call spawn when `syNetRbSnapThunderJoltProcAccessoryWillRun()` is false. |
+| **ProcUpdate fallback** | `ftPikachuSpecialNProcUpdate` / `SpecialAirNProcUpdate` (+ Kirby copy) call spawn when `syNetRbSnapThunderJoltProcAccessoryWillRun()` is false **or** `proc_accessory == NULL` (snapshot rebind gap); `flag1` latch dedups when accessory also runs. |
 | **ProcAccessory** | PORT path delegates to spawn helper (vanilla body under `#else`). |
 | **Status desc** | Replace `ftAnimEndSetWait` / `ftAnimEndSetFall` with new ProcUpdate wrappers. |
 
@@ -52,6 +52,55 @@ Emergency spawn re-armed every ~7 frames after air jolt became ground jolt: `syN
 Emergency frame **4** fired the jolt ~17 frames before retail (`WaitAsync(21)` + `SetFlag0` in `dPikachuMainMotion_0x15A4` / `0x15F0`). Logs: `path=emergency` at `anim_frame=4`, latched through lunge.
 
 **Fix:** `SYNETRB_SNAP_THUNDERJOLT_EMERGENCY_FRAME` 4 → **21** (spam latch unchanged).
+
+## Missed jolt after snapshot rebind (2026-05-22 soak)
+
+First B press could exit SpecialN with `weapon_count=0`: `jolt_spawn skip=wait_frame` through frame 10, then **no spawn attempts** until anim ended. Synctest at mid-throw runs `syNetRbSnapRebindFighterStatusProcs()`, which clears `proc_accessory`; `ftMainRebindStatusProcs` does not restore it. ProcUpdate only called spawn when `syNetRbSnapThunderJoltProcAccessoryWillRun()` was false — but that stays true when physics-map routing is normal, so spawn was skipped while `proc_accessory == NULL`.
+
+Air→ground mid-throw could also `skip=latched` with stale `flag1` when no owned jolt existed for the current throw.
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| **ProcUpdate** | Always call `syNetRbSnapTrySpawnThunderJoltFromAccessory()` (flag1 latch prevents double spawn with proc_accessory). |
+| **Snapshot rebind** | Restore Pikachu / Kirby-copy `proc_accessory` when still in SpecialN throw status after rebind. |
+| **Air↔ground switch** | Clear `flag1` when `!syNetRbSnapThunderJoltOwnedByFighter()` so landing mid-throw cannot block spawn. |
+
+## Regression (Phase 5b.2)
+
+Unconditional ProcUpdate + `proc_accessory` rebind restore caused **3 jolts per B press** (Mario Phase 5b.1 same class: doubled spawn paths).
+
+**Fix:** Restore Mario gate — ProcUpdate calls spawn only when `syNetRbSnapThunderJoltProcAccessoryWillRun()` is false **or** `proc_accessory == NULL`. Rebind restore + air/ground latch clear unchanged.
+
+## Extra jolt mid-recovery (Phase 5b.3)
+
+Soak logs: every B press showed `path=anim` at frame 21, then `path=emergency` at frame ~43 while still in SpecialN. Tick ~460: `gcEjectGObj` on owned jolt (deferred eject after 25-frame preserve); `weapon_count=0`. Spawn helper cleared `flag1` when `!owned && anim_frame >= 25`, re-arming emergency for frames 43–63. Worse cases spammed `path=emergency` every tick after eject.
+
+**Fix:** Never clear `flag1` inside the spawn helper once set. After preserve window, return `spawn_done` instead of clearing latch. New throw still clears `flag1` in `InitStatusVars`; air↔ground switch clears when `!owned`.
+
+## Extra ground jolt on air→ground landing (Phase 5b.4)
+
+Air throw spawns jolt at frame 21 (`path=anim`). On landing mid-recovery (e.g. frame 36–57), `SpecialAirNSwitchStatusGround` cleared `flag1` when `!owned` (air jolt already ejected or ground segments no longer counted at feet). Same physics tick then ran `proc_accessory` on ground SpecialN with `flag1=0` and `anim_frame>=21` → `path=emergency` at Pikachu's feet (extra bolt).
+
+Log pattern: `skip=spawn_done status=223`, then `play forward events status=0xde frame_begin=57`, then `path=emergency`.
+
+**Fix:** Only clear `flag1` on air↔ground switch when `anim_frame < 21` and `!owned` (stale pre-spawn latch). Preserve `flag1` after spawn so landing cannot re-arm emergency.
+
+## Random jolt on non-Pikachu fighters (Phase 5b.5)
+
+Soak: Falcon spamming A (`btn=0x8000`) with idle Pikachu on stage spawned Thunder Jolt owned by Falcon (`owner_player=1`, `status=222`, `joint=11`). Synctest restore runs `syNetRbSnapshotRebindAllFighters()`, which installed `ftPikachuSpecialNProcAccessory` on any fighter whose numeric `status_id` matched `nFTPikachuStatusSpecialN` — **without checking `fkind`**.
+
+Global status IDs collide at the same offset for different moves:
+
+| Offset | Pikachu | Other fighters at same number |
+|--------|---------|-------------------------------|
+| +2 (222) | SpecialN | Captain/Link **Attack100Loop**; Fox/Kirby/Purin **Attack100End** |
+| +3 (223) | SpecialAirN | Mario/Luigi **SpecialN** (fireball); Captain/Link **Attack100End** |
+
+Fox/Kirby rapid-jab **loop** is offset +1 (221) — not Pikachu SpecialN — but jab end at +2 and Captain/Link loop at +2 were in the collision set.
+
+**Fix:** Gate `syNetRbSnapFighterIsInThunderJoltThrowStatus()` and rebind restore on `fkind == nFTKindPikachu` (or Kirby + copy-Pikachu statuses). Mirror for `syNetRbSnapFighterIsInFireballThrowStatus()` with Mario/Luigi/Kirby-copy only.
 
 ## Related
 

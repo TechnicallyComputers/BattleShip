@@ -38,6 +38,8 @@ extern void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick);
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
 extern sb32 syNetRbSnapshotAnyFighterGrabCouplingActive(void);
+/* Re-derive victim pose from grabber hand joint (hold, pulled, thrown, cargo). */
+extern void syNetRbSnapshotRefreshGrabCouplingGeometry(void);
 /* TRUE if any item is held or any fighter has item_gobj set (all slots). */
 extern sb32 syNetRbSnapshotAnyItemHoldCouplingActive(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
@@ -55,9 +57,14 @@ extern sb32 syNetRbSnapFireballNeedsSpawnAtHand(struct GObj *fighter_gobj, const
 extern struct GObj *syNetRbSnapReacquireFireballAtHand(struct GObj *fighter_gobj, const Vec3f *pos, f32 radius_sq);
 extern void syNetRbSnapCullOwnedFireballsNearPose(struct GObj *fighter_gobj, struct GObj *keep_fireball_gobj,
                                                   const Vec3f *pos, f32 radius_sq);
+extern void syNetRbSnapCullOwnedPKThunderForFighter(struct GObj *fighter_gobj, struct GObj *keep_head_gobj);
+extern struct GObj *syNetRbSnapReacquirePKThunderHeadForFighter(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapPKFireOwnedByFighter(struct GObj *fighter_gobj);
 extern sb32 syNetRbSnapFireballProcAccessoryWillRun(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnFireballFromAccessory(struct GObj *fighter_gobj);
+extern void syNetRbSnapTrySpawnPKFireFromAccessory(struct GObj *fighter_gobj);
 extern sb32 syNetRbSnapThunderJoltProcAccessoryWillRun(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapThunderJoltOwnedByFighter(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderJoltFromAccessory(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderFromSpecialLw(struct GObj *fighter_gobj);
 /* Skip held-item spawn when rollback already restored a matching projectile at this pose. */
@@ -84,6 +91,7 @@ extern void syNetRbSnapshotSyncFighterPresentation(void);
  * out must hold at least max entries. Returns count stored; *truncated_out TRUE if link has more than max.
  */
 extern s32 syNetRbEnumerateActiveItemsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
+extern s32 syNetRbEnumerateActiveWeaponsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 
 #ifdef PORT
 /* Subsystem hashes stored on the slot (for load verify / diagnostics). */
