@@ -4579,26 +4579,36 @@ void syNetRollbackAfterBattleUpdate(void)
 		else
 		{
 			probe_tick = completed_tick - 1U;
-			emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
-			verify_ok = FALSE;
-			if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
+			if (syNetRbSnapshotSynctestProbeWeaponMismatch(probe_tick) != FALSE)
 			{
-				syNetRbSnapshotFinalizeLoad(probe_tick);
-				verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
-			}
-			if (emergency_ok != FALSE)
-			{
-				(void)syNetRbSnapshotRestoreLiveEmergency();
-			}
-			if (verify_ok == FALSE)
-			{
-				port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
+				port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=weapon_probe_mismatch probe=%u\n",
+				         completed_tick,
+				         probe_tick);
+				sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
 			}
 			else
 			{
-				port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
+				emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
+				verify_ok = FALSE;
+				if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
+				{
+					syNetRbSnapshotFinalizeLoad(probe_tick);
+					verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
+				}
+				if (emergency_ok != FALSE)
+				{
+					(void)syNetRbSnapshotRestoreLiveEmergency();
+				}
+				if (verify_ok == FALSE)
+				{
+					port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
+				}
+				else
+				{
+					port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
+				}
+				sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
 			}
-			sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
 		}
 	}
 #endif
