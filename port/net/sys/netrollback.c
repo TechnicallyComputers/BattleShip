@@ -1,7 +1,4 @@
 #include <sys/netrollback.h>
-#ifdef PORT
-#include <sys/netpause.h>
-#endif
 
 #include <sys/netrollback_episode.h>
 #include <sys/netinput.h>
@@ -1472,7 +1469,6 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackPeerSnapshotAbort = TRUE;
 	syNetSyncResetNetplayBattleClock();
 	syUtilsResetCosmeticRandomSeed(syUtilsRandSeed());
-	syNetPauseReset();
 #endif
 }
 
@@ -1546,7 +1542,6 @@ void syNetRollbackStopVSSession(void)
 	sSYNetRollbackResimPostCompletedValid = FALSE;
 	sSYNetRollbackResimPostMatchLogged = FALSE;
 	syNetSyncResetNetplayBattleClock();
-	syNetPauseReset();
 #endif
 }
 
@@ -1609,10 +1604,6 @@ static sb32 syNetRollbackLoadHashDriftIsSoft(void)
 static sb32 syNetRollbackLoadHashDriftIsAnimOnly(u32 tick, u32 live_f, u32 live_w, u32 live_i, u32 live_wp, u32 live_m,
                                                   u32 live_r, u32 live_c, u32 live_a)
 {
-	if (syNetPauseRollbackRequireStrictHash() != FALSE)
-	{
-		return FALSE;
-	}
 	if ((live_f != syNetRbSnapshotGetSlotHashFighter(tick)) || (live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
 	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) ||
 	    (live_m != syNetRbSnapshotGetSlotHashMap(tick)) || (live_r != syNetRbSnapshotGetSlotHashRng(tick)) ||
@@ -2815,6 +2806,23 @@ static sb32 syNetRollbackDeferFrameCommitForSymmetric(u32 fc_mismatch)
 	return TRUE;
 }
 
+#ifdef PORT
+/* Pause/Unpause mutates hashed world state; defer resim until both peers return to Go. */
+static sb32 syNetRollbackDeferResimForPauseTransition(void)
+{
+	if (gSCManagerBattleState == NULL)
+	{
+		return FALSE;
+	}
+	if ((gSCManagerBattleState->game_status == nSCBattleGameStatusPause) ||
+	    (gSCManagerBattleState->game_status == nSCBattleGameStatusUnpause))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 {
 	u32 mismatch;
@@ -2825,6 +2833,12 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 	{
 		return FALSE;
 	}
+#ifdef PORT
+	if (syNetRollbackDeferResimForPauseTransition() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	if ((sSYNetRollbackResimPending != FALSE) || (syNetRollbackIsResimulating() != FALSE))
 	{
 		return FALSE;
@@ -3036,6 +3050,12 @@ static sb32 syNetRollbackTryBeginDeferredStateMismatch(void)
 	{
 		return FALSE;
 	}
+#ifdef PORT
+	if (syNetRollbackDeferResimForPauseTransition() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	if ((sSYNetRollbackResimPending != FALSE) || (syNetRollbackIsResimulating() != FALSE))
 	{
 		return FALSE;
@@ -3219,10 +3239,6 @@ void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNe
 	u32 target_tick;
 
 	if ((local == NULL) || (peer == NULL))
-	{
-		return;
-	}
-	if (syNetPauseShouldHoldSimTick() != FALSE)
 	{
 		return;
 	}
@@ -4377,7 +4393,7 @@ static void syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		}
 		return;
 	}
-	syNetRbSnapshotFinalizeLoadCoupling(load_tick);
+	syNetRbSnapshotFinalizeLoad(load_tick);
 	syNetRbSnapshotRebindAllFighters();
 	syNetSyncReconcileBattleTimePassedForSimTick(load_tick);
 	syNetInputSetTick(probe_tick);
@@ -4413,7 +4429,7 @@ static void syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	else
 	{
 		syNetRbSnapshotLoad(load_tick);
-		syNetRbSnapshotFinalizeLoadCoupling(load_tick);
+		syNetRbSnapshotFinalizeLoad(load_tick);
 		syNetRbSnapshotRebindAllFighters();
 		syNetSyncReconcileBattleTimePassedForSimTick(load_tick);
 		syNetInputSetTick(probe_tick);
@@ -4441,7 +4457,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 	}
 #ifdef PORT
 	syNetSyncReconcileBattleTimePassedForSimTick(tick);
-	syNetRbSnapshotFinalizeLoadCoupling(tick);
+	syNetRbSnapshotFinalizeLoad(tick);
 #endif
 	if (syNetRollbackVerifyLoadedSlot(tick) == FALSE)
 	{
@@ -4477,10 +4493,8 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 #endif
 		return FALSE;
 	}
-#ifdef PORT
-	syNetRbSnapshotSyncFighterPresentation();
-#endif
 	syNetRbSnapshotRebindAllFighters();
+	syNetRbSnapshotFinalizeLoadCoupling(tick);
 	return TRUE;
 }
 
@@ -4488,40 +4502,6 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 sb32 syNetRollbackLoadSnapshotAfterCompletedTick(u32 completed_sim_tick)
 {
 	return syNetRollbackLoadPostTick(completed_sim_tick);
-}
-
-sb32 syNetRollbackRewindToPauseBoundary(u32 boundary_tick)
-{
-	u32 current_tick;
-	u32 load_tick;
-
-	if (syNetRollbackIsActive() == FALSE)
-	{
-		return TRUE;
-	}
-	current_tick = syNetInputGetTick();
-	if (current_tick <= boundary_tick)
-	{
-		return TRUE;
-	}
-	if ((sSYNetRollbackResimPending != FALSE) || (syNetRollbackIsResimulating() != FALSE))
-	{
-		return FALSE;
-	}
-	load_tick = (boundary_tick > 0U) ? (boundary_tick - 1U) : 0U;
-	if (syNetRollbackLoadPostTick(load_tick) == FALSE)
-	{
-		port_log(
-		    "SSB64 NetPause: rewind load failed boundary=%u load=%u cur=%u ring=%u\n",
-		    boundary_tick,
-		    load_tick,
-		    current_tick,
-		    (unsigned int)syNetRbSnapshotRingCapacity());
-		return FALSE;
-	}
-	syNetInputSetTick(boundary_tick);
-	port_log("SSB64 NetPause: rewound sim %u -> %u (load post %u)\n", current_tick, boundary_tick, load_tick);
-	return TRUE;
 }
 
 void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32 frontier_tick)
@@ -4603,7 +4583,7 @@ void syNetRollbackAfterBattleUpdate(void)
 			verify_ok = FALSE;
 			if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 			{
-				syNetRbSnapshotFinalizeLoadCoupling(probe_tick);
+				syNetRbSnapshotFinalizeLoad(probe_tick);
 				verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 			}
 			if (emergency_ok != FALSE)
@@ -7749,10 +7729,6 @@ void syNetRollbackUpdate(void)
 		return;
 	}
 #ifdef PORT
-	if (syNetPauseShouldHoldSimTick() != FALSE)
-	{
-		return;
-	}
 	if (sSYNetRollbackResimPending != FALSE)
 	{
 		if (syNetRollbackResimStallAbortIfNeeded() != FALSE)

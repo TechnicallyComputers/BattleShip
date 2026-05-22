@@ -1896,6 +1896,15 @@ u32 syNetSyncHashGMCamera(void)
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pzoom_eye_y));
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraPauseCameraEyeX));
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraPauseCameraEyeY));
+	if (gGMCameraStruct.pzoom_fighter_gobj != NULL)
+	{
+		FTStruct *pzoom_fp = ftGetStruct(gGMCameraStruct.pzoom_fighter_gobj);
+
+		if (pzoom_fp != NULL)
+		{
+			hash = syNetSyncFnvAccumulateU32(hash, (u32)pzoom_fp->player);
+		}
+	}
 	return hash;
 }
 

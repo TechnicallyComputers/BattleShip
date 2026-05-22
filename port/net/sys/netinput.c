@@ -601,6 +601,11 @@ static u32 syNetInputLocalDelayOwnerTick(u32 sample_tick)
 
 #ifdef PORT
 static sb32 syNetInputFrameGameplayEquals(const SYNetInputFrame *a, const SYNetInputFrame *b);
+/* One-frame taps (Start pause) live in button_tap; history rings must OR tap into stored buttons. */
+static u16 syNetInputButtonsFromController(const SYController *controller)
+{
+	return (u16)(controller->button_hold | controller->button_tap);
+}
 static sb32 syNetInputMixedInputQuantizeEnabled(void);
 static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y);
 static void syNetInputSnapStickDominantAxisForPrediction(s8 *stick_x, s8 *stick_y);
@@ -635,7 +640,8 @@ static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
 		{
 			syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
 		}
-		syNetInputMakeFrame(&frame, owner_tick, controller->button_hold, stick_x, stick_y, nSYNetInputSourceLocal, FALSE);
+		syNetInputMakeFrame(&frame, owner_tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
+		                   nSYNetInputSourceLocal, FALSE);
 	}
 	syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
 }
@@ -780,7 +786,8 @@ static sb32 syNetInputResolveLocalAuthorityFrameEx(s32 player, u32 tick, SYNetIn
 	{
 		syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
 	}
-	syNetInputMakeFrame(out_frame, tick, controller->button_hold, stick_x, stick_y, nSYNetInputSourceLocal, FALSE);
+	syNetInputMakeFrame(out_frame, tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
+	                   nSYNetInputSourceLocal, FALSE);
 	if (out_source_rank != NULL)
 	{
 		*out_source_rank = nSYNetLocalAuthoritySourceLatch;
@@ -826,9 +833,10 @@ void syNetInputPromoteLocalAuthorityPublished(s32 player, u32 tick)
 	if ((syNetInputLocalPublishLogEnabled() != FALSE) &&
 	    ((resolved.stick_x != 0) || (resolved.stick_y != 0) || (resolved.buttons != 0)))
 	{
-		port_log("SSB64 NetInput: LOCAL_PUBLISH player=%d sim_tick=%u sx=%d sy=%d source=%s\n", (int)player,
-		         (unsigned int)tick, (int)resolved.stick_x, (int)resolved.stick_y,
-		         syNetInputLocalAuthoritySourceTag(source_rank));
+		port_log(
+		    "SSB64 NetInput: LOCAL_PUBLISH player=%d sim_tick=%u btn=0x%04X sx=%d sy=%d source=%s\n",
+		    (int)player, (unsigned int)tick, (unsigned int)resolved.buttons, (int)resolved.stick_x,
+		    (int)resolved.stick_y, syNetInputLocalAuthoritySourceTag(source_rank));
 	}
 }
 
@@ -2934,14 +2942,15 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 		{
 			syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
 		}
-		syNetInputMakeFrame(out_frame, tick, controller->button_hold, stick_x, stick_y, nSYNetInputSourceLocal, FALSE);
+		syNetInputMakeFrame(out_frame, tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
+		                   nSYNetInputSourceLocal, FALSE);
 	}
 #else
 	{
 		SYController *controller = &gSYControllerDevices[player];
 
-		syNetInputMakeFrame(out_frame, tick, controller->button_hold, controller->stick_range.x, controller->stick_range.y,
-		                   nSYNetInputSourceLocal, FALSE);
+		syNetInputMakeFrame(out_frame, tick, syNetInputButtonsFromController(controller), controller->stick_range.x,
+		                   controller->stick_range.y, nSYNetInputSourceLocal, FALSE);
 	}
 #endif
 #ifdef PORT
@@ -3578,9 +3587,36 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 {
 	SYNetInputFrame *last_published = &sSYNetInputSlots[player].last_published;
-	u16 prev_buttons = (last_published->is_valid != FALSE) ? last_published->buttons : 0;
-	u16 pressed = (frame->buttons ^ prev_buttons) & frame->buttons;
-	u16 released = (frame->buttons ^ prev_buttons) & prev_buttons;
+	SYNetInputFrame prev_tick_frame;
+	u16 prev_buttons = 0;
+	u16 preserved_tap = 0;
+	u16 preserved_release = 0;
+	u16 pressed;
+	u16 released;
+
+	if (last_published->is_valid != FALSE)
+	{
+		if (last_published->tick == frame->tick)
+		{
+			/*
+			 * Same-tick republish (FuncRead then RepublishRemote before interface): edge detect against
+			 * prior sim tick, not the first publish this tick — and keep taps already seen by interface.
+			 */
+			if ((frame->tick > 0U) &&
+			    (syNetInputGetHistoryFrame(player, frame->tick - 1U, &prev_tick_frame) != FALSE))
+			{
+				prev_buttons = prev_tick_frame.buttons;
+			}
+			preserved_tap = gSYControllerDevices[player].button_tap;
+			preserved_release = gSYControllerDevices[player].button_release;
+		}
+		else
+		{
+			prev_buttons = last_published->buttons;
+		}
+	}
+	pressed = (u16)(((frame->buttons ^ prev_buttons) & frame->buttons) | preserved_tap);
+	released = (u16)(((frame->buttons ^ prev_buttons) & prev_buttons) | preserved_release);
 
 	gSYControllerDevices[player].button_hold = frame->buttons;
 	gSYControllerDevices[player].button_tap = pressed;

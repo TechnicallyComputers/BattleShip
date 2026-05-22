@@ -263,8 +263,6 @@ extern sb32 syNetPeerShouldHardAbortOnNetplayInputMismatch(void);
 extern void syNetPeerRefreshCachedNetplayEnvForNewMatch(void);
 /* GGPO-style merged max(last_confirmed tick) across INPUT peer_connect_status; FALSE if no confirmed ticks yet. */
 extern sb32 syNetPeerGetMergedMinConfirmedSimTick(s32 *out_min_tick);
-extern void syNetPeerSendBattlePausePacket(u32 sim_tick, u8 pause_player);
-extern void syNetPeerSendBattleUnpausePacket(u32 sim_tick);
 #endif
 
 #if defined(PORT) && defined(SSB64_NETMENU)
