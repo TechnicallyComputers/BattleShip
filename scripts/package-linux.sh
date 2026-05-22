@@ -4,7 +4,8 @@
 # Usage:
 #   ./scripts/package-linux.sh
 #   ./scripts/package-linux.sh -DSSB64_NETMENU=ON    # netplay / net-menu build
-#   ./scripts/package-linux.sh --netplay            # same output paths + forces NETMENU (uses port/net/sys/taskman.c)
+#   ./scripts/package-linux.sh -DSSB64_NETMENU=OFF   # explicit offline (default)
+#   ./scripts/package-linux.sh --netplay            # netplay output paths + NETMENU ON
 #
 # Additional CMake cache variables may be passed through (they are forwarded to
 # the configure step after NON_PORTABLE=ON and Release).
@@ -81,26 +82,27 @@ has_netmenu_on=0
 has_netmenu_off=0
 for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
 	case "$a" in
-		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON) has_netmenu_on=1 ;;
-		-DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF) has_netmenu_off=1 ;;
+		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON|-DSSB64_NETMENU=1|-DSSB64_NETMENU:BOOL=1) has_netmenu_on=1 ;;
+		-DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF|-DSSB64_NETMENU=0|-DSSB64_NETMENU:BOOL=0) has_netmenu_off=1 ;;
 	esac
 done
 if [[ "$NETPLAY_PACKAGE" -eq 1 ]] && [[ "$has_netmenu_off" -eq 0 ]] && [[ "$has_netmenu_on" -eq 0 ]]; then
 	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=ON")
+	has_netmenu_on=1
 fi
 
+# Explicit -DSSB64_NETMENU=OFF wins over --netplay. Default is offline (IS_NETPLAY=0).
 IS_NETPLAY=0
-if [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
+if [[ "$has_netmenu_off" -eq 1 ]]; then
+	IS_NETPLAY=0
+elif [[ "$has_netmenu_on" -eq 1 ]] || [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
 	IS_NETPLAY=1
 fi
-for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
-	case "$a" in
-		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON)
-			IS_NETPLAY=1
-			break
-			;;
-	esac
-done
+
+# Offline packaging must pass OFF so a reused build dir cannot keep a cached ON.
+if [[ "$IS_NETPLAY" -eq 0 ]] && [[ "$has_netmenu_off" -eq 0 ]]; then
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=OFF")
+fi
 
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	BUILD_DIR="$ROOT/build-bundle-linux-netplay-$VER"
@@ -112,8 +114,8 @@ if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	fi
 	DESKTOP_DISPLAY_NAME="BattleShip Netplay"
 else
-	BUILD_DIR="$ROOT/build-bundle-linux"
-	APPDIR="$DIST_DIR/BattleShip.AppDir"
+	BUILD_DIR="$ROOT/build-bundle-linux-$VER"
+	APPDIR="$DIST_DIR/$APP_NAME.AppDir"
 	APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
 	DESKTOP_DISPLAY_NAME="BattleShip"
 fi
@@ -200,7 +202,11 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
-step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMENU=ON)}"
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=ON)"
+else
+	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
+fi
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
