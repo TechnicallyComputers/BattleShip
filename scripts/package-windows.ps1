@@ -171,6 +171,14 @@ if ($Netplay) {
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
+if (Test-KsguidLibOnLibPath) {
+    foreach ($dir in ($env:LIB -split ';')) {
+        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir 'ksguid.lib'))) {
+            Write-Host "   ksguid.lib on LIB: $(Join-Path $dir 'ksguid.lib')"
+            break
+        }
+    }
+}
 # Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
 Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
 Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
@@ -185,6 +193,21 @@ if ($Netplay) {
     & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
 }
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
+
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    $ninjaFiles = Get-ChildItem -Path $BuildDir -Recurse -Filter build.ninja -ErrorAction SilentlyContinue
+    $ksLines = $ninjaFiles | Select-String -Pattern 'ksguid' -SimpleMatch
+    if (-not $ksLines) {
+        Write-Host "   (no ksguid in build.ninja yet — may link via response files)"
+    } else {
+        foreach ($line in $ksLines) {
+            if ($line.Line -match 'ksguid\.lib' -and $line.Line -notmatch 'Windows Kits') {
+                Fail "build.ninja uses bare ksguid.lib (WindowsSdkUmLib.cmake missing?). Ensure libultraship submodule includes cmake/WindowsSdkUmLib.cmake"
+            }
+        }
+        Write-Host "   ksguid link uses full Windows SDK path in build.ninja"
+    }
+}
 
 Write-Step "Building BattleShip + torch"
 cmake --build $BuildDir --config Release -j $Jobs
