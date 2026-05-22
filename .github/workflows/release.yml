@@ -268,6 +268,8 @@ jobs:
         # (ksguid.lib for WASAPI 5.1 GUIDs in libultraship). libultraship
         # and torch CI both use this action; without it LNK1181 on ksguid.lib.
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -296,6 +298,8 @@ jobs:
         shell: pwsh
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}

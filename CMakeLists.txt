@@ -114,8 +114,25 @@ endif()
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
+# Windows netmenu: curl is installed by libultraship's vcpkg bootstrap (classic mode
+# under libultraship/vcpkg/installed/<triplet>). Parent project() ran before the
+# toolchain was active, so point find_package at that prefix explicitly.
 if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    find_package(CURL REQUIRED)
+    if(USE_AUTO_VCPKG)
+        if(VCPKG_TARGET_TRIPLET)
+            set(_SSB64_VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
+        else()
+            set(_SSB64_VCPKG_TRIPLET "x64-windows-static")
+        endif()
+        set(_SSB64_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/libultraship/vcpkg/installed/${_SSB64_VCPKG_TRIPLET}")
+        if(EXISTS "${_SSB64_VCPKG_INSTALLED}")
+            list(APPEND CMAKE_PREFIX_PATH "${_SSB64_VCPKG_INSTALLED}")
+            message(STATUS "SSB64 vcpkg prefix for CURL: ${_SSB64_VCPKG_INSTALLED}")
+        else()
+            message(FATAL_ERROR "vcpkg installed tree missing (expected ${_SSB64_VCPKG_INSTALLED}); curl install may have failed")
+        endif()
+    endif()
+    find_package(CURL REQUIRED CONFIG)
     find_package(Threads REQUIRED)
 endif()
 
@@ -644,7 +661,7 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE shell32 ksguid)
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)

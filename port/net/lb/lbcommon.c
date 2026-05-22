@@ -1812,7 +1812,9 @@ sb32 func_ovl0_800C9F30(Mtx *mtx, DObj *dobj, Gfx **dls)
     return 0;
 }
 
-#if defined(REGION_US)
+/* US-only in decomp ROM builds; matrix table references this unconditionally.
+ * || PORT compiles for JP netmenu/offline port. See docs/bugs/jp_us_only_funcs_called_unconditionally_2026-05-18.md */
+#if defined(REGION_US) || defined(PORT)
 // 0x800C9F70
 sb32 func_ovl0_800C9F70(Mtx *mtx, DObj *dobj, Gfx **dls)
 {
@@ -2353,9 +2355,9 @@ sb32 (*dLBCommonFuncMatrixList[/* */])(/* */) =
 #if defined(REGION_US)
 	func_ovl0_800C9F30,
 	func_ovl0_800C9F30,
-#endif
-    func_ovl0_800C9F70,
 	func_ovl0_800C9F70,
+	func_ovl0_800C9F70,
+#endif
 	grSectorArwingLaser3DFuncMatrix,
 	grSectorArwingLaser3DFuncMatrix,
 	gmCameraOrthoLookAtFuncMatrix,
