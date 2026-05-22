@@ -216,7 +216,7 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-# Ninja + x64 MSVC (libultraship ImGui links ksguid for WASAPI). GHA sets
+# Ninja + x64 MSVC (libultraship links ksguid for WASAPI). GHA sets
 # vcvars via ilammy/msvc-dev-cmd; local builds need a Developer Command Prompt.
 $CmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
@@ -298,7 +298,7 @@ function Test-KsguidConfigureAndLinkInputs {
     }
     if ($bareHits.Count -gt 0) {
         $bareHits | ForEach-Object { Write-Host "   $_" }
-        Fail "Linker uses bare ksguid.lib — bump libultraship (windows.cmake + WindowsSdkUmLib.cmake)"
+        Fail "Linker uses bare ksguid.lib — bump libultraship (src/CMakeLists.txt + WindowsSdkUmLib.cmake)"
     }
     Write-Host "   ksguid: full SDK path in CMake cache (no bare ksguid in ninja/rsp)"
 }
