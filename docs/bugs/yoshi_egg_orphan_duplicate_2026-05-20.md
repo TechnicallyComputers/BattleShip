@@ -58,6 +58,7 @@ With `SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1`:
 | Area | Change |
 |------|--------|
 | **ApplyWeapons** | Remove post-apply Yoshi egg cull; cull only after rebind when `egg_gobj != NULL`. |
+| **Load order (Phase 4.5)** | Unmatched weapon eject deferred globally until after `syNetRbSnapRebindFighterCoupledGObjs` — see [`netrollback_weapon_deferred_eject_2026-05-20.md`](netrollback_weapon_deferred_eject_2026-05-20.md). |
 | **Load rebind** | Reacquire charge egg if resolve fails; skip cull when still NULL. |
 | **ProcPhysics** | Reacquire when `egg_gobj==NULL && flag1==0` (pre-throw charge only). |
 | **Throw event** | On `flag2==2`, reacquire then emergency spawn before launching. |
