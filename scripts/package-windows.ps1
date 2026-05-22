@@ -74,7 +74,9 @@ function Copy-CaBundle($DestDir) {
         (Join-Path $BuildDir "vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
         (Join-Path $BuildDir "vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
         (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
-        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt")
+        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows\share\curl\curl-ca-bundle.crt")
     )
     foreach ($c in $Candidates) {
         if (Test-Path $c) {

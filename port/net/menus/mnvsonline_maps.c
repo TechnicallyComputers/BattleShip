@@ -10,6 +10,28 @@
 #ifdef PORT
 #include <mp/mpcollision.h>
 extern void *func_800269C0_275C0(u16 id);
+extern float port_widescreen_clip_x_scale(void);
+
+/* Compress 2D sprite X about screen center so overlays track the 3D preview
+ * (AdjXForAspectRatio widens vertices; TextureRectangle UI stays at 4:3 NDC). */
+static void mnVSNetLevelPrefsMapsAnchorSObjX(SObj *sobj)
+{
+	f32 scale;
+	f32 half_w;
+	f32 center_x;
+
+	if (sobj == NULL)
+	{
+		return;
+	}
+	scale = port_widescreen_clip_x_scale();
+	if (scale < 1.0F)
+	{
+		half_w = sobj->sprite.width * 0.5F;
+		center_x = sobj->pos.x + half_w;
+		sobj->pos.x = (160.0F + (center_x - 160.0F) * scale) - half_w;
+	}
+}
 #endif
 /*
  * sc/scene.h may pull <lb/library.h> (decomp) which includes decomp lbcommon.h first.
@@ -555,6 +577,9 @@ void mnVSNetLevelPrefsMapsMakeString(GObj *gobj, const char *str, f32 x, f32 y, 
 		{
 			sobj = lbCommonMakeSObjForGObj(gobj, lbRelocGetFileData(Sprite*, sMNVSNetLevelPrefsMapsFiles[3], chars[mnVSNetLevelPrefsMapsGetCharacterID(str[i])]));
 			sobj->pos.x = start_x;
+#ifdef PORT
+			mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 
 			start_x += sobj->sprite.width + mnVSNetLevelPrefsMapsGetCharacterSpacing(str, i);
 
@@ -629,6 +654,9 @@ void mnVSNetLevelPrefsMapsMakePlaque(void)
 
 	sobj->pos.x = 189.0F;
 	sobj->pos.y = 124.0F;
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 }
 
 // 0x801320E0
@@ -679,6 +707,9 @@ void mnVSNetLevelPrefsMapsMakeLabels(void)
 
 	sobj->pos.x = 172.0F;
 	sobj->pos.y = 122.0F;
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 
 #ifdef PORT
 	sobj = lbCommonMakeSObjForGObj(gobj, lbRelocGetFileData(Sprite*, sMNVSNetLevelPrefsMapsFiles[2], llMNMapsPlateLeftSprite));
@@ -690,6 +721,9 @@ void mnVSNetLevelPrefsMapsMakeLabels(void)
 
 	sobj->pos.x = 174.0F;
 	sobj->pos.y = 191.0F;
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 
 	for (x = 186; x < 262; x += 4)
 	{
@@ -700,6 +734,9 @@ void mnVSNetLevelPrefsMapsMakeLabels(void)
 #endif
 		sobj->pos.x = x;
 		sobj->pos.y = 191.0F;
+#ifdef PORT
+		mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 	}
 #ifdef PORT
 	sobj = lbCommonMakeSObjForGObj(gobj, lbRelocGetFileData(Sprite*, sMNVSNetLevelPrefsMapsFiles[2], llMNMapsPlateRightSprite));
@@ -711,6 +748,9 @@ void mnVSNetLevelPrefsMapsMakeLabels(void)
 
 	sobj->pos.x = 262.0F;
 	sobj->pos.y = 191.0F;
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
+#endif
 }
 
 // 0x80132430
@@ -865,6 +905,9 @@ void mnVSNetLevelPrefsMapsSetNamePosition(SObj *sobj, s32 gkind)
 #else
 	sobj->pos.x = positions[gkind].x;
 	sobj->pos.y = positions[gkind].y;
+#endif
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(sobj);
 #endif
 }
 
@@ -1080,6 +1123,9 @@ void mnVSNetLevelPrefsMapsSetLogoPosition(GObj *gobj, s32 gkind)
 		SObjGetStruct(gobj)->pos.x = positions[gkind].x + 189.0F;
 		SObjGetStruct(gobj)->pos.y = positions[gkind].y + 124.0F;
 	}
+#ifdef PORT
+	mnVSNetLevelPrefsMapsAnchorSObjX(SObjGetStruct(gobj));
+#endif
 }
 
 // 0x801328A8

@@ -12,6 +12,7 @@
 #include <string.h>
 extern char *getenv(const char *name);
 extern int atoi(const char *str);
+extern float port_widescreen_clip_x_scale(void);
 #endif
 /*
  * Automatch state machine (HTTPS queue + STUN/LAN + P2P bootstrap). Same path on Linux and
@@ -1973,6 +1974,19 @@ void mnVSNetAutomatchMakeFighter(GObj *fighter_gobj, s32 player, s32 fkind, s32 
 
 		DObjGetStruct(fighter_gobj)->translate.vec.f.x = -1100.0F;
 		DObjGetStruct(fighter_gobj)->translate.vec.f.y = -850.0F;
+#ifdef PORT
+		/* Widescreen: pre-divide world-x by clip_x_scale so the 3D fighter
+		 * (which gets AdjXForAspectRatio compression) lands at its 4:3
+		 * authored NDC position relative to the 2D panel UI. Same pattern
+		 * as mnPlayers1PGameMakeFighter / mnPlayersVSMakeFighter. */
+		{
+			f32 scale = port_widescreen_clip_x_scale();
+			if (scale > 0.0F && scale < 1.0F)
+			{
+				DObjGetStruct(fighter_gobj)->translate.vec.f.x /= scale;
+			}
+		}
+#endif
 
 		DObjGetStruct(fighter_gobj)->rotate.vec.f.y = rot_y;
 
@@ -3359,6 +3373,16 @@ void mnVSNetAutomatchMakeSpotlight(void)
 	DObjGetStruct(gobj)->translate.vec.f.x = -1100.0F;
 	DObjGetStruct(gobj)->translate.vec.f.y = -850.0F;
 	DObjGetStruct(gobj)->translate.vec.f.z = 0.0F;
+#ifdef PORT
+	/* Track the widened fighter world-x so the spotlight stays under it. */
+	{
+		f32 scale = port_widescreen_clip_x_scale();
+		if (scale > 0.0F && scale < 1.0F)
+		{
+			DObjGetStruct(gobj)->translate.vec.f.x /= scale;
+		}
+	}
+#endif
 }
 
 // 0x80137BE4
