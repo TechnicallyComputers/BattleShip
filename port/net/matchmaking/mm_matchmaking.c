@@ -4,6 +4,8 @@
 
 #include <macros.h>
 
+#include <ssb64_paths_capi.h>
+
 #include <curl/curl.h>
 #include <errno.h>
 #include <pthread.h>
@@ -14,6 +16,7 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <errno.h>
+#include <sys/stat.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -24,7 +27,7 @@ extern void port_log(const char *fmt, ...);
 #endif
 
 #ifndef MM_DEFAULT_BASE_URL
-#define MM_DEFAULT_BASE_URL "http://216.154.76.149:8899"
+#define MM_DEFAULT_BASE_URL "https://netplay.technicallycomputers.ca"
 #endif
 /* HTTPS jobs queue: producer can outpace single worker under high RTT — keep headroom. */
 #define MM_JOB_QUEUE_DEPTH 64
@@ -214,6 +217,17 @@ static void mmMemBufFree(MmMemBuf *m)
 	m->len = 0;
 }
 
+static sb32 mmFileReadable(const char *path)
+{
+	struct stat st;
+
+	if ((path == NULL) || (path[0] == '\0'))
+	{
+		return FALSE;
+	}
+	return (stat(path, &st) == 0) && S_ISREG(st.st_mode);
+}
+
 static void mmBaseUrlSetup(void)
 {
 	const char *env = getenv("SSB64_MATCHMAKING_BASE_URL");
@@ -225,6 +239,52 @@ static void mmBaseUrlSetup(void)
 	else
 	{
 		snprintf(sBaseUrl, sizeof(sBaseUrl), "%s", MM_DEFAULT_BASE_URL);
+	}
+}
+
+/* AppImage / portable builds bundle curl+OpenSSL but not the host CA store. */
+static void mmCurlConfigureSsl(CURL *c)
+{
+	const char *ca;
+	char bundle_path[512];
+	char base[384];
+
+	if (c == NULL)
+	{
+		return;
+	}
+
+	curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+
+	ca = getenv("SSB64_MATCHMAKING_CA_BUNDLE");
+	if ((ca == NULL) || (ca[0] == '\0'))
+	{
+		ca = getenv("CURL_CA_BUNDLE");
+	}
+	if ((ca == NULL) || (ca[0] == '\0'))
+	{
+		ca = getenv("SSL_CERT_FILE");
+	}
+	if ((ca != NULL) && (ca[0] != '\0') && mmFileReadable(ca))
+	{
+		curl_easy_setopt(c, CURLOPT_CAINFO, ca);
+		return;
+	}
+
+	if (ssb64_RealAppBundlePathUtf8(base, sizeof(base)) != 0)
+	{
+		snprintf(bundle_path, sizeof(bundle_path), "%s/../share/BattleShip/ssl/cacert.pem", base);
+		if (mmFileReadable(bundle_path))
+		{
+			curl_easy_setopt(c, CURLOPT_CAINFO, bundle_path);
+			return;
+		}
+		snprintf(bundle_path, sizeof(bundle_path), "%s/ssl/cacert.pem", base);
+		if (mmFileReadable(bundle_path))
+		{
+			curl_easy_setopt(c, CURLOPT_CAINFO, bundle_path);
+		}
 	}
 }
 
@@ -555,6 +615,7 @@ static long mmHttpsRequest(const char *method, const char *path_suffix, const ch
 	curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, mmCurlWriteMem);
 	curl_easy_setopt(c, CURLOPT_WRITEDATA, &chunk);
 	curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
+	mmCurlConfigureSsl(c);
 
 	(void)curl_easy_perform(c);
 

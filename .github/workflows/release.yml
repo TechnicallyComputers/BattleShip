@@ -4,10 +4,8 @@ name: Release
 #   - Pushing a tag matching v* (e.g. v1.0.0, v0.1-test)
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
-# Three platform jobs, each matrixed over the two ROM versions (us, jp),
-# build with NON_PORTABLE=ON via the corresponding scripts/package-*.sh|.ps1
-# helper (SSB64_VERSION selects the region). A final `release` job stitches
-# all six artifacts into a GitHub Release attached to the tag.
+# Three platform jobs (offline), each matrixed over us/jp, plus macOS netplay.
+# A final `release` job stitches artifacts into a GitHub Release on tag push.
 #
 # US keeps the historical artifact names (BattleShip.dmg, …-x86_64.AppImage,
 # …-windows.zip) so existing links and the in-app updater are unaffected;
@@ -76,6 +74,32 @@ jobs:
           # is falsy and falls through to `c`. Keep the non-empty value
           # in the `&&` branch and the empty default in `||`.
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}.dmg
+          if-no-files-found: error
+
+  build-macos-netplay:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        run: |
+          brew install cmake ninja \
+            sdl2 glew libzip nlohmann-json tinyxml2 spdlog curl \
+            zip create-dmg dylibbundler ca-certificates
+      - name: Package macOS netplay .app + .dmg
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+        run: bash scripts/package-macos.sh --netplay
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-macos-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay.dmg
           if-no-files-found: error
 
   build-linux:
@@ -205,7 +229,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-linux, build-windows]
+    needs: [build-macos, build-macos-netplay, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')   # only on tag pushes
     runs-on: ubuntu-latest
     steps:
@@ -219,6 +243,8 @@ jobs:
           files: |
             artifacts/BattleShip.dmg
             artifacts/BattleShip-JP.dmg
+            artifacts/BattleShip-Netplay.dmg
+            artifacts/BattleShip-JP-Netplay.dmg
             artifacts/BattleShip-x86_64.AppImage
             artifacts/BattleShip-JP-x86_64.AppImage
             artifacts/BattleShip-windows.zip

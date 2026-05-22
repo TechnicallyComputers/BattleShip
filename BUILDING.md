@@ -46,7 +46,7 @@ Packaging scripts:
 
 | Script | Default variant |
 |--------|-----------------|
-| `scripts/package-macos.sh` | Offline |
+| `scripts/package-macos.sh` | Offline (`--netplay` for netmenu) |
 | `scripts/package-linux.sh` | Offline (`--netplay` for netmenu) |
 | `scripts/package-mingw-windows.sh` | Offline (`--netplay` for netmenu) |
 | `scripts/package-windows.ps1` | Release MSVC (configure flags vary) |

@@ -28,6 +28,10 @@
 #     assets/custom/fonts/
 #     *.dll                  (MinGW runtime deps from the cross toolchain)
 #     port/net/assets/       (netmenu / --netplay only)
+#     ssl/cacert.pem         (netmenu / --netplay only; libcurl TLS for HTTPS matchmaking)
+#
+# Netplay (--netplay): bundles libcurl + OpenSSL DLLs and ships ssl/cacert.pem so automatch
+# can reach https://netplay.technicallycomputers.ca/ (see mm_matchmaking.c).
 #
 # BattleShip.o2r is NOT bundled; users extract via torch + their own ROM (see package-windows.ps1).
 #
@@ -152,6 +156,94 @@ require_mingw_netplay_deps() {
 	fi
 }
 
+# PEM CA bundle for libcurl on Windows (no system trust store in portable zip layout).
+bundle_mingw_ca_certs() {
+	local dest="$1"
+	local candidate
+
+	mkdir -p "$dest"
+	for candidate in \
+		"$MINGW_PREFIX/ssl/certs/ca-bundle.crt" \
+		"$MINGW_PREFIX/etc/ssl/certs/ca-bundle.crt" \
+		"$MINGW_PREFIX/share/curl/ca-bundle.crt" \
+		/etc/ssl/certs/ca-certificates.crt \
+		/etc/pki/tls/certs/ca-bundle.crt \
+		/etc/ssl/ca-bundle.pem \
+		/usr/share/curl/ca-bundle.crt; do
+		if [[ -f "$candidate" ]]; then
+			cp "$candidate" "$dest/cacert.pem"
+			printf '%s\n' "$dest/cacert.pem"
+			return 0
+		fi
+	done
+	fail "Could not find a CA certificate bundle to ship for HTTPS matchmaking (install mingw-w64-curl / ca-certificates)"
+}
+
+# Resolve a MinGW DLL from MINGW_BIN, then MINGW_PREFIX/bin.
+find_mingw_dll() {
+	local dll="$1"
+	local src="$MINGW_BIN/$dll"
+
+	if [[ -f "$src" ]]; then
+		printf '%s\n' "$src"
+		return 0
+	fi
+	src="$(find "$MINGW_BIN" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+	if [[ -n "$src" && -f "$src" ]]; then
+		printf '%s\n' "$src"
+		return 0
+	fi
+	src="$MINGW_PREFIX/bin/$dll"
+	if [[ -f "$src" ]]; then
+		printf '%s\n' "$src"
+		return 0
+	fi
+	src="$(find "$MINGW_PREFIX/bin" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+	if [[ -n "$src" && -f "$src" ]]; then
+		printf '%s\n' "$src"
+		return 0
+	fi
+	return 1
+}
+
+# Copy a DLL into dest when objdump walk missed it (match basename glob in MinGW prefix).
+ensure_mingw_dll_glob() {
+	local dest="$1"
+	local pattern="$2"
+	local src
+
+	if compgen -G "$dest/$pattern" >/dev/null 2>&1; then
+		return 0
+	fi
+	src="$(find "$MINGW_BIN" "$MINGW_PREFIX/bin" -maxdepth 1 -iname "$pattern" -print -quit 2>/dev/null || true)"
+	if [[ -z "$src" || ! -f "$src" ]]; then
+		return 1
+	fi
+	cp -f "$src" "$dest/"
+	printf '   ensured %s\n' "$(basename "$src")"
+	return 0
+}
+
+verify_mingw_https_bundle() {
+	local dest="$1"
+	local missing=0
+	local pat
+
+	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll'; do
+		if ! compgen -G "$dest/$pat" >/dev/null; then
+			warn "HTTPS netplay package missing $pat in $dest"
+			missing=1
+		fi
+	done
+	if [[ ! -f "$dest/ssl/cacert.pem" ]]; then
+		warn "HTTPS netplay package missing ssl/cacert.pem"
+		missing=1
+	fi
+	if [[ "$missing" -ne 0 ]]; then
+		fail "Incomplete HTTPS matchmaking bundle — install mingw-w64-curl + openssl and re-run with --build --netplay"
+	fi
+}
+
 # True if $1 is a Windows system DLL we do not bundle (ships with Windows / UCRT).
 is_system_dll() {
 	local name="${1,,}"
@@ -201,15 +293,9 @@ bundle_mingw_dlls() {
 			fi
 			seen[$key]=1
 
-			local src="$MINGW_BIN/$dll"
-			if [[ ! -f "$src" ]]; then
-				# Match case-insensitive filenames (e.g. HID.DLL vs hid.dll).
-				local match
-				match="$(find "$MINGW_BIN" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
-				[[ -n "$match" ]] && src="$match"
-			fi
-			if [[ ! -f "$src" ]]; then
-				warn "imported $dll but not found under $MINGW_BIN (skipped)"
+			local src
+			if ! src="$(find_mingw_dll "$dll")"; then
+				warn "imported $dll but not found under $MINGW_BIN or $MINGW_PREFIX/bin (skipped)"
 				continue
 			fi
 
@@ -383,6 +469,10 @@ encode_credits_if_needed() {
 require_cmd zip
 require_cmd "$OBJDUMP"
 
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	require_mingw_netplay_deps
+fi
+
 if [[ "$DO_BUILD" -eq 1 ]]; then
 	encode_credits_if_needed
 	if torch_external_is_stale_host_build; then
@@ -518,6 +608,21 @@ step "Bundling MinGW runtime DLLs"
 [[ -d "$MINGW_BIN" ]] || fail "MINGW_BIN not found: $MINGW_BIN"
 bundle_mingw_dlls "$GAME_EXE" "$STAGE_DIR"
 bundle_mingw_dlls "$STAGE_DIR/torch.exe" "$STAGE_DIR"
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
+	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll'; do
+		ensure_mingw_dll_glob "$STAGE_DIR" "$pat" \
+			|| warn "netplay packaging: could not locate $pat under $MINGW_BIN or $MINGW_PREFIX/bin"
+	done
+	for curl_dll in "$STAGE_DIR"/libcurl*.dll; do
+		[[ -f "$curl_dll" ]] || continue
+		bundle_mingw_dlls "$curl_dll" "$STAGE_DIR"
+	done
+	NETPLAY_CA_BUNDLE="$(bundle_mingw_ca_certs "$STAGE_DIR/ssl")"
+	printf '   CA bundle: %s\n' "$NETPLAY_CA_BUNDLE"
+	verify_mingw_https_bundle "$STAGE_DIR"
+fi
 
 step "Compressing $ZIP_PATH"
 mkdir -p "$DIST_DIR"

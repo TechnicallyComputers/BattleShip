@@ -38,6 +38,9 @@
 #     actual library files into AppDir/usr/lib/ so the AppImage runs
 #     on distros that don't have the build host's exact .so versions.
 #     https://github.com/linuxdeploy/linuxdeploy/releases
+#   Netplay (--netplay / SSB64_NETMENU=ON): libcurl + OpenSSL at build time;
+#     packaging also ships a CA bundle under usr/share/BattleShip/ssl/ for HTTPS
+#     matchmaking (default https://netplay.technicallycomputers.ca/).
 #
 # If linuxdeploy isn't in PATH the script warns and skips library
 # bundling — the resulting AppImage will only run on systems whose
@@ -113,8 +116,72 @@ fi
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mWARN: %s\033[0m\n' "$1" >&2; }
+
+require_linux_netplay_deps() {
+	local pc="pkg-config"
+	command -v "$pc" >/dev/null 2>&1 || pc=""
+	if [[ -n "$pc" ]] && "$pc" --exists libcurl 2>/dev/null; then
+		return 0
+	fi
+	if ldconfig -p 2>/dev/null | grep -q 'libcurl\.so'; then
+		return 0
+	fi
+	if [[ -f /usr/lib/libcurl.so ]] || [[ -f /usr/lib/libcurl.so.4 ]]; then
+		return 0
+	fi
+	fail "SSB64_NETMENU requires libcurl (HTTPS matchmaking). Install: pacman -S curl  or  apt install libcurl4-openssl-dev"
+}
+
+bundle_linux_ca_certs() {
+	local dest="$1"
+	local candidate
+
+	mkdir -p "$dest"
+	for candidate in \
+		/etc/ssl/certs/ca-certificates.crt \
+		/etc/pki/tls/certs/ca-bundle.crt \
+		/etc/ssl/ca-bundle.pem \
+		/usr/share/curl/ca-bundle.crt \
+		/usr/lib/ssl/cert.pem; do
+		if [[ -f "$candidate" ]]; then
+			cp "$candidate" "$dest/cacert.pem"
+			printf '%s\n' "$dest/cacert.pem"
+			return 0
+		fi
+	done
+	fail "Could not find a system CA certificate bundle to ship for HTTPS matchmaking"
+}
+
+ensure_linuxdeploy_libs() {
+	local appdir="$1"
+	local binary="$2"
+	shift 2
+	local -a libs=("$@")
+	local lib base name
+
+	[[ -d "$appdir/usr/lib" ]] || mkdir -p "$appdir/usr/lib"
+	for lib in "${libs[@]}"; do
+		base="$(ldd "$binary" 2>/dev/null | awk -v pat="$lib" '$1 ~ pat { print $3; exit }')"
+		if [[ -z "$base" || ! -f "$base" ]]; then
+			base="$(ldconfig -p 2>/dev/null | awk -v pat="$lib" '$1 ~ pat && /x86-64/ && first == "" { first = $NF } END { if (first != "") print first }')"
+		fi
+		if [[ -z "$base" || ! -f "$base" ]]; then
+			warn "netplay packaging: could not locate $lib for bundling"
+			continue
+		fi
+		name="$(basename "$base")"
+		if [[ ! -f "$appdir/usr/lib/$name" ]]; then
+			cp -L "$base" "$appdir/usr/lib/$name"
+		fi
+	done
+}
 
 [[ "$(uname -s)" == "Linux" ]] || fail "package-linux.sh runs on Linux only"
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	require_linux_netplay_deps
+fi
 
 # ── 0. Run codegen scripts that don't need the ROM ──
 step "Encoding credits text"
@@ -325,6 +392,14 @@ else
     printf '   Install from https://github.com/linuxdeploy/linuxdeploy/releases\n'
 fi
 
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
+    ensure_linuxdeploy_libs "$APPDIR" "$APPDIR/usr/bin/$APP_NAME" \
+        libcurl libssl libcrypto libnghttp2 libidn2 libnghttp3 libngtcp2
+    NETPLAY_CA_BUNDLE="$(bundle_linux_ca_certs "$APPDIR/usr/share/$APP_NAME/ssl")"
+    printf '   CA bundle: %s\n' "$NETPLAY_CA_BUNDLE"
+fi
+
 # ── 7. AppRun ──
 # Linuxdeploy makes AppRun a *symlink* to usr/bin/BattleShip and
 # expects users to embed their AppRun-equivalent logic (env, cwd) in
@@ -335,6 +410,21 @@ fi
 # sets LD_LIBRARY_PATH for the bundled libs, cd's into the data dir,
 # then execs the binary.
 rm -f "$APPDIR/AppRun"
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+cat > "$APPDIR/AppRun" <<EOF
+#!/bin/sh
+HERE="\$(dirname "\$(readlink -f "\${0}")")"
+export PATH="\$HERE/usr/bin:\$PATH"
+export LD_LIBRARY_PATH="\$HERE/usr/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+CA_BUNDLE="\$HERE/usr/share/$APP_NAME/ssl/cacert.pem"
+if [ -f "\$CA_BUNDLE" ]; then
+	export CURL_CA_BUNDLE="\$CA_BUNDLE"
+	export SSL_CERT_FILE="\$CA_BUNDLE"
+fi
+cd "\$HERE/usr/share/$APP_NAME" || exit 1
+exec "\$HERE/usr/bin/$APP_NAME" "\$@"
+EOF
+else
 cat > "$APPDIR/AppRun" <<EOF
 #!/bin/sh
 HERE="\$(dirname "\$(readlink -f "\${0}")")"
@@ -343,6 +433,7 @@ export LD_LIBRARY_PATH="\$HERE/usr/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 cd "\$HERE/usr/share/$APP_NAME" || exit 1
 exec "\$HERE/usr/bin/$APP_NAME" "\$@"
 EOF
+fi
 chmod +x "$APPDIR/AppRun"
 
 # ── 8. Pack into AppImage if appimagetool is available ──

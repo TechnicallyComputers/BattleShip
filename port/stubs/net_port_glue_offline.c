@@ -34,6 +34,11 @@ sb32 syNetRollbackIsActive(void)
 	return FALSE;
 }
 
+sb32 syNetRollbackIsResimulating(void)
+{
+	return FALSE;
+}
+
 void syNetRollbackApplyPortSimPacing(u32 refresh_hz)
 {
 	(void)refresh_hz;
