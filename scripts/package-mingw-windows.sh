@@ -99,7 +99,7 @@ done
 # Offline vs netplay: separate default BUILD_DIR trees + forced -DSSB64_NETMENU=OFF|ON (see header).
 IS_NETPLAY=$NETPLAY_PACKAGE
 NETMENU_FILTERED=()
-for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
 	case "$a" in
 		-DSSB64_NETMENU=* | -DSSB64_NETMENU:BOOL=*)
 			warn "Ignoring $a — use --netplay for netmenu; offline builds force SSB64_NETMENU=OFF"
@@ -372,7 +372,7 @@ configure_mingw_build() {
 		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
 		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
 		-DUSE_AUTO_VCPKG=OFF \
-		"${EXTRA_CMAKE_ARGS[@]}"
+		"${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}"
 
 	verify_netmenu_configured
 }
