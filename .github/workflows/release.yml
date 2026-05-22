@@ -264,19 +264,18 @@ jobs:
           choco install ninja -y
         shell: pwsh
       - name: Setup MSVC
-        # Ninja + MSVC needs vcvars so link.exe sees Windows SDK libs
-        # (ksguid.lib for WASAPI 5.1 GUIDs in libultraship). libultraship
-        # and torch CI both use this action; without it LNK1181 on ksguid.lib.
+        # vcvars for cl/link; ksguid.lib path is embedded at CMake configure (WindowsSdkUmLib.cmake).
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+          vsversion: '2022'
       - name: Verify MSVC environment
         shell: cmd
         run: |
           where cl
           where link
           echo LIB=%LIB%
-          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib
+          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib >nul || exit /b 1
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1
@@ -311,13 +310,14 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+          vsversion: '2022'
       - name: Verify MSVC environment
         shell: cmd
         run: |
           where cl
           where link
           echo LIB=%LIB%
-          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib
+          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib >nul || exit /b 1
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
         run: ./scripts/ci-append-windows-sdk-lib.ps1
