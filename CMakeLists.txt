@@ -389,14 +389,14 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
-<<<<<<< HEAD
 if(SSB64_NETMENU)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
 endif()
 
 if(SSB64_NETPLAY_HARD_LAN_MODE)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
-=======
+endif()
+
 # Hi-res texture pack support is US-only. Pack PNGs are addressed by
 # CRC32-IEEE of the decoded RGBA8 buffer that came out of the US ROM
 # fast-path; JP rendering hits different hash inputs (different glyph
@@ -409,7 +409,6 @@ if(SSB64_VERSION STREQUAL "us")
     list(APPEND SSB64_COMPILE_DEFS PORT_HIRES_ENABLED=1)
 else()
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
->>>>>>> 48a65501fcef3cd39a2b895fe9e1a4e9f3b26226
 endif()
 
 ################################################################################
@@ -429,14 +428,35 @@ if(SSB64_NETMENU)
     target_include_directories(ssb64_game PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
 else()
-    # Decomp VS scenes include <sys/net*.h>; add trailing -I port/net on these TUs only so decomp/src stays
-    # ahead for <sc/scene.h> and port/net/sys supplies net headers.
+    # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
+    # Add trailing -I port/net on these TUs only so decomp/src stays ahead for <sc/scene.h>.
     set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     set(_SSB64_DECOMP_NETINCLUDE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/sccommon/scvsbattle.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/objman.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/taskman.c")
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/taskman.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopymariospecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopypikachuspecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopysamusspecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftmario/ftmariospecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftness/ftnessspecialhi.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftness/ftnessspecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftpikachu/ftpikachuspecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftpikachu/ftpikachuspeciallw.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftsamus/ftsamusspecialn.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftyoshi/ftyoshispecialhi.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itfflower.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itlgun.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itstarrod.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/gm/gmcamera.c")
+    set(_SSB64_OFFLINE_NET_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netrollbacksnapshot.c")
+    target_sources(ssb64_game PRIVATE ${_SSB64_OFFLINE_NET_SOURCES})
+    list(APPEND _SSB64_DECOMP_NETINCLUDE_SOURCES ${_SSB64_OFFLINE_NET_SOURCES})
+    # port/net/string.h must precede decomp/include/string.h for netrollbacksnapshot.c (strcmp et al.).
+    set_source_files_properties(${_SSB64_OFFLINE_NET_SOURCES}
+        PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     if(MSVC)
         set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
             PROPERTIES COMPILE_OPTIONS "/I${_SSB64_PORT_NET_SYS_PARENT}")
@@ -451,8 +471,14 @@ file(GLOB SSB64_STUBS "port/stubs/*.c")
 if(SSB64_NETMENU)
     # Extended netpeer / rollback live in port/net when netmenu is on; omit offline-only glue (would duplicate symbols).
     list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/net_port_glue_offline\\.c$")
+    list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/netsync_hash_stubs\\.c$")
 endif()
 target_sources(ssb64_game PRIVATE ${SSB64_STUBS})
+if(NOT SSB64_NETMENU)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/netsync_hash_stubs.c"
+        PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+endif()
 
 # Selectively include decomp libultra files that provide needed functionality.
 # These are pure C implementations that work on any platform.
@@ -607,30 +633,6 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
-<<<<<<< HEAD
-    # UDP netpeer / automatch P2P (syNetPeer socket platform uses Winsock).
-    if (SSB64_NETMENU)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    endif()
-    if (MSVC)
-        target_link_options(${PROJECT_NAME} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
-        # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
-        # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
-        target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
-        # Embed the application icon (Explorer / taskbar / window).
-        target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
-    elseif (MINGW)
-        # Linux -> MinGW cross: /utf-8 and /SUBSYSTEM are MSVC-only and break g++.
-        target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
-        # SDL_MAIN_HANDLED + main() in port.cpp; SDL2_NO_MWINDOWS in libultraship avoids -mwindows.
-        target_link_options(${PROJECT_NAME} PRIVATE -mconsole "LINKER:--subsystem,console")
-        # port/port.cpp minidump + symbol resolution (MSVC uses #pragma comment).
-        target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp psapi)
-        if (CMAKE_RC_COMPILER)
-            target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
-        endif()
-    endif()
-=======
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
@@ -648,7 +650,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
         ${CMAKE_BINARY_DIR}/port/ssb64.rc
         @ONLY)
     target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/port/ssb64.rc)
->>>>>>> 48a65501fcef3cd39a2b895fe9e1a4e9f3b26226
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
 endif()
