@@ -9,6 +9,9 @@
 
 #include "Compat.h"
 #include "../enhancements/enhancements.h"
+#ifdef PORT_HIRES_ENABLED
+#include "../hires/HiResPack.h"
+#endif
 
 #include <fast/backends/gfx_rendering_api.h>
 #include <fast/postprocess/PostProcessSourceLoader.h>
@@ -1108,24 +1111,106 @@ void PortMenu::AddMenuAssets() {
     WidgetPath path = { "Assets", "Extraction", SECTION_COLUMN_1 };
     AddSidebarEntry("Assets", "Extraction", 1);
     AddWidget(path, "Extraction", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "BattleShip.o2r is generated from your ROM and loaded on launch.", WIDGET_TEXT);
+    AddWidget(path, SSB64_O2R_NAME " is generated from your ROM and loaded on launch.", WIDGET_TEXT);
     AddWidget(path, "Schedule Re-extract", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([this](WidgetInfo&) {
-            const auto path = Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r");
+            const auto path = Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME);
             std::error_code ec;
             fs::remove(path, ec);
             mShowReextractMessage = true;
         })
-        .Options(ButtonOptions().Tooltip("Deletes BattleShip.o2r so it is regenerated from the ROM on next launch.")
+        .Options(ButtonOptions().Tooltip("Deletes " SSB64_O2R_NAME " so it is regenerated from the ROM on next launch.")
                      .Size(Sizes::Inline));
 
     path.sidebarName = "Paths";
     AddSidebarEntry("Assets", "Paths", 1);
     AddWidget(path, "Runtime Paths", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, fmt::format("App directory: {}", Ship::Context::GetPathRelativeToAppDirectory("")), WIDGET_TEXT);
-    AddWidget(path, fmt::format("Main archive: {}", Ship::Context::GetPathRelativeToAppDirectory("BattleShip.o2r")),
+    AddWidget(path, fmt::format("Main archive: {}", Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME)),
               WIDGET_TEXT);
+
+#ifdef PORT_HIRES_ENABLED
+    path.sidebarName = "Mods";
+    path.column = SECTION_COLUMN_1;
+    AddSidebarEntry("Assets", "Mods", 1);
+
+    AddWidget(path, "Hi-Res Texture Pack", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path,
+              "Drop a PNG pack into the mods/ folder. "
+              "Files are matched by decoded-RGBA8 CRC32 — no per-PNG configuration needed. "
+              "Toggle takes effect on the next texture cache miss.",
+              WIDGET_TEXT);
+    AddWidget(path, "Enable Hi-Res Texture Pack", WIDGET_CVAR_CHECKBOX)
+        .CVar("gHiResTextures.Enabled")
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("When on, every cache-miss texture upload hashes the decoded RGBA8 image "
+                                            "and substitutes a matching PNG from the mods/ index at the pack's higher "
+                                            "resolution.")
+                     .DefaultValue(true));
+    AddWidget(path, "Open Mods Folder", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) {
+            std::string modsPath = Ship::Context::GetPathRelativeToAppDirectory("mods");
+            std::error_code ec;
+            fs::create_directories(modsPath, ec); // make it if it isn't there yet
+            SDL_OpenURL(std::string("file:///" + fs::absolute(modsPath).string()).c_str());
+        })
+        .Options(ButtonOptions().Tooltip("Opens the mods/ folder in your file browser. Drop pack subfolders here."));
+    AddWidget(path,
+              fmt::format("Indexed PNGs: {}",
+                           ssb64::hires::HiResPack::Get().Stats().indexedTextures),
+              WIDGET_TEXT);
+
+    AddWidget(path, "Pack Authoring", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path,
+              "Dump Source Textures writes one .bin per unique texture into "
+              "<app>/hires_dump/. Used by the offline conversion tool to "
+              "re-name a third-party Rice-CRC pack into our hash. Leave off "
+              "in normal play.",
+              WIDGET_TEXT);
+    AddWidget(path, "Dump Source Textures", WIDGET_CVAR_CHECKBOX)
+        .CVar("gHiResTextures.DumpSource")
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("On: every cache-miss with no pack hit dumps the source bytes + dimensions "
+                                            "to <app>/hires_dump/. One file per unique texture per session.")
+                     .DefaultValue(false));
+    AddWidget(path, "Open Dump Folder", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) {
+            std::string dumpPath = Ship::Context::GetPathRelativeToAppDirectory("hires_dump");
+            std::error_code ec;
+            fs::create_directories(dumpPath, ec);
+            SDL_OpenURL(std::string("file:///" + fs::absolute(dumpPath).string()).c_str());
+        })
+        .Options(ButtonOptions().Tooltip("Opens the hires_dump/ folder where source-texture dumps land."));
+
+    AddWidget(path, "Miss Dump (native key)", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path,
+              "On: every cache-miss with no pack hit writes a .bmp + .rgba into "
+              "<app>/hires_miss_dump/, named with the port's native lookup key "
+              "(miss#<hash>#<fmt>#<siz>_<w>x<h>). Rename the matching pack PNG to "
+              "\"<anything>#<hash>#<fmt>#<siz>_all.png\" and drop it in mods/ to "
+              "bind textures whose Rice CRC no dumper can reach (VS-records "
+              "digits, tiny UI glyphs). Captures a full playthrough by default.",
+              WIDGET_TEXT);
+    AddWidget(path, "Dump Unmatched (native key)", WIDGET_CVAR_CHECKBOX)
+        .CVar("gHiResTextures.DumpMissRgba")
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("On: each unique unmatched texture is written as a viewable .bmp plus the "
+                                            "raw .rgba the hash was computed over. The filename is the exact "
+                                            "<hash>#<fmt>#<siz> the pack scanner looks up.")
+                     .DefaultValue(false));
+    AddWidget(path, "Open Miss-Dump Folder", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) {
+            std::string missPath = Ship::Context::GetPathRelativeToAppDirectory("hires_miss_dump");
+            std::error_code ec;
+            fs::create_directories(missPath, ec);
+            SDL_OpenURL(std::string("file:///" + fs::absolute(missPath).string()).c_str());
+        })
+        .Options(ButtonOptions().Tooltip("Opens the hires_miss_dump/ folder where native-key dumps land."));
+#endif // PORT_HIRES_ENABLED
 }
 
 void PortMenu::AddMenuAbout() {
@@ -1318,7 +1403,7 @@ void PortMenu::DrawElement() {
     if (ImGui::BeginPopupModal("Re-extract scheduled", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextWrapped(
-            "BattleShip.o2r will be regenerated from your ROM the next time the game launches.");
+            SSB64_O2R_NAME " will be regenerated from your ROM the next time the game launches.");
         ImGui::Spacing();
         if (ImGui::Button("OK", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();

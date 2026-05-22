@@ -222,6 +222,31 @@ add_custom_target(PrepareBuildInputs
     DEPENDS GenerateRelocArtifacts GenerateCreditsAssets
 )
 
+# ── Window icon embed (US/JP) ─────────────────────────────────────────────
+# Linux SDL only renders an app icon on the WM if SDL_SetWindowIcon() is
+# called at runtime — there's no .rc-equivalent that the WM reads at
+# launch. The PNG bytes are baked into the binary via tools/embed_icon.py
+# so port/port_window_icon.cpp doesn't have to chase the icon across
+# build/dev-tree/AppImage layouts. Region-aware: US uses assets/icon.png,
+# JP uses assets/icon-jp.png.
+set(SSB64_ICON_PNG ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png)
+if(SSB64_VERSION STREQUAL "jp")
+    set(SSB64_ICON_PNG ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon-jp.png)
+endif()
+set(SSB64_ICON_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(SSB64_ICON_GEN ${SSB64_ICON_GEN_DIR}/port_icon_data.h)
+add_custom_command(
+    OUTPUT ${SSB64_ICON_GEN}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_icon.py
+            ${SSB64_ICON_PNG} ${SSB64_ICON_GEN} kSSB64IconPng
+    DEPENDS
+        ${SSB64_ICON_PNG}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_icon.py
+    COMMENT "Embedding window icon (${SSB64_VERSION}) -> ${SSB64_ICON_GEN}"
+    VERBATIM
+)
+
 add_custom_target(ExtractAssetHeaders
     DEPENDS PrepareBuildInputs
     COMMENT "BattleShip asset/header generation is driven by PrepareBuildInputs"
@@ -257,6 +282,9 @@ list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/net/")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
 list(APPEND SSB64_SRC_PORT
     ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp)
+# Treat the generated icon header as a source so CMake schedules it ahead
+# of any port TU compilation (port_window_icon.cpp #includes it).
+list(APPEND SSB64_SRC_PORT ${SSB64_ICON_GEN})
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -325,6 +353,13 @@ set(SSB64_COMPILE_DEFS
     # App identity (binary name + libultraship app-data scope). Quoted so
     # it expands to a C string literal at the use site.
     SSB64_APP_NAME=\"${SSB64_APP_NAME}\"
+    # Per-region archive filename: US writes/reads "BattleShip.o2r"
+    # (preserves the historical name so existing installs keep working);
+    # JP writes/reads "BattleShip-JP.o2r" so a stray archive in CWD or an
+    # accidental shared install directory can't be picked up by the wrong
+    # build (PortLocateFile falls back to CWD on miss, and the bifurcated
+    # app-data dirs from issue #190 don't catch that case).
+    SSB64_O2R_NAME=\"${SSB64_APP_NAME}.o2r\"
 
     # Port mode
     NON_MATCHING=1
@@ -354,12 +389,27 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
+<<<<<<< HEAD
 if(SSB64_NETMENU)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
 endif()
 
 if(SSB64_NETPLAY_HARD_LAN_MODE)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
+=======
+# Hi-res texture pack support is US-only. Pack PNGs are addressed by
+# CRC32-IEEE of the decoded RGBA8 buffer that came out of the US ROM
+# fast-path; JP rendering hits different hash inputs (different glyph
+# art for VS-records, JP-only menus, plus palette/sprite nuances on
+# shared assets), so a US-built pack would silently miss on JP and no
+# JP-only pack has been authored. Drop port/hires/ from the JP build
+# entirely and gate the port.cpp / PortMenu.cpp integration on
+# PORT_HIRES_ENABLED.
+if(SSB64_VERSION STREQUAL "us")
+    list(APPEND SSB64_COMPILE_DEFS PORT_HIRES_ENABLED=1)
+else()
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
+>>>>>>> 48a65501fcef3cd39a2b895fe9e1a4e9f3b26226
 endif()
 
 ################################################################################
@@ -533,6 +583,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
+    ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
 )
 
 ################################################################################
@@ -556,6 +607,7 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+<<<<<<< HEAD
     # UDP netpeer / automatch P2P (syNetPeer socket platform uses Winsock).
     if (SSB64_NETMENU)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
@@ -578,6 +630,25 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
             target_sources(${PROJECT_NAME} PRIVATE port/ssb64.rc)
         endif()
     endif()
+=======
+    # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
+    # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    # Embed the application icon (Explorer / taskbar / window). The .rc
+    # is generated per-region from port/ssb64.rc.in: US embeds
+    # assets/icon.ico, JP embeds assets/icon-jp.ico. The icon also
+    # surfaces as the .exe's Explorer thumbnail because RC resources
+    # carry over to the PE's icon group.
+    set(SSB64_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+    if(SSB64_VERSION STREQUAL "jp")
+        set(SSB64_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/icon-jp.ico")
+    endif()
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/port/ssb64.rc.in
+        ${CMAKE_BINARY_DIR}/port/ssb64.rc
+        @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/port/ssb64.rc)
+>>>>>>> 48a65501fcef3cd39a2b895fe9e1a4e9f3b26226
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
 endif()
