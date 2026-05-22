@@ -79,7 +79,7 @@ done
 
 has_netmenu_on=0
 has_netmenu_off=0
-for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
 	case "$a" in
 		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON) has_netmenu_on=1 ;;
 		-DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF) has_netmenu_off=1 ;;
@@ -93,7 +93,7 @@ IS_NETPLAY=0
 if [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
 	IS_NETPLAY=1
 fi
-for a in "${EXTRA_CMAKE_ARGS[@]}"; do
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
 	case "$a" in
 		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON)
 			IS_NETPLAY=1
@@ -205,7 +205,7 @@ cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
-    "${EXTRA_CMAKE_ARGS[@]}" \
+    ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"} \
     >/dev/null
 
 step "Building BattleShip + torch"
