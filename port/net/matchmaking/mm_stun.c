@@ -20,6 +20,8 @@
 #include <netinet/in.h>
 #if defined(__linux__)
 #include <sys/random.h>
+#elif defined(__APPLE__)
+#include <bsd/stdlib.h>
 #endif
 #include <sys/select.h>
 #include <sys/socket.h>
