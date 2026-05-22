@@ -108,36 +108,6 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND USE_AUTO_VCPKG)
     set(LUS_VCPKG_EXTRA_PACKAGES curl CACHE INTERNAL "")
 endif()
 
-# Resolve ksguid.lib before libultraship configure (CI may pass -DSSB64_KSGUID_LIB from ci-append).
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsSdkUmLib.cmake)
-    if(NOT SSB64_KSGUID_LIB)
-        if(DEFINED ENV{SSB64_KSGUID_LIB} AND EXISTS "$ENV{SSB64_KSGUID_LIB}")
-            _windows_sdk_um_is_um_x64_lib("$ENV{SSB64_KSGUID_LIB}" _ksguid_env_ok)
-            if(_ksguid_env_ok)
-                set(SSB64_KSGUID_LIB "$ENV{SSB64_KSGUID_LIB}")
-            else()
-                message(WARNING "Ignoring SSB64_KSGUID_LIB env (not um/x64): $ENV{SSB64_KSGUID_LIB}")
-            endif()
-        endif()
-        if(NOT SSB64_KSGUID_LIB)
-            windows_sdk_um_find_lib(ksguid SSB64_KSGUID_LIB)
-        endif()
-    else()
-        _windows_sdk_um_is_um_x64_lib("${SSB64_KSGUID_LIB}" _ksguid_cache_ok)
-        if(NOT _ksguid_cache_ok)
-            message(FATAL_ERROR "SSB64_KSGUID_LIB must be under um/x64: ${SSB64_KSGUID_LIB}")
-        endif()
-    endif()
-    if(SSB64_KSGUID_LIB AND EXISTS "${SSB64_KSGUID_LIB}")
-        set(SSB64_KSGUID_LIB "${SSB64_KSGUID_LIB}" CACHE INTERNAL
-            "Full path to Windows SDK ksguid.lib (WASAPI); shared with libultraship ImGui")
-        message(STATUS "SSB64 ksguid.lib: ${SSB64_KSGUID_LIB}")
-    else()
-        message(FATAL_ERROR "SSB64: ksguid.lib not found (set SSB64_KSGUID_LIB or install Windows 10 SDK um libs)")
-    endif()
-endif()
-
 ################################################################################
 # Subdirectories: libultraship
 ################################################################################
@@ -711,9 +681,7 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    include(${CMAKE_SOURCE_DIR}/libultraship/cmake/WindowsSdkUmLib.cmake)
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
-    windows_sdk_um_link_lib(${PROJECT_NAME} PRIVATE ksguid)
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)

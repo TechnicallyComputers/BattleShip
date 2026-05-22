@@ -268,16 +268,6 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
-      - name: Refresh vcvars for SDK with ksguid.lib
-        # 26100 um\x64 often lacks ksguid.lib; re-run vcvars on an SDK that has it.
-        shell: pwsh
-        run: ./scripts/ci-refresh-vcvars-windows-sdk.ps1
-      - name: Append Windows SDK um/x64 to LIB
-        shell: pwsh
-        run: ./scripts/ci-append-windows-sdk-lib.ps1
-      - name: Verify MSVC environment
-        shell: pwsh
-        run: ./scripts/ci-verify-windows-msvc.ps1
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -310,15 +300,6 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
-      - name: Refresh vcvars for SDK with ksguid.lib
-        shell: pwsh
-        run: ./scripts/ci-refresh-vcvars-windows-sdk.ps1
-      - name: Append Windows SDK um/x64 to LIB
-        shell: pwsh
-        run: ./scripts/ci-append-windows-sdk-lib.ps1
-      - name: Verify MSVC environment
-        shell: pwsh
-        run: ./scripts/ci-verify-windows-msvc.ps1
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
