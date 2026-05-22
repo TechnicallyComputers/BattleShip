@@ -6,6 +6,7 @@ extern void port_coroutine_yield(void);
 #include <gr/ground.h>
 #include <sc/scene.h>
 #include <sys/netinput.h>
+#include <sys/netpause.h>
 #include <sys/netpeer.h>
 #include <sys/netreplay.h>
 #include <sys/netrollback.h>
@@ -156,8 +157,19 @@ void scVSBattleFuncUpdate(void)
 		}
 	}
 #endif
+#if defined(PORT)
+	if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		syNetPeerPumpIngressTransport("battle_pre_interface");
+		syNetPausePollSyncedInputAtTick(syNetInputGetTick());
+	}
+#endif
 	ifCommonBattleUpdateInterfaceAll();
 #ifdef PORT
+	if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		syNetPauseTryApplyAtBattleBoundary(syNetInputGetTick());
+	}
 	if ((syNetPeerIsVSSessionActive() != FALSE) && (gSCManagerBattleState != NULL) &&
 	    (gSCManagerBattleState->game_status == nSCBattleGameStatusGo))
 	{
@@ -171,12 +183,21 @@ void scVSBattleFuncUpdate(void)
 	}
 	syNetPeerUpdate();
 #if defined(PORT)
+	if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		syNetPauseTryApplyAtBattleBoundary(syNetInputGetTick());
+	}
+#endif
+#if defined(PORT)
 	if (syNetInputStrictContractSkippedPublishThisPass() == FALSE)
 #endif
 	{
-		syNetRollbackAfterBattleUpdate();
-		syNetInputAdvanceAuthoritativeSimTick();
-		syNetPeerFrameCommitAfterCompletedSimStep();
+		if (syNetPauseShouldHoldSimTick() == FALSE)
+		{
+			syNetRollbackAfterBattleUpdate();
+			syNetInputAdvanceAuthoritativeSimTick();
+			syNetPeerFrameCommitAfterCompletedSimStep();
+		}
 	}
 }
 
@@ -184,6 +205,10 @@ void scVSBattleFuncUpdate(void)
 void scVSBattleFuncUpdateBattleSimOnly(void)
 {
 	ifCommonBattleUpdateInterfaceAll();
+	if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		syNetPauseTryApplyAtBattleBoundary(syNetInputGetTick());
+	}
 	if ((syNetPeerIsVSSessionActive() != FALSE) && (gSCManagerBattleState != NULL) &&
 	    (gSCManagerBattleState->game_status == nSCBattleGameStatusGo))
 	{
@@ -191,7 +216,10 @@ void scVSBattleFuncUpdateBattleSimOnly(void)
 		syNetSyncReconcileBattleTimePassedFromSimTick();
 	}
 	syNetRollbackAfterBattleUpdate();
-	syNetInputAdvanceAuthoritativeSimTick();
+	if (syNetPauseShouldHoldSimTick() == FALSE)
+	{
+		syNetInputAdvanceAuthoritativeSimTick();
+	}
 }
 #endif
 
