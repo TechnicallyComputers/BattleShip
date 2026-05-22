@@ -105,7 +105,7 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 
 # MSVC netmenu: libcurl via the same vcpkg triplet as libultraship (see windows-vcpkg.cmake).
 if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND USE_AUTO_VCPKG)
-    set(LUS_VCPKG_EXTRA_PACKAGES curl CACHE INTERNAL "")
+    set(LUS_VCPKG_EXTRA_PACKAGES curl pthreads CACHE INTERNAL "")
 endif()
 
 ################################################################################
@@ -150,6 +150,7 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
         endif()
     endif()
     find_package(CURL REQUIRED CONFIG)
+    find_package(pthreads CONFIG REQUIRED)
     find_package(Threads REQUIRED)
 endif()
 
@@ -475,6 +476,9 @@ if(SSB64_NETMENU)
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
     ssb64_netmenu_attach_curl(ssb64_game)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        target_link_libraries(ssb64_game PRIVATE PThreads4W::PThreads4W)
+    endif()
 else()
     # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
     # Add trailing -I port/net on these TUs only so decomp/src stays ahead for <sc/scene.h>.
@@ -668,11 +672,11 @@ add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 if(SSB64_NETMENU)
-    # ssb64_game: curl attached in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
+    # ssb64_game: curl/pthreads attached in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
     # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-        target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi)
+        target_link_libraries(${PROJECT_NAME} PRIVATE PThreads4W::PThreads4W iphlpapi)
     endif()
 endif()
 
