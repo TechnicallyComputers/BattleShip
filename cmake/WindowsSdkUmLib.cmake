@@ -1,7 +1,6 @@
 # Resolve Windows SDK um/x64 import libs (e.g. ksguid.lib for WASAPI) to full paths at
 # configure time so Ninja link lines do not depend on LIB being present in every build
-# subprocess. GHA often sets LIB with ucrt paths only, or pwsh children drop um paths —
-# link then fails LNK1181 even when a coarse "Windows Kits" check passes.
+# subprocess. Newest SDK version dirs (e.g. 10.0.26100.0) may omit ksguid.lib; scan all.
 
 function(_windows_sdk_um_glob_versions out_list)
     set(_roots "")
@@ -42,6 +41,23 @@ function(windows_sdk_um_find_lib lib_name out_var)
     endforeach()
 
     if(NOT _result)
+        foreach(_root IN ITEMS
+            "C:/Program Files (x86)/Windows Kits/10/Lib"
+            "C:/Program Files/Windows Kits/10/Lib"
+        )
+            if(NOT EXISTS "${_root}")
+                continue()
+            endif()
+            file(GLOB_RECURSE _wsu_recurse "${_root}/*/${lib_name}.lib")
+            if(_wsu_recurse)
+                list(GET _wsu_recurse 0 _result)
+                get_filename_component(_result "${_result}" ABSOLUTE)
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT _result)
         find_library(_wsu_found NAMES ${lib_name})
         if(_wsu_found)
             get_filename_component(_result "${_wsu_found}" ABSOLUTE)
@@ -76,7 +92,7 @@ function(windows_sdk_um_link_lib target visibility lib_name)
     else()
         message(FATAL_ERROR
             "Windows SDK: ${lib_name}.lib not found under "
-            "Windows Kits/10/Lib/*/um/x64 (required for WASAPI). "
-            "Install the Windows 10 SDK (um/x64) on the build host.")
+            "Windows Kits/10/Lib (tried all SDK versions under um/x64 and recursive search). "
+            "Install the Windows 10 SDK desktop/um libraries on the build host.")
     endif()
 endfunction()
