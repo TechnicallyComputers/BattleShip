@@ -130,7 +130,13 @@ Copy-Item (Join-Path $Root "yamls\$Ver\*.yml") (Join-Path $StageDir "yamls\$Ver"
 # Standalone .ico for shortcut/installer use — the icon is also embedded
 # directly in BattleShip.exe via port/ssb64.rc, so Explorer picks it up
 # without this file. Keep it bundled for future installer work.
-Copy-Item (Join-Path $Root "assets\icon.ico") (Join-Path $StageDir "$AppName.ico")
+# Region-aware: JP picks assets\icon-jp.ico, US keeps assets\icon.ico.
+# (Note: ssb64.rc still embeds assets\icon.ico unconditionally, so the
+# .exe's own Explorer-icon is US-art for both regions until that .rc
+# is taught to pick per-region — leave for follow-up if needed.)
+$IcoSrc = if ($Ver -eq "jp") { Join-Path $Root "assets\icon-jp.ico" }
+          else                { Join-Path $Root "assets\icon.ico"   }
+Copy-Item $IcoSrc (Join-Path $StageDir "$AppName.ico")
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
 # RealAppBundlePath() and from current_path(); placing the TTFs at

@@ -418,11 +418,13 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
         return BuildFailure(commandError, logPath);
     }
 
+    // Torch emits with the historical "BattleShip.o2r" name; the port
+    // renames into the per-region SSB64_O2R_NAME below.
     const std::string emitted = (workDir / "BattleShip.o2r").string();
     if (!fs::exists(emitted)) {
         port_log("first_run: ERROR extractor reported success but %s is missing\n",
                  emitted.c_str());
-        return { false, {}, "Torch reported success but BattleShip.o2r is missing", logPath };
+        return { false, {}, "Torch reported success but " SSB64_O2R_NAME " is missing", logPath };
     }
 
     fs::rename(emitted, targetPath, ec);
@@ -432,13 +434,13 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
         if (ec) {
             port_log("first_run: ERROR failed to install %s -> %s: %s\n", emitted.c_str(),
                      targetPath.string().c_str(), ec.message().c_str());
-            return { false, {}, "Failed to install BattleShip.o2r: " + ec.message(), logPath };
+            return { false, {}, std::string("Failed to install ") + SSB64_O2R_NAME + ": " + ec.message(), logPath };
         }
     }
 
     fs::remove_all(workDir, ec);
 
-    port_log("first_run: extracted BattleShip.o2r -> %s\n", targetPath.string().c_str());
+    port_log("first_run: extracted %s -> %s\n", SSB64_O2R_NAME, targetPath.string().c_str());
     return { true, targetPath.string(), {}, logPath };
 }
 
@@ -586,7 +588,7 @@ bool RunFirstRunWizard(const std::string& target_o2r_path) {
                     // and an empty overlay string with a sliding
                     // SetNextItemWidth to fake it.
                     const float t = (frameCount % 120) / 120.0f;
-                    ImGui::ProgressBar(t, ImVec2(-1, 0), "Extracting BattleShip.o2r...");
+                    ImGui::ProgressBar(t, ImVec2(-1, 0), "Extracting " SSB64_O2R_NAME "...");
                 } else if (!statusMsg.empty()) {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
                                        "%s", statusMsg.c_str());
