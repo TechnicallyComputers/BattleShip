@@ -263,6 +263,11 @@ jobs:
         run: |
           choco install ninja -y
         shell: pwsh
+      - name: Setup MSVC
+        # Ninja + MSVC needs vcvars so link.exe sees Windows SDK libs
+        # (ksguid.lib for WASAPI 5.1 GUIDs in libultraship). libultraship
+        # and torch CI both use this action; without it LNK1181 on ksguid.lib.
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -289,6 +294,8 @@ jobs:
         run: |
           choco install ninja -y
         shell: pwsh
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}

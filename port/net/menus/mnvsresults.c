@@ -7,6 +7,9 @@
 #include <sys/audio.h>
 #include <sys/rdp.h>
 #include <reloc_data.h>
+#ifdef PORT
+extern float port_widescreen_clip_x_scale(void);
+#endif
 /* Automatch post-battle routing back to CSS (all platforms when SSB64_NETMENU=ON). */
 #if defined(PORT) && defined(SSB64_NETMENU)
 #include <sc/scmanager.h>
@@ -1048,6 +1051,27 @@ void mnVSResultsSetPlayerTagPosition(GObj *gobj, s32 player)
 		SObjGetStruct(gobj)->pos.y = pos_xy_4p[dist][spot].y + pos_y_kinds[mnVSResultsGetFighterKind(player)][dist];
 		break;
 	}
+
+#ifdef PORT
+	// Widescreen: the VS results 3D fighters render through GfxSpVertex and
+	// get clip-X compressed by (4/3)/window_aspect (AdjXForAspectRatio), so
+	// they shift toward screen-center. The tag positions above are authored
+	// in 320-wide 4:3 screen coords matching the original fighter render
+	// positions — apply the same compression about screen-center=160 so each
+	// tag still sits over its fighter. Sprite top-left coord is converted to
+	// a center coord first so the scale pivots on the sprite midpoint (the
+	// visual point that aligns with the fighter), not on the top-left edge.
+	{
+		f32 scale = port_widescreen_clip_x_scale();
+		if (scale < 1.0F)
+		{
+			SObj *sobj = SObjGetStruct(gobj);
+			f32 half_w = sobj->sprite.width * 0.5F;
+			f32 center_x = sobj->pos.x + half_w;
+			sobj->pos.x = (160.0F + (center_x - 160.0F) * scale) - half_w;
+		}
+	}
+#endif
 }
 
 // 0x80133C58
