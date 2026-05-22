@@ -285,22 +285,27 @@ function Test-KsguidConfigureAndLinkInputs {
             if (-not (Test-Path -LiteralPath $p)) {
                 Fail "Cached SSB64_KSGUID_LIB does not exist: $p"
             }
+            if ($p -notmatch '(?i)[\\/]um[\\/]x64[\\/]ksguid\.lib$') {
+                Fail "Cached SSB64_KSGUID_LIB is not desktop um/x64: $p"
+            }
             Write-Host "   SSB64_KSGUID_LIB: $p"
         }
     }
     $bareHits = @()
     foreach ($file in (Get-ChildItem -Path $Dir -Recurse -Include 'build.ninja', '*.rsp', 'link.txt' -ErrorAction SilentlyContinue)) {
         Select-String -LiteralPath $file.FullName -Pattern 'ksguid' -SimpleMatch -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_.Line -match 'ksguid\.lib' -and $_.Line -notmatch 'Windows Kits' -and $_.Line -notmatch 'Program Files') {
-                $bareHits += "$($file.FullName): $($_.Line.Trim())"
+            if ($_.Line -match 'ksguid\.lib' -and $_.Line -notmatch '(?i)[\\/]um[\\/]x64[\\/]ksguid\.lib') {
+                $snippet = $_.Line
+                if ($snippet.Length -gt 240) { $snippet = $snippet.Substring(0, 240) + "..." }
+                $bareHits += "$($file.FullName): $snippet"
             }
         }
     }
     if ($bareHits.Count -gt 0) {
         $bareHits | ForEach-Object { Write-Host "   $_" }
-        Fail "Linker uses bare ksguid.lib — bump libultraship (src/CMakeLists.txt + WindowsSdkUmLib.cmake)"
+        Fail "Linker missing um/x64 ksguid.lib full path — check WindowsSdkUmLib.cmake and ci-append"
     }
-    Write-Host "   ksguid: full SDK path in CMake cache (no bare ksguid in ninja/rsp)"
+    Write-Host "   ksguid: um/x64 full path in CMake cache and ninja/rsp"
 }
 
 Test-KsguidConfigureAndLinkInputs $BuildDir

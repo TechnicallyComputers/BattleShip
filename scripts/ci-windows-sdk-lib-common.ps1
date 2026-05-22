@@ -19,10 +19,16 @@ function Write-SdkDiag {
     }
 }
 
+function Test-UmX64LibDir {
+    param([string]$Dir)
+    return ($Dir -match '(?i)(\\|/)um(\\|/)x64$')
+}
+
 function Find-KsguidOnLibEnv {
     if (-not $env:LIB) { return $null }
     foreach ($dir in ($env:LIB -split ';')) {
         if (-not $dir) { continue }
+        if (-not (Test-UmX64LibDir $dir)) { continue }
         $candidate = Join-Path $dir "ksguid.lib"
         if (Test-Path -LiteralPath $candidate) {
             return @{ Um = $dir; Ksguid = $candidate; SdkVersion = "LIB" }
@@ -32,9 +38,6 @@ function Find-KsguidOnLibEnv {
 }
 
 function Get-WindowsSdkKsguidLib {
-    $hit = Find-KsguidOnLibEnv
-    if ($hit) { return $hit }
-
     $kitRoots = @(
         "C:\Program Files (x86)\Windows Kits\10\Lib",
         "C:\Program Files\Windows Kits\10\Lib"
@@ -61,13 +64,11 @@ function Get-WindowsSdkKsguidLib {
                 return @{ Um = $um; Ksguid = $ksguid; SdkVersion = $ver.Name }
             }
         }
-        $any = Get-ChildItem -LiteralPath $kits -Recurse -Filter "ksguid.lib" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($any) {
-            $um = Split-Path -Parent $any.FullName
-            return @{ Um = $um; Ksguid = $any.FullName; SdkVersion = "recursive" }
-        }
     }
+
+    $hit = Find-KsguidOnLibEnv
+    if ($hit) { return $hit }
+
     return $null
 }
 
