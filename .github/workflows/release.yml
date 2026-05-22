@@ -276,15 +276,16 @@ jobs:
           where cl
           where link
           echo LIB=%LIB%
+          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ci-append-windows-sdk-lib.ps1
+        run: ./scripts/ci-append-windows-sdk-lib.ps1
       - name: Package Windows zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
-        # cmd shell inherits ilammy/msvc-dev-cmd LIB/PATH; pwsh as a child keeps them.
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
-        shell: cmd
+        # Step shell is pwsh; msvc-dev-cmd + GITHUB_ENV LIB apply to this step directly.
+        run: ./scripts/package-windows.ps1
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-${{ matrix.version }}
@@ -316,14 +317,15 @@ jobs:
           where cl
           where link
           echo LIB=%LIB%
+          where /R "%ProgramFiles(x86)%\Windows Kits\10\Lib" ksguid.lib
       - name: Append Windows SDK um/x64 to LIB
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ci-append-windows-sdk-lib.ps1
+        run: ./scripts/ci-append-windows-sdk-lib.ps1
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -Netplay
-        shell: cmd
+        run: ./scripts/package-windows.ps1 -Netplay
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-windows-netplay-${{ matrix.version }}

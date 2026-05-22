@@ -136,6 +136,8 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
             endif()
         endforeach()
         if(_SSB64_VCPKG_INSTALLED)
+            set(SSB64_VCPKG_CURL_PREFIX "${_SSB64_VCPKG_INSTALLED}" CACHE INTERNAL
+                "vcpkg installed prefix for curl (headers under include/curl/)")
             list(APPEND CMAKE_PREFIX_PATH "${_SSB64_VCPKG_INSTALLED}")
             message(STATUS "SSB64 vcpkg prefix for CURL: ${_SSB64_VCPKG_INSTALLED}")
         else()
@@ -471,6 +473,8 @@ if(SSB64_NETMENU)
         "${CMAKE_CURRENT_SOURCE_DIR}/port/net/lb")
     target_include_directories(ssb64_game PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
+    ssb64_netmenu_attach_curl(ssb64_game)
 else()
     # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
     # Add trailing -I port/net on these TUs only so decomp/src stays ahead for <sc/scene.h>.
@@ -664,9 +668,7 @@ add_dependencies(${PROJECT_NAME} libultraship TorchExternal)
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 if(SSB64_NETMENU)
-    # Netmenu TUs (mm_matchmaking.c, etc.) compile into ssb64_game OBJECT, not ${PROJECT_NAME}.
-    # CURL::libcurl must be linked here so INTERFACE include dirs reach the compiler.
-    target_link_libraries(ssb64_game PRIVATE CURL::libcurl)
+    # ssb64_game: curl attached in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
     # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
