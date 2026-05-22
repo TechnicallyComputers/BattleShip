@@ -62,7 +62,8 @@ option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstr
 # Automatch HTTP (mm_matchmaking) uses libcurl on Linux and MinGW Windows netmenu builds.
 # Offline builds (SSB64_NETMENU=OFF) do not link curl. MinGW: install mingw-w64-curl and pass
 # CMAKE_FIND_ROOT_PATH when cross-compiling (see scripts/package-mingw-windows.sh).
-if(SSB64_NETMENU)
+# MSVC: libultraship bootstraps vcpkg in add_subdirectory(); defer CURL until after that.
+if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     find_package(CURL REQUIRED)
     find_package(Threads REQUIRED)
 endif()
@@ -106,6 +107,15 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 ################################################################################
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
+
+if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(USE_AUTO_VCPKG)
+        include(${CMAKE_SOURCE_DIR}/libultraship/cmake/automate-vcpkg.cmake)
+        vcpkg_install_packages(curl)
+    endif()
+    find_package(CURL REQUIRED)
+    find_package(Threads REQUIRED)
+endif()
 
 # ExternalProject does not inherit the parent toolchain; forward MinGW cross args
 # so torch.exe matches BattleShip.exe when cross-compiling on Linux.
