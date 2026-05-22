@@ -15,6 +15,7 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | GBI trace capture (port + M64P plugin) and `gbi_diff.py` usage | `docs/debug_gbi_trace.md` |
 | IDO BE bitfield layout audit (compile + rabbitizer disasm to verify port struct bit positions) | `docs/debug_ido_bitfield_layout.md` |
 | Resolved bugs (index + per-bug root cause / fix write-ups) | `docs/bugs/README.md` |
+| Linux menu rendering bug family (CSS/pause/HUD sprites, upstream delta) | `docs/linux_menu_rendering_fixes_2026-05-22.md` |
 | Netplay: sim tick authority vs `hr` / VI / admission bias | `docs/netplay_timebase_authority.md` |
 
 Ongoing investigations and handoff notes are loose `.md` files at the top level of `docs/` — check there before starting work on rendering, collision, or animation issues so you don't duplicate prior effort.

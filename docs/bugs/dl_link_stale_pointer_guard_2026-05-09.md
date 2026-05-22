@@ -129,7 +129,7 @@ been observed crashing on Linux yet.
 - `decomp/src/sys/objdisplay.c:gcDrawDObjTreeDLLinks` — Part 2 guard
 - `libultraship/src/fast/interpreter.cpp:gfx_set_timg_handler_rdp` —
   Part 3 revert
-- `docs/linux_intro_skip_crash_handoff_2026-05-09.md` — investigation
-- `docs/linux_intro_skip_crash_handoff_2026-05-09-session2.md` — bisect
-  + recommended ship state
+- `docs/linux_menu_rendering_fixes_2026-05-22.md` — umbrella index for this
+  family (replaces missing `linux_intro_skip_crash_handoff_2026-05-09*.md`
+  bisect notes from May 2026)
 - `docs/bugs/g_vtx_unresolved_addr_guard_2026-05-03.md` — sibling
