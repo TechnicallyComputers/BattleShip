@@ -68,6 +68,19 @@ $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else {
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 
+# automate-vcpkg.cmake runs git pull when ${BuildDir}/libultraship/vcpkg exists.
+# A partial/failed prior configure leaves a non-git directory and configure dies with
+# "fatal: not a git repository" before README.md exists.
+function Remove-InvalidVcpkgTree([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir)) { return }
+    $gitDir = Join-Path $Dir ".git"
+    $readme = Join-Path $Dir "README.md"
+    if ((-not (Test-Path -LiteralPath $gitDir)) -or (-not (Test-Path -LiteralPath $readme))) {
+        Write-Host "   Removing invalid vcpkg cache: $Dir"
+        Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Copy-CaBundle($DestDir) {
     New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
     $Candidates = @(
@@ -114,6 +127,7 @@ if ($Netplay) {
     $CmakeArgs += "-DSSB64_NETMENU=ON"
 }
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
+Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
