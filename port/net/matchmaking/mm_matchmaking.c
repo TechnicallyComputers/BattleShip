@@ -17,9 +17,33 @@
 #include <direct.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <windows.h>
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
+static int mm_clock_gettime(int clk_id, struct timespec *ts)
+{
+	ULARGE_INTEGER uli;
+	FILETIME ft;
+
+	(void)clk_id;
+	if (ts == NULL)
+	{
+		return -1;
+	}
+	GetSystemTimePreciseAsFileTime(&ft);
+	uli.LowPart = ft.dwLowDateTime;
+	uli.HighPart = ft.dwHighDateTime;
+	uli.QuadPart -= 116444736000000000ULL;
+	ts->tv_sec = (long)(uli.QuadPart / 10000000ULL);
+	ts->tv_nsec = (long)((uli.QuadPart % 10000000ULL) * 100ULL);
+	return 0;
+}
+#define clock_gettime(clk, ts) mm_clock_gettime((clk), (ts))
 #else
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #endif
 
 #ifdef PORT
