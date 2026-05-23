@@ -653,9 +653,14 @@ bundle_mingw_dlls "$STAGE_DIR/torch.exe" "$STAGE_DIR"
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
 	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll' 'zlib1.dll' 'zlib*.dll'; do
-		ensure_mingw_dll_glob "$STAGE_DIR" "$pat" \
-			|| { [[ "$pat" == libcurl* || "$pat" == libssl* || "$pat" == libcrypto* ]] \
-				&& warn "netplay packaging: could not locate $pat under $MINGW_BIN or $MINGW_PREFIX/bin (may be static)"; }
+		if ensure_mingw_dll_glob "$STAGE_DIR" "$pat"; then
+			continue
+		fi
+		case "$pat" in
+			libcurl*|libssl*|libcrypto*)
+				warn "netplay packaging: could not locate $pat under $MINGW_BIN or $MINGW_PREFIX/bin (may be static)"
+				;;
+		esac
 	done
 	for curl_dll in "$STAGE_DIR"/libcurl*.dll; do
 		[[ -f "$curl_dll" ]] || continue
@@ -688,7 +693,8 @@ rm -f "$ZIP_PATH"
 [[ -f "$ZIP_PATH" ]] || fail "zip was not created"
 
 ZIP_KB=$(( $(stat -c%s "$ZIP_PATH" 2>/dev/null || stat -f%z "$ZIP_PATH") / 1024 ))
-printf '\n\033[32m✓ Release zip ready: %s (%s KB)\033[0m\n' "$ZIP_PATH" "$ZIP_KB"
+echo ""
+printf '\033[32m✓ Release zip ready: %s (%s KB)\033[0m\n' "$ZIP_PATH" "$ZIP_KB"
 printf '   Variant: %s\n' "$([[ "$IS_NETPLAY" -eq 1 ]] && echo netmenu/netplay || echo offline)"
 printf '   Portable: extract anywhere; save data lives next to BattleShip.exe.\n'
 printf '   First launch prompts for a ROM unless BattleShip.o2r is already present.\n'

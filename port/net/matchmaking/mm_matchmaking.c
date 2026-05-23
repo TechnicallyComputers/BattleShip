@@ -204,6 +204,9 @@ static void mmPushDoneError(long http_status, const char *msg)
 {
 	MmMatchResult r;
 
+#ifdef PORT
+	port_log("SSB64 Matchmaking: error HTTP %ld %s\n", http_status, (msg != NULL) ? msg : "");
+#endif
 	memset(&r, 0, sizeof(r));
 	r.kind = MM_POLL_ERROR;
 	r.http_status = http_status;
@@ -260,6 +263,155 @@ static sb32 mmFileReadable(const char *path)
 #endif
 }
 
+static sb32 mmCaEnvUnset(const char *name)
+{
+	const char *v;
+
+	if (name == NULL)
+	{
+		return TRUE;
+	}
+	v = getenv(name);
+	return (v == NULL) || (v[0] == '\0');
+}
+
+static sb32 mmCaBundleAbsPath(const char *path, char *out, size_t cap)
+{
+#ifdef _WIN32
+	if (_fullpath(out, path, cap) != NULL)
+	{
+		return TRUE;
+	}
+#else
+	if (realpath(path, out) != NULL)
+	{
+		return TRUE;
+	}
+#endif
+	if ((path != NULL) && (path[0] != '\0') && (strlen(path) + 1U <= cap))
+	{
+		memcpy(out, path, strlen(path) + 1U);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 mmTryBundlePath(const char *path, char *out, size_t cap)
+{
+	char abs[512];
+
+	if (mmFileReadable(path) == FALSE)
+	{
+		return FALSE;
+	}
+	if (mmCaBundleAbsPath(path, abs, sizeof(abs)) == FALSE)
+	{
+		return FALSE;
+	}
+	snprintf(out, cap, "%s", abs);
+	return TRUE;
+}
+
+static sb32 mmResolveCaBundlePath(char *out, size_t cap)
+{
+	char base[384];
+	char candidate[512];
+	static const char *env_names[] = {
+	    "SSB64_MATCHMAKING_CA_BUNDLE",
+	    "CURL_CA_BUNDLE",
+	    "SSL_CERT_FILE",
+	};
+	size_t ei;
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return FALSE;
+	}
+	out[0] = '\0';
+
+	for (ei = 0; ei < sizeof(env_names) / sizeof(env_names[0]); ei++)
+	{
+		const char *ca = getenv(env_names[ei]);
+
+		if ((ca != NULL) && (ca[0] != '\0') && (mmTryBundlePath(ca, out, cap) != FALSE))
+		{
+			return TRUE;
+		}
+	}
+
+	if (ssb64_RealAppBundlePathUtf8(base, sizeof(base)) == 0)
+	{
+		return FALSE;
+	}
+
+	snprintf(candidate, sizeof(candidate), "%s/ssl/cacert.pem", base);
+	if (mmTryBundlePath(candidate, out, cap) != FALSE)
+	{
+		return TRUE;
+	}
+#ifdef _WIN32
+	snprintf(candidate, sizeof(candidate), "%s\\ssl\\cacert.pem", base);
+	if (mmTryBundlePath(candidate, out, cap) != FALSE)
+	{
+		return TRUE;
+	}
+#endif
+	snprintf(candidate, sizeof(candidate), "%s/../share/BattleShip/ssl/cacert.pem", base);
+	if (mmTryBundlePath(candidate, out, cap) != FALSE)
+	{
+		return TRUE;
+	}
+#ifdef _WIN32
+	snprintf(candidate, sizeof(candidate), "%s\\..\\share\\BattleShip\\ssl\\cacert.pem", base);
+	if (mmTryBundlePath(candidate, out, cap) != FALSE)
+	{
+		return TRUE;
+	}
+#endif
+	return FALSE;
+}
+
+static void mmSetenvIfUnset(const char *name, const char *value)
+{
+	if ((name == NULL) || (value == NULL) || (value[0] == '\0') || (mmCaEnvUnset(name) == FALSE))
+	{
+		return;
+	}
+#ifdef _WIN32
+	(void)_putenv_s(name, value);
+#else
+	(void)setenv(name, value, 0);
+#endif
+}
+
+static sb32 sCaBundleInitDone = FALSE;
+static char sCaBundlePath[512];
+
+static void mmMatchmakingInitPortableCaBundle(void)
+{
+	if (sCaBundleInitDone != FALSE)
+	{
+		return;
+	}
+	sCaBundleInitDone = TRUE;
+
+	if (mmResolveCaBundlePath(sCaBundlePath, sizeof(sCaBundlePath)) == FALSE)
+	{
+#ifdef PORT
+		port_log(
+		    "SSB64 Matchmaking: WARNING no readable CA bundle (set SSB64_MATCHMAKING_CA_BUNDLE or place ssl/cacert.pem next to the exe)\n");
+#endif
+		return;
+	}
+
+	mmSetenvIfUnset("SSB64_MATCHMAKING_CA_BUNDLE", sCaBundlePath);
+	mmSetenvIfUnset("CURL_CA_BUNDLE", sCaBundlePath);
+	mmSetenvIfUnset("SSL_CERT_FILE", sCaBundlePath);
+#ifdef PORT
+	port_log("SSB64 Matchmaking: CA bundle %s\n", sCaBundlePath);
+#endif
+}
+
 static void mmBaseUrlSetup(void)
 {
 	const char *env = getenv("SSB64_MATCHMAKING_BASE_URL");
@@ -274,12 +426,11 @@ static void mmBaseUrlSetup(void)
 	}
 }
 
-/* AppImage / portable builds bundle curl+OpenSSL but not the host CA store. */
+/* Portable builds bundle curl+OpenSSL but not the host CA store (Linux AppRun sets env; Windows sets in mmMatchmakingInitPortableCaBundle). */
 static void mmCurlConfigureSsl(CURL *c)
 {
-	const char *ca;
 	char bundle_path[512];
-	char base[384];
+	const char *ca;
 
 	if (c == NULL)
 	{
@@ -288,6 +439,18 @@ static void mmCurlConfigureSsl(CURL *c)
 
 	curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+
+	if ((sCaBundlePath[0] != '\0') && (mmFileReadable(sCaBundlePath) != FALSE))
+	{
+		curl_easy_setopt(c, CURLOPT_CAINFO, sCaBundlePath);
+		return;
+	}
+
+	if (mmResolveCaBundlePath(bundle_path, sizeof(bundle_path)) != FALSE)
+	{
+		curl_easy_setopt(c, CURLOPT_CAINFO, bundle_path);
+		return;
+	}
 
 	ca = getenv("SSB64_MATCHMAKING_CA_BUNDLE");
 	if ((ca == NULL) || (ca[0] == '\0'))
@@ -298,26 +461,15 @@ static void mmCurlConfigureSsl(CURL *c)
 	{
 		ca = getenv("SSL_CERT_FILE");
 	}
-	if ((ca != NULL) && (ca[0] != '\0') && mmFileReadable(ca))
+	if ((ca != NULL) && (ca[0] != '\0'))
 	{
 		curl_easy_setopt(c, CURLOPT_CAINFO, ca);
 		return;
 	}
 
-	if (ssb64_RealAppBundlePathUtf8(base, sizeof(base)) != 0)
-	{
-		snprintf(bundle_path, sizeof(bundle_path), "%s/../share/BattleShip/ssl/cacert.pem", base);
-		if (mmFileReadable(bundle_path))
-		{
-			curl_easy_setopt(c, CURLOPT_CAINFO, bundle_path);
-			return;
-		}
-		snprintf(bundle_path, sizeof(bundle_path), "%s/ssl/cacert.pem", base);
-		if (mmFileReadable(bundle_path))
-		{
-			curl_easy_setopt(c, CURLOPT_CAINFO, bundle_path);
-		}
-	}
+#ifdef PORT
+	port_log("SSB64 Matchmaking: WARNING CURLOPT_CAINFO not set — TLS verification may fail (OpenSSL curl)\n");
+#endif
 }
 
 /* Persist matchmaking API token outside the install dir (port/net/stdlib.h shadows <stdlib.h>). */
@@ -597,10 +749,12 @@ static long mmHttpsRequest(const char *method, const char *path_suffix, const ch
 	MmMemBuf chunk;
 	struct curl_slist *hdrs;
 	long http_code;
+	CURLcode curl_code;
 
 	memset(&chunk, 0, sizeof(chunk));
 	hdrs = NULL;
 	http_code = 0;
+	curl_code = CURLE_OK;
 
 	snprintf(url, sizeof(url), "%s%s", sBaseUrl, path_suffix);
 
@@ -649,16 +803,24 @@ static long mmHttpsRequest(const char *method, const char *path_suffix, const ch
 	curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
 	mmCurlConfigureSsl(c);
 
-	(void)curl_easy_perform(c);
+	curl_code = curl_easy_perform(c);
 
 	curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
 	curl_slist_free_all(hdrs);
 	curl_easy_cleanup(c);
 
 #ifdef PORT
-	if (verb != FALSE)
+	if ((curl_code != CURLE_OK) || (verb != FALSE))
 	{
-		port_log("SSB64 Matchmaking: %s %s -> HTTP %ld\n", method, url, http_code);
+		if (curl_code != CURLE_OK)
+		{
+			port_log("SSB64 Matchmaking: %s %s curl error: %s (HTTP %ld)\n", method, url,
+			         curl_easy_strerror(curl_code), http_code);
+		}
+		else if (verb != FALSE)
+		{
+			port_log("SSB64 Matchmaking: %s %s -> HTTP %ld\n", method, url, http_code);
+		}
 	}
 #endif
 
@@ -1076,6 +1238,8 @@ void mmMatchmakingStartup(void)
 	{
 		return;
 	}
+
+	mmMatchmakingInitPortableCaBundle();
 
 	if (curl_global_init(CURL_GLOBAL_DEFAULT) != 0)
 	{
