@@ -19,8 +19,9 @@
 #     config.yml                 — Torch extraction config
 #     yamls\us\*.yml             — Torch extraction recipes
 #     gamecontrollerdb.txt       — SDL controller mappings
-#     SDL2.dll                   — runtime dependency (vcpkg-bundled)
-#     <other vcpkg DLLs>         — picked up by Get-ChildItem from build dir
+#     SDL2.dll                   — runtime dependency (vcpkg / dumpbin walk)
+#     libcurl*.dll, libssl*.dll, libcrypto*.dll, zlib1.dll  — netplay HTTPS (when dynamic)
+#     <other transitive DLLs>    — recursive dumpbin walk from BattleShip.exe + torch.exe
 #
 # Portable: drop the extracted folder anywhere and run BattleShip.exe.
 # Save data and config (ssb64_save.bin, BattleShip.cfg.json, logs/) land
@@ -217,6 +218,215 @@ function Copy-CaBundle($DestDir) {
     Fail "Could not find a CA certificate bundle for HTTPS matchmaking (see port/net/cacert.pem)"
 }
 
+# Windows system DLLs — do not bundle (ship with Windows / UCRT).
+function Test-SystemDll {
+    param([string]$Name)
+    $n = $Name.ToLowerInvariant()
+    $system = @(
+        'kernel32.dll', 'user32.dll', 'gdi32.dll', 'shell32.dll', 'ole32.dll', 'oleaut32.dll',
+        'opengl32.dll', 'ws2_32.dll', 'advapi32.dll', 'comdlg32.dll', 'winmm.dll',
+        'd3dcompiler_47.dll', 'dbghelp.dll', 'hid.dll', 'dwmapi.dll', 'setupapi.dll',
+        'version.dll', 'imm32.dll', 'bcrypt.dll', 'psapi.dll', 'ntdll.dll',
+        'ucrtbase.dll', 'msvcrt.dll', 'shlwapi.dll', 'rpcrt4.dll', 'sechost.dll',
+        'combase.dll', 'gdiplus.dll', 'uxtheme.dll', 'dinput8.dll', 'xinput1_4.dll'
+    )
+    if ($system -contains $n) { return $true }
+    if ($n -like 'api-ms-win-*') { return $true }
+    return $false
+}
+
+function Get-PeDependencies {
+    param([string]$Binary)
+    if (-not (Test-Path -LiteralPath $Binary)) { return @() }
+    if (-not (Get-Command dumpbin -ErrorAction SilentlyContinue)) {
+        Fail "dumpbin not found — run from a Developer Command Prompt or after vcvars64 / ilammy/msvc-dev-cmd"
+    }
+    $deps = @()
+    $inBlock = $false
+    foreach ($line in (& dumpbin /nologo /dependents $Binary 2>$null)) {
+        if ($line -match '^\s*Image has the following dependencies:\s*$') {
+            $inBlock = $true
+            continue
+        }
+        if ($inBlock -and $line -match '^\s*Summary\s*$') { break }
+        if ($inBlock -and $line -match '^\s+(\S+\.dll)\s*$') {
+            $deps += $Matches[1]
+        }
+    }
+    return $deps
+}
+
+function Get-VcpkgBinSearchPaths {
+    param([string]$Dir)
+    $paths = @()
+    foreach ($root in @(
+        (Join-Path $Dir "libultraship\vcpkg\installed"),
+        (Join-Path $Dir "libultraship\vcpkg_installed"),
+        (Join-Path $Dir "vcpkg_installed")
+    )) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $bin = Join-Path $_.FullName "bin"
+            if (Test-Path -LiteralPath $bin) { $paths += $bin }
+        }
+    }
+    return $paths | Select-Object -Unique
+}
+
+function Get-MsvcRedistSearchPaths {
+    $paths = @()
+    foreach ($hint in @($env:VCToolsRedistDir, $env:VCToolsInstallDir, $env:VCINSTALLDIR)) {
+        if (-not $hint) { continue }
+        foreach ($glob in @(
+            (Join-Path $hint "x64\Microsoft.VC*.CRT"),
+            (Join-Path $hint "Redist\MSVC\*\x64\Microsoft.VC*.CRT"),
+            (Join-Path (Split-Path $hint -Parent) "Redist\MSVC\*\x64\Microsoft.VC*.CRT")
+        )) {
+            $crt = Get-Item -Path $glob -ErrorAction SilentlyContinue |
+                Sort-Object { $_.Name } -Descending |
+                Select-Object -First 1
+            if ($crt) { $paths += $crt.FullName }
+        }
+    }
+    return $paths | Select-Object -Unique
+}
+
+function Find-RuntimeDll {
+    param(
+        [string]$Name,
+        [string[]]$SearchPaths
+    )
+    foreach ($dir in $SearchPaths) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $exact = Join-Path $dir $Name
+        if (Test-Path -LiteralPath $exact) { return $exact }
+        $ci = Get-ChildItem -LiteralPath $dir -Filter $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ci) { return $ci.FullName }
+    }
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Name).ToLowerInvariant()
+    $glob = switch -Regex ($leaf) {
+        '^libssl'     { 'libssl*.dll' }
+        '^libcrypto'  { 'libcrypto*.dll' }
+        '^libcurl'    { 'libcurl*.dll' }
+        '^zlib1$'     { 'zlib1.dll' }
+        '^zlib'       { 'zlib*.dll' }
+        '^libz'       { 'libz*.dll' }
+        default       { $Name }
+    }
+    if ($glob -ne $Name) {
+        foreach ($dir in $SearchPaths) {
+            if (-not (Test-Path -LiteralPath $dir)) { continue }
+            $hit = Get-ChildItem -LiteralPath $dir -Filter $glob -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        }
+    }
+    return $null
+}
+
+function Copy-EnsureDllGlob {
+    param(
+        [string]$Dest,
+        [string]$Pattern,
+        [string[]]$SearchPaths
+    )
+    if (Get-ChildItem -LiteralPath $Dest -Filter $Pattern -ErrorAction SilentlyContinue) {
+        return $true
+    }
+    foreach ($dir in $SearchPaths) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $hit = Get-ChildItem -LiteralPath $dir -Filter $Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) {
+            Copy-Item -LiteralPath $hit.FullName -Destination $Dest -Force
+            Write-Host "   ensured $($hit.Name)"
+            return $true
+        }
+    }
+    return $false
+}
+
+function Bundle-WindowsDlls {
+    param(
+        [string]$Binary,
+        [string]$Dest,
+        [string[]]$SearchPaths,
+        [hashtable]$SeenGlobal
+    )
+    if (-not (Test-Path -LiteralPath $Binary)) {
+        Fail "Bundle-WindowsDlls: not a file: $Binary"
+    }
+    $queue = [System.Collections.Queue]::new()
+    $queue.Enqueue($Binary)
+    $localCount = 0
+
+    while ($queue.Count -gt 0) {
+        $current = [string]$queue.Dequeue()
+        foreach ($dll in (Get-PeDependencies $current)) {
+            $key = $dll.ToLowerInvariant()
+            if (Test-SystemDll $key) { continue }
+            if ($SeenGlobal.ContainsKey($key)) { continue }
+
+            $src = Find-RuntimeDll $dll $SearchPaths
+            if (-not $src) {
+                Write-Host "WARN: $dll required by $(Split-Path $current -Leaf) but not found under search paths" -ForegroundColor Yellow
+                continue
+            }
+
+            $SeenGlobal[$key] = $true
+            $localCount++
+            Copy-Item -LiteralPath $src -Destination $Dest -Force
+            $queue.Enqueue($src)
+        }
+    }
+    Write-Host "   bundled $localCount DLL(s) from $(Split-Path $Binary -Leaf)"
+}
+
+function Test-StagedPeDependencies {
+    param(
+        [string]$Binary,
+        [string]$StageDir
+    )
+    $missing = @()
+    foreach ($dll in (Get-PeDependencies $Binary)) {
+        $key = $dll.ToLowerInvariant()
+        if (Test-SystemDll $key) { continue }
+        $staged = Join-Path $StageDir $dll
+        if (-not (Test-Path -LiteralPath $staged)) {
+            $globHit = Get-ChildItem -LiteralPath $StageDir -Filter ($dll -replace '\.dll$', '*.dll') -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $globHit) {
+                $missing += $dll
+            }
+        }
+    }
+    if ($missing.Count -gt 0) {
+        Fail "Staged $(Split-Path $Binary -Leaf) still missing DLL(s): $($missing -join ', ')"
+    }
+}
+
+function Test-WindowsNetplayHttpsBundle {
+    param(
+        [string]$StageDir,
+        [string]$GameExePath
+    )
+    if (-not (Test-Path (Join-Path $StageDir "ssl\cacert.pem"))) {
+        Fail "Netplay package missing ssl\cacert.pem"
+    }
+    $hasCurl = @(Get-ChildItem -LiteralPath $StageDir -Filter 'libcurl*.dll' -ErrorAction SilentlyContinue).Count -gt 0
+    if (-not $hasCurl) {
+        foreach ($dll in (Get-PeDependencies $GameExePath)) {
+            if ($dll -like 'libcurl*') { $hasCurl = $true; break }
+        }
+    }
+    if ($hasCurl) {
+        foreach ($pat in @('libssl*.dll', 'libcrypto*.dll')) {
+            if (-not (Get-ChildItem -LiteralPath $StageDir -Filter $pat -ErrorAction SilentlyContinue)) {
+                Fail "Netplay package links libcurl dynamically but missing $pat (OpenSSL runtime)"
+            }
+        }
+    }
+    Write-Host "   netplay HTTPS bundle OK (cacert.pem$(if ($hasCurl) { ' + dynamic curl/OpenSSL DLLs' } else { '; curl/OpenSSL statically linked' }))"
+}
+
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in decomp/src/credits/),
 # so a fresh checkout (CI or otherwise) must run the encoder before
@@ -400,11 +610,41 @@ BSD, BSD-3-Clause, MIT). Refer to those upstream packages for full
 license texts.
 '@ | Set-Content -Path (Join-Path $LicensesDir "README.txt") -Encoding UTF8
 
-# Bundle DLLs that landed next to BattleShip.exe (vcpkg drops SDL2.dll, etc.).
+# Recursive dumpbin walk: BattleShip.exe + torch.exe + vcpkg bin + MSVC redist.
+Write-Step "Bundling runtime DLLs"
 $ExeBuildDir = Split-Path $GameExe -Parent
-Get-ChildItem -Path $ExeBuildDir -Filter "*.dll" | ForEach-Object {
-    Copy-Item $_.FullName $StageDir
+$TorchBuildDir = Split-Path $TorchExe -Parent
+$DllSearchPaths = @(
+    $ExeBuildDir,
+    $TorchBuildDir
+) + (Get-VcpkgBinSearchPaths $BuildDir) + (Get-MsvcRedistSearchPaths)
+$DllSearchPaths = $DllSearchPaths | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+$BundledDlls = @{}
+Bundle-WindowsDlls -Binary $GameExe -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+$StagedTorch = Join-Path $StageDir "torch.exe"
+Bundle-WindowsDlls -Binary $StagedTorch -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+
+if ($Netplay) {
+    Write-Step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
+    foreach ($pat in @('libcurl*.dll', 'libssl*.dll', 'libcrypto*.dll', 'zlib1.dll', 'zlib*.dll')) {
+        if (-not (Copy-EnsureDllGlob -Dest $StageDir -Pattern $pat -SearchPaths $DllSearchPaths)) {
+            if ($pat -match '^(libcurl|libssl|libcrypto)') {
+                Write-Host "   note: no $pat in search paths (may be statically linked via vcpkg x64-windows-static)"
+            }
+        }
+    }
+    foreach ($curlDll in (Get-ChildItem -LiteralPath $StageDir -Filter 'libcurl*.dll' -ErrorAction SilentlyContinue)) {
+        Bundle-WindowsDlls -Binary $curlDll.FullName -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+    }
+    foreach ($sslDll in (Get-ChildItem -LiteralPath $StageDir -Filter 'libssl*.dll' -ErrorAction SilentlyContinue)) {
+        Bundle-WindowsDlls -Binary $sslDll.FullName -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+    }
+    Test-WindowsNetplayHttpsBundle -StageDir $StageDir -GameExePath (Join-Path $StageDir "$AppName.exe")
 }
+
+Test-StagedPeDependencies -Binary (Join-Path $StageDir "$AppName.exe") -StageDir $StageDir
+Test-StagedPeDependencies -Binary $StagedTorch -StageDir $StageDir
 
 # ── 5. Zip ──
 Write-Step "Compressing $ZipPath"
