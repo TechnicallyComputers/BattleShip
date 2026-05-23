@@ -513,17 +513,35 @@ if (-not (Test-Path $GameExe)) {
     # Fall back to non-multi-config layout (Ninja).
     $GameExe = Join-Path $BuildDir "$AppName.exe"
 }
+function Test-TorchReleaseBinary {
+    param([string]$Path)
+    foreach ($dll in (Get-PeDependencies $Path)) {
+        $n = $dll.ToLowerInvariant()
+        if ($n -match '140d\.dll$' -or $n -eq 'ucrtbased.dll') {
+            return $false
+        }
+    }
+    return $true
+}
+
 $TorchExe = $null
 foreach ($cand in @(
     "TorchExternal\src\TorchExternal-build\Release\torch.exe",
-    "TorchExternal\src\TorchExternal-build\torch.exe",
-    "torch-install\bin\torch.exe"
+    "torch-install\bin\torch.exe",
+    "TorchExternal\src\TorchExternal-build\torch.exe"
 )) {
     $p = Join-Path $BuildDir $cand
-    if (Test-Path $p) { $TorchExe = $p; break }
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    if (Test-TorchReleaseBinary $p) {
+        $TorchExe = $p
+        break
+    }
+    Write-Host "   skip Debug torch: $p (needs MSVC Debug CRT DLLs)"
 }
 if (-not (Test-Path $GameExe))   { Fail "$AppName.exe not found at $GameExe" }
-if (-not $TorchExe)              { Fail "torch.exe not found in $BuildDir" }
+if (-not $TorchExe) {
+    Fail "torch.exe not found in $BuildDir (need Release TorchExternal; push CMakeLists with CMAKE_BUILD_TYPE on ExternalProject)"
+}
 
 # ── 4. Stage the release tree ──
 Write-Step "Staging $StageDir"

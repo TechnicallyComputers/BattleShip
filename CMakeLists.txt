@@ -156,9 +156,18 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
     endif()
 endif()
 
+# ExternalProject does not inherit the parent CMAKE_BUILD_TYPE; match BattleShip.exe
+# (Release packaging must not pick up a Debug torch.exe — MSVCP140D / ucrtbased).
+if(CMAKE_BUILD_TYPE)
+    set(_SSB64_TORCH_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+else()
+    set(_SSB64_TORCH_BUILD_TYPE "Release")
+endif()
+
 # ExternalProject does not inherit the parent toolchain; forward MinGW cross args
 # so torch.exe matches BattleShip.exe when cross-compiling on Linux.
 set(_SSB64_TORCH_EP_CMAKE_ARGS
+    -DCMAKE_BUILD_TYPE=${_SSB64_TORCH_BUILD_TYPE}
     -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
     -DUSE_STANDALONE=ON
     -DBUILD_STORMLIB=OFF
@@ -173,12 +182,18 @@ set(_SSB64_TORCH_EP_CMAKE_ARGS
 )
 # Parent CMAKE_FIND_ROOT_PATH (MinGW sysroot) is not inherited by ExternalProject; forward it
 # so torch.exe is built with the same cross toolchain as BattleShip.exe.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(CMAKE_C_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+    endif()
+    if(CMAKE_CXX_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
+    endif()
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND (MINGW OR CMAKE_CROSSCOMPILING))
     list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS
         -DCMAKE_SYSTEM_NAME=Windows
         -DCMAKE_CROSSCOMPILING=TRUE
-        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     )
     if(CMAKE_RC_COMPILER)
         list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_RC_COMPILER=${CMAKE_RC_COMPILER})
@@ -782,6 +797,11 @@ if(SSB64_NETMENU)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/port/net/assets
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net/assets
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/ssl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/port/net/cacert.pem
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/ssl/cacert.pem
     )
 endif()
 
