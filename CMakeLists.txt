@@ -212,6 +212,9 @@ ExternalProject_Add(TorchExternal
     PREFIX TorchExternal
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
     CMAKE_ARGS ${_SSB64_TORCH_EP_CMAKE_ARGS}
+    CMAKE_CACHE_ARGS
+        -DCMAKE_BUILD_TYPE:STRING=${_SSB64_TORCH_BUILD_TYPE}
+    BUILD_ALWAYS TRUE
 )
 
 ExternalProject_Get_Property(TorchExternal install_dir)
