@@ -4,6 +4,7 @@
 
 #include <SDL2/SDL.h>
 #include <cstdint>
+#include <cstring>
 
 // stb_image's implementation lives in libultraship's stb_impl.c (see
 // HiResPack.cpp). We only need the header.
@@ -25,6 +26,22 @@ void SetWindowIcon() {
     SDL_Window* wnd = SDL_GL_GetCurrentWindow();
     if (!wnd) {
         port_log("SetWindowIcon: SDL_GL_GetCurrentWindow returned NULL — non-GL backend?\n");
+        return;
+    }
+
+    // SDL2's Wayland backend implements SetWindowIcon via
+    // xdg_toplevel_icon_v1. The protocol traffic (SHM buffer + icon-set
+    // requests) flushes queued compositor events, landing a delayed
+    // configure mid-init that libultraship's Fast3D has already cached
+    // past — surfaces as missing geometry / dropped vertex chains in
+    // attract-mode fighter intros. 100% reproducible on Fedora 43
+    // (SDL2 2.32). Skip on Wayland; the WM still resolves the icon
+    // from .desktop Icon= for installed AppImages. Mechanism + A/B in
+    // docs/bugs/wayland_set_window_icon_renderer_corruption_2026-05-22.md.
+    const char* drv = SDL_GetCurrentVideoDriver();
+    if (drv && std::strcmp(drv, "wayland") == 0) {
+        port_log("SetWindowIcon: skipping on Wayland (see "
+                 "docs/bugs/wayland_set_window_icon_renderer_corruption_2026-05-22.md)\n");
         return;
     }
 
