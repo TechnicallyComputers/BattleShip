@@ -163,6 +163,7 @@ bundle_mingw_ca_certs() {
 
 	mkdir -p "$dest"
 	for candidate in \
+		"$ROOT/port/net/cacert.pem" \
 		"$MINGW_PREFIX/ssl/certs/ca-bundle.crt" \
 		"$MINGW_PREFIX/etc/ssl/certs/ca-bundle.crt" \
 		"$MINGW_PREFIX/share/curl/ca-bundle.crt" \
