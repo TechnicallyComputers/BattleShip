@@ -1,13 +1,52 @@
 # Linux stale-DL bail — specific holders pinned (Zebes acid Ground GObj + efManagerMakeEffect)
 
 **Date:** 2026-05-23
-**Status:** **OPEN — holders identified, root-cause fix attempted and FAILED; defensive guard in
-`gcDrawDObjTreeDLLinks` still catches the symptom without crash.**
+**Status:** **FIXED 2026-05-23** — scene-boundary GObj sweep + `gGRCommonStruct` zero in
+`scManagerRunLoop`. Bail count goes from 28 per triggered run (~40% trigger rate) to **0 across
+multiple repro attempts**.
 **Family:** [`dl_link_stale_pointer_guard_2026-05-09`](dl_link_stale_pointer_guard_2026-05-09.md) /
 [`linux_stale_scene_data_family_2026-05-11`](linux_stale_scene_data_family_2026-05-11.md)
 **Platform:** Linux glibc — observed on Fedora 43 / Nobara, native Release builds.
 **Files affected for diagnosis:** `decomp/src/sys/objdisplay.c` (augmented bail log),
-`decomp/src/sys/objman.c` (per-GObj alloc tracking macro). Both still in place.
+`decomp/src/sys/objman.c` (per-GObj alloc tracking macro). Both still in place as tripwires for
+future regressions of this class.
+
+## The fix (landed)
+
+`decomp/src/sc/scmanager.c::scManagerRunLoop` — alongside the existing Issue #103 `fighter_gobj`
+NULLing at the top of the `while (TRUE)` scene-dispatch loop, two new PORT-only blocks before
+the `switch (gSCManagerSceneData.scene_curr)`:
+
+1. **Sweep every linked GObj.** Iterate `gGCCommonLinks[link]` for every `link_id`; while the head
+   is non-NULL, `gcEjectGObj(head)`. Two clamps: if the head doesn't move after a `gcEjectGObj`
+   call (eject refusal — would be `gGCCurrentCommon`, shouldn't happen between scenes but cheap to
+   guard) `port_log` + break; if a single link's loop exceeds 4096 iterations `port_log` + break.
+   Mirrors the body of `gcEjectAll()` (`objhelper.c:465`) inline so we can attach the clamps.
+2. **`memset(&gGRCommonStruct, 0, sizeof(gGRCommonStruct))`** — the union of per-stage var blobs
+   overlays every cached `*_gobj` slot (`zebes.map_gobj`, `hyrule.twister_gobj`,
+   `jungle.tarucann_gobj`, `castle.bumper_gobj`, `yamabuki.{gate,monster}_gobj`,
+   `pupupu.map_gobj[]`, `inishie.{pakkun,pblock}_gobj`, ...). Zeroing nulls them all in one shot;
+   the next stage init repopulates the union from scratch.
+
+Headers added under `#ifdef PORT`: `<gr/ground.h>` (for `gGRCommonStruct`), `<sys/objman.h>` (for
+`gGCCommonLinks`).
+
+**Why this works where the `syTaskmanStartTask` sweep didn't (see "Failed fix attempt" below):**
+`scManagerRunLoop` runs once per scene transition; `syTaskmanStartTask` only at task boundaries.
+The attract demo cycles through Opening sub-scenes (27 → 28 → 29 → ... → 37) all inside a single
+task instance, so the task-boundary sweep was a no-op for the leak window. Moving the sweep into
+the scene loop catches every transition.
+
+**Why the GOBJ_PORT_EJECTED_SENTINEL guard (`objman.c:1881`) makes this safe to overlap with
+in-game eject paths:** stage routines that self-eject (e.g. `grHyruleTwister` at `grhyrule.c:334`)
+remove their GObj from `gGCCommonLinks[]` as part of the eject, so the sweep doesn't see them.
+A GObj that's somehow seen twice would trip the sentinel check and `port_log` rather than
+corrupt the free list — observed count of `DOUBLE-EJECT DETECTED` post-fix: 0.
+
+**Verification:** 0 `stale dl_link bail` log lines across multiple full-attract-cycle runs
+post-fix (was 28/run on triggered runs pre-fix, with ~40% trigger rate). No sweep-guard breaks,
+no double-eject. The diagnostic instrumentation in `objdisplay.c` + `objman.c` stays in place so
+any future regression of this class trips the same in-log signal.
 
 ## Symptom
 
