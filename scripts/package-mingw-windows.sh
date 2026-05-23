@@ -295,6 +295,12 @@ is_system_dll() {
 		ucrtbase.dll | msvcrt.dll | shlwapi.dll | rpcrt4.dll | sechost.dll)
 			return 0
 			;;
+		iphlpapi.dll | crypt32.dll | secur32.dll | normaliz.dll | wldap32.dll)
+			return 0
+			;;
+		userenv.dll | dnsapi.dll | nsapi.dll | msasn1.dll | wintrust.dll)
+			return 0
+			;;
 		api-ms-win-*)
 			return 0
 			;;

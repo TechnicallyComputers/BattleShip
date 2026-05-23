@@ -114,11 +114,13 @@ endif()
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
-# Windows netmenu: curl is installed by libultraship's vcpkg bootstrap (classic mode
-# under libultraship/vcpkg/installed/<triplet>). Parent project() ran before the
-# toolchain was active, so point find_package at that prefix explicitly.
+# Windows netmenu: MSVC uses libultraship vcpkg (curl + pthreads4w CONFIG packages).
+# MinGW cross uses mingw-w64-curl from CMAKE_FIND_ROOT_PATH (FindCURL module / pkg-config).
 if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    if(USE_AUTO_VCPKG)
+    if(MINGW OR NOT USE_AUTO_VCPKG)
+        find_package(CURL REQUIRED)
+        find_package(Threads REQUIRED)
+    else()
         set(_SSB64_VCPKG_ROOT "${CMAKE_BINARY_DIR}/libultraship/vcpkg")
         set(_SSB64_VCPKG_INSTALLED "")
         foreach(_SSB64_VCPKG_TRIPLET IN ITEMS
@@ -148,10 +150,10 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
             endif()
             message(FATAL_ERROR "vcpkg curl package missing under ${_SSB64_VCPKG_ROOT}/installed/*; see libultraship vcpkg install output above")
         endif()
+        find_package(CURL REQUIRED CONFIG)
+        find_package(pthreads CONFIG REQUIRED)
+        find_package(Threads REQUIRED)
     endif()
-    find_package(CURL REQUIRED CONFIG)
-    find_package(pthreads CONFIG REQUIRED)
-    find_package(Threads REQUIRED)
 endif()
 
 # ExternalProject does not inherit the parent toolchain; forward MinGW cross args
@@ -476,8 +478,10 @@ if(SSB64_NETMENU)
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
     ssb64_netmenu_attach_curl(ssb64_game)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT MINGW)
         target_link_libraries(ssb64_game PRIVATE PThreads4W::PThreads4W)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
+        target_link_libraries(ssb64_game PRIVATE Threads::Threads)
     endif()
 else()
     # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
@@ -675,8 +679,10 @@ if(SSB64_NETMENU)
     # ssb64_game: curl/pthreads attached in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
     # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
-    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT MINGW)
         target_link_libraries(${PROJECT_NAME} PRIVATE PThreads4W::PThreads4W iphlpapi)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
+        target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi)
     endif()
 endif()
 
@@ -686,9 +692,22 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    if(MINGW)
+        # MinGW has no #pragma comment(lib); port.cpp + libultraship CrashHandler need dbghelp.
+        target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp psapi)
+        if(SSB64_NETMENU)
+            # netpeer / STUN / LAN detect (Winsock + GetAdaptersAddresses).
+            target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        endif()
+    endif()
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    elseif(MINGW)
+        # /utf-8 is MSVC-only; MinGW GCC treats it as a bogus input file path.
+        target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
+    endif()
     # Embed the application icon (Explorer / taskbar / window). The .rc
     # is generated per-region from port/ssb64.rc.in: US embeds
     # assets/icon.ico, JP embeds assets/icon-jp.ico. The icon also

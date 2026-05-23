@@ -228,7 +228,10 @@ function Test-SystemDll {
         'd3dcompiler_47.dll', 'dbghelp.dll', 'hid.dll', 'dwmapi.dll', 'setupapi.dll',
         'version.dll', 'imm32.dll', 'bcrypt.dll', 'psapi.dll', 'ntdll.dll',
         'ucrtbase.dll', 'msvcrt.dll', 'shlwapi.dll', 'rpcrt4.dll', 'sechost.dll',
-        'combase.dll', 'gdiplus.dll', 'uxtheme.dll', 'dinput8.dll', 'xinput1_4.dll'
+        'combase.dll', 'gdiplus.dll', 'uxtheme.dll', 'dinput8.dll', 'xinput1_4.dll',
+        # Ship with Windows — link-time imports, not redistributed in the portable zip.
+        'iphlpapi.dll', 'crypt32.dll', 'secur32.dll', 'normaliz.dll', 'wldap32.dll',
+        'userenv.dll', 'dnsapi.dll', 'nsapi.dll', 'msasn1.dll', 'wintrust.dll'
     )
     if ($system -contains $n) { return $true }
     if ($n -like 'api-ms-win-*') { return $true }
