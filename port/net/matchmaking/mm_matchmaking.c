@@ -18,7 +18,16 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
+/* port/net/stdlib.h is on the include path before the system header; use include_next for POSIX. */
+#ifdef _WIN32
 #include <stdlib.h>
+#else
+#if defined(__GNUC__) || defined(__clang__)
+#include_next <stdlib.h>
+#else
+#include <stdlib.h>
+#endif
+#endif
 #include <string.h>
 #include <time.h>
 #ifdef _WIN32
@@ -51,7 +60,6 @@ static int mm_clock_gettime(int clk_id, struct timespec *ts)
 #else
 #include <sys/stat.h>
 #include <unistd.h>
-#include <time.h>
 #endif
 
 #ifdef PORT
