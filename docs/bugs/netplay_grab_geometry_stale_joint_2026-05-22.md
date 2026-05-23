@@ -38,3 +38,7 @@ Aerial Y-from-hand attach was **not** changed — needs N64 verification first.
 - Synctest on: `SYNCTEST_OK` through hold + throw probes ([`netplay_grab_synctest_roundtrip_2026-05-22.md`](netplay_grab_synctest_roundtrip_2026-05-22.md))
 - Yoshi / Kirby capture paths unchanged
 - Existing throw release NULL guards still hold ([`netplay_grab_synctest_throw_segv_2026-05-20.md`](netplay_grab_synctest_throw_segv_2026-05-20.md))
+
+## Upstream handoff
+
+Consolidated patch list and recommended vanilla fix: [`../grab_coupling_geometry_handoff_2026-05-23.md`](../grab_coupling_geometry_handoff_2026-05-23.md)
