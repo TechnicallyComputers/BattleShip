@@ -221,6 +221,7 @@ function Copy-CaBundle($DestDir) {
 # Windows system DLLs — do not bundle (ship with Windows / UCRT).
 function Test-SystemDll {
     param([string]$Name)
+    if (-not $Name) { return $false }
     $n = $Name.ToLowerInvariant()
     $system = @(
         'kernel32.dll', 'user32.dll', 'gdi32.dll', 'shell32.dll', 'ole32.dll', 'oleaut32.dll',
@@ -233,9 +234,45 @@ function Test-SystemDll {
         'iphlpapi.dll', 'crypt32.dll', 'secur32.dll', 'normaliz.dll', 'wldap32.dll',
         'userenv.dll', 'dnsapi.dll', 'nsapi.dll', 'msasn1.dll', 'wintrust.dll'
     )
-    if ($system -contains $n) { return $true }
-    if ($n -like 'api-ms-win-*') { return $true }
+    foreach ($entry in $system) {
+        if ($n -ceq $entry) { return $true }
+    }
+    if ($n -like 'api-ms-win-*' -or $n -like 'ext-ms-win-*') { return $true }
+    if ($env:SystemRoot) {
+        $sys32 = Join-Path $env:SystemRoot 'System32'
+        if (Test-Path -LiteralPath (Join-Path $sys32 $Name)) { return $true }
+        if (Test-Path -LiteralPath (Join-Path $sys32 $n)) { return $true }
+    }
     return $false
+}
+
+function Test-MsvcDebugCrtDll {
+    param([string]$Name)
+    $n = $Name.ToLowerInvariant()
+    return ($n -match '140d\.dll$' -or $n -eq 'ucrtbased.dll')
+}
+
+# True when the PE import must be present in the portable zip (not OS-provided / not Debug CRT).
+function Test-PortableBundledDll {
+    param([string]$Name)
+    if (Test-SystemDll $Name) { return $false }
+    if (Test-MsvcDebugCrtDll $Name) { return $false }
+    return $true
+}
+
+function Test-TorchReleaseBinary {
+    param([string]$Path)
+    $deps = @(Get-PeDependencies $Path)
+    if ($deps.Count -eq 0) {
+        Write-Host "   WARN: dumpbin returned no dependents for $Path"
+        return $false
+    }
+    foreach ($dll in $deps) {
+        if (Test-MsvcDebugCrtDll $dll) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Get-PeDependencies {
@@ -365,7 +402,7 @@ function Bundle-WindowsDlls {
         $current = [string]$queue.Dequeue()
         foreach ($dll in (Get-PeDependencies $current)) {
             $key = $dll.ToLowerInvariant()
-            if (Test-SystemDll $key) { continue }
+            if (-not (Test-PortableBundledDll $dll)) { continue }
             if ($SeenGlobal.ContainsKey($key)) { continue }
 
             $src = Find-RuntimeDll $dll $SearchPaths
@@ -390,8 +427,7 @@ function Test-StagedPeDependencies {
     )
     $missing = @()
     foreach ($dll in (Get-PeDependencies $Binary)) {
-        $key = $dll.ToLowerInvariant()
-        if (Test-SystemDll $key) { continue }
+        if (-not (Test-PortableBundledDll $dll)) { continue }
         $staged = Join-Path $StageDir $dll
         if (-not (Test-Path -LiteralPath $staged)) {
             $globHit = Get-ChildItem -LiteralPath $StageDir -Filter ($dll -replace '\.dll$', '*.dll') -ErrorAction SilentlyContinue |
@@ -495,6 +531,16 @@ Write-Step "Building BattleShip + torch"
 cmake --build $BuildDir --config Release -j $Jobs
 if ($LASTEXITCODE -ne 0) { Fail "build failed" }
 
+$TorchProbe = Join-Path $BuildDir "TorchExternal\src\TorchExternal-build\torch.exe"
+if ((Test-Path -LiteralPath $TorchProbe) -and -not (Test-TorchReleaseBinary $TorchProbe)) {
+    Write-Host "   torch.exe is Debug — clean-rebuilding TorchExternal (Release)"
+    cmake --build $BuildDir --target TorchExternal --clean-first -j $Jobs
+    if ($LASTEXITCODE -ne 0) { Fail "TorchExternal clean rebuild failed" }
+    if (-not (Test-TorchReleaseBinary $TorchProbe)) {
+        Fail "torch.exe still links MSVC Debug CRT after TorchExternal rebuild (check CMAKE_BUILD_TYPE on ExternalProject)"
+    }
+}
+
 # ── 2. Build f3d.o2r (zip of LUS shaders, ROM-independent) ──
 Write-Step "Packaging Fast3D shader archive"
 $F3DO2R = Join-Path $BuildDir "f3d.o2r"
@@ -513,17 +559,6 @@ if (-not (Test-Path $GameExe)) {
     # Fall back to non-multi-config layout (Ninja).
     $GameExe = Join-Path $BuildDir "$AppName.exe"
 }
-function Test-TorchReleaseBinary {
-    param([string]$Path)
-    foreach ($dll in (Get-PeDependencies $Path)) {
-        $n = $dll.ToLowerInvariant()
-        if ($n -match '140d\.dll$' -or $n -eq 'ucrtbased.dll') {
-            return $false
-        }
-    }
-    return $true
-}
-
 $TorchExe = $null
 foreach ($cand in @(
     "TorchExternal\src\TorchExternal-build\Release\torch.exe",
@@ -534,13 +569,18 @@ foreach ($cand in @(
     if (-not (Test-Path -LiteralPath $p)) { continue }
     if (Test-TorchReleaseBinary $p) {
         $TorchExe = $p
+        Write-Host "   torch.exe: $p"
         break
     }
-    Write-Host "   skip Debug torch: $p (needs MSVC Debug CRT DLLs)"
+    Write-Host "   skip non-Release torch: $p"
 }
 if (-not (Test-Path $GameExe))   { Fail "$AppName.exe not found at $GameExe" }
 if (-not $TorchExe) {
-    Fail "torch.exe not found in $BuildDir (need Release TorchExternal; push CMakeLists with CMAKE_BUILD_TYPE on ExternalProject)"
+    Fail @"
+torch.exe not found as a Release binary under $BuildDir.
+Expected TorchExternal\src\TorchExternal-build\Release\torch.exe or a Release Ninja build.
+If only Debug torch exists, wipe the build dir and ensure TorchExternal gets -DCMAKE_BUILD_TYPE=Release.
+"@
 }
 
 # ── 4. Stage the release tree ──
