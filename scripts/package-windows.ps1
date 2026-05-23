@@ -172,12 +172,29 @@ function Copy-CaBundle($DestDir) {
         (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
         (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
         (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
-        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows\share\curl\curl-ca-bundle.crt")
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\tools\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\tools\curl\cacert.pem")
     )
     foreach ($c in $Candidates) {
-        if (Test-Path $c) {
-            Copy-Item $c (Join-Path $DestDir "cacert.pem")
+        if (Test-Path -LiteralPath $c) {
+            Copy-Item -LiteralPath $c (Join-Path $DestDir "cacert.pem")
             Write-Host "   CA bundle: $c"
+            return
+        }
+    }
+    foreach ($root in @(
+        (Join-Path $BuildDir "libultraship\vcpkg\installed"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed"),
+        (Join-Path $BuildDir "vcpkg_installed")
+    )) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $found = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @('curl-ca-bundle.crt', 'cacert.pem', 'ca-bundle.crt') } |
+            Select-Object -First 1
+        if ($found) {
+            Copy-Item -LiteralPath $found.FullName (Join-Path $DestDir "cacert.pem")
+            Write-Host "   CA bundle: $($found.FullName)"
             return
         }
     }
