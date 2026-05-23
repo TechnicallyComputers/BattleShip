@@ -249,7 +249,15 @@ static sb32 mmFileReadable(const char *path)
 	{
 		return FALSE;
 	}
-	return (stat(path, &st) == 0) && S_ISREG(st.st_mode);
+	if (stat(path, &st) != 0)
+	{
+		return FALSE;
+	}
+#ifdef _WIN32
+	return (st.st_mode & _S_IFREG) != 0;
+#else
+	return S_ISREG(st.st_mode);
+#endif
 }
 
 static void mmBaseUrlSetup(void)
