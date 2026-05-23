@@ -6,6 +6,14 @@
 
 #include <ssb64_paths_capi.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+/* Before curl/winsock2 pull in <windows.h> → <stralign.h> needs _wcsicmp from <wchar.h>. */
+#include <wchar.h>
+#endif
+
 #include <curl/curl.h>
 #include <errno.h>
 #include <pthread.h>
@@ -244,22 +252,68 @@ static void mmMemBufFree(MmMemBuf *m)
 	m->len = 0;
 }
 
+#ifdef _WIN32
+static sb32 mmWinUtf8ToWide(const char *utf8, wchar_t *out, size_t out_wchars)
+{
+	int need;
+
+	if ((utf8 == NULL) || (out == NULL) || (out_wchars == 0U))
+	{
+		return FALSE;
+	}
+	need = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, (int)out_wchars);
+	return (need > 0) && ((size_t)need <= out_wchars);
+}
+
+static sb32 mmWinWideToUtf8(const wchar_t *wide, char *out, size_t out_bytes)
+{
+	int need;
+
+	if ((wide == NULL) || (out == NULL) || (out_bytes == 0U))
+	{
+		return FALSE;
+	}
+	need = WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, (int)out_bytes, NULL, NULL);
+	return (need > 0) && ((size_t)need <= out_bytes);
+}
+#endif
+
 static sb32 mmFileReadable(const char *path)
 {
-	struct stat st;
-
 	if ((path == NULL) || (path[0] == '\0'))
 	{
 		return FALSE;
 	}
-	if (stat(path, &st) != 0)
-	{
-		return FALSE;
-	}
 #ifdef _WIN32
-	return (st.st_mode & _S_IFREG) != 0;
+	{
+		wchar_t wpath[512];
+		DWORD attr;
+
+		if (mmWinUtf8ToWide(path, wpath, sizeof(wpath) / sizeof(wpath[0])) == FALSE)
+		{
+			return FALSE;
+		}
+		attr = GetFileAttributesW(wpath);
+		if (attr == INVALID_FILE_ATTRIBUTES)
+		{
+			return FALSE;
+		}
+		if ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0U)
+		{
+			return FALSE;
+		}
+		return TRUE;
+	}
 #else
-	return S_ISREG(st.st_mode);
+	{
+		struct stat st;
+
+		if (stat(path, &st) != 0)
+		{
+			return FALSE;
+		}
+		return S_ISREG(st.st_mode);
+	}
 #endif
 }
 
@@ -278,17 +332,29 @@ static sb32 mmCaEnvUnset(const char *name)
 static sb32 mmCaBundleAbsPath(const char *path, char *out, size_t cap)
 {
 #if defined(_WIN32)
+	wchar_t wpath[512];
+	wchar_t wout[512];
 	DWORD n;
 
 	if ((path == NULL) || (out == NULL) || (cap == 0U))
 	{
 		return FALSE;
 	}
-	n = GetFullPathNameA(path, (DWORD)cap, out, NULL);
-	if ((n > 0U) && (n < cap))
+	if (mmWinUtf8ToWide(path, wpath, sizeof(wpath) / sizeof(wpath[0])) == FALSE)
 	{
-		return TRUE;
+		goto fallback;
 	}
+	n = GetFullPathNameW(wpath, (DWORD)(sizeof(wout) / sizeof(wout[0])), wout, NULL);
+	if ((n == 0U) || (n >= (DWORD)(sizeof(wout) / sizeof(wout[0]))))
+	{
+		goto fallback;
+	}
+	if (mmWinWideToUtf8(wout, out, cap) == FALSE)
+	{
+		return FALSE;
+	}
+	return TRUE;
+fallback:
 #else
 	if (realpath(path, out) != NULL)
 	{
@@ -385,9 +451,19 @@ static void mmSetenvIfUnset(const char *name, const char *value)
 		return;
 	}
 #if defined(_WIN32)
-	if (SetEnvironmentVariableA(name, value) == 0)
 	{
-		return;
+		wchar_t wname[96];
+		wchar_t wvalue[512];
+
+		if (mmWinUtf8ToWide(name, wname, sizeof(wname) / sizeof(wname[0])) == FALSE)
+		{
+			return;
+		}
+		if (mmWinUtf8ToWide(value, wvalue, sizeof(wvalue) / sizeof(wvalue[0])) == FALSE)
+		{
+			return;
+		}
+		(void)SetEnvironmentVariableW(wname, wvalue);
 	}
 #else
 	(void)setenv(name, value, 0);
@@ -396,6 +472,120 @@ static void mmSetenvIfUnset(const char *name, const char *value)
 
 static sb32 sCaBundleInitDone = FALSE;
 static char sCaBundlePath[512];
+static char *sCaBundleBlob = NULL;
+static size_t sCaBundleBlobLen = 0U;
+static struct curl_blob sCaBundleCurlBlob;
+
+static sb32 mmLoadCaBundleFromPath(const char *path)
+{
+	char *buf = NULL;
+	size_t blob_len = 0U;
+
+#ifdef _WIN32
+	{
+		wchar_t wpath[512];
+		HANDLE file;
+		LARGE_INTEGER file_size;
+		DWORD read_bytes;
+
+		if ((path == NULL) || (path[0] == '\0'))
+		{
+			return FALSE;
+		}
+		if (mmWinUtf8ToWide(path, wpath, sizeof(wpath) / sizeof(wpath[0])) == FALSE)
+		{
+			return FALSE;
+		}
+		file = CreateFileW(wpath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (file == INVALID_HANDLE_VALUE)
+		{
+			return FALSE;
+		}
+		if (GetFileSizeEx(file, &file_size) == 0)
+		{
+			CloseHandle(file);
+			return FALSE;
+		}
+		if ((file_size.QuadPart <= 0LL) || (file_size.QuadPart > 8388608LL))
+		{
+			CloseHandle(file);
+			return FALSE;
+		}
+		buf = (char *)malloc((size_t)file_size.QuadPart + 1U);
+		if (buf == NULL)
+		{
+			CloseHandle(file);
+			return FALSE;
+		}
+		if ((ReadFile(file, buf, (DWORD)file_size.QuadPart, &read_bytes, NULL) == 0) ||
+		    (read_bytes != (DWORD)file_size.QuadPart))
+		{
+			free(buf);
+			CloseHandle(file);
+			return FALSE;
+		}
+		CloseHandle(file);
+		buf[read_bytes] = '\0';
+		blob_len = (size_t)read_bytes;
+	}
+#else
+	{
+		FILE *fp;
+		long file_len;
+		size_t got;
+
+		fp = fopen(path, "rb");
+		if (fp == NULL)
+		{
+			return FALSE;
+		}
+		if (fseek(fp, 0, SEEK_END) != 0)
+		{
+			fclose(fp);
+			return FALSE;
+		}
+		file_len = ftell(fp);
+		if ((file_len <= 0L) || (file_len > 8388608L))
+		{
+			fclose(fp);
+			return FALSE;
+		}
+		if (fseek(fp, 0, SEEK_SET) != 0)
+		{
+			fclose(fp);
+			return FALSE;
+		}
+		buf = (char *)malloc((size_t)file_len + 1U);
+		if (buf == NULL)
+		{
+			fclose(fp);
+			return FALSE;
+		}
+		got = fread(buf, 1U, (size_t)file_len, fp);
+		fclose(fp);
+		if (got != (size_t)file_len)
+		{
+			free(buf);
+			return FALSE;
+		}
+		buf[got] = '\0';
+		blob_len = got;
+	}
+#endif
+
+	if (sCaBundleBlob != NULL)
+	{
+		free(sCaBundleBlob);
+		sCaBundleBlob = NULL;
+		sCaBundleBlobLen = 0U;
+	}
+	sCaBundleBlob = buf;
+	sCaBundleBlobLen = blob_len;
+	sCaBundleCurlBlob.data = sCaBundleBlob;
+	sCaBundleCurlBlob.len = sCaBundleBlobLen;
+	sCaBundleCurlBlob.flags = CURL_BLOB_NOCOPY;
+	return TRUE;
+}
 
 static void mmMatchmakingInitPortableCaBundle(void)
 {
@@ -414,11 +604,20 @@ static void mmMatchmakingInitPortableCaBundle(void)
 		return;
 	}
 
+	if (mmLoadCaBundleFromPath(sCaBundlePath) == FALSE)
+	{
+#ifdef PORT
+		port_log("SSB64 Matchmaking: WARNING failed to load CA bundle from %s\n", sCaBundlePath);
+#endif
+		return;
+	}
+
 	mmSetenvIfUnset("SSB64_MATCHMAKING_CA_BUNDLE", sCaBundlePath);
 	mmSetenvIfUnset("CURL_CA_BUNDLE", sCaBundlePath);
 	mmSetenvIfUnset("SSL_CERT_FILE", sCaBundlePath);
 #ifdef PORT
-	port_log("SSB64 Matchmaking: CA bundle %s\n", sCaBundlePath);
+	port_log("SSB64 Matchmaking: CA bundle %s (%zu bytes, CURLOPT_CAINFO_BLOB)\n", sCaBundlePath,
+	         sCaBundleBlobLen);
 #endif
 }
 
@@ -436,7 +635,7 @@ static void mmBaseUrlSetup(void)
 	}
 }
 
-/* Portable builds bundle curl+OpenSSL but not the host CA store (Linux AppRun sets env; Windows sets in mmMatchmakingInitPortableCaBundle). */
+/* Portable builds bundle curl+OpenSSL but not the host CA store (Linux AppRun sets env; Windows loads PEM blob). */
 static void mmCurlConfigureSsl(CURL *c)
 {
 	char bundle_path[512];
@@ -449,6 +648,12 @@ static void mmCurlConfigureSsl(CURL *c)
 
 	curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+
+	if ((sCaBundleBlob != NULL) && (sCaBundleBlobLen > 0U))
+	{
+		curl_easy_setopt(c, CURLOPT_CAINFO_BLOB, &sCaBundleCurlBlob);
+		return;
+	}
 
 	if ((sCaBundlePath[0] != '\0') && (mmFileReadable(sCaBundlePath) != FALSE))
 	{
@@ -478,7 +683,7 @@ static void mmCurlConfigureSsl(CURL *c)
 	}
 
 #ifdef PORT
-	port_log("SSB64 Matchmaking: WARNING CURLOPT_CAINFO not set — TLS verification may fail (OpenSSL curl)\n");
+	port_log("SSB64 Matchmaking: WARNING CA bundle not loaded — TLS verification may fail (OpenSSL curl)\n");
 #endif
 }
 

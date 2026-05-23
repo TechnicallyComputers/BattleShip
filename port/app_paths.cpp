@@ -21,11 +21,23 @@ std::string RealAppBundlePath() {
         return exe.parent_path().string();
     }
 #elif defined(_WIN32)
-    wchar_t buf[MAX_PATH];
-    DWORD len = GetModuleFileNameW(NULL, buf, MAX_PATH);
-    if (len != 0 && len < MAX_PATH) {
-        std::filesystem::path exe(buf, buf + len);
-        return exe.parent_path().string();
+    /* Match libultraship Context::GetAppBundlePath(): UTF-8 exe dir for portable zip layouts. */
+    std::wstring progpath(MAX_PATH, L'\0');
+    int len = GetModuleFileNameW(NULL, progpath.data(), static_cast<DWORD>(progpath.size()));
+    if (len != 0 && len < static_cast<int>(progpath.size())) {
+        progpath.resize(static_cast<size_t>(len));
+        const auto lastSlash = progpath.find_last_of(L'\\');
+        if (lastSlash != std::wstring::npos) {
+            progpath.erase(lastSlash);
+        }
+        len = WideCharToMultiByte(CP_UTF8, 0, progpath.data(), static_cast<int>(progpath.size()),
+                                  nullptr, 0, nullptr, nullptr);
+        if (len > 0) {
+            std::string utf8(static_cast<size_t>(len), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, progpath.data(), static_cast<int>(progpath.size()),
+                                utf8.data(), len, nullptr, nullptr);
+            return utf8;
+        }
     }
 #endif
     return Ship::Context::GetAppBundlePath();

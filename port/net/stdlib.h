@@ -11,9 +11,14 @@ __declspec(noreturn) extern void abort(void);
 #else
 extern void abort(void) __attribute__((noreturn));
 #endif
+#if defined(__MINGW32__) || defined(__MINGW64__)
+extern void *malloc(unsigned long long size);
+extern void *realloc(void *ptr, unsigned long long size);
+#else
 extern void *malloc(unsigned long size);
-extern void free(void *ptr);
 extern void *realloc(void *ptr, unsigned long size);
+#endif
+extern void free(void *ptr);
 extern int abs(int j);
 extern long strtol(const char *nptr, char **endptr, int base);
 extern char *getenv(const char *name);

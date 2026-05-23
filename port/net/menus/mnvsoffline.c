@@ -145,11 +145,11 @@ s32 mnVSOffClassicPow(s32 num, s32 pow)
 
         if (pow >= 2)
         {
-            do
+            while (i > 1)
             {
                 result *= num;
+                i--;
             }
-            while (--i != 1);
         }
         return result;
     }
