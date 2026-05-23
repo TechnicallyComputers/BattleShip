@@ -460,7 +460,15 @@ extern "C" void port_watchdog_init(void) {
     sigemptyset(&csa.sa_mask);
     csa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     csa.sa_sigaction = CrashSignalHandler;
-#if !defined(__SANITIZE_ADDRESS__) && !(defined(__has_feature) && __has_feature(address_sanitizer))
+    /* Clang exposes __has_feature as a builtin inside #if; GCC does not, and
+     * the `defined(__has_feature) && __has_feature(...)` short-circuit trick
+     * still fails because GCC has to syntactically parse the whole expression
+     * before evaluating — `__has_feature(x)` expands to `0(x)` on GCC. Stub
+     * it to 0 when absent so the expression parses on both compilers. */
+#ifndef __has_feature
+#  define __has_feature(x) 0
+#endif
+#if !defined(__SANITIZE_ADDRESS__) && !__has_feature(address_sanitizer)
     sigaction(SIGSEGV, &csa, nullptr);
     sigaction(SIGBUS,  &csa, nullptr);
 #endif
