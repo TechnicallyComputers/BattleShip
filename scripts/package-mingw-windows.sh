@@ -301,10 +301,17 @@ is_system_dll() {
 		userenv.dll | dnsapi.dll | nsapi.dll | msasn1.dll | wintrust.dll)
 			return 0
 			;;
-		api-ms-win-*)
+		api-ms-win-* | ext-ms-win-*)
 			return 0
 			;;
 	esac
+	# When this script runs on Windows, imports resolved via System32 are OS-provided.
+	if [[ -n "${SYSTEMROOT:-}" ]]; then
+		local sys32="$SYSTEMROOT/System32"
+		if [[ -f "$sys32/$name" || -f "$sys32/${name^^}" ]]; then
+			return 0
+		fi
+	fi
 	return 1
 }
 
@@ -404,6 +411,7 @@ configure_mingw_build() {
 	maybe_clean_on_netmenu_flip
 
 	cmake -B "$BUILD_DIR" "$ROOT" \
+		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_SYSTEM_NAME=Windows \
 		-DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
 		-DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
