@@ -277,8 +277,15 @@ static sb32 mmCaEnvUnset(const char *name)
 
 static sb32 mmCaBundleAbsPath(const char *path, char *out, size_t cap)
 {
-#ifdef _WIN32
-	if (_fullpath(out, path, cap) != NULL)
+#if defined(_WIN32)
+	DWORD n;
+
+	if ((path == NULL) || (out == NULL) || (cap == 0U))
+	{
+		return FALSE;
+	}
+	n = GetFullPathNameA(path, (DWORD)cap, out, NULL);
+	if ((n > 0U) && (n < cap))
 	{
 		return TRUE;
 	}
@@ -377,8 +384,11 @@ static void mmSetenvIfUnset(const char *name, const char *value)
 	{
 		return;
 	}
-#ifdef _WIN32
-	(void)_putenv_s(name, value);
+#if defined(_WIN32)
+	if (SetEnvironmentVariableA(name, value) == 0)
+	{
+		return;
+	}
 #else
 	(void)setenv(name, value, 0);
 #endif
