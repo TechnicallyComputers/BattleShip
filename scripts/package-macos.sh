@@ -146,6 +146,7 @@ bundle_macos_ca_certs() {
 
     mkdir -p "$dest"
     for candidate in \
+        "$ROOT/port/net/cacert.pem" \
         /opt/homebrew/etc/openssl@3/cert.pem \
         /opt/homebrew/etc/ca-certificates/cert.pem \
         /opt/homebrew/share/curl/curl-ca-bundle.crt \

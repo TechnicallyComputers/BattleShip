@@ -145,6 +145,7 @@ bundle_linux_ca_certs() {
 
 	mkdir -p "$dest"
 	for candidate in \
+		"$ROOT/port/net/cacert.pem" \
 		/etc/ssl/certs/ca-certificates.crt \
 		/etc/pki/tls/certs/ca-bundle.crt \
 		/etc/ssl/ca-bundle.pem \

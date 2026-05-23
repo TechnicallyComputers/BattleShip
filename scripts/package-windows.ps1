@@ -166,6 +166,12 @@ function Remove-InvalidVcpkgTree([string]$Dir) {
 
 function Copy-CaBundle($DestDir) {
     New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    $CommittedCa = Join-Path $Root "port\net\cacert.pem"
+    if (Test-Path -LiteralPath $CommittedCa) {
+        Copy-Item -LiteralPath $CommittedCa (Join-Path $DestDir "cacert.pem")
+        Write-Host "   CA bundle: $CommittedCa (committed)"
+        return
+    }
     $Candidates = @(
         (Join-Path $BuildDir "vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
         (Join-Path $BuildDir "vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
@@ -198,7 +204,17 @@ function Copy-CaBundle($DestDir) {
             return
         }
     }
-    Fail "Could not find a CA certificate bundle for HTTPS matchmaking (build with vcpkg curl)"
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        $MozillaCaUrl = "https://curl.se/ca/cacert.pem"
+        try {
+            Invoke-WebRequest -Uri $MozillaCaUrl -OutFile (Join-Path $DestDir "cacert.pem") -ErrorAction Stop
+            Write-Host "   CA bundle: downloaded from $MozillaCaUrl (no committed/vcpkg bundle)"
+            return
+        } catch {
+            Fail "Could not find CA certificate bundle and download failed: $_"
+        }
+    }
+    Fail "Could not find a CA certificate bundle for HTTPS matchmaking (see port/net/cacert.pem)"
 }
 
 # ── 0. Run codegen scripts that don't need the ROM ──
