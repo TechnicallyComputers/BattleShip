@@ -22,6 +22,11 @@ extern void free(void *ptr);
 extern int abs(int j);
 extern long strtol(const char *nptr, char **endptr, int base);
 extern char *getenv(const char *name);
+
+#ifndef _WIN32
+extern char *realpath(const char *path, char *resolved_path);
+extern int setenv(const char *name, const char *value, int overwrite);
+#endif
 #endif
 
 typedef struct lldiv_t
