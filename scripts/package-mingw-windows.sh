@@ -27,6 +27,7 @@
 #     f3d.o2r, config.yml, gamecontrollerdb.txt, yamls/us/*.yml
 #     assets/custom/fonts/
 #     *.dll                  (MinGW runtime deps from the cross toolchain)
+#     libcurl/libssl/libcrypto/zlib1.dll  (netplay HTTPS when dynamically linked)
 #     port/net/assets/       (netmenu / --netplay only)
 #     ssl/cacert.pem         (netmenu / --netplay only; libcurl TLS for HTTPS matchmaking)
 #
@@ -229,13 +230,19 @@ verify_mingw_https_bundle() {
 	local dest="$1"
 	local missing=0
 	local pat
+	local has_curl=0
 
-	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll'; do
-		if ! compgen -G "$dest/$pat" >/dev/null; then
-			warn "HTTPS netplay package missing $pat in $dest"
-			missing=1
-		fi
-	done
+	if compgen -G "$dest/libcurl*.dll" >/dev/null; then
+		has_curl=1
+	fi
+	if [[ "$has_curl" -eq 1 ]]; then
+		for pat in 'libssl*.dll' 'libcrypto*.dll'; do
+			if ! compgen -G "$dest/$pat" >/dev/null; then
+				warn "HTTPS netplay package missing $pat (OpenSSL runtime for libcurl)"
+				missing=1
+			fi
+		done
+	fi
 	if [[ ! -f "$dest/ssl/cacert.pem" ]]; then
 		warn "HTTPS netplay package missing ssl/cacert.pem"
 		missing=1
@@ -243,6 +250,30 @@ verify_mingw_https_bundle() {
 	if [[ "$missing" -ne 0 ]]; then
 		fail "Incomplete HTTPS matchmaking bundle — install mingw-w64-curl + openssl and re-run with --build --netplay"
 	fi
+}
+
+# Fail if a non-system imported DLL is not present in $dest (basename match).
+verify_staged_pe_deps() {
+	local binary="$1"
+	local dest="$2"
+	local dll key staged
+
+	[[ -f "$binary" ]] || fail "verify_staged_pe_deps: not a file: $binary"
+	while IFS= read -r dll; do
+		[[ -n "$dll" ]] || continue
+		key="${dll,,}"
+		if is_system_dll "$key"; then
+			continue
+		fi
+		if [[ -f "$dest/$dll" ]]; then
+			continue
+		fi
+		staged="$(find "$dest" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+		if [[ -n "$staged" && -f "$staged" ]]; then
+			continue
+		fi
+		fail "Staged $(basename "$binary") missing bundled DLL: $dll"
+	done < <("$OBJDUMP" -p "$binary" 2>/dev/null | awk '/DLL Name:/ {print $3}')
 }
 
 # True if $1 is a Windows system DLL we do not bundle (ships with Windows / UCRT).
@@ -258,7 +289,10 @@ is_system_dll() {
 		d3dcompiler_47.dll | dbghelp.dll | hid.dll | dwmapi.dll | setupapi.dll)
 			return 0
 			;;
-		version.dll | imm32.dll | bcrypt.dll | psapi.dll)
+		version.dll | imm32.dll | bcrypt.dll | psapi.dll | ntdll.dll)
+			return 0
+			;;
+		ucrtbase.dll | msvcrt.dll | shlwapi.dll | rpcrt4.dll | sechost.dll)
 			return 0
 			;;
 		api-ms-win-*)
@@ -612,18 +646,31 @@ bundle_mingw_dlls "$STAGE_DIR/torch.exe" "$STAGE_DIR"
 
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
-	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll'; do
+	for pat in 'libcurl*.dll' 'libssl*.dll' 'libcrypto*.dll' 'zlib1.dll' 'zlib*.dll'; do
 		ensure_mingw_dll_glob "$STAGE_DIR" "$pat" \
-			|| warn "netplay packaging: could not locate $pat under $MINGW_BIN or $MINGW_PREFIX/bin"
+			|| { [[ "$pat" == libcurl* || "$pat" == libssl* || "$pat" == libcrypto* ]] \
+				&& warn "netplay packaging: could not locate $pat under $MINGW_BIN or $MINGW_PREFIX/bin (may be static)"; }
 	done
 	for curl_dll in "$STAGE_DIR"/libcurl*.dll; do
 		[[ -f "$curl_dll" ]] || continue
 		bundle_mingw_dlls "$curl_dll" "$STAGE_DIR"
 	done
+	for ssl_dll in "$STAGE_DIR"/libssl*.dll; do
+		[[ -f "$ssl_dll" ]] || continue
+		bundle_mingw_dlls "$ssl_dll" "$STAGE_DIR"
+	done
+	for crypto_dll in "$STAGE_DIR"/libcrypto*.dll; do
+		[[ -f "$crypto_dll" ]] || continue
+		bundle_mingw_dlls "$crypto_dll" "$STAGE_DIR"
+	done
 	NETPLAY_CA_BUNDLE="$(bundle_mingw_ca_certs "$STAGE_DIR/ssl")"
 	printf '   CA bundle: %s\n' "$NETPLAY_CA_BUNDLE"
 	verify_mingw_https_bundle "$STAGE_DIR"
 fi
+
+step "Verifying staged PE dependencies"
+verify_staged_pe_deps "$STAGE_DIR/$APP_NAME.exe" "$STAGE_DIR"
+verify_staged_pe_deps "$STAGE_DIR/torch.exe" "$STAGE_DIR"
 
 step "Compressing $ZIP_PATH"
 mkdir -p "$DIST_DIR"
