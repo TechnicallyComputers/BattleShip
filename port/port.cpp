@@ -1,4 +1,10 @@
+// On desktop we own `int main` directly. On Android, SDLActivity calls into
+// the .so via dlsym("SDL_main"), so we let SDL_main.h's `#define main SDL_main`
+// rename the entry point during preprocessing — which is exactly what
+// SDL_MAIN_HANDLED would suppress.
+#if !defined(__ANDROID__)
 #define SDL_MAIN_HANDLED
+#endif
 #include "port.h"
 #include "gameloop.h"
 
@@ -30,7 +36,9 @@
 #include "hires/HiResHook.h"
 #include "hires/HiResPack.h"
 #endif
+#if !defined(__ANDROID__)
 #include "port_window_icon.h"
+#endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 
@@ -614,10 +622,15 @@ static int PortInitImpl(int argc, char* argv[]) {
 			port_log("SSB64: Port menu attached\n");
 		}
 
+#if !defined(__ANDROID__)
 		// Linux: WMs only show the app icon if SDL_SetWindowIcon is called
 		// on the live window. .ico/.icns paths are baked into the .exe /
-		// .app on Windows / macOS so this is a no-op there.
+		// .app on Windows / macOS so this is a no-op there. Android pulls
+		// its launcher icon from the APK resources at install time, so
+		// the runtime SDL_SetWindowIcon path is skipped entirely there
+		// (and port_window_icon.cpp isn't compiled into libmain.so).
 		ssb64::SetWindowIcon();
+#endif
 	}
 
 	// Pin LUS to off-screen rendering so mGameFb is populated during
@@ -802,6 +815,56 @@ int main(int argc, char* argv[]) {
 	if (PortInit(argc, argv) != 0) {
 		return 1;
 	}
+
+#if defined(__ANDROID__)
+	// === Android JNI cache warm-up ===
+	//
+	// Our cooperative scheduler runs as port_coroutines (aarch64 fibers)
+	// stack-switched on the SDL_main thread. ART tracks JNI transition
+	// frames per OS thread via a ManagedStack list whose head lives on
+	// the native stack — when port_coroutine_swap moves SP to a different
+	// fiber, the head pointer dangles and any JNI call from the fiber
+	// aborts with "invalid JNI transition frame reference".
+	//
+	// SDL2's Android backend lazy-initializes a few caches via JNI on
+	// first use; if the first use happens from a coroutine, we crash.
+	// Force-warm them here on the real thread so subsequent reads from
+	// inside coroutines hit the in-process cache without re-entering JNI.
+
+	// 1. SDL_INIT_GAMECONTROLLER → HIDDeviceManager.initialize.
+	SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
+	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+		port_log("SSB64: pre-init SDL_INIT_GAMECONTROLLER failed: %s\n",
+		         SDL_GetError());
+	}
+
+	// Prefer AAudio (Android 8.0+ low-latency audio API) over the default
+	// OpenSL ES backend. Worth a few ms of latency for a fighting game,
+	// and SDL2 falls back to OpenSL ES if AAudio isn't compiled in or
+	// the device rejects it.
+	SDL_SetHint(SDL_HINT_AUDIODRIVER, "aaudio");
+
+	// 2. Suppress ImGui's per-frame SDL_GetDisplayUsableBounds JNI path.
+	//    ImGui_ImplSDL2_UpdateMonitors runs on the SSB64 GFX coroutine
+	//    every frame; it calls SDL_GetDisplayUsableBounds →
+	//    ParseDisplayUsableBoundsHint → SDL_GetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS).
+	//    On Android SDL_GetHint falls through to SDL_getenv, which
+	//    Binder-IPCs into Java's PackageManager.getApplicationInfo —
+	//    that fails CheckJNI ("invalid JNI transition frame reference")
+	//    when called from inside a port_coroutine fiber.
+	//
+	//    Setting the hint here populates SDL2's per-program hint store;
+	//    SDL_GetHint then returns from the local cache without env
+	//    lookup, never re-entering JNI from the coroutine. The value
+	//    matches the typical full-screen mobile area; ImGui only uses
+	//    it as the upper bound for floating-window placement, which is
+	//    inert on a touch-only build (we suppress menu rendering anyway).
+	SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080");
+	// Warm bHasEnvironmentVariables so any other SDL_getenv that we
+	// missed is also cached. The SDL_main thread is JVM-attached at
+	// this point, so the JNI roundtrip succeeds.
+	(void)SDL_getenv("__ssb64_jni_warmup__");
+#endif
 
 	// Wrap post-init (game boot + main loop + shutdown) in a top-level
 	// catch so uncaught C++ exceptions get logged as ssb64.log entries

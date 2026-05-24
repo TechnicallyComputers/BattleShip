@@ -339,6 +339,14 @@ void RenderPostProcessDiagnostics(WidgetInfo& /*widget*/) {
     }
 }
 
+#if !defined(__ANDROID__)
+// Shader-pack downloader UI is gated off on Android (the libretro
+// catalog fetch + ZIP-extract pipeline doesn't fit Play Store distro;
+// port/enhancements/ShaderDownloader.cpp is not compiled into libmain.so).
+// The matching menu entry under Settings → Graphics is wrapped in the
+// same guard, so this block is dead code on Android — gate the whole
+// definition so the link doesn't reach for the missing symbols.
+
 // State scoped to the shader-pack modal, mirroring the Low-Res-warn
 // pattern. We keep a "needs to open this frame" flag so the
 // RenderShaderPackModal hook (called every frame from
@@ -643,6 +651,7 @@ void RenderShaderPackModal() {
 
     ImGui::EndPopup();
 }
+#endif // !__ANDROID__ (shader-pack downloader)
 
 // Modal companion to RenderPostProcessShaderPicker. Drawn from
 // RenderMenuTopLevel each frame so the popup survives the picker's
@@ -831,11 +840,14 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Gives the search input focus when it becomes visible."));
 
-    // DRP
+#if !defined(__ANDROID__)
+    // DRP — Android drops discord-rpc entirely (no curl + Play Store
+    // distribution friction; the Discord SDK isn't built for mobile).
     AddWidget(path, "Enable Discord Rich Presence", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("Menu.EnableDRP"))
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Adds Discord Rich Presence (DRP)."));
+#endif
 
     AddWidget(path, "Open App Files Folder", WIDGET_BUTTON)
         .RaceDisable(false)
@@ -907,6 +919,11 @@ void PortMenu::AddMenuSettings() {
                      .DefaultValue(1));
 #endif
 
+#if !defined(__ANDROID__)
+    // Post-process / CRT shader stack — hidden on Android. The libretro
+    // slang→SPIR-V→backend transpile path hasn't been validated against
+    // GLES on mobile, and the libretro shader catalog download (curl +
+    // ZIP extraction) is a poor fit for a Play Store distribution.
     AddWidget(path, "Post-Process Shader", WIDGET_CUSTOM)
         .RaceDisable(false)
         .CustomFunction(RenderPostProcessShaderPicker);
@@ -918,6 +935,7 @@ void PortMenu::AddMenuSettings() {
     AddWidget(path, "Shader Runtime Diagnostics", WIDGET_CUSTOM)
         .RaceDisable(false)
         .CustomFunction(RenderPostProcessDiagnostics);
+#endif
 
     AddWidget(path, "Renderer API (Needs reload)", WIDGET_VIDEO_BACKEND).RaceDisable(false);
     AddWidget(path, "Enable Vsync", WIDGET_CVAR_CHECKBOX)
@@ -1327,7 +1345,11 @@ void PortMenu::AddMenuAbout() {
     AddWidget(path, "Fray: Nrage Control Advising", WIDGET_TEXT);
     AddWidget(path, "ElBateSoli: Raphnet Playtesting", WIDGET_TEXT);
 
-    // BUILT-IN UPDATER
+#if !defined(__ANDROID__)
+    // BUILT-IN UPDATER — hidden on Android. App updates come through the
+    // Play Store on mobile; a curl-driven GitHub-releases updater can't
+    // replace a system-managed installation, and the curl shell-out
+    // (Updater.cpp) isn't built on Android in the first place.
     // The background check still fires when the menu loads
     ssb64::enhancements::CheckForUpdatesAsync(false);
 
@@ -1392,6 +1414,7 @@ void PortMenu::AddMenuAbout() {
         // Pass true to bypass the single-session lock
         ssb64::enhancements::CheckForUpdatesAsync(true);
     });
+#endif // !__ANDROID__ (Updater)
 }
 
 void PortMenu::AddMenuElements() {
@@ -1502,7 +1525,9 @@ void PortMenu::DrawElement() {
     }
 
     RenderPostProcessLowResWarnModal();
+#if !defined(__ANDROID__)
     RenderShaderPackModal();
+#endif
 }
 
 } // namespace ssb64

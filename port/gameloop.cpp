@@ -43,6 +43,12 @@
 /* GBI trace system */
 #include "../debug_tools/gbi_trace/gbi_trace.h"
 
+#if defined(__ANDROID__)
+/* Defined in port/android_touch_overlay.cpp. Atomic flag drained on the
+ * SDL_main thread to honor the on-screen hamburger menu tap. */
+extern "C" bool port_drain_pending_menu_toggle(void);
+#endif
+
 #include "port_log.h"
 #include "renderdoc_trigger.h"
 
@@ -300,6 +306,18 @@ extern "C" int port_get_last_dl_defer_n(void)
  * the port mirrors that below by presenting the cached Fast3D framebuffer. */
 static int sDLSubmitsThisFrame = 0;
 
+/* On Android the SSB64 GFX coroutine cannot safely call into Fast3D's
+ * rendering pipeline: ImGui's per-frame SDL_GetDisplayUsableBounds reads
+ * SDL_HINT_DISPLAY_USABLE_BOUNDS, which on Android falls through to
+ * Java's PackageManager via Binder IPC, which fails CheckJNI when invoked
+ * from a port_coroutine fiber ("invalid JNI transition frame reference").
+ *
+ * To keep the JNI calls on a JVM-attached OS thread, we record the DL
+ * pointer here and let PortPushFrame's main-thread tail call
+ * DrawAndRunGraphicsCommands. The scheduler doesn't observe the deferral —
+ * its task-completion signaling is decoupled from the actual GPU work. */
+static Gfx *sPendingDisplayList = nullptr;
+
 extern "C" void port_submit_display_list(void *dl)
 {
 	/* Lazy-init the GBI trace system on first DL submit. Always install
@@ -321,24 +339,45 @@ extern "C" void port_submit_display_list(void *dl)
 		return;
 	}
 
+	/* Replace any earlier deferred DL from this frame — only the last one
+	 * matters since they all target the same framebuffer slot. In practice
+	 * SSB64 submits one DL per VI tick. */
+	sPendingDisplayList = static_cast<Gfx *>(dl);
+}
+
+/* Drain any deferred DL on the SDL_main thread. Called from PortPushFrame
+ * after port_resume_service_threads — by that point the scheduler coroutine
+ * has yielded and we own the OS thread context-switch state, so JNI calls
+ * inside DrawAndRunGraphicsCommands (ImGui ↔ SDL ↔ Java) execute on a
+ * thread the JVM tracks. */
+extern "C" void port_drain_pending_display_list(void)
+{
+	if (sPendingDisplayList == nullptr) {
+		return;
+	}
+
 	auto context = Ship::Context::GetInstance();
 	if (!context) {
-		port_log("SSB64: WARNING — no Ship::Context in display list submit!\n");
+		port_log("SSB64: WARNING — no Ship::Context in DL drain\n");
+		sPendingDisplayList = nullptr;
 		return;
 	}
 
 	auto window = std::dynamic_pointer_cast<Fast::Fast3dWindow>(context->GetWindow());
 	if (!window) {
-		port_log("SSB64: WARNING — no Fast3dWindow in display list submit!\n");
+		port_log("SSB64: WARNING — no Fast3dWindow in DL drain\n");
+		sPendingDisplayList = nullptr;
 		return;
 	}
 
-	/* Begin trace frame before Fast3D processes the display list */
+	Gfx *dl = sPendingDisplayList;
+	sPendingDisplayList = nullptr;
+
 	gbi_trace_begin_frame();
 
 	std::unordered_map<Mtx *, MtxF> mtxReplacements;
 	try {
-		window->DrawAndRunGraphicsCommands(static_cast<Gfx *>(dl), mtxReplacements);
+		window->DrawAndRunGraphicsCommands(dl, mtxReplacements);
 	} catch (long hr) {
 		port_log("SSB64: CAUGHT DX shader exception HRESULT=0x%08lX\n", hr);
 		gbi_trace_end_frame();
@@ -350,8 +389,6 @@ extern "C" void port_submit_display_list(void *dl)
 	}
 
 	sDLSubmitsThisFrame++;
-
-	/* End trace frame after processing */
 	gbi_trace_end_frame();
 
 	/* Capture this DL's cost so port_get_last_dl_defer_n() can use it
@@ -550,7 +587,33 @@ void PortPushFrame(void)
 	port_enhancement_stage_hazards_tick();
 	port_widescreen_tick();
 
+#if !defined(__ANDROID__)
 	ssb64::enhancements::TickDiscordPresence(); // DRP
+#endif
+
+#if defined(__ANDROID__)
+	/* Hamburger menu button on the touch overlay sets an atomic flag in
+	 * port/android_touch_overlay.cpp; drain it here on the SDL_main thread
+	 * so the ImGui frame currently being built picks up the visibility
+	 * change. Doing this from the Android UI thread directly would race
+	 * with Gui::DrawMenu. */
+	if (port_drain_pending_menu_toggle()) {
+		auto context = Ship::Context::GetInstance();
+		if (context && context->GetWindow() && context->GetWindow()->GetGui()
+		    && context->GetWindow()->GetGui()->GetMenu()) {
+			context->GetWindow()->GetGui()->GetMenu()->ToggleVisibility();
+		}
+	}
+#endif
+
+	/* Render the staged display list now that all coroutines have yielded.
+	 * On Android this hop is load-bearing: ImGui's per-frame
+	 * SDL_GetDisplayUsableBounds Binder-IPCs into Java, and CheckJNI
+	 * rejects jobjects from a port_coroutine fiber. Running on the SDL_main
+	 * thread (here) makes the JNI roundtrip safe. On other platforms the
+	 * deferral is a no-op behavior change — same one DL per frame, same
+	 * order relative to vblank rotation. */
+	port_drain_pending_display_list();
 
 	sFrameCount++;
 

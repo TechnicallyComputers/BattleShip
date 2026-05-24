@@ -165,6 +165,85 @@ jobs:
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-x86_64.AppImage
           if-no-files-found: error
 
+  build-android:
+    # US-only — the Android pipeline (Gradle asset staging, touch overlay,
+    # ROM picker UI) has only ever been tested against the US decomp.
+    # Pinning is also enforced in CMakeLists.txt; setting SSB64_VERSION=jp
+    # on Android would FATAL out at configure time.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Same as the other jobs — fetch-tags-aware history for the
+          # BATTLESHIP_VERSION string the CMake derives from `git describe`.
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          # Match android/app/build.gradle.kts: ndkVersion = "29.0.14206865"
+          # and compileSdk = 34. ssb64-port has confirmed r29 + API 34
+          # build clean against bionic / NDK toolchain; older NDKs trip on
+          # the ptrdiff_t shim in decomp/include/stddef.h.
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
+        # Mirrors the GenerateF3DO2R CMake target. We don't invoke the full
+        # CMake build here because Gradle's externalNativeBuild handles that;
+        # we just need the f3d.o2r file present at repo root so Gradle's
+        # stageGameAssets task picks it up at configure time. The file
+        # contents are just shaders/ packed as a ZIP — no toolchain needed.
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Decode release keystore (if configured via secrets)
+        # If SSB64_ANDROID_KEYSTORE_BASE64 is set in the repo secrets, decode
+        # it to a real .jks file and feed the gradle script's env-var lookup
+        # (signingProp() in build.gradle.kts) so the release build is signed
+        # with the release key. Otherwise Gradle falls back to the debug
+        # signing config — the resulting APK still runs, it's just not
+        # distributable through Play Store.
+        if: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          SSB64_ANDROID_KEYSTORE_BASE64: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$SSB64_ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+          echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"               >> "$GITHUB_ENV"
+          echo "SSB64_RELEASE_KEYSTORE_PASSWORD=${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "SSB64_RELEASE_KEY_ALIAS=${{ secrets.SSB64_ANDROID_KEY_ALIAS }}"     >> "$GITHUB_ENV"
+          echo "SSB64_RELEASE_KEY_PASSWORD=${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+      - name: Build APK
+        # assembleRelease produces the sideload APK that users install
+        # directly. We intentionally do NOT run bundleRelease — the AAB
+        # is Play-Store-only (needs Google's bundletool to install on
+        # a device), and this project isn't distributed through Play.
+        # Skipping it also keeps the GitHub Release page uncluttered.
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Stage release APK under a stable name
+        # Gradle drops the file at app/build/outputs/apk/release/ with
+        # a name like app-release.apk or app-release-unsigned.apk
+        # depending on signing config. Normalize to BattleShip-android.apk
+        # so the release job's files: list doesn't need a glob.
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          apk=(android/app/build/outputs/apk/release/app-release*.apk)
+          if (( ${#apk[@]} == 0 )); then
+            echo "::error::no APK produced under android/app/build/outputs/apk/release/"
+            ls -la android/app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          cp "${apk[0]}" dist/BattleShip-android.apk
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android
+          path: dist/BattleShip-android.apk
+          if-no-files-found: error
+
   build-windows:
     runs-on: windows-2022
     strategy:
@@ -205,7 +284,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-linux, build-windows]
+    needs: [build-macos, build-linux, build-windows, build-android]
     if: startsWith(github.ref, 'refs/tags/v')   # only on tag pushes
     runs-on: ubuntu-latest
     steps:
@@ -216,6 +295,8 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          # Android: sideload APK only (no Play Store distribution, so
+          # the AAB is skipped). Android is US-only so there's no -JP.
           files: |
             artifacts/BattleShip.dmg
             artifacts/BattleShip-JP.dmg
@@ -223,6 +304,7 @@ jobs:
             artifacts/BattleShip-JP-x86_64.AppImage
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
+            artifacts/BattleShip-android.apk
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.
