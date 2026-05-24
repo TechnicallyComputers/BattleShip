@@ -44,6 +44,14 @@ void syNetRollbackApplyPortSimPacing(u32 refresh_hz)
 	(void)refresh_hz;
 }
 
+void syNetReplayInitDebugEnv(void)
+{
+}
+
+void syNetPeerInitDebugEnv(void)
+{
+}
+
 #ifdef PORT
 sb32 syNetPeerShouldPumpBattleGateOnHostFrame(void)
 {

@@ -1,0 +1,53 @@
+name: Android Netplay
+
+# PR smoke: netplay APK only (SSB64_NETMENU=ON). Offline Android is covered by
+# release.yml build-android on tags. One job, one APK — never combined with offline.
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'port/net/**'
+      - 'decomp/src/netplay/**'
+      - 'cmake/Ssb64CurlAndroid.cmake'
+      - 'cmake/Ssb64Netmenu*.cmake'
+      - 'CMakeLists.txt'
+      - 'port/app_paths.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-netplay:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Build netplay APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true
+      - name: Log libmain.so size
+        run: |
+          so="$(find android/app/.cxx android/app/build -name 'libmain.so' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$so" ] && [ -f "$so" ]; then
+            ls -la "$so"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android-netplay-pr
+          path: android/app/build/outputs/apk/release/app-release*.apk
+          if-no-files-found: error
+          retention-days: 7

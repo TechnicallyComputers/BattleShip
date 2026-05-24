@@ -17,6 +17,7 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | Resolved bugs (index + per-bug root cause / fix write-ups) | `docs/bugs/README.md` |
 | Linux menu rendering bug family (CSS/pause/HUD sprites, upstream delta) | `docs/linux_menu_rendering_fixes_2026-05-22.md` |
 | Netplay: sim tick authority vs `hr` / VI / admission bias | `docs/netplay_timebase_authority.md` |
+| Android port status + offline/netplay APK CI | `docs/android_port_status_2026-05-01.md` |
 
 Ongoing investigations and handoff notes are loose `.md` files at the top level of `docs/` — check there before starting work on rendering, collision, or animation issues so you don't duplicate prior effort.
 
