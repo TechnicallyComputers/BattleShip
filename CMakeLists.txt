@@ -2,8 +2,15 @@ cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
 
 project(ssb64 LANGUAGES C CXX)
 
+# Android needs ASM for the aarch64 coroutine context-switch
+# (port/coroutine_aarch64.S). Enable it before any add_library/add_executable
+# call sees an .S source. ASM is preprocessed by clang on the way through.
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    enable_language(ASM)
+endif()
+
 include(ExternalProject)
-include(FetchContent) # pull discord-rpc from GitHub
+include(FetchContent) # pull discord-rpc from GitHub (desktop only)
 
 # Version string for the built-in updater. String-compared exactly against
 # the name returned by GitHub's /tags API, so it must match the release tag
@@ -67,6 +74,16 @@ set_property(CACHE SSB64_VERSION PROPERTY STRINGS us jp)
 if(NOT SSB64_VERSION MATCHES "^(us|jp)$")
     message(FATAL_ERROR "SSB64_VERSION must be 'us' or 'jp' (got '${SSB64_VERSION}')")
 endif()
+# Android ships US-only. The Android build pipeline (Gradle asset staging,
+# touch overlay, JNI bridges) has only ever been tested against the US
+# decomp; bifurcating the APK / app-data dir per region the way desktop
+# does (PR #191) would also need a JP-specific BootActivity/AssetExtractor.
+# Until someone signs up for the JP Android effort, force US.
+if (CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT SSB64_VERSION STREQUAL "us")
+    message(FATAL_ERROR
+        "Android build is US-only (got SSB64_VERSION=${SSB64_VERSION}). "
+        "Drop -DSSB64_VERSION=jp from the Gradle externalNativeBuild args.")
+endif()
 string(TOUPPER "${SSB64_VERSION}" SSB64_VERSION_UC)
 message(STATUS "SSB64 ROM version: ${SSB64_VERSION}")
 
@@ -80,8 +97,22 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(INCLUDE_MPQ_SUPPORT OFF CACHE BOOL "" FORCE)
 set(GBI_UCODE "F3DEX_GBI_2" CACHE STRING "" FORCE)
 
-# Build Torch as the original standalone sidecar executable.
-set(USE_STANDALONE ON CACHE BOOL "" FORCE)
+# Android needs GLES3 instead of desktop GL + GLEW. Pin USE_OPENGLES ON
+# before the libultraship subdirectory so its src/CMakeLists.txt picks the
+# GLESv3 branch and the ENABLE_OPENGL/USE_OPENGLES compile defs are set.
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(USE_OPENGLES ON CACHE BOOL "" FORCE)
+endif()
+
+# Build Torch as the original standalone sidecar executable on desktop.
+# Android ships Torch as a SHARED library (libtorch_runner.so) inside the
+# APK so the first-run UI can extract the user's ROM on-device via JNI —
+# see the torch_runner target at the bottom of this file.
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(USE_STANDALONE OFF CACHE BOOL "" FORCE)
+else()
+    set(USE_STANDALONE ON CACHE BOOL "" FORCE)
+endif()
 set(BUILD_STORMLIB OFF CACHE BOOL "" FORCE)
 set(BUILD_SM64 OFF CACHE BOOL "" FORCE)
 set(BUILD_MK64 OFF CACHE BOOL "" FORCE)
@@ -98,37 +129,46 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
-ExternalProject_Add(TorchExternal
-    PREFIX TorchExternal
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
-    CMAKE_ARGS
-        -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
-        -DUSE_STANDALONE=ON
-        -DBUILD_STORMLIB=OFF
-        -DBUILD_SM64=OFF
-        -DBUILD_MK64=OFF
-        -DBUILD_SF64=OFF
-        -DBUILD_PM64=OFF
-        -DBUILD_FZERO=OFF
-        -DBUILD_MARIO_ARTIST=OFF
-        -DBUILD_NAUDIO=ON
-        -DBUILD_SSB64=ON
-)
-
-ExternalProject_Get_Property(TorchExternal install_dir)
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    # Torch is built via ExternalProject_Add and inherits the parent generator.
-    # Multi-config generators (Visual Studio) place the binary under <CONFIG>/;
-    # single-config generators (Ninja, NMake) drop it directly in the build dir.
-    if(CMAKE_CONFIGURATION_TYPES)
-        set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/$<CONFIG>/torch.exe)
-    else()
-        set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch.exe)
-    endif()
-    set(TORCH_SIDECAR_NAME torch.exe)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Android: build Torch in-tree as a STATIC lib (USE_STANDALONE=OFF
+    # was forced above). The libtorch_runner.so SHARED library at the
+    # bottom of this file wraps it for JNI.
+    add_subdirectory(torch ${CMAKE_BINARY_DIR}/torch)
 else()
-    set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch)
-    set(TORCH_SIDECAR_NAME torch)
+    # Desktop: build Torch as a host executable via ExternalProject so it
+    # can run at our build time to extract ROM assets.
+    ExternalProject_Add(TorchExternal
+        PREFIX TorchExternal
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
+        CMAKE_ARGS
+            -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
+            -DUSE_STANDALONE=ON
+            -DBUILD_STORMLIB=OFF
+            -DBUILD_SM64=OFF
+            -DBUILD_MK64=OFF
+            -DBUILD_SF64=OFF
+            -DBUILD_PM64=OFF
+            -DBUILD_FZERO=OFF
+            -DBUILD_MARIO_ARTIST=OFF
+            -DBUILD_NAUDIO=ON
+            -DBUILD_SSB64=ON
+    )
+
+    ExternalProject_Get_Property(TorchExternal install_dir)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        # Torch is built via ExternalProject_Add and inherits the parent generator.
+        # Multi-config generators (Visual Studio) place the binary under <CONFIG>/;
+        # single-config generators (Ninja, NMake) drop it directly in the build dir.
+        if(CMAKE_CONFIGURATION_TYPES)
+            set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/$<CONFIG>/torch.exe)
+        else()
+            set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch.exe)
+        endif()
+        set(TORCH_SIDECAR_NAME torch.exe)
+    else()
+        set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch)
+        set(TORCH_SIDECAR_NAME torch)
+    endif()
 endif()
 
 # Reloc YAML category files (same category set for every version; the
@@ -245,9 +285,29 @@ list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
 list(APPEND SSB64_SRC_PORT
     ${CMAKE_CURRENT_SOURCE_DIR}/port/resource/RelocFileTable.${SSB64_VERSION}.cpp)
+# coroutine_test.cpp has its own main(); only built standalone when
+# SSB64_BUILD_COROUTINE_TEST=ON below. Never link it into the game.
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/coroutine_test\\.cpp$")
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # libtorch_runner.so wraps android_torch_bridge.cpp separately; keep
+    # it out of libmain.so so the static libtorch + its FetchContent'd
+    # deps don't bloat the SDL-bound game library.
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/android_torch_bridge\\.cpp$")
+    # Drop features we explicitly disable on Android (no curl-driven
+    # self-updater, no discord-rpc link, no libretro shader downloader,
+    # no hires-pack runtime). The corresponding menu entries are gated
+    # with #if !defined(__ANDROID__) in port/gui/PortMenu.cpp so nothing
+    # references the removed symbols.
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX
+        "port/enhancements/(Updater|DiscordRichPresence|ShaderDownloader)\\.cpp$")
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/port_window_icon\\.cpp$")
+endif()
 # Treat the generated icon header as a source so CMake schedules it ahead
 # of any port TU compilation (port_window_icon.cpp #includes it).
-list(APPEND SSB64_SRC_PORT ${SSB64_ICON_GEN})
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    list(APPEND SSB64_SRC_PORT ${SSB64_ICON_GEN})
+endif()
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -348,15 +408,17 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
-# Hi-res texture pack support is US-only. Pack PNGs are addressed by
-# CRC32-IEEE of the decoded RGBA8 buffer that came out of the US ROM
-# fast-path; JP rendering hits different hash inputs (different glyph
-# art for VS-records, JP-only menus, plus palette/sprite nuances on
-# shared assets), so a US-built pack would silently miss on JP and no
-# JP-only pack has been authored. Drop port/hires/ from the JP build
-# entirely and gate the port.cpp / PortMenu.cpp integration on
-# PORT_HIRES_ENABLED.
-if(SSB64_VERSION STREQUAL "us")
+# Hi-res texture pack support is US-only on desktop and dropped entirely
+# on Android (mobile memory budget can't carry the 512 MB LRU cache,
+# and the dump-tooling menu items add no value on touch UI).
+# Pack PNGs are addressed by CRC32-IEEE of the decoded RGBA8 buffer that
+# came out of the US ROM fast-path; JP rendering hits different hash inputs
+# (different glyph art for VS-records, JP-only menus, plus palette/sprite
+# nuances on shared assets), so a US-built pack would silently miss on JP
+# and no JP-only pack has been authored. Drop port/hires/ from the JP and
+# Android builds entirely and gate the port.cpp / PortMenu.cpp integration
+# on PORT_HIRES_ENABLED.
+if(SSB64_VERSION STREQUAL "us" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     list(APPEND SSB64_COMPILE_DEFS PORT_HIRES_ENABLED=1)
 else()
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
@@ -463,50 +525,67 @@ if (NOT MSVC)
 endif()
 
 ################################################################################
-# Fetch Discord RPC
+# Fetch Discord RPC (desktop only — Android drops Discord Rich Presence
+# along with the rest of the network-dependent features).
 ################################################################################
-# discord-rpc v3.4.0's CMakeLists declares cmake_minimum_required(VERSION 2.x),
-# which CMake 3.30+ refuses to honor. Force a baseline policy version for the
-# fetched subdir so the build still configures with current CMake.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-# BattleShip links against the static CRT on Windows (see the
-# MSVC_RUNTIME_LIBRARY setting on the ssb64 / ssb64_game targets below).
-# discord-rpc's own CMakeLists guards the static-CRT switch behind
-# USE_STATIC_CRT — opt in so the produced discord-rpc.lib uses the same
-# /MT[d] runtime, otherwise the final link fails with LNK2038.
-set(USE_STATIC_CRT ON CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    discord_rpc
-    GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
-    GIT_TAG        v3.4.0
-    PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
-)
-FetchContent_MakeAvailable(discord_rpc)
-# Belt and suspenders: enforce the runtime-library property on the
-# produced target directly so it survives a future cmake_policy(CMP0091)
-# propagation behavior change.
-if(MSVC AND TARGET discord-rpc)
-    set_property(TARGET discord-rpc PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # discord-rpc v3.4.0's CMakeLists declares cmake_minimum_required(VERSION 2.x),
+    # which CMake 3.30+ refuses to honor. Force a baseline policy version for the
+    # fetched subdir so the build still configures with current CMake.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    # BattleShip links against the static CRT on Windows (see the
+    # MSVC_RUNTIME_LIBRARY setting on the ssb64 / ssb64_game targets below).
+    # discord-rpc's own CMakeLists guards the static-CRT switch behind
+    # USE_STATIC_CRT — opt in so the produced discord-rpc.lib uses the same
+    # /MT[d] runtime, otherwise the final link fails with LNK2038.
+    set(USE_STATIC_CRT ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        discord_rpc
+        GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
+        GIT_TAG        v3.4.0
+        PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
+    )
+    FetchContent_MakeAvailable(discord_rpc)
+    # Belt and suspenders: enforce the runtime-library property on the
+    # produced target directly so it survives a future cmake_policy(CMP0091)
+    # propagation behavior change.
+    if(MSVC AND TARGET discord-rpc)
+        set_property(TARGET discord-rpc PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
 
-# Suppress GCC 14 strict template errors in discord-rpc's bundled RapidJSON
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
-    target_compile_options(discord-rpc PRIVATE -Wno-template-body)
+    # Suppress GCC 14 strict template errors in discord-rpc's bundled RapidJSON
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
+        target_compile_options(discord-rpc PRIVATE -Wno-template-body)
+    endif()
 endif()
 
 ################################################################################
 # Executable target — port C++ code + decomp object library
 ################################################################################
 
-add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_DEBUG_TOOLS} $<TARGET_OBJECTS:ssb64_game>)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # SDLActivity (Java) loads a shared library and calls SDL_main from it
+    # via dlsym. Output name `main` matches SDL2's default `libmain.so`
+    # lookup. The aarch64 coroutine asm shim is pulled in here so the
+    # SHARED target builds with the .S preprocessed by clang.
+    add_library(${PROJECT_NAME} SHARED
+        ${SSB64_SRC_PORT}
+        ${SSB64_DEBUG_TOOLS}
+        $<TARGET_OBJECTS:ssb64_game>
+        port/coroutine_aarch64.S
+    )
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "main")
+else()
+    add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_DEBUG_TOOLS} $<TARGET_OBJECTS:ssb64_game>)
 
-# User-facing binary name. The CMake target keeps the historical
-# `ssb64` identifier (matches the repo, build dirs, internal symbols),
-# but the produced executable is `${SSB64_APP_NAME}` — `BattleShip`
-# (US) or `BattleShip-JP` (JP), so the two are distinct applications.
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${SSB64_APP_NAME}")
+    # User-facing binary name. The CMake target keeps the historical
+    # `ssb64` identifier (matches the repo, build dirs, internal symbols),
+    # but the produced executable is `${SSB64_APP_NAME}` — `BattleShip`
+    # (US) or `BattleShip-JP` (JP), so the two are distinct applications.
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${SSB64_APP_NAME}")
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set_target_properties(ssb64_game PROPERTIES
@@ -534,17 +613,26 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
-    ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
-    ${discord_rpc_SOURCE_DIR}/include             # Discord Rich Presence
 )
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
+        ${discord_rpc_SOURCE_DIR}/include             # Discord Rich Presence
+    )
+endif()
 
 ################################################################################
 # Link libultraship and Torch
 ################################################################################
 
-add_dependencies(${PROJECT_NAME} libultraship TorchExternal discord-rpc)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    add_dependencies(${PROJECT_NAME} libultraship)
+    target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+else()
+    add_dependencies(${PROJECT_NAME} libultraship TorchExternal discord-rpc)
+    target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
+endif()
 add_dependencies(ssb64_game GenerateCreditsAssets)
-target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
 
 ################################################################################
 # Platform-specific settings
@@ -575,56 +663,74 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 ################################################################################
-# Copy runtime data files to build directory
+# Copy runtime data files to build directory (desktop only — Android stages
+# these into the APK assets/ at Gradle time via android/app/build.gradle.kts).
 ################################################################################
 
-configure_file(
-    ${CMAKE_SOURCE_DIR}/gamecontrollerdb.txt
-    ${CMAKE_BINARY_DIR}/gamecontrollerdb.txt
-    COPYONLY
-)
-
-add_custom_target(GenerateF3DO2R
-    BYPRODUCTS ${CMAKE_SOURCE_DIR}/f3d.o2r
-    COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_SOURCE_DIR}/f3d.o2r
-    COMMAND ${CMAKE_COMMAND} -E tar cf ${CMAKE_SOURCE_DIR}/f3d.o2r --format=zip shaders
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libultraship/src/fast
-    COMMENT "Packaging Fast3D shaders into f3d.o2r"
-)
-
-add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/f3d.o2r
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/f3d.o2r
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    configure_file(
         ${CMAKE_SOURCE_DIR}/gamecontrollerdb.txt
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/gamecontrollerdb.txt
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/assets/custom/fonts/Montserrat-Regular.ttf
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts/Montserrat-Regular.ttf
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/assets/custom/fonts/Inconsolata-Regular.ttf
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts/Inconsolata-Regular.ttf
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/config.yml
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/config.yml
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/yamls/${SSB64_VERSION}
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${TORCH_EXECUTABLE}
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
-)
+        ${CMAKE_BINARY_DIR}/gamecontrollerdb.txt
+        COPYONLY
+    )
+
+    add_custom_target(GenerateF3DO2R
+        BYPRODUCTS ${CMAKE_SOURCE_DIR}/f3d.o2r
+        COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_SOURCE_DIR}/f3d.o2r
+        COMMAND ${CMAKE_COMMAND} -E tar cf ${CMAKE_SOURCE_DIR}/f3d.o2r --format=zip shaders
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libultraship/src/fast
+        COMMENT "Packaging Fast3D shaders into f3d.o2r"
+    )
+
+    add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/f3d.o2r
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/f3d.o2r
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/gamecontrollerdb.txt
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/gamecontrollerdb.txt
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/assets/custom/fonts/Montserrat-Regular.ttf
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts/Montserrat-Regular.ttf
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/assets/custom/fonts/Inconsolata-Regular.ttf
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/custom/fonts/Inconsolata-Regular.ttf
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/config.yml
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/config.yml
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/yamls/${SSB64_VERSION}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/yamls/${SSB64_VERSION}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${TORCH_EXECUTABLE}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
+    )
+else()
+    # Android: produce f3d.o2r in the source tree so Gradle's stageGameAssets
+    # task can pick it up at APK build time. No POST_BUILD copies — the APK
+    # asset pipeline handles staging into externalFilesDir on first launch.
+    add_custom_target(GenerateF3DO2R
+        BYPRODUCTS ${CMAKE_SOURCE_DIR}/f3d.o2r
+        COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_SOURCE_DIR}/f3d.o2r
+        COMMAND ${CMAKE_COMMAND} -E tar cf ${CMAKE_SOURCE_DIR}/f3d.o2r --format=zip shaders
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libultraship/src/fast
+        COMMENT "Packaging Fast3D shaders into f3d.o2r (Android)"
+    )
+    add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
+endif()
 
 ################################################################################
-# Asset extraction targets
+# Asset extraction targets (desktop only — Android extracts on-device from
+# the user's ROM via libtorch_runner.so at first launch; see
+# port/android_torch_bridge.cpp + RomImporter.java).
 ################################################################################
 
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
 # Accept .z64 (big-endian), .n64 (little-endian), or .v64 (byteswapped).
 # Torch's Cartridge::Normalize converts non-z64 byte orders in-memory.
 set(SSB64_BASEROM "")
@@ -713,3 +819,43 @@ add_custom_target(GenerateBattleShipO2R
 # early-development artifact; the runtime loads only BattleShip.o2r
 # (ROM-derived, user-extracted at first run) and f3d.o2r (shaders). No
 # ROM-derived data is ever produced by the build.
+
+endif() # NOT Android — ExtractAssets / GenerateBattleShipO2R block
+
+################################################################################
+# Android-only targets: torch_runner SHARED library + coroutine_test harness
+################################################################################
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # libtorch_runner.so — wraps the static libtorch.a (from add_subdirectory
+    # at the top) with a small extern "C" entry point that the first-run
+    # Activity calls via JNI to extract the user's ROM into BattleShip.o2r.
+    # Lives outside libmain.so so Java can load it BEFORE SDLActivity/libSDL2
+    # are initialized — the ROM picker is a regular Activity that runs before
+    # the SDL game loop starts.
+    add_library(torch_runner SHARED port/android_torch_bridge.cpp)
+    target_include_directories(torch_runner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/torch/src
+    )
+    # The extractor + its FetchContent'd deps (yaml-cpp, tinyxml2, libgfxd,
+    # BinaryTools, N64Graphics, spdlog, GSL, ...). All are static libs from
+    # torch's CMakeLists.txt under USE_STANDALONE=OFF.
+    target_link_libraries(torch_runner PRIVATE torch)
+    set_target_properties(torch_runner PROPERTIES OUTPUT_NAME "torch_runner")
+
+    # Standalone aarch64 coroutine test (off by default — opt in for asm
+    # regression validation, see docs/android_port_status_*.md). Pushes a
+    # tiny binary to /data/local/tmp/ to verify the asm context-switch
+    # without needing the full game.
+    option(SSB64_BUILD_COROUTINE_TEST
+        "Build the aarch64 coroutine standalone test binary (Android)" OFF)
+    if (SSB64_BUILD_COROUTINE_TEST)
+        add_executable(coroutine_test
+            port/coroutine_test.cpp
+            port/coroutine_android.cpp
+            port/coroutine_aarch64.S
+        )
+        target_include_directories(coroutine_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/port
+        )
+    endif()
+endif()

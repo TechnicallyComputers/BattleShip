@@ -36,7 +36,9 @@
 #include "hires/HiResHook.h"
 #include "hires/HiResPack.h"
 #endif
+#if !defined(__ANDROID__)
 #include "port_window_icon.h"
+#endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 
@@ -620,10 +622,15 @@ static int PortInitImpl(int argc, char* argv[]) {
 			port_log("SSB64: Port menu attached\n");
 		}
 
+#if !defined(__ANDROID__)
 		// Linux: WMs only show the app icon if SDL_SetWindowIcon is called
 		// on the live window. .ico/.icns paths are baked into the .exe /
-		// .app on Windows / macOS so this is a no-op there.
+		// .app on Windows / macOS so this is a no-op there. Android pulls
+		// its launcher icon from the APK resources at install time, so
+		// the runtime SDL_SetWindowIcon path is skipped entirely there
+		// (and port_window_icon.cpp isn't compiled into libmain.so).
 		ssb64::SetWindowIcon();
+#endif
 	}
 
 	// Pin LUS to off-screen rendering so mGameFb is populated during
