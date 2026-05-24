@@ -225,8 +225,8 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 
 - **`SSB64_MATCHMAKING_BASE_URL`** — [`mm_matchmaking.c`](port/net/matchmaking/mm_matchmaking.c). Default: `https://netplay.technicallycomputers.ca` (HTTPS proxy to the matchmaking API). Override for local/dev servers.
 - **`SSB64_MATCHMAKING_CA_BUNDLE`** — PEM CA bundle path for libcurl TLS verification when the host store is unavailable (AppImage sets `CURL_CA_BUNDLE` / `SSL_CERT_FILE` automatically; this env wins if set).
-- **`SSB64_MATCHMAKING_PUBLIC_ENDPOINT`**, **`SSB64_MATCHMAKING_BIND`**, **`SSB64_MATCHMAKING_LAN_ENDPOINT`** — [`scautomatch.c`](decomp/src/netplay/sc/sccommon/scautomatch.c). After match, bootstrap tries **`peer_lan`** only when local STUN **`udp_endpoint`** and opponent reflexive **`peer`** share the same IPv4 (same WAN); otherwise uses reflexive **`peer`** only.
-- **`SSB64_MATCHMAKING_FORCE_PEER_LAN`** — Non-zero: always try **`peer_lan`** before reflexive (ignores WAN comparison).
+- **`SSB64_MATCHMAKING_PUBLIC_ENDPOINT`**, **`SSB64_MATCHMAKING_BIND`**, **`SSB64_MATCHMAKING_LAN_ENDPOINT`** — [`scautomatch.c`](decomp/src/netplay/sc/sccommon/scautomatch.c). After match, bootstrap always tries reflexive **`peer`** (WAN/STUN path) first. **`peer_lan`** is tried only if that fails **and** local STUN **`udp_endpoint`** and opponent **`peer`** share the same IPv4 (`mmHostportWanIpv4Equal`).
+- **`SSB64_MATCHMAKING_FORCE_PEER_LAN`** — Non-zero: dev override — try **`peer_lan`** before reflexive (ignores WAN comparison).
 - **`SSB64_MATCHMAKING_LAN_INTERFACE`** — [`mm_lan_detect.c`](port/net/matchmaking/mm_lan_detect.c)
 - **`SSB64_NETPLAY_SERVER_BOOTSTRAP`** — [`mm_server_barrier.c`](port/net/bootstrap/mm_server_barrier.c) (Linux)
 
