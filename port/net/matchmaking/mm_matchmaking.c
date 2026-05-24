@@ -18,7 +18,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
-/* port/net/stdlib.h is on the include path before the system header; use include_next for POSIX. */
+/* decomp/src/netplay/include/stdlib.h shadows decomp/include before the system header; use include_next for POSIX. */
 #ifdef _WIN32
 #include <stdlib.h>
 #else
@@ -695,7 +695,7 @@ static void mmCurlConfigureSsl(CURL *c)
 #endif
 }
 
-/* Persist matchmaking API token outside the install dir (port/net/stdlib.h shadows <stdlib.h>). */
+/* Persist matchmaking API token outside the install dir (netplay/include/stdlib.h shadows <stdlib.h>). */
 static void mmCredPath(char *out, size_t cap)
 {
 #ifdef _WIN32

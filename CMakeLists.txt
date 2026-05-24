@@ -387,6 +387,7 @@ if(SSB64_VERSION STREQUAL "jp")
 endif()
 
 if(SSB64_NETMENU)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuSources.cmake")
 endif()
 
@@ -486,12 +487,11 @@ add_library(ssb64_game OBJECT ${SSB64_DECOMP_SOURCES})
 
 if(SSB64_NETMENU)
     target_sources(ssb64_game PRIVATE ${SSB64_PORT_NETMENU_SOURCES})
-    # BEFORE: foundation shims in port/net (string.h, stdlib.h, sys/taskman.h) must precede decomp/include
-    # and decomp/src; then narrower include roots for matchmaking/mm_*.h and lb/*.h lookups.
+    # BEFORE: netplay shims + shadows, then port/net (matchmaking, rollback transport).
     target_include_directories(ssb64_game BEFORE PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/port/net"
+        ${SSB64_NETPLAY_INCLUDE_BEFORE}
         "${CMAKE_CURRENT_SOURCE_DIR}/port/net/matchmaking"
-        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/lb")
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     target_include_directories(ssb64_game PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
@@ -502,8 +502,9 @@ if(SSB64_NETMENU)
         target_link_libraries(ssb64_game PRIVATE Threads::Threads)
     endif()
 else()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
     # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
-    # Add trailing -I port/net on these TUs only so decomp/src stays ahead for <sc/scene.h>.
+    # Per-TU -I: netplay include/ shims, netplay/sys for objman_gcport, then port/net for netpeer headers.
     set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     set(_SSB64_DECOMP_NETINCLUDE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/sccommon/scvsbattle.c"
@@ -528,15 +529,19 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netrollbacksnapshot.c")
     target_sources(ssb64_game PRIVATE ${_SSB64_OFFLINE_NET_SOURCES})
     list(APPEND _SSB64_DECOMP_NETINCLUDE_SOURCES ${_SSB64_OFFLINE_NET_SOURCES})
-    # port/net/string.h must precede decomp/include/string.h for netrollbacksnapshot.c (strcmp et al.).
+    # netplay/include/string.h must precede decomp/include/string.h for netrollbacksnapshot.c.
+    set(_SSB64_OFFLINE_NET_INCLUDE_DIRS
+        "${SSB64_NETPLAY_INCLUDE_SHIMS};${SSB64_NETPLAY_SYS_INCLUDE};${_SSB64_PORT_NET_SYS_PARENT}")
     set_source_files_properties(${_SSB64_OFFLINE_NET_SOURCES}
-        PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+        PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
     if(MSVC)
         set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
-            PROPERTIES COMPILE_OPTIONS "/I${_SSB64_PORT_NET_SYS_PARENT}")
+            PROPERTIES COMPILE_OPTIONS
+                "/I${SSB64_NETPLAY_INCLUDE_SHIMS};/I${SSB64_NETPLAY_SYS_INCLUDE};/I${_SSB64_PORT_NET_SYS_PARENT}")
     else()
         set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
-            PROPERTIES COMPILE_OPTIONS "-I${_SSB64_PORT_NET_SYS_PARENT}")
+            PROPERTIES COMPILE_OPTIONS
+                "-I${SSB64_NETPLAY_INCLUDE_SHIMS} -I${SSB64_NETPLAY_SYS_INCLUDE} -I${_SSB64_PORT_NET_SYS_PARENT}")
     endif()
 endif()
 
@@ -551,7 +556,7 @@ target_sources(ssb64_game PRIVATE ${SSB64_STUBS})
 if(NOT SSB64_NETMENU)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/netsync_hash_stubs.c"
-        PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+        PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
 endif()
 
 # Selectively include decomp libultra files that provide needed functionality.

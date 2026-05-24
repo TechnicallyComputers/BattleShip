@@ -50,7 +50,7 @@ static void mmStunFillTxId(u8 *pkt)
 	s32 i;
 
 #ifdef _WIN32
-	/* No rand(): port/net/stdlib.h shadows system <stdlib.h> under netmenu include order. */
+	/* No rand(): netplay/include/stdlib.h shadows system <stdlib.h> under netmenu include order. */
 	for (i = 0; i < 12; i++)
 	{
 		pkt[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 7919U));

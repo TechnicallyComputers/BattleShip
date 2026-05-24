@@ -7,7 +7,7 @@
 #include <PR/gbi.h>
 #include <lb/lbcommon.h>
 #ifndef LBCOMMON_H_PORT_NET
-#error "BattleShip netmenu expects port/net lb/lbcommon.h shadow, not stock decomp header."
+#error "BattleShip netmenu expects decomp/src/netplay/lb/lbcommon.h shadow, not stock decomp header."
 #endif
 #include <sys/objtypes.h>
 

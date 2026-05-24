@@ -103,6 +103,242 @@ static sb32 parse_bind_port(const char *spec, u16 *out_port)
 	return TRUE;
 }
 
+static sb32 parse_hostport_ipv4(const char *hostport, struct in_addr *out_addr)
+{
+	const char *colon;
+	size_t host_len;
+	char host[INET_ADDRSTRLEN];
+
+	if ((hostport == NULL) || (out_addr == NULL))
+	{
+		return FALSE;
+	}
+	colon = strrchr(hostport, ':');
+	if ((colon == NULL) || (colon == hostport) || (colon[1] == '\0'))
+	{
+		return FALSE;
+	}
+	host_len = (size_t)(colon - hostport);
+	if ((host_len == 0U) || (host_len >= sizeof(host)))
+	{
+		return FALSE;
+	}
+	memcpy(host, hostport, host_len);
+	host[host_len] = '\0';
+	if (inet_pton(AF_INET, host, out_addr) != 1)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static u32 ipv4_cidr_prefix_to_mask_host(u8 prefix_len)
+{
+	u32 mask;
+
+	if (prefix_len == 0U)
+	{
+		return 0U;
+	}
+	if (prefix_len >= 32U)
+	{
+		return 0xFFFFFFFFU;
+	}
+	mask = 0xFFFFFFFFU;
+	mask <<= (32U - (u32)prefix_len);
+	return mask;
+}
+
+static sb32 ipv4_same_subnet_host_order(u32 peer_be, u32 if_be, u32 mask_host)
+{
+	u32 peer_h = ntohl(peer_be);
+	u32 if_h = ntohl(if_be);
+
+	if (mask_host == 0U)
+	{
+		return FALSE;
+	}
+	return ((peer_h & mask_host) == (if_h & mask_host)) ? TRUE : FALSE;
+}
+
+#ifdef _WIN32
+static sb32 mmLanIpv4OnLocalSubnet(const struct in_addr *peer)
+{
+	ULONG buf_len = 15000;
+	PIP_ADAPTER_ADDRESSES addrs;
+	ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+	PIP_ADAPTER_ADDRESSES cur;
+	sb32 ok;
+
+	if (peer == NULL)
+	{
+		return FALSE;
+	}
+	for (;;)
+	{
+		addrs = (PIP_ADAPTER_ADDRESSES)malloc(buf_len);
+		if (addrs == NULL)
+		{
+			return FALSE;
+		}
+		if (GetAdaptersAddresses(AF_INET, flags, NULL, addrs, &buf_len) == ERROR_SUCCESS)
+		{
+			break;
+		}
+		free(addrs);
+		if (GetLastError() != ERROR_BUFFER_OVERFLOW)
+		{
+			return FALSE;
+		}
+	}
+
+	ok = FALSE;
+	for (cur = addrs; cur != NULL; cur = cur->Next)
+	{
+		PIP_ADAPTER_UNICAST_ADDRESS ua;
+		struct sockaddr_in *sin;
+
+		if (cur->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+		{
+			continue;
+		}
+		for (ua = cur->FirstUnicastAddress; ua != NULL; ua = ua->Next)
+		{
+			u32 mask_host;
+			u8 prefix;
+
+			if ((ua->Address.lpSockaddr == NULL) || (ua->Address.lpSockaddr->sa_family != AF_INET))
+			{
+				continue;
+			}
+			sin = (struct sockaddr_in *)ua->Address.lpSockaddr;
+			if (addr_is_rfc1918(&sin->sin_addr) == FALSE)
+			{
+				continue;
+			}
+			if (peer->s_addr == sin->sin_addr.s_addr)
+			{
+				ok = TRUE;
+				break;
+			}
+			prefix = ua->OnLinkPrefixLength;
+			mask_host = ipv4_cidr_prefix_to_mask_host(prefix);
+			if (ipv4_same_subnet_host_order(peer->s_addr, sin->sin_addr.s_addr, mask_host) != FALSE)
+			{
+				ok = TRUE;
+				break;
+			}
+		}
+		if (ok != FALSE)
+		{
+			break;
+		}
+	}
+	free(addrs);
+	return ok;
+}
+#else
+static sb32 mmLanIfaUsableForPeerReach(const char *ifname)
+{
+	if (ifname == NULL)
+	{
+		return FALSE;
+	}
+	return (ifname_score(ifname) >= 0) ? TRUE : FALSE;
+}
+
+static sb32 mmLanIpv4OnLocalSubnet(const struct in_addr *peer)
+{
+	struct ifaddrs *ifa_head;
+	struct ifaddrs *ifa;
+	sb32 ok;
+
+	if (peer == NULL)
+	{
+		return FALSE;
+	}
+	if (getifaddrs(&ifa_head) != 0)
+	{
+		return FALSE;
+	}
+	ok = FALSE;
+	for (ifa = ifa_head; ifa != NULL; ifa = ifa->ifa_next)
+	{
+		struct sockaddr_in *addr;
+		struct sockaddr_in *mask;
+
+		if ((ifa->ifa_addr == NULL) || (ifa->ifa_netmask == NULL) || (ifa->ifa_name == NULL))
+		{
+			continue;
+		}
+		if (mmLanIfaUsableForPeerReach(ifa->ifa_name) == FALSE)
+		{
+			continue;
+		}
+		if (ifa->ifa_addr->sa_family != AF_INET)
+		{
+			continue;
+		}
+		addr = (struct sockaddr_in *)ifa->ifa_addr;
+		mask = (struct sockaddr_in *)ifa->ifa_netmask;
+		if (addr_is_rfc1918(&addr->sin_addr) == FALSE)
+		{
+			continue;
+		}
+		if (peer->s_addr == addr->sin_addr.s_addr)
+		{
+			ok = TRUE;
+			break;
+		}
+		if (((peer->s_addr & mask->sin_addr.s_addr) == (addr->sin_addr.s_addr & mask->sin_addr.s_addr)) &&
+		    (mask->sin_addr.s_addr != 0))
+		{
+			ok = TRUE;
+			break;
+		}
+	}
+	freeifaddrs(ifa_head);
+	return ok;
+}
+#endif
+
+sb32 mmLanPeerHostportIsOnLocalLan(const char *peer_hostport)
+{
+	struct in_addr peer;
+
+	if ((peer_hostport == NULL) || (peer_hostport[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (parse_hostport_ipv4(peer_hostport, &peer) == FALSE)
+	{
+		return FALSE;
+	}
+	if (addr_is_rfc1918(&peer) == FALSE)
+	{
+		return FALSE;
+	}
+	return mmLanIpv4OnLocalSubnet(&peer);
+}
+
+sb32 mmHostportWanIpv4Equal(const char *local_wan_hostport, const char *peer_wan_hostport)
+{
+	struct in_addr local_addr;
+	struct in_addr peer_addr;
+
+	if ((local_wan_hostport == NULL) || (local_wan_hostport[0] == '\0') || (peer_wan_hostport == NULL) ||
+	    (peer_wan_hostport[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if ((parse_hostport_ipv4(local_wan_hostport, &local_addr) == FALSE) ||
+	    (parse_hostport_ipv4(peer_wan_hostport, &peer_addr) == FALSE))
+	{
+		return FALSE;
+	}
+	return (local_addr.s_addr == peer_addr.s_addr) ? TRUE : FALSE;
+}
+
 #ifdef _WIN32
 static sb32 udp_port_from_fd(s32 udp_fd, u16 *out_port)
 {

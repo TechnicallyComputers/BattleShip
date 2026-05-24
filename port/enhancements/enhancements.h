@@ -48,6 +48,11 @@ void port_enhancement_analog_remap(int player_index, signed char* stick_x, signe
 
 int port_cheat_unlock_all_active(void);
 
+int port_get_comp_ruleset(void);
+int port_enhancement_cpu_level_9(void);
+int port_enhancement_neutral_spawns(void);
+int port_enhancement_skip_results_screen(void);
+
 #ifdef __cplusplus
 }
 
@@ -62,6 +67,10 @@ const char* AnalogRemapCVarName(int playerIndex);
 const char* AnalogRemapDeadzoneCVarName(int playerIndex);
 const char* AnalogRemapRangeCVarName(int playerIndex);
 const char* WidescreenCVarName();
+const char* CompRulesetCVarName();
+const char* CpuLevel9CVarName();
+const char* NeutralSpawnsCVarName();
+const char* SkipResultsScreenCVarName();
 
 // Updater functions
 void CheckForUpdatesAsync(bool force = false);
