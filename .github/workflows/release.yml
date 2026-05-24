@@ -199,21 +199,36 @@ jobs:
         working-directory: libultraship/src/fast
         run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
       - name: Decode release keystore (if configured via secrets)
-        # If SSB64_ANDROID_KEYSTORE_BASE64 is set in the repo secrets, decode
-        # it to a real .jks file and feed the gradle script's env-var lookup
-        # (signingProp() in build.gradle.kts) so the release build is signed
-        # with the release key. Otherwise Gradle falls back to the debug
-        # signing config — the resulting APK still runs, it's just not
-        # distributable through Play Store.
-        if: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 != '' }}
+        # If SSB64_ANDROID_KEYSTORE_BASE64 is set in the repo secrets,
+        # decode it to a real .jks file and export the env vars
+        # build.gradle.kts looks for (signingProp() in app/build.gradle.kts).
+        # Otherwise Gradle falls back to debug signing — the APK still
+        # runs, it just isn't certificate-stable across releases.
+        #
+        # Secrets are routed through env: rather than referenced in a
+        # step-level if: expression. GitHub's startup-time workflow parser
+        # rejects `if: ${{ secrets.X != '' }}` because the secrets context
+        # isn't guaranteed available at that point — the workflow run
+        # comes back as "This run likely failed because of a workflow file
+        # issue" with no jobs ever scheduled. Doing the check inside the
+        # shell against an env-mapped value is the documented safe pattern.
         env:
-          SSB64_ANDROID_KEYSTORE_BASE64: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
         run: |
+          if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::No release keystore secret configured; falling back to debug signing"
+            exit 0
+          fi
           echo "$SSB64_ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
-          echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"               >> "$GITHUB_ENV"
-          echo "SSB64_RELEASE_KEYSTORE_PASSWORD=${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "SSB64_RELEASE_KEY_ALIAS=${{ secrets.SSB64_ANDROID_KEY_ALIAS }}"     >> "$GITHUB_ENV"
-          echo "SSB64_RELEASE_KEY_PASSWORD=${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          {
+            echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"
+            echo "SSB64_RELEASE_KEYSTORE_PASSWORD=$SSB64_ANDROID_KEYSTORE_PASSWORD"
+            echo "SSB64_RELEASE_KEY_ALIAS=$SSB64_ANDROID_KEY_ALIAS"
+            echo "SSB64_RELEASE_KEY_PASSWORD=$SSB64_ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
       - name: Build APK
         # assembleRelease produces the sideload APK that users install
         # directly. We intentionally do NOT run bundleRelease — the AAB
