@@ -169,7 +169,7 @@ Local build:
 ./scripts/package-android.sh --netplay  # netplay
 ```
 
-**Native:** `-DSSB64_NETMENU=ON` pulls in rollback/automatch (`port/net/`, `decomp/src/netplay/`) and builds static libcurl via `cmake/Ssb64CurlAndroid.cmake` + `cmake/FindMbedTLS.cmake` (FetchContent mbedtls with `framework` submodule; first NDK configure can take several minutes).
+**Native:** `-DSSB64_NETMENU=ON` pulls in rollback/automatch (`port/net/`, `decomp/src/netplay/`) and builds static libcurl via `cmake/Ssb64CurlAndroid.cmake` + `cmake/FindMbedTLS.cmake` (FetchContent mbedtls with `framework` submodule; first NDK configure can take several minutes). HID/Raphnet USB uses a **hidapi stub** on Android (`libultraship/cmake/dependencies/hidapi_android/`); controllers are via SDL only.
 
 **Runtime assets** (extracted to `externalFilesDir` on first launch, same tree as `f3d.o2r`):
 
