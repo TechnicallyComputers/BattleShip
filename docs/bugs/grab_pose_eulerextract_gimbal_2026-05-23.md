@@ -68,3 +68,21 @@ Any other matched-decomp function that compares a derived float against an exact
 - **Counter-shaped equality checks** with values produced by float arithmetic (e.g. comparing accumulated sums to a target).
 
 Both want tolerance-based comparison. Audit candidates: any `gm/gmcollision.c` matrix-decomp routine, anything that does `if (f == 0.0F)` after a multiplication chain, anything in physics integration comparing time-step accumulators.
+
+## Sweep follow-up (2026-05-23, same day)
+
+After confirming the offline reproducer was fixed solely by the gimbal-lock tolerance change here (PR #205), we ran the audit hook against the rest of the codebase. JR's repro on `main` (which had PR #204's invalidate machinery applied) **still produced the inverted victim** — so PR #204's `ftParamInvalidateFighterRootChain`, `ftMainApplySlopeContourFlags`, per-frame stale-FULL guard, NULL guards on capture/throw paths, and `mpCommonUpdateFighterSlopeContour` invalidate were demonstrably not load-bearing for the offline bug they were diagnosed against (and the runtime trace had already shown `root_cache_pre = 0, hand_cache_pre = 0` on every one of 975 frames, confirming the invalidate had nothing to clear). Reverted in `398f02978` on the same branch as part of this follow-up.
+
+Sweep scope: `decomp/src/{gm,ft,mp,wp,it,gr,sc,lb,ef,mn,sys/audio}/` and `port/`. libultraship out of scope (separate codebase). Three confirmed sibling sites with the same root-cause class:
+
+| Site | Shape | Visible blast |
+|---|---|---|
+| `gr/grcommon/grsector.c:620` `func_ovl2_801070A4` | Matrix-to-Euler extractor, `(vec3->z == ±1.0F)` exact-equality gimbal-lock check. `vec3` from `lbCommonCross3D` + `syVectorNorm3D`. | Sector Z Arwing laser orientation can be wrong by up to 90° |
+| `ft/ftparam.c:2794` (two-bone IK) | Same matrix-to-Euler shape, `(inverse_xy_2 == ±1.0F)`. Value from `sqrtf` chain. Drives `child1_dobj` rotate. | Arm IK chain (grab/throw target tracking) produces corrupted joint rotations |
+| `gm/gmcollision.c:591` `func_ovl2_800EE050` | Different shape: `square == 1.0F` chooses between identity matrix and a general formula whose else branch divides by `(1.0F - SQUARE(temp))` and `(1.0F + dist.x)` — both collapse to zero exactly when the equality check is supposed to fire. Original inline comment: "JUST BARELY matches" (the IDO author was aware). | Collision capsule rotation matrix gets inf/nan when the input vector is near-±X-axis-aligned — likely cause of any "stretched / missing hitbox" report at near-horizontal angles |
+
+All three fixed with the same `<= -0.9999F || >= 0.9999F` (or `>= 0.9999F` for the single-sided `square` check) tolerance pattern under `#ifdef PORT`. ~0.81° band around the singularity, narrow enough that genuine rotations don't trip it.
+
+**Dismissed as a different class** (defensive divide-by-zero guards, not branch-mis-selection): `lb/lbparticle.c:1822 tm == 0.0F`, `lb/lbcommon.c:411 magnitude == 0.0F`, `lb/lbcommon.c:2173 magnitude == 0.0F`. IEEE-754 `sqrtf` preserves exact zero so these equality checks fire correctly for natural inputs; the worst case is a subnormal-flushing edge case which is a separate hardening discussion. `wp/wplink/wplinkboomerang.c:386 vel == 10.0F` was flagged as possibly broken but is self-correcting on the next physics tic via the `< 10.0F` clamp in `wpLinkBoomerangSubVelSqrt`.
+
+**Audit coverage:** `gm/ ft/ mp/ wp/ it/ gr/ sc/ lb/ ef/ mn/ sys/audio/ port/`. Not yet swept: `mv/`, `db/`, libultraship.
