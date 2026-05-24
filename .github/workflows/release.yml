@@ -214,40 +214,34 @@ jobs:
           echo "SSB64_RELEASE_KEYSTORE_PASSWORD=${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
           echo "SSB64_RELEASE_KEY_ALIAS=${{ secrets.SSB64_ANDROID_KEY_ALIAS }}"     >> "$GITHUB_ENV"
           echo "SSB64_RELEASE_KEY_PASSWORD=${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
-      - name: Build APK + AAB
-        # assembleRelease produces a sideload APK; bundleRelease produces
-        # the Play-Store-format AAB. Both go into the release artifacts;
-        # users pick whichever suits their distribution.
+      - name: Build APK
+        # assembleRelease produces the sideload APK that users install
+        # directly. We intentionally do NOT run bundleRelease — the AAB
+        # is Play-Store-only (needs Google's bundletool to install on
+        # a device), and this project isn't distributed through Play.
+        # Skipping it also keeps the GitHub Release page uncluttered.
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease bundleRelease
-      - name: Stage release artifacts under stable names
-        # Gradle drops files at app/build/outputs/{apk,bundle}/release/
-        # with names like app-release.apk / app-release-unsigned.apk
-        # depending on whether signing was configured. Normalize to a
-        # consistent BattleShip-android-<version>.{apk,aab} so the
-        # release job's files: list doesn't need to know whether
-        # signing happened.
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Stage release APK under a stable name
+        # Gradle drops the file at app/build/outputs/apk/release/ with
+        # a name like app-release.apk or app-release-unsigned.apk
+        # depending on signing config. Normalize to BattleShip-android.apk
+        # so the release job's files: list doesn't need a glob.
         run: |
           mkdir -p dist
           shopt -s nullglob
           apk=(android/app/build/outputs/apk/release/app-release*.apk)
-          aab=(android/app/build/outputs/bundle/release/app-release.aab)
           if (( ${#apk[@]} == 0 )); then
             echo "::error::no APK produced under android/app/build/outputs/apk/release/"
             ls -la android/app/build/outputs/apk/release/ || true
             exit 1
           fi
           cp "${apk[0]}" dist/BattleShip-android.apk
-          if (( ${#aab[@]} > 0 )); then
-            cp "${aab[0]}" dist/BattleShip-android.aab
-          else
-            echo "::warning::no AAB produced; release will include APK only"
-          fi
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
           name: BattleShip-android
-          path: dist/BattleShip-android.*
+          path: dist/BattleShip-android.apk
           if-no-files-found: error
 
   build-windows:
@@ -301,9 +295,8 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          # APK is sideload (drop on a device, install via the package
-          # installer); AAB is for Play Store uploads. Android is US-only
-          # so there's no -JP variant.
+          # Android: sideload APK only (no Play Store distribution, so
+          # the AAB is skipped). Android is US-only so there's no -JP.
           files: |
             artifacts/BattleShip.dmg
             artifacts/BattleShip-JP.dmg
@@ -312,7 +305,6 @@ jobs:
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
             artifacts/BattleShip-android.apk
-            artifacts/BattleShip-android.aab
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.
