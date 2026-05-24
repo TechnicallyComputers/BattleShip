@@ -11,6 +11,7 @@ on:
       - 'decomp/src/netplay/**'
       - 'cmake/Ssb64CurlAndroid.cmake'
       - 'cmake/FindMbedTLS.cmake'
+      - 'libultraship/cmake/dependencies/**'
       - 'cmake/Ssb64Netmenu*.cmake'
       - 'CMakeLists.txt'
       - 'port/app_paths.cpp'

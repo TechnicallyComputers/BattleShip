@@ -75,6 +75,7 @@ option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstr
 # Android: static curl+mbedTLS via cmake/Ssb64CurlAndroid.cmake (no system libcurl on NDK).
 if(SSB64_NETMENU)
     if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+        list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
         include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
         ssb64_android_provide_curl()
         find_package(Threads REQUIRED)
@@ -121,6 +122,9 @@ set(GBI_UCODE "F3DEX_GBI_2" CACHE STRING "" FORCE)
 # GLESv3 branch and the ENABLE_OPENGL/USE_OPENGLES compile defs are set.
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(USE_OPENGLES ON CACHE BOOL "" FORCE)
+    # Raphnet/hidapi: libultraship uses a no-op hidapi stub (no NDK libusb). SDL handles pads.
+    set(HIDAPI_WITH_LIBUSB OFF CACHE BOOL "" FORCE)
+    set(HIDAPI_WITH_HIDRAW OFF CACHE BOOL "" FORCE)
 endif()
 
 # Build Torch as the original standalone sidecar executable on desktop.

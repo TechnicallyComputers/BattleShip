@@ -11,14 +11,13 @@
 
 include(FetchContent)
 
+# Directory containing this file and FindMbedTLS.cmake (used by PATCH_COMMAND).
+set(SSB64_CURL_ANDROID_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "")
+
 function(ssb64_android_provide_curl)
     if(TARGET CURL::libcurl)
         return()
     endif()
-
-    # curl's FindMbedTLS.cmake uses find_library and fails for in-tree FetchContent
-    # (libs are not on disk at configure time). Prefer this module during curl configure.
-    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
     set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
@@ -59,11 +58,18 @@ function(ssb64_android_provide_curl)
     set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
     set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
 
+    # curl prepends ${curl_SOURCE}/CMake to CMAKE_MODULE_PATH before find_package(MbedTLS),
+    # so a parent CMAKE_MODULE_PATH never wins. Replace curl's FindMbedTLS.cmake with ours
+    # (in-tree targets; stock module uses find_library and fails on Android NDK).
     FetchContent_Declare(
         curl
         GIT_REPOSITORY https://github.com/curl/curl.git
         GIT_TAG        curl-8_11_1
         GIT_SHALLOW    TRUE
+        PATCH_COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${SSB64_CURL_ANDROID_CMAKE_DIR}/FindMbedTLS.cmake"
+            "CMake/FindMbedTLS.cmake"
     )
     FetchContent_MakeAvailable(curl)
 
