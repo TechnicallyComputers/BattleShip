@@ -240,26 +240,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND (MINGW OR CMAKE_CROSSCOMPILING))
     endif()
 endif()
 
-ExternalProject_Add(TorchExternal
-    PREFIX TorchExternal
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
-    CMAKE_ARGS ${_SSB64_TORCH_EP_CMAKE_ARGS}
-    CMAKE_CACHE_ARGS
-        -DCMAKE_BUILD_TYPE:STRING=${_SSB64_TORCH_BUILD_TYPE}
-    BUILD_ALWAYS TRUE
-)
-
-ExternalProject_Get_Property(TorchExternal install_dir)
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    # Torch is built via ExternalProject_Add and inherits the parent generator.
-    # Multi-config generators (Visual Studio) place the binary under <CONFIG>/;
-    # single-config generators (Ninja, NMake) drop it directly in the build dir.
-    if(CMAKE_CONFIGURATION_TYPES)
-        set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/$<CONFIG>/torch.exe)
-    else()
-        set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch.exe)
-    endif()
-    set(TORCH_SIDECAR_NAME torch.exe)
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # Android: build Torch in-tree as a STATIC lib (USE_STANDALONE=OFF
     # was forced above). The libtorch_runner.so SHARED library at the
@@ -271,18 +251,10 @@ else()
     ExternalProject_Add(TorchExternal
         PREFIX TorchExternal
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
-        CMAKE_ARGS
-            -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
-            -DUSE_STANDALONE=ON
-            -DBUILD_STORMLIB=OFF
-            -DBUILD_SM64=OFF
-            -DBUILD_MK64=OFF
-            -DBUILD_SF64=OFF
-            -DBUILD_PM64=OFF
-            -DBUILD_FZERO=OFF
-            -DBUILD_MARIO_ARTIST=OFF
-            -DBUILD_NAUDIO=ON
-            -DBUILD_SSB64=ON
+        CMAKE_ARGS ${_SSB64_TORCH_EP_CMAKE_ARGS}
+        CMAKE_CACHE_ARGS
+            -DCMAKE_BUILD_TYPE:STRING=${_SSB64_TORCH_BUILD_TYPE}
+        BUILD_ALWAYS TRUE
     )
 
     ExternalProject_Get_Property(TorchExternal install_dir)
@@ -554,15 +526,6 @@ if(SSB64_NETPLAY_HARD_LAN_MODE)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
 endif()
 
-# Hi-res texture pack support is US-only. Pack PNGs are addressed by
-# CRC32-IEEE of the decoded RGBA8 buffer that came out of the US ROM
-# fast-path; JP rendering hits different hash inputs (different glyph
-# art for VS-records, JP-only menus, plus palette/sprite nuances on
-# shared assets), so a US-built pack would silently miss on JP and no
-# JP-only pack has been authored. Drop port/hires/ from the JP build
-# entirely and gate the port.cpp / PortMenu.cpp integration on
-# PORT_HIRES_ENABLED.
-if(SSB64_VERSION STREQUAL "us")
 # Hi-res texture pack support is US-only on desktop and dropped entirely
 # on Android (mobile memory budget can't carry the 512 MB LRU cache,
 # and the dump-tooling menu items add no value on touch UI).
