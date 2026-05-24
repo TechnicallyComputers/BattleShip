@@ -14,7 +14,10 @@
 namespace ssb64 {
 
 std::string RealAppBundlePath() {
-#if defined(__linux__)
+#if defined(__ANDROID__)
+    /* externalFilesDir — same tree AssetExtractor uses for f3d.o2r / ssl / port/net/assets. */
+    return Ship::Context::GetAppDirectoryPath();
+#elif defined(__linux__)
     std::error_code ec;
     std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (!ec && !exe.empty()) {

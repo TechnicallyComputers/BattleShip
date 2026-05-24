@@ -67,14 +67,21 @@ option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for r
 option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
 option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstrap for debugging" OFF)
 
-# Automatch HTTP (mm_matchmaking) uses libcurl on Linux and MinGW Windows netmenu builds.
+# Automatch HTTP (mm_matchmaking) uses libcurl on Linux, Android, and MinGW Windows netmenu builds.
 # Offline builds (SSB64_NETMENU=OFF) do not link curl. MinGW: install mingw-w64-curl and pass
 # CMAKE_FIND_ROOT_PATH when cross-compiling (see scripts/package-mingw-windows.sh).
 # MSVC: libultraship bootstraps vcpkg in add_subdirectory(); curl is installed there
-# via LUS_VCPKG_EXTRA_PACKAGES when SSB64_NETMENU=ON. find_package(CURL) runs after.
-if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    find_package(CURL REQUIRED)
-    find_package(Threads REQUIRED)
+# via LUS_VCPKG_EXTRA_PACKAGES when SSB64_NETMENU=ON.
+# Android: static curl+mbedTLS via cmake/Ssb64CurlAndroid.cmake (no system libcurl on NDK).
+if(SSB64_NETMENU)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
+        ssb64_android_provide_curl()
+        find_package(Threads REQUIRED)
+    elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        find_package(CURL REQUIRED)
+        find_package(Threads REQUIRED)
+    endif()
 endif()
 
 # ROM version to build. The decomp game code is region-conditionally
@@ -563,6 +570,8 @@ if(SSB64_NETMENU)
         target_link_libraries(ssb64_game PRIVATE PThreads4W::PThreads4W)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
         target_link_libraries(ssb64_game PRIVATE Threads::Threads)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+        target_link_libraries(ssb64_game PRIVATE Threads::Threads)
     endif()
 else()
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
@@ -593,19 +602,15 @@ else()
     target_sources(ssb64_game PRIVATE ${_SSB64_OFFLINE_NET_SOURCES})
     list(APPEND _SSB64_DECOMP_NETINCLUDE_SOURCES ${_SSB64_OFFLINE_NET_SOURCES})
     # netplay/include/string.h must precede decomp/include/string.h for netrollbacksnapshot.c.
+    # INCLUDE_DIRECTORIES (not COMPILE_OPTIONS "-I a -I b") — a single COMPILE_OPTIONS string is
+    # passed as one argv on Unix/macOS CI and the compiler never sees port/net for <sys/*.h>.
     set(_SSB64_OFFLINE_NET_INCLUDE_DIRS
-        "${SSB64_NETPLAY_INCLUDE_SHIMS};${SSB64_NETPLAY_SYS_INCLUDE};${_SSB64_PORT_NET_SYS_PARENT}")
-    set_source_files_properties(${_SSB64_OFFLINE_NET_SOURCES}
+        "${SSB64_NETPLAY_INCLUDE_SHIMS}"
+        "${SSB64_NETPLAY_DIR}"
+        "${_SSB64_PORT_NET_SYS_PARENT}")
+    set_source_files_properties(
+        ${_SSB64_OFFLINE_NET_SOURCES} ${_SSB64_DECOMP_NETINCLUDE_SOURCES}
         PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
-    if(MSVC)
-        set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
-            PROPERTIES COMPILE_OPTIONS
-                "/I${SSB64_NETPLAY_INCLUDE_SHIMS};/I${SSB64_NETPLAY_SYS_INCLUDE};/I${_SSB64_PORT_NET_SYS_PARENT}")
-    else()
-        set_source_files_properties(${_SSB64_DECOMP_NETINCLUDE_SOURCES}
-            PROPERTIES COMPILE_OPTIONS
-                "-I${SSB64_NETPLAY_INCLUDE_SHIMS} -I${SSB64_NETPLAY_SYS_INCLUDE} -I${_SSB64_PORT_NET_SYS_PARENT}")
-    endif()
 endif()
 
 # Port stub definitions (C code that satisfies N64 linker symbols)
@@ -936,9 +941,10 @@ else()
     add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
 endif()
 
-if(SSB64_NETMENU)
+if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     # Entire tree so custom menu PNGs (any filename under port/net/assets/) ship next to the binary;
     # mn_vs_submenu_png.c loads RealAppBundlePath()/port/net/assets/<filename>.
+    # Android stages ssl/ + port/net/assets/ via Gradle/APK assets (see android/app/build.gradle.kts).
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net

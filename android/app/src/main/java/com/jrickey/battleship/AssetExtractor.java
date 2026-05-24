@@ -77,6 +77,21 @@ public final class AssetExtractor {
             // know the ROM's file table layout. Walk the asset directory
             // recursively so we pick up every reloc_*.yml.
             copyAssetTree(am, "yamls", new File(dst, "yamls"));
+
+            // Netplay: CA bundle + menu PNGs (bundled in netplay APK assets; no-op if absent).
+            try {
+                copyAsset(am, "ssl/cacert.pem", new File(dst, "ssl/cacert.pem"));
+            } catch (IOException ioe) {
+                Log.i(TAG, "No bundled ssl/cacert.pem: " + ioe.getMessage());
+            }
+            try {
+                String[] netAssetEntries = am.list("port/net/assets");
+                if (netAssetEntries != null && netAssetEntries.length > 0) {
+                    copyAssetTree(am, "port/net/assets", new File(dst, "port/net/assets"));
+                }
+            } catch (IOException ioe) {
+                Log.i(TAG, "No bundled port/net/assets: " + ioe.getMessage());
+            }
         } catch (IOException e) {
             Log.e(TAG, "Asset extraction failed", e);
             return "Asset extraction failed: " + e.getMessage();

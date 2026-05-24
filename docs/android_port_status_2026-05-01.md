@@ -153,6 +153,37 @@ adb shell am start -n com.jrickey.battleship.debug/com.jrickey.battleship.BootAc
   /storage/emulated/0/Android/data/com.jrickey.battleship.debug/files/baserom.us.z64
 ```
 
+## Netplay APK (SSB64_NETMENU)
+
+Two release artifacts (separate CI jobs in [`.github/workflows/release.yml`](../.github/workflows/release.yml), same pattern as desktop offline vs netplay):
+
+| APK | Gradle | `applicationId` (release) | CI job |
+|-----|--------|---------------------------|--------|
+| `BattleShip-android.apk` | default (`SSB64_NETMENU=OFF`) | `com.jrickey.battleship` | `build-android` |
+| `BattleShip-android-netplay.apk` | `-Pssb64Netmenu=true` | `com.jrickey.battleship.netplay` | `build-android-netplay` |
+
+Local build:
+
+```bash
+./scripts/package-android.sh              # offline
+./scripts/package-android.sh --netplay  # netplay
+```
+
+**Native:** `-DSSB64_NETMENU=ON` pulls in rollback/automatch (`port/net/`, `decomp/src/netplay/`) and builds static libcurl via `cmake/Ssb64CurlAndroid.cmake` (first NDK configure can take several minutes).
+
+**Runtime assets** (extracted to `externalFilesDir` on first launch, same tree as `f3d.o2r`):
+
+- `ssl/cacert.pem` — HTTPS matchmaking TLS
+- `port/net/assets/` — VS netmenu PNGs
+
+**Paths:** `RealAppBundlePath()` on Android uses `Ship::Context::GetAppDirectoryPath()` (`externalFilesDir`). Matchmaking credentials: `<appData>/ssb64/matchmaking_credentials`.
+
+**Manifest:** `INTERNET`, `ACCESS_NETWORK_STATE` (required for automatch; present in all APK builds).
+
+**PR CI:** [`.github/workflows/android-netplay.yml`](../.github/workflows/android-netplay.yml) — netplay APK only.
+
+**Soak (manual):** Wi‑Fi, two devices, automatch queue → 2P VS; keep app foreground (Android may throttle UDP in background).
+
 ## What's next (Phase 8: polish)
 
 - Force landscape across both Activities; fix the portrait-letterbox

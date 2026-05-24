@@ -4,9 +4,9 @@ name: Release
 #   - Pushing a tag matching v* (e.g. v1.0.0, v0.1-test)
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
-# Three platform jobs (offline), each matrixed over us/jp, plus netplay variants for
-# macOS, Linux, and Windows. A final `release` job stitches artifacts into a GitHub
-# Release on tag push.
+# Platform jobs (offline), each matrixed over us/jp where applicable, plus netplay
+# variants for macOS, Linux, Windows, and Android (build-android-netplay). A final
+# `release` job stitches artifacts into a GitHub Release on tag push.
 #
 # US keeps the historical artifact names (BattleShip.dmg, …-x86_64.AppImage,
 # …-windows.zip) so existing links and the in-app updater are unaffected;
@@ -330,6 +330,72 @@ jobs:
           path: dist/BattleShip-android.apk
           if-no-files-found: error
 
+  build-android-netplay:
+    # Sibling of build-android — one APK per job (SSB64_NETMENU=ON via Gradle).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Decode release keystore (if configured via secrets)
+        env:
+          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::No release keystore secret configured; falling back to debug signing"
+            exit 0
+          fi
+          echo "$SSB64_ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+          {
+            echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"
+            echo "SSB64_RELEASE_KEYSTORE_PASSWORD=$SSB64_ANDROID_KEYSTORE_PASSWORD"
+            echo "SSB64_RELEASE_KEY_ALIAS=$SSB64_ANDROID_KEY_ALIAS"
+            echo "SSB64_RELEASE_KEY_PASSWORD=$SSB64_ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - name: Build netplay APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true
+      - name: Log libmain.so size
+        run: |
+          so="$(find android/app/.cxx android/app/build -name 'libmain.so' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$so" ] && [ -f "$so" ]; then
+            ls -la "$so"
+          else
+            echo "::warning::libmain.so not found for size log"
+          fi
+      - name: Stage release APK under a stable name
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          apk=(android/app/build/outputs/apk/release/app-release*.apk)
+          if (( ${#apk[@]} == 0 )); then
+            echo "::error::no APK produced under android/app/build/outputs/apk/release/"
+            ls -la android/app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          cp "${apk[0]}" dist/BattleShip-android-netplay.apk
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android-netplay
+          path: dist/BattleShip-android-netplay.apk
+          if-no-files-found: error
+
   build-windows:
     runs-on: windows-2022
     strategy:
@@ -407,7 +473,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-macos-netplay, build-linux, build-linux-netplay, build-windows, build-windows-netplay, build-android]
+    needs: [build-macos, build-macos-netplay, build-linux, build-linux-netplay, build-windows, build-windows-netplay, build-android, build-android-netplay]
     if: startsWith(github.ref, 'refs/tags/v')   # only on tag pushes
     runs-on: ubuntu-latest
     steps:
@@ -434,6 +500,7 @@ jobs:
             artifacts/BattleShip-Netplay-windows.zip
             artifacts/BattleShip-JP-Netplay-windows.zip
             artifacts/BattleShip-android.apk
+            artifacts/BattleShip-android-netplay.apk
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
                         # before the release is visible to the public.

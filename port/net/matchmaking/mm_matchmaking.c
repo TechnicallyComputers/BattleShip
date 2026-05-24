@@ -709,6 +709,17 @@ static void mmCredPath(char *out, size_t cap)
 	{
 		snprintf(out, cap, ".\\%s", MM_CRED_FILENAME);
 	}
+#elif defined(__ANDROID__)
+	char base[384];
+
+	if ((ssb64_RealAppBundlePathUtf8(base, sizeof(base)) != 0) && (base[0] != '\0'))
+	{
+		snprintf(out, cap, "%s/ssb64/%s", base, MM_CRED_FILENAME);
+	}
+	else
+	{
+		snprintf(out, cap, "./%s", MM_CRED_FILENAME);
+	}
 #else
 	const char *xdg = getenv("XDG_CONFIG_HOME");
 	const char *home = getenv("HOME");
