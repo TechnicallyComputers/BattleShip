@@ -22,8 +22,8 @@ import java.io.File;
  * BootActivity — launcher entry, drives first-run setup.
  *
  * Stages, in order:
- *   1. Extract bundled APK assets (f3d.o2r, ssb64.o2r, config.yml, yamls/)
- *      into externalFilesDir if absent or stale — see {@link AssetExtractor}.
+ *   1. Extract bundled APK assets (f3d.o2r, config.yml, yamls/) into
+ *      externalFilesDir if absent or stale — see {@link AssetExtractor}.
  *   2. If BattleShip.o2r doesn't exist, prompt the user to pick a ROM
  *      via SAF ACTION_OPEN_DOCUMENT, stream it into cacheDir, and run
  *      libtorch_runner.so against it ({@link RomImporter}).
@@ -108,8 +108,8 @@ public class BootActivity extends ComponentActivity {
     private void startAssetExtraction() {
         // Honor the --ez ssb64.repick true Intent extra: delete the existing
         // BattleShip.o2r so routeAfterAssets() falls into the SAF picker
-        // path again. Bundled assets (config.yml / yamls / f3d.o2r /
-        // ssb64.o2r) stay intact — those don't depend on the user's ROM.
+        // path again. Bundled assets (config.yml / yamls / f3d.o2r) stay
+        // intact — those don't depend on the user's ROM.
         boolean repick = getIntent() != null
             && getIntent().getBooleanExtra(EXTRA_REPICK, false);
         if (repick) {

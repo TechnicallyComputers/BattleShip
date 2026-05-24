@@ -14,19 +14,20 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
 /**
- * Copies bundled APK assets (f3d.o2r, ssb64.o2r, config.yml, yamls/) into
- * the app's externalFilesDir on first launch and on app updates.
+ * Copies bundled APK assets (f3d.o2r, config.yml, yamls/) into the app's
+ * externalFilesDir on first launch and on app updates.
  *
  * - externalFilesDir is what LUS's Ship::Context::GetAppDirectoryPath()
  *   returns on Android (via SDL_AndroidGetExternalStoragePath), so files
  *   landed here are reachable through the same path the desktop build
- *   uses for cwd-relative archive lookups (f3d.o2r, ssb64.o2r).
+ *   uses for cwd-relative archive lookups (f3d.o2r).
  * - We mark "extracted" by writing a versioned sentinel file. If the
  *   APK's versionCode bumps (i.e. the user updated the app), the sentinel
  *   no longer matches and we re-extract. This handles asset format
  *   changes that ship inside the APK.
  * - BattleShip.o2r is NOT extracted here — that comes from libtorch_runner.so
- *   in Phase 4.4 once the user picks their ROM.
+ *   in Phase 4.4 once the user picks their ROM. NEVER add anything
+ *   ROM-derived to the APK assets.
  */
 public final class AssetExtractor {
     private static final String TAG = "ssb64.assets";
@@ -70,7 +71,6 @@ public final class AssetExtractor {
         try {
             // Top-level files. Order doesn't matter — they're independent.
             copyAsset(am, "f3d.o2r",    new File(dst, "f3d.o2r"));
-            copyAsset(am, "ssb64.o2r",  new File(dst, "ssb64.o2r"));
             copyAsset(am, "config.yml", new File(dst, "config.yml"));
 
             // yamls/ subtree — Torch reads these at extraction time to

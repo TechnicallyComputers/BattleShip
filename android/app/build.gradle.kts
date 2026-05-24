@@ -61,24 +61,24 @@ fun findGameArtifact(name: String): java.io.File {
                  "GeneratePortO2R, ExtractAssets) before assembleDebug.")
 }
 
-// Stage f3d.o2r + ssb64.o2r + Torch's runtime config (config.yml + yamls/)
-// into a generated dir that AGP merges into the APK's assets/.
+// Stage f3d.o2r + Torch's runtime config (config.yml + yamls/) into a
+// generated dir that AGP merges into the APK's assets/.
 //
-// BattleShip.o2r is intentionally NOT bundled — it derives from Nintendo's
-// ROM and the user supplies that themselves on first launch (Phase 4.4
-// SAF picker → libtorch_runner.so → produces BattleShip.o2r in
-// externalFilesDir).
+// NEVER bundle anything ROM-derived. BattleShip.o2r is produced on-device
+// from the user's own ROM at first launch (Phase 4.4 SAF picker →
+// libtorch_runner.so → BattleShip.o2r in externalFilesDir). f3d.o2r is
+// open-source Fast3D shaders, config.yml + yamls/ are layout metadata —
+// none of those contain Nintendo content, so they're safe in the APK.
 val stagedAssetsDir = layout.buildDirectory.dir("generated/staged_assets")
 
 val stageGameAssets = tasks.register<Copy>("stageGameAssets") {
-    description = "Stage f3d.o2r / ssb64.o2r / config.yml / yamls into APK assets/"
+    description = "Stage f3d.o2r / config.yml / yamls into APK assets/"
     group = "android"
     into(stagedAssetsDir)
 
     // Resolved at task-config time so we fail before AGP even starts the
     // merge — avoids a half-built APK with missing assets.
     from(findGameArtifact("f3d.o2r"))
-    from(findGameArtifact("ssb64.o2r"))
     from(repoRoot.resolve("config.yml"))
     from(repoRoot.resolve("yamls")) {
         into("yamls")
