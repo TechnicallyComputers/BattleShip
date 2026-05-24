@@ -465,7 +465,17 @@ endif()
 ################################################################################
 # Fetch Discord RPC
 ################################################################################
+# discord-rpc v3.4.0's CMakeLists declares cmake_minimum_required(VERSION 2.x),
+# which CMake 3.30+ refuses to honor. Force a baseline policy version for the
+# fetched subdir so the build still configures with current CMake.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+# BattleShip links against the static CRT on Windows (see the
+# MSVC_RUNTIME_LIBRARY setting on the ssb64 / ssb64_game targets below).
+# discord-rpc's own CMakeLists guards the static-CRT switch behind
+# USE_STATIC_CRT — opt in so the produced discord-rpc.lib uses the same
+# /MT[d] runtime, otherwise the final link fails with LNK2038.
+set(USE_STATIC_CRT ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     discord_rpc
     GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
@@ -473,6 +483,13 @@ FetchContent_Declare(
     PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
 )
 FetchContent_MakeAvailable(discord_rpc)
+# Belt and suspenders: enforce the runtime-library property on the
+# produced target directly so it survives a future cmake_policy(CMP0091)
+# propagation behavior change.
+if(MSVC AND TARGET discord-rpc)
+    set_property(TARGET discord-rpc PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 # Suppress GCC 14 strict template errors in discord-rpc's bundled RapidJSON
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
