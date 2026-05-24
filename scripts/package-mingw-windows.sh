@@ -28,7 +28,7 @@
 #     assets/custom/fonts/
 #     *.dll                  (MinGW runtime deps from the cross toolchain)
 #     libcurl/libssl/libcrypto/zlib1.dll  (netplay HTTPS when dynamically linked)
-#     port/net/assets/       (netmenu / --netplay only)
+#     port/net/assets/       (netmenu / --netplay; sources in decomp/src/netplay + port/net)
 #     ssl/cacert.pem         (netmenu / --netplay only; libcurl TLS for HTTPS matchmaking)
 #
 # Netplay (--netplay): bundles libcurl + OpenSSL DLLs and ships ssl/cacert.pem so automatch

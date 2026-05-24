@@ -67,7 +67,7 @@ APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 # Extra CMake configure arguments (forwarded to CMake). Use --netplay for the Netplay AppImage
-# with SSB64_NETMENU=ON (required so port/net/** mirrors—including taskman.c—replace decomp).
+# with SSB64_NETMENU=ON (required so decomp/src/netplay/** + port/net/** link for netmenu).
 EXTRA_CMAKE_ARGS=()
 NETPLAY_PACKAGE=0
 for a in "$@"; do

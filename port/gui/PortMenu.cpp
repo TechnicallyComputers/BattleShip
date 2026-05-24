@@ -981,6 +981,76 @@ void PortMenu::AddMenuSettings() {
                      .ComboMap(kHitboxViewMap)
                      .DefaultIndex(0));
 
+    AddWidget(path, "Rules", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Use Competitive Ruleset", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::CompRulesetCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "Forces the following in VS Mode:\n"
+            "- 4 Stocks\n"
+            "- 8 Minutes\n"
+            "- Items Off\n"
+            "- Team Attack ON\n"
+            "- Dream Land only"));
+    AddWidget(path, "Neutral Spawns on Dreamland", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::NeutralSpawnsCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "Forces balanced, opposite-side starting positions for 1v1 and team battles."));
+
+    AddWidget(path, "Quality-of-Life", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::SkipResultsScreenCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "Skips the victory podium and returns directly to the Character Select Screen."));
+    AddWidget(path, "Force CPU Level 9", WIDGET_CVAR_CHECKBOX)
+        .CVar(enhancements::CpuLevel9CVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Automatically forces all CPU players to Level 9."));
+
+    path.sidebarName = "Audio";
+    path.column = SECTION_COLUMN_1;
+    AddSidebarEntry("Settings", "Audio", 1);
+
+    AddWidget(path, "Volume Levels", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Master Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.MasterVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the overall volume of the entire game.")
+                     .DefaultValue(1.0f)
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .IsPercentage());
+    AddWidget(path, "Music Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.MusicVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the volume of the background music.")
+                     .DefaultValue(1.0f)
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .IsPercentage());
+    AddWidget(path, "Sound Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.SFXVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the volume of sound effects.")
+                     .DefaultValue(1.0f)
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .IsPercentage());
+    AddWidget(path, "Voice Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.VoiceVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the volume of character voices and the announcer.")
+                     .DefaultValue(1.0f)
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .IsPercentage());
+
     // --- Controls sidebar: per-player input remapping ---
     path.sidebarName = "Controls";
     path.column = SECTION_COLUMN_1;

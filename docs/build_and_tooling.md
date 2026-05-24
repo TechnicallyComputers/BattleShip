@@ -22,7 +22,7 @@ Full step-by-step instructions: [`BUILDING.md`](../BUILDING.md).
 |--------------|---------|---------------|-------------------------|
 | `SSB64_NETMENU` | **OFF** | Stock VS menus; `port/stubs/net_port_glue_offline.c` | Full `port/net/**` sources; extended netpeer / rollback |
 | libcurl | — | Not required | **Required** on macOS, Linux, and Windows (MSVC or MinGW) |
-| `port/net/sys/taskman.c` | — | Decomp `decomp/src/sys/taskman.c` + trailing `-I port/net` on selected TUs | Port mirror replaces decomp taskman |
+| `decomp/src/netplay/taskman.c` | — | Decomp `decomp/src/sys/taskman.c` (offline) + `-I port/net` on selected TUs | Netmenu uses netplay taskman; transport stays in `port/net/sys/` |
 
 **Offline** is what most contributors use day-to-day (`cmake -B build` with no extra flags, `scripts/package-macos.sh`). **Netmenu** adds `-DSSB64_NETMENU=ON` (or `scripts/package-linux.sh --netplay`, `scripts/package-mingw-windows.sh --netplay`).
 

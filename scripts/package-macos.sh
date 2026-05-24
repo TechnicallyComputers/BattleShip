@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/package-macos.sh
-#   ./scripts/package-macos.sh --netplay            # netmenu / netplay (SSB64_NETMENU=ON)
+#   ./scripts/package-macos.sh --netplay            # netmenu (decomp/src/netplay + port/net)
 #   ./scripts/package-macos.sh --netplay -DSSB64_NETPLAY_HARD_LAN_MODE=ON
 #
 # Output:
