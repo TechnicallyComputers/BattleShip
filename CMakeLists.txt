@@ -634,10 +634,6 @@ if(EXISTS "${SSB64_BASEROM}")
         DEPENDS TorchExternal PrepareBuildInputs GenerateF3DO2R ${SSB64_BASEROM}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SSB64_O2R_DIR}
         COMMAND ${TORCH_EXECUTABLE} o2r ${SSB64_BASEROM} -s ${CMAKE_SOURCE_DIR} -d ${SSB64_O2R_DIR}
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${SSB64_O2R}
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/BattleShip.o2r
         COMMENT "Extracting ${SSB64_VERSION} assets from ${SSB64_BASEROM} -> ${SSB64_O2R}"
     )
     add_custom_target(ExtractAssets DEPENDS ${SSB64_O2R})
@@ -648,7 +644,20 @@ if(EXISTS "${SSB64_BASEROM}")
     # inputs (torch / build inputs / baserom) change; cached otherwise.
     # The release pipeline ships no baserom and hits the else() branch,
     # so packaged builds are unaffected (runtime first-run extracts).
+    #
+    # Staging the o2r into $<TARGET_FILE_DIR:ssb64> is done as a POST_BUILD
+    # step on ssb64 rather than inside the ExtractAssets custom_command —
+    # referencing $<TARGET_FILE_DIR:ssb64> inside the command would create
+    # a back-edge from ExtractAssets to ssb64 (CMake genex creates target
+    # deps), and combined with `add_dependencies(ssb64 ExtractAssets)`
+    # below produces a strongly-connected-component error at generate time.
     add_dependencies(${PROJECT_NAME} ExtractAssets)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_O2R}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/BattleShip.o2r
+        COMMENT "Staging BattleShip.o2r next to ssb64 binary"
+    )
 else()
     add_custom_target(ExtractAssets
         COMMAND ${CMAKE_COMMAND} -E echo
