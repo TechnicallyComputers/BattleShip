@@ -1,6 +1,6 @@
 # FindMbedTLS.cmake — copied into curl's CMake/ by Ssb64CurlAndroid.cmake (PATCH_COMMAND).
-# Satisfies find_package(MbedTLS) for in-tree FetchContent mbedtls. Stock curl module uses
-# find_library and fails at configure time because static .a files do not exist yet.
+# Not on the project CMAKE_MODULE_PATH (would break libzip find_package). Stock curl
+# module uses find_library and fails at configure time because static .a files do not exist yet.
 
 if(NOT (TARGET mbedtls AND TARGET mbedx509 AND TARGET mbedcrypto))
     message(FATAL_ERROR
