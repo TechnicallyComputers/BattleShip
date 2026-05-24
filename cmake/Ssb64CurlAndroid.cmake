@@ -11,8 +11,8 @@
 
 include(FetchContent)
 
-# Directory containing this file and FindMbedTLS.cmake (used by PATCH_COMMAND).
-set(SSB64_CURL_ANDROID_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "")
+# curl-only FindMbedTLS.cmake (not on global CMAKE_MODULE_PATH — libzip has its own finder).
+set(SSB64_CURL_FIND_MBEDTLS "${CMAKE_CURRENT_LIST_DIR}/curl/FindMbedTLS.cmake" CACHE INTERNAL "")
 
 function(ssb64_android_provide_curl)
     if(TARGET CURL::libcurl)
@@ -68,7 +68,7 @@ function(ssb64_android_provide_curl)
         GIT_SHALLOW    TRUE
         PATCH_COMMAND
             ${CMAKE_COMMAND} -E copy_if_different
-            "${SSB64_CURL_ANDROID_CMAKE_DIR}/FindMbedTLS.cmake"
+            "${SSB64_CURL_FIND_MBEDTLS}"
             "CMake/FindMbedTLS.cmake"
     )
     FetchContent_MakeAvailable(curl)

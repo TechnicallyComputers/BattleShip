@@ -75,7 +75,6 @@ option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstr
 # Android: static curl+mbedTLS via cmake/Ssb64CurlAndroid.cmake (no system libcurl on NDK).
 if(SSB64_NETMENU)
     if(CMAKE_SYSTEM_NAME STREQUAL "Android")
-        list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
         include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
         ssb64_android_provide_curl()
         find_package(Threads REQUIRED)
