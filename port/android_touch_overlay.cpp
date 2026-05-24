@@ -21,6 +21,11 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_joystick.h>
 
+#include <libultraship/libultraship.h>
+#include <ship/Context.h>
+#include <ship/window/Window.h>
+#include <ship/window/gui/Gui.h>
+
 #include <android/log.h>
 #include <jni.h>
 
@@ -73,6 +78,16 @@ bool ensureAttached() {
         sDeviceIndex = -1;
         return false;
     }
+    // SDL_GameController normalizes the joystick's trigger axes via the
+    // standard Xbox-360 mapping ("lefttrigger:a4,righttrigger:a5"). With
+    // that mapping, raw joystick value -32768 -> trigger 0 (released);
+    // raw +32767 -> trigger 32767 (fully pressed). SDL_JoystickAttachVirtual
+    // defaults all axes to 0, which would land the triggers at ~50% — i.e.
+    // LUS sees N64 Z/R as held the entire time we haven't touched them.
+    // Park them at -32768 explicitly.
+    SDL_JoystickSetVirtualAxis(sJoystick, SDL_CONTROLLER_AXIS_TRIGGERLEFT,  -32768);
+    SDL_JoystickSetVirtualAxis(sJoystick, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, -32768);
+
     LOGI("Virtual joystick attached (device_index=%d, instance_id=%d, %d axes, %d buttons)",
          sDeviceIndex, SDL_JoystickInstanceID(sJoystick), kAxisCount, kButtonCount);
     return true;
@@ -104,6 +119,41 @@ Java_com_jrickey_battleship_TouchOverlay_setAxis(
     if (value < -32768) value = -32768;
     if (value >  32767) value =  32767;
     SDL_JoystickSetVirtualAxis(sJoystick, axis, (Sint16)value);
+}
+
+// Menu toggle: set an atomic flag here on the Android UI thread; the
+// SDL_main thread's PortPushFrame drains it via port_drain_pending_menu_toggle()
+// (see port/gameloop.cpp) and calls libultraship's
+// Gui->GetMenu()->ToggleVisibility() from the same thread that's running
+// the ImGui frame. Pushing SDL_KEYDOWN(F1) was unreliable — Gui.cpp's
+// IsKeyPressed(TOGGLE_BTN, false) is an edge detector that needs the
+// keydown to land in the right frame slot, and SDL backend event timing
+// from a JNI-thread push didn't consistently line up.
+static std::atomic<bool> sMenuTogglePending{false};
+
+extern "C" bool port_drain_pending_menu_toggle(void) {
+    return sMenuTogglePending.exchange(false);
+}
+
+JNIEXPORT void JNICALL
+Java_com_jrickey_battleship_TouchOverlay_toggleMenu(
+    JNIEnv * /*env*/, jclass /*clazz*/) {
+    sMenuTogglePending.store(true);
+    LOGI("toggleMenu: queued");
+}
+
+// Polled every ~100ms by TouchOverlay.installMenuVisibilityPoller so the
+// overlay can hide itself while the menu is up — otherwise the analog
+// stick view eats taps on menu items before they reach ImGui.
+JNIEXPORT jboolean JNICALL
+Java_com_jrickey_battleship_TouchOverlay_isMenuVisible(
+    JNIEnv * /*env*/, jclass /*clazz*/) {
+    auto ctx = Ship::Context::GetInstance();
+    if (!ctx || !ctx->GetWindow() || !ctx->GetWindow()->GetGui()) {
+        return JNI_FALSE;
+    }
+    return ctx->GetWindow()->GetGui()->GetMenuOrMenubarVisible()
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

@@ -43,6 +43,12 @@
 /* GBI trace system */
 #include "../debug_tools/gbi_trace/gbi_trace.h"
 
+#if defined(__ANDROID__)
+/* Defined in port/android_touch_overlay.cpp. Atomic flag drained on the
+ * SDL_main thread to honor the on-screen hamburger menu tap. */
+extern "C" bool port_drain_pending_menu_toggle(void);
+#endif
+
 #include "port_log.h"
 #include "renderdoc_trigger.h"
 
@@ -583,6 +589,21 @@ void PortPushFrame(void)
 
 #if !defined(__ANDROID__)
 	ssb64::enhancements::TickDiscordPresence(); // DRP
+#endif
+
+#if defined(__ANDROID__)
+	/* Hamburger menu button on the touch overlay sets an atomic flag in
+	 * port/android_touch_overlay.cpp; drain it here on the SDL_main thread
+	 * so the ImGui frame currently being built picks up the visibility
+	 * change. Doing this from the Android UI thread directly would race
+	 * with Gui::DrawMenu. */
+	if (port_drain_pending_menu_toggle()) {
+		auto context = Ship::Context::GetInstance();
+		if (context && context->GetWindow() && context->GetWindow()->GetGui()
+		    && context->GetWindow()->GetGui()->GetMenu()) {
+			context->GetWindow()->GetGui()->GetMenu()->ToggleVisibility();
+		}
+	}
 #endif
 
 	/* Render the staged display list now that all coroutines have yielded.
