@@ -10,6 +10,7 @@ on:
       - 'port/net/**'
       - 'decomp/src/netplay/**'
       - 'cmake/Ssb64CurlAndroid.cmake'
+      - 'cmake/FindMbedTLS.cmake'
       - 'cmake/Ssb64Netmenu*.cmake'
       - 'CMakeLists.txt'
       - 'port/app_paths.cpp'

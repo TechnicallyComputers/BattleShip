@@ -16,6 +16,10 @@ function(ssb64_android_provide_curl)
         return()
     endif()
 
+    # curl's FindMbedTLS.cmake uses find_library and fails for in-tree FetchContent
+    # (libs are not on disk at configure time). Prefer this module during curl configure.
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
     set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
     set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
@@ -24,9 +28,12 @@ function(ssb64_android_provide_curl)
         mbedtls
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
         GIT_TAG        v3.6.2
-        GIT_SHALLOW    TRUE
+        GIT_SUBMODULES "framework"
     )
     FetchContent_MakeAvailable(mbedtls)
+
+    # Visible to curl's find_package(MbedTLS) when curl is a FetchContent subdir.
+    set(SSB64_MBEDTLS_SOURCE_DIR "${mbedtls_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
 
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
