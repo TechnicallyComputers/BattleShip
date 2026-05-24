@@ -12,11 +12,21 @@
 #include <thread>
 
 #if !defined(_WIN32)
-#include <execinfo.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
+/*
+ * Bionic exposes <execinfo.h> only at API 33+. We target a lower minSdk so
+ * the symbols aren't linkable. For the Android spike, stub these out — a
+ * production build can either raise minSdk or use libunwind directly.
+ */
+#if defined(__ANDROID__) && __ANDROID_API__ < 33
+static inline int backtrace(void * /*frames*/[], int /*max*/) { return 0; }
+static inline void backtrace_symbols_fd(void *const /*frames*/[], int /*n*/, int /*fd*/) {}
+#else
+#include <execinfo.h>
+#endif
 #endif
 
 extern "C" {
@@ -460,7 +470,15 @@ extern "C" void port_watchdog_init(void) {
     sigemptyset(&csa.sa_mask);
     csa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     csa.sa_sigaction = CrashSignalHandler;
-#if !defined(__SANITIZE_ADDRESS__) && !(defined(__has_feature) && __has_feature(address_sanitizer))
+    /* Clang exposes __has_feature as a builtin inside #if; GCC does not, and
+     * the `defined(__has_feature) && __has_feature(...)` short-circuit trick
+     * still fails because GCC has to syntactically parse the whole expression
+     * before evaluating — `__has_feature(x)` expands to `0(x)` on GCC. Stub
+     * it to 0 when absent so the expression parses on both compilers. */
+#ifndef __has_feature
+#  define __has_feature(x) 0
+#endif
+#if !defined(__SANITIZE_ADDRESS__) && !__has_feature(address_sanitizer)
     sigaction(SIGSEGV, &csa, nullptr);
     sigaction(SIGBUS,  &csa, nullptr);
 #endif

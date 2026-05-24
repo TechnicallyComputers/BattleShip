@@ -339,6 +339,14 @@ void RenderPostProcessDiagnostics(WidgetInfo& /*widget*/) {
     }
 }
 
+#if !defined(__ANDROID__)
+// Shader-pack downloader UI is gated off on Android (the libretro
+// catalog fetch + ZIP-extract pipeline doesn't fit Play Store distro;
+// port/enhancements/ShaderDownloader.cpp is not compiled into libmain.so).
+// The matching menu entry under Settings → Graphics is wrapped in the
+// same guard, so this block is dead code on Android — gate the whole
+// definition so the link doesn't reach for the missing symbols.
+
 // State scoped to the shader-pack modal, mirroring the Low-Res-warn
 // pattern. We keep a "needs to open this frame" flag so the
 // RenderShaderPackModal hook (called every frame from
@@ -643,6 +651,7 @@ void RenderShaderPackModal() {
 
     ImGui::EndPopup();
 }
+#endif // !__ANDROID__ (shader-pack downloader)
 
 // Modal companion to RenderPostProcessShaderPicker. Drawn from
 // RenderMenuTopLevel each frame so the popup survives the picker's
@@ -831,6 +840,15 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Gives the search input focus when it becomes visible."));
 
+#if !defined(__ANDROID__)
+    // DRP — Android drops discord-rpc entirely (no curl + Play Store
+    // distribution friction; the Discord SDK isn't built for mobile).
+    AddWidget(path, "Enable Discord Rich Presence", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("Menu.EnableDRP"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Adds Discord Rich Presence (DRP)."));
+#endif
+
     AddWidget(path, "Open App Files Folder", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([](WidgetInfo&) {
@@ -901,6 +919,11 @@ void PortMenu::AddMenuSettings() {
                      .DefaultValue(1));
 #endif
 
+#if !defined(__ANDROID__)
+    // Post-process / CRT shader stack — hidden on Android. The libretro
+    // slang→SPIR-V→backend transpile path hasn't been validated against
+    // GLES on mobile, and the libretro shader catalog download (curl +
+    // ZIP extraction) is a poor fit for a Play Store distribution.
     AddWidget(path, "Post-Process Shader", WIDGET_CUSTOM)
         .RaceDisable(false)
         .CustomFunction(RenderPostProcessShaderPicker);
@@ -912,6 +935,7 @@ void PortMenu::AddMenuSettings() {
     AddWidget(path, "Shader Runtime Diagnostics", WIDGET_CUSTOM)
         .RaceDisable(false)
         .CustomFunction(RenderPostProcessDiagnostics);
+#endif
 
     AddWidget(path, "Renderer API (Needs reload)", WIDGET_VIDEO_BACKEND).RaceDisable(false);
     AddWidget(path, "Enable Vsync", WIDGET_CVAR_CHECKBOX)
@@ -981,75 +1005,49 @@ void PortMenu::AddMenuSettings() {
                      .ComboMap(kHitboxViewMap)
                      .DefaultIndex(0));
 
+    // --- Competitive ruleset (still in Gameplay sidebar) ---
     AddWidget(path, "Rules", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Use Competitive Ruleset", WIDGET_CVAR_CHECKBOX)
-        .CVar(enhancements::CompRulesetCVarName())
+        .CVar(ssb64::enhancements::CompRulesetCVarName())
         .RaceDisable(false)
-        .Options(CheckboxOptions().Tooltip(
-            "Forces the following in VS Mode:\n"
-            "- 4 Stocks\n"
-            "- 8 Minutes\n"
-            "- Items Off\n"
-            "- Team Attack ON\n"
-            "- Dream Land only"));
+        .Options(CheckboxOptions().Tooltip("Forces the following in VS Mode: \n"
+                                           "- 4 Stocks \n"
+                                           "- 8 Minutes \n"
+                                           "- Items Off \n"
+                                           "- Team Attack ON \n"
+                                           "- Dream Land only"));
     AddWidget(path, "Neutral Spawns on Dreamland", WIDGET_CVAR_CHECKBOX)
-        .CVar(enhancements::NeutralSpawnsCVarName())
+        .CVar(ssb64::enhancements::NeutralSpawnsCVarName())
         .RaceDisable(false)
-        .Options(CheckboxOptions().Tooltip(
-            "Forces balanced, opposite-side starting positions for 1v1 and team battles."));
+        .Options(CheckboxOptions().Tooltip("Forces balanced, opposite-side starting positions for 1v1 and Team Battles."));
 
+    // --- Quality-of-Life (still in Gameplay sidebar) ---
     AddWidget(path, "Quality-of-Life", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
-        .CVar(enhancements::SkipResultsScreenCVarName())
+    AddWidget(path, "Boot to VS CSS", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::BootToVSCSSCVarName())
         .RaceDisable(false)
-        .Options(CheckboxOptions().Tooltip(
-            "Skips the victory podium and returns directly to the Character Select Screen."));
+        .Options(CheckboxOptions().Tooltip("Skips the intro sequences and boots directly to the VS Mode Character Select Screen."));
+    AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::SkipResultsScreenCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Skips the victory podium and returns directly to the Character Select Screen."));
     AddWidget(path, "Force CPU Level 9", WIDGET_CVAR_CHECKBOX)
-        .CVar(enhancements::CpuLevel9CVarName())
+        .CVar(ssb64::enhancements::CpuLevel9CVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Automatically forces all CPU players to Level 9."));
 
-    path.sidebarName = "Audio";
+    // --- Input customization ---
+    path.sidebarName = "Input";
     path.column = SECTION_COLUMN_1;
-    AddSidebarEntry("Settings", "Audio", 1);
+    AddSidebarEntry("Settings", "Input", 1);
 
-    AddWidget(path, "Volume Levels", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "Master Volume", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gSettings.Audio.MasterVolume")
+    AddWidget(path, "Controller", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Controller Configuration", WIDGET_WINDOW_BUTTON)
+        .CVar(CVAR_CONTROLLER_CONFIGURATION_WINDOW_OPEN)
         .RaceDisable(false)
-        .Options(FloatSliderOptions()
-                     .Tooltip("Adjust the overall volume of the entire game.")
-                     .DefaultValue(1.0f)
-                     .Min(0.0f)
-                     .Max(1.0f)
-                     .IsPercentage());
-    AddWidget(path, "Music Volume", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gSettings.Audio.MusicVolume")
-        .RaceDisable(false)
-        .Options(FloatSliderOptions()
-                     .Tooltip("Adjust the volume of the background music.")
-                     .DefaultValue(1.0f)
-                     .Min(0.0f)
-                     .Max(1.0f)
-                     .IsPercentage());
-    AddWidget(path, "Sound Volume", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gSettings.Audio.SFXVolume")
-        .RaceDisable(false)
-        .Options(FloatSliderOptions()
-                     .Tooltip("Adjust the volume of sound effects.")
-                     .DefaultValue(1.0f)
-                     .Min(0.0f)
-                     .Max(1.0f)
-                     .IsPercentage());
-    AddWidget(path, "Voice Volume", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gSettings.Audio.VoiceVolume")
-        .RaceDisable(false)
-        .Options(FloatSliderOptions()
-                     .Tooltip("Adjust the volume of character voices and the announcer.")
-                     .DefaultValue(1.0f)
-                     .Min(0.0f)
-                     .Max(1.0f)
-                     .IsPercentage());
+        .WindowName("Input Editor")
+        .HideInSearch(true)
+        .Options(WindowButtonOptions().Tooltip("Toggles the controller configuration window."));
 
     // --- Controls sidebar: per-player input remapping ---
     path.sidebarName = "Controls";
@@ -1117,6 +1115,58 @@ void PortMenu::AddMenuSettings() {
                          .Tooltip("Output scale (50–150%). 100% caps at the N64's natural max."));
     }
 
+    // --- Audio ---
+    path.sidebarName = "Audio";
+    path.column = SECTION_COLUMN_1;
+    AddSidebarEntry("Settings", "Audio", 1);
+
+    AddWidget(path, "Volume Levels", WIDGET_SEPARATOR_TEXT);
+
+
+    // Master
+    AddWidget(path, "Master Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.MasterVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+        .Tooltip("Adjust the overall volume of the entire game.")
+        .DefaultValue(1.0f)
+        .Min(0.0f)
+        .Max(1.0f)
+        .IsPercentage());
+
+    // Music Volume Slider
+    AddWidget(path, "Music Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.MusicVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+        .Tooltip("Adjust the volume of the background music.")
+        .DefaultValue(1.0f)
+        .Min(0.0f)
+        .Max(1.0f)
+        .IsPercentage());
+
+    // Sound Effects Volume Slider
+    AddWidget(path, "Sound Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.SFXVolume") // Standard LUS native CVar
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+        .Tooltip("Adjust the volume of sound effects and voices.")
+        .DefaultValue(1.0f)
+        .Min(0.0f)
+        .Max(1.0f)
+        .IsPercentage());
+
+    // voice
+    AddWidget(path, "Voice Volume", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gSettings.Audio.VoiceVolume")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+        .Tooltip("Adjust the volume of character voices and the announcer.")
+        .DefaultValue(1.0f)
+        .Min(0.0f)
+        .Max(1.0f)
+        .IsPercentage());
+
     // --- Cheats ---
     path.sidebarName = "Cheats";
     path.column = SECTION_COLUMN_1;
@@ -1124,8 +1174,8 @@ void PortMenu::AddMenuSettings() {
 
     AddWidget(path, "Master Unlocks", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Unlock Everything", WIDGET_CVAR_CHECKBOX)
-    .CVar("gCheats.UnlockAll")
-    .RaceDisable(false);
+        .CVar("gCheats.UnlockAll")
+        .RaceDisable(false);
 
     AddWidget(path, "Individual Characters", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Unlock Captain Falcon", WIDGET_CVAR_CHECKBOX).CVar("gCheats.UnlockCaptain").RaceDisable(false);
@@ -1137,13 +1187,12 @@ void PortMenu::AddMenuSettings() {
     AddWidget(path, "Unlock Mushroom Kingdom", WIDGET_CVAR_CHECKBOX).CVar("gCheats.UnlockInishie").RaceDisable(false);
     AddWidget(path, "Unlock Item Switch Menu", WIDGET_CVAR_CHECKBOX).CVar("gCheats.UnlockItemSwitch").RaceDisable(false);
     AddWidget(path, "Unlock Sound Test Menu", WIDGET_CVAR_CHECKBOX).CVar("gCheats.UnlockSoundTest").RaceDisable(false);
-}
 
-void PortMenu::AddMenuWindows() {
-    AddMenuEntry("Windows", CVAR_SETTING("Menu.WindowsSidebarSection"));
+    // --- Tools ---
+    path.sidebarName = "Tools";
+    path.column = SECTION_COLUMN_1;
+    AddSidebarEntry("Settings", "Tools", 1);
 
-    WidgetPath path = { "Windows", "Tools", SECTION_COLUMN_1 };
-    AddSidebarEntry("Windows", "Tools", 1);
     AddWidget(path, "Debug Windows", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Stats", WIDGET_WINDOW_BUTTON)
         .CVar(CVAR_STATS_WINDOW_OPEN)
@@ -1163,16 +1212,6 @@ void PortMenu::AddMenuWindows() {
         .WindowName("GfxDebuggerWindow")
         .HideInSearch(true)
         .Options(WindowButtonOptions().Tooltip("Toggles the graphics debugger window."));
-
-    path.sidebarName = "Input";
-    AddSidebarEntry("Windows", "Input", 1);
-    AddWidget(path, "Controller", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "Controller Configuration", WIDGET_WINDOW_BUTTON)
-        .CVar(CVAR_CONTROLLER_CONFIGURATION_WINDOW_OPEN)
-        .RaceDisable(false)
-        .WindowName("Input Editor")
-        .HideInSearch(true)
-        .Options(WindowButtonOptions().Tooltip("Toggles the controller configuration window."));
 }
 
 void PortMenu::AddMenuAssets() {
@@ -1306,7 +1345,11 @@ void PortMenu::AddMenuAbout() {
     AddWidget(path, "Fray: Nrage Control Advising", WIDGET_TEXT);
     AddWidget(path, "ElBateSoli: Raphnet Playtesting", WIDGET_TEXT);
 
-    // BUILT-IN UPDATER
+#if !defined(__ANDROID__)
+    // BUILT-IN UPDATER — hidden on Android. App updates come through the
+    // Play Store on mobile; a curl-driven GitHub-releases updater can't
+    // replace a system-managed installation, and the curl shell-out
+    // (Updater.cpp) isn't built on Android in the first place.
     // The background check still fires when the menu loads
     ssb64::enhancements::CheckForUpdatesAsync(false);
 
@@ -1371,11 +1414,11 @@ void PortMenu::AddMenuAbout() {
         // Pass true to bypass the single-session lock
         ssb64::enhancements::CheckForUpdatesAsync(true);
     });
+#endif // !__ANDROID__ (Updater)
 }
 
 void PortMenu::AddMenuElements() {
     AddMenuSettings();
-    AddMenuWindows();
     AddMenuAssets();
     AddMenuAbout();
 
@@ -1482,7 +1525,9 @@ void PortMenu::DrawElement() {
     }
 
     RenderPostProcessLowResWarnModal();
+#if !defined(__ANDROID__)
     RenderShaderPackModal();
+#endif
 }
 
 } // namespace ssb64

@@ -844,6 +844,17 @@ void Menu::DrawElement() {
         ImGui::PopStyleColor();
     }
     ImGui::EndChild();
+#if defined(__ANDROID__)
+    // Android: only 2 header-row buttons (Reset + Close Menu) — the Quit
+    // button is skipped because mobile users dismiss the app by swiping
+    // it away. The SameLine offset shifts left by one button-width
+    // accordingly so the remaining two stay flush-right. Pop the
+    // FramePadding from line 745 here so the Reset/Close buttons render
+    // with their default inline sizing (matches the desktop path where
+    // the pop happens between Quit and Reset).
+    ImGui::SameLine(menuSize.x - (buttonSize.x * 2) - (style.ItemSpacing.x * 1));
+    ImGui::PopStyleVar();
+#else
     ImGui::SameLine(menuSize.x - (buttonSize.x * 3) - (style.ItemSpacing.x * 2));
     UIWidgets::ButtonOptions options3 = {};
     options3.color = UIWidgets::Colors::Red;
@@ -859,6 +870,7 @@ void Menu::DrawElement() {
     }
     ImGui::PopStyleVar();
     ImGui::SameLine();
+#endif
     UIWidgets::ButtonOptions options2 = {};
     options2.color = UIWidgets::Colors::Red;
     options2.size = UIWidgets::Sizes::Inline;
