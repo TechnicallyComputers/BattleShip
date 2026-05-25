@@ -55,8 +55,8 @@ extern void port_log(const char *fmt, ...);
 
 #define STUN_TRANSPORT_UDP 17U
 
-/* Default coturn on match host — override via env until credentials are obscured. */
-#define MM_TURN_DEFAULT_HOST "216.154.76.149"
+/* Default coturn — DNS-only A record; UDP/TCP 3478 on host (not HTTP). Override via env. */
+#define MM_TURN_DEFAULT_HOST "coturn.technicallycomputers.ca"
 #define MM_TURN_DEFAULT_PORT 3478
 #define MM_TURN_DEFAULT_USER "netplay"
 #define MM_TURN_DEFAULT_PASS "rCGKgDisoVJcdFRhltm3"
