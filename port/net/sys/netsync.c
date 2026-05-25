@@ -18,6 +18,10 @@
 #include <wp/weapon.h>
 #include <wp/wpdef.h>
 
+#ifdef PORT
+#include <ef/effect.h>
+#endif
+
 #include <it/itmanager.h>
 
 #ifdef PORT
@@ -2117,6 +2121,64 @@ u32 syNetSyncHashActiveWeaponsForRollback(void)
 	}
 	return hash;
 }
+
+#ifdef PORT
+u32 syNetSyncHashActiveEffectsForRollback(void)
+{
+	GObj *sorted[SYNET_SYNC_EFFECT_HASH_SORT_MAX];
+	s32 count;
+	u32 hash;
+	s32 i;
+	sb32 truncated;
+
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveEffectsSorted(sorted, SYNET_SYNC_EFFECT_HASH_SORT_MAX, &truncated);
+	{
+		static sb32 sSYNetSyncEffectHashTruncationLogged = FALSE;
+
+		if ((truncated != FALSE) && (sSYNetSyncEffectHashTruncationLogged == FALSE))
+		{
+			port_log("SSB64 NetSync: effect hash truncated at max=%d (snapshot cap; save will fail if overflow)\n",
+			         SYNET_SYNC_EFFECT_HASH_SORT_MAX);
+			sSYNetSyncEffectHashTruncationLogged = TRUE;
+		}
+	}
+	hash = 2166136261U;
+	for (i = 0; i < count; i++)
+	{
+		GObj *gobj = sorted[i];
+		EFStruct *ep;
+		DObj *dobj;
+		u32 fold;
+
+		ep = efGetStruct(gobj);
+		if (ep == NULL)
+		{
+			continue;
+		}
+		fold = 2166136261U;
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->bank_id);
+		fold = syNetSyncFnvAccumulateU32(fold,
+		                                 (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U);
+		fold = syNetSyncFnvAccumulateU32(fold, (ep->is_pause_effect != FALSE) ? 1U : 0U);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
+		fold =
+		    syNetSyncFnvAccumulateU32(fold, syNetSyncPointerFingerprintLow32((const void *)ep->proc_update));
+		dobj = DObjGetStruct(gobj);
+		if (dobj != NULL)
+		{
+			Vec3f pos = dobj->translate.vec.f;
+
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+		}
+		hash ^= fold;
+		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
+	}
+	return hash;
+}
+#endif
 
 u32 syNetSyncHashRNGSeed(void)
 {

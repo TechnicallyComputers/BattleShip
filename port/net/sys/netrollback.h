@@ -12,10 +12,11 @@
  * and remote ring rows exist; `source` / `is_predicted` / `is_valid` are diagnostic and must not alone trigger resim when
  * buttons/sticks match. Optional `SSB64_NETPLAY_ROLLBACK_MISMATCH_REMOTE_WITHOUT_PUBLISHED` also flags remote-without-published.
  *
- * Each save records subsystem hashes (fighter, world, item, weapon, map, rng, camera, animation). The stored
+ * Each save records subsystem hashes (fighter, world, item, weapon, map, rng, camera, animation, effect digest). The stored
  * animation digest uses `syNetSyncHashFighterAnimationStateForRollback()`; item/weapon digests use
  * `syNetSyncHashActiveItemsForRollback()` / `syNetSyncHashActiveWeaponsForRollback()` (omit unstable item/weapon
- * GObj ids when respawn allocates fresh ids). After load+apply,
+ * GObj ids when respawn allocates fresh ids). Effect digest: `syNetSyncHashActiveEffectsForRollback()` (capped like snapshot
+ * blobs; **not** yet part of load-verify baseline). After load+apply,
  * `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY` (default on) recomputes and logs `LOAD_HASH_DRIFT` on mismatch.
  *
  * Rollback is **local input-timeline driven** (`netinput_timeline.c`, validated at scan time). GGPO input

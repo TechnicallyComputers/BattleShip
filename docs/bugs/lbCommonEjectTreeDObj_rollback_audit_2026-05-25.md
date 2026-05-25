@@ -77,7 +77,7 @@ So **item apply + orphan reconcile** happens **before** weapon apply and **befor
 | Crash on **first throw** after resim | **B** | Release assumes hold DObj layout; load left incomplete tree or `child` cleared. |
 | Crash when **respawning** item from blob | **A** | Unusual if `attr->data` path builds model without children (would also affect non-rollback). |
 
-**Effects (GObj id 1011)** are **not** snapshot-applied like items; explosion resim can allocate/eject many effect GObjs while item teardown runs. That stresses ordering but does **not** add new direct `lbCommonEjectTreeDObj` sites — focus stays on **item DObj invariants** (A/B/C).
+**Effects (links 6 / 8, GObj kind id 1011-class):** **Phase 1 (2026-05-25)** snapshots **userdata effect presence** (cap 48), stores `hash_effect`, and **reconciles before items**: free-floating effects not listed in the slice are **`gcEjectGObj`’d**; matched ids get **`anim_frame`**. Fighter-coupled effects (`ep->fighter_gobj != NULL`, e.g. shield/reflector/egg‑lay paths) **are never torn down here**. There is **still no** generic effect respawn from serialized `effect_vars`; see [`netrollback_effect_snapshot_presence_phase1_2026-05-25.md`](netrollback_effect_snapshot_presence_phase1_2026-05-25.md). Item DObj invariant focus (sites A/B/C) remains primary for **`lbCommonEjectTreeDObj`** crashes.
 
 ---
 

@@ -74,6 +74,9 @@
 #include <it/itvars.h>
 #include <it/itfighter/itlinkbomb.h>
 
+#include <ef/effect.h>
+#include <ef/eftypes.h>
+
 extern ITDesc dItLinkBombItemDesc;
 
 extern void portFixupStructU16(void *base, unsigned int byte_offset, unsigned int num_words);
@@ -407,6 +410,19 @@ typedef struct SYNetRbSnapWeaponBlob
 
 } SYNetRbSnapWeaponBlob;
 
+typedef struct SYNetRbSnapEffectBlob
+{
+	sb32 is_valid;
+	u32 gobj_id;
+	u16 bank_id;
+	u8 link_id;
+	u8 pad;
+	u32 fighter_gobj_id;
+	f32 anim_frame;
+	u32 proc_update_fingerprint;
+
+} SYNetRbSnapEffectBlob;
+
 #define SYNETRB_WEAPON_SPAWN_DEFAULT           0U
 #define SYNETRB_WEAPON_SPAWN_PK_REFLECT_HEAD   1U
 #define SYNETRB_WEAPON_SPAWN_PK_REFLECT_TRAIL  2U
@@ -438,6 +454,7 @@ typedef struct SYNetRbSnapshotSlot
 	u32 hash_rng;
 	u32 hash_camera;
 	u32 hash_animation;
+	u32 hash_effect;
 	SYNetRbSnapWorldBlob world;
 	u16 mp_collision_tic;
 	s32 mp_yakumono_count;
@@ -448,6 +465,8 @@ typedef struct SYNetRbSnapshotSlot
 	SYNetRbSnapItemBlob items[SYNETRB_SNAPSHOT_MAX_ITEMS];
 	s32 weapon_count;
 	SYNetRbSnapWeaponBlob weapons[SYNETRB_SNAPSHOT_MAX_WEAPONS];
+	s32 effect_count;
+	SYNetRbSnapEffectBlob effects[SYNETRB_SNAPSHOT_MAX_EFFECTS];
 	SYNetRbSnapCameraBlob camera;
 
 } SYNetRbSnapshotSlot;
@@ -3278,6 +3297,70 @@ s32 syNetRbEnumerateActiveWeaponsSorted(GObj **out, s32 max, sb32 *truncated_out
 }
 
 #ifdef PORT
+
+s32 syNetRbEnumerateActiveEffectsSorted(GObj **out, s32 max, sb32 *truncated_out)
+{
+	s32 link_pass;
+	GObj *gobj;
+	s32 count;
+	s32 i;
+	s32 j;
+	sb32 saw_extra;
+
+	if (truncated_out != NULL)
+	{
+		*truncated_out = FALSE;
+	}
+	if ((out == NULL) || (max <= 0))
+	{
+		return 0;
+	}
+	count = 0;
+	saw_extra = FALSE;
+	for (link_pass = 0; link_pass < 2; link_pass++)
+	{
+		GObj *link_head;
+
+		link_head =
+		    gGCCommonLinks[(link_pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = gobj->link_next)
+		{
+			if ((gobj->user_data.p == NULL) || (efGetStruct(gobj) == NULL))
+			{
+				continue;
+			}
+			if (count < max)
+			{
+				out[count++] = gobj;
+			}
+			else
+			{
+				saw_extra = TRUE;
+			}
+		}
+	}
+	for (i = 1; i < count; i++)
+	{
+		GObj *key_gobj;
+		u32 key_id;
+
+		key_gobj = out[i];
+		key_id = key_gobj->id;
+		j = i;
+		while ((j > 0) && (out[j - 1]->id > key_id))
+		{
+			out[j] = out[j - 1];
+			j--;
+		}
+		out[j] = key_gobj;
+	}
+	if ((truncated_out != NULL) && (saw_extra != FALSE))
+	{
+		*truncated_out = TRUE;
+	}
+	return count;
+}
+
 static sb32 syNetRbSnapSnapshotItemDiagEnabled(void)
 {
 	static int s_env_cache = -999;
@@ -4268,6 +4351,162 @@ static sb32 syNetRbSnapCaptureWeapons(SYNetRbSnapshotSlot *slot)
 	return TRUE;
 }
 
+
+#ifdef PORT
+
+static sb32 syNetRbSnapSnapshotEffectDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static u32 syNetRbSnapPointerFingerprintLow32(const void *p)
+{
+	uintptr_t u;
+
+	u = (uintptr_t)p;
+	if (sizeof(u) > sizeof(u32))
+	{
+		u ^= u >> 32;
+	}
+	return (u32)u;
+}
+
+static void syNetRbSnapApplyEffectPresence(GObj *gobj, const SYNetRbSnapEffectBlob *blob)
+{
+	if ((gobj == NULL) || (blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return;
+	}
+	gobj->anim_frame = blob->anim_frame;
+}
+
+static sb32 syNetRbSnapLiveEffectListedInSnapshot(const SYNetRbSnapshotSlot *slot, u32 gobj_id)
+{
+	s32 ei;
+
+	if (slot == NULL)
+	{
+		return FALSE;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		if ((slot->effects[ei].is_valid != FALSE) && (slot->effects[ei].gobj_id == gobj_id))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/*
+ * Tear down orphaned world/free effects that speculative sim piled up; EFStructs pinned to fighters (shield/reflector…) are never
+ * touched here — their `fighter_gobj` field is snapshots-consistent via full fighter status_vars capture.
+ */
+static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pass;
+	GObj *gobj;
+	GObj *next;
+	s32 ei;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob;
+
+		blob = &slot->effects[ei];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		gobj = gcFindGObjByID(blob->gobj_id);
+		if ((gobj != NULL) && (efGetStruct(gobj) != NULL))
+		{
+			syNetRbSnapApplyEffectPresence(gobj, blob);
+		}
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *link_head;
+
+		link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = next)
+		{
+			EFStruct *ep;
+
+			next = gobj->link_next;
+			if ((gobj->user_data.p == NULL) || ((ep = efGetStruct(gobj)) == NULL))
+			{
+				continue;
+			}
+			if (ep->fighter_gobj != NULL)
+			{
+				continue;
+			}
+			if (syNetRbSnapLiveEffectListedInSnapshot(slot, gobj->id) == FALSE)
+			{
+				gcEjectGObj(gobj);
+			}
+		}
+	}
+}
+
+static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
+{
+	GObj *sorted[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	s32 count;
+	s32 i;
+	sb32 truncated;
+
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveEffectsSorted(sorted, SYNETRB_SNAPSHOT_MAX_EFFECTS, &truncated);
+	for (i = 0; i < count; i++)
+	{
+		GObj *gobj_iter;
+		EFStruct *ep;
+		SYNetRbSnapEffectBlob *blob;
+
+		gobj_iter = sorted[i];
+		ep = efGetStruct(gobj_iter);
+		blob = &slot->effects[i];
+		memset(blob, 0, sizeof(*blob));
+		blob->is_valid = TRUE;
+		blob->gobj_id = gobj_iter->id;
+		blob->bank_id = ep->bank_id;
+		blob->link_id = gobj_iter->link_id;
+		blob->fighter_gobj_id = (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U;
+		blob->anim_frame = gobj_iter->anim_frame;
+		blob->proc_update_fingerprint = syNetRbSnapPointerFingerprintLow32((const void *)ep->proc_update);
+	}
+	slot->effect_count = count;
+	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+	{
+		port_log("SSB64 NetRbSnapshot: effect save tick=%u effect_count=%d truncated=%d\n",
+		         (unsigned int)slot->tick, (int)slot->effect_count, (int)truncated);
+	}
+	if (truncated != FALSE)
+	{
+		port_log("SSB64 NetRbSnapshot: effect cap overflow (max=%d) tick=%u — save failed\n",
+		         SYNETRB_SNAPSHOT_MAX_EFFECTS, (unsigned int)slot->tick);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+#endif /* PORT */
+
 static ub8 syNetRbSnapStarRodIsSmashFromBlob(const SYNetRbSnapWeaponBlob *blob)
 {
 	f32 vel_x;
@@ -4792,6 +5031,31 @@ sb32 syNetRbSnapshotSynctestProbeWeaponMismatch(u32 probe_tick)
 	return (live_count != slot->weapon_count) ? TRUE : FALSE;
 }
 
+static s32 syNetRbSnapProbeCountEffectsWithTrunc(sb32 *truncated_out)
+{
+	sb32 local_truncated;
+	GObj *sorted[SYNETRB_SNAPSHOT_MAX_EFFECTS + 1];
+
+	local_truncated = FALSE;
+	return syNetRbEnumerateActiveEffectsSorted(
+	    sorted, (s32)(sizeof(sorted) / sizeof(sorted[0])), (truncated_out != NULL) ? truncated_out : &local_truncated);
+}
+
+sb32 syNetRbSnapshotSynctestProbeEffectMismatch(u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *slot;
+	sb32 truncated;
+	s32 live_count;
+
+	slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != probe_tick))
+	{
+		return FALSE;
+	}
+	live_count = syNetRbSnapProbeCountEffectsWithTrunc(&truncated);
+	return ((truncated != FALSE) || (live_count != slot->effect_count)) ? TRUE : FALSE;
+}
+
 static u32 sSYNetRbSnapshotLastCommittedTick;
 static u32 sSYNetRbSnapshotLastLoadSafeTick;
 
@@ -4920,6 +5184,13 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 		slot->is_valid = FALSE;
 		return FALSE;
 	}
+#ifdef PORT
+	if (syNetRbSnapCaptureEffects(slot) == FALSE)
+	{
+		slot->is_valid = FALSE;
+		return FALSE;
+	}
+#endif
 	syNetRbSnapBackfillFighterCoupledIdsFromWeapons(slot);
 	syNetRbSnapCaptureCamera(&slot->camera);
 
@@ -4931,6 +5202,9 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	slot->hash_rng = syNetSyncHashRNGSeed();
 	slot->hash_camera = syNetSyncHashGMCamera();
 	slot->hash_animation = syNetSyncHashFighterAnimationStateForRollback();
+#ifdef PORT
+	slot->hash_effect = syNetSyncHashActiveEffectsForRollback();
+#endif
 
 	return TRUE;
 }
@@ -4969,6 +5243,9 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 
 	syNetRbSnapApplyMap(slot);
 	syNetRbSnapApplyWorld(&slot->world, slot->tick);
+#ifdef PORT
+	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
+#endif
 	syNetRbSnapApplyItems(slot);
 	syNetRbSnapRebindAllFighterMPCollPointers();
 	syNetRbSnapApplyWeapons(slot);
@@ -7166,6 +7443,12 @@ u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick)
 {
 	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
 	return slot->hash_animation;
+}
+
+u32 syNetRbSnapshotGetSlotHashEffect(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot = syNetRbSnapshotSlotForTick(tick);
+	return slot->hash_effect;
 }
 
 sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng)

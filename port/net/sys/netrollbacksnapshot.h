@@ -16,6 +16,10 @@ struct GObj;
 #define SYNETRB_SNAPSHOT_MAX_YAKU     64
 #define SYNETRB_SNAPSHOT_MAX_ITEMS    32
 #define SYNETRB_SNAPSHOT_MAX_WEAPONS  32
+/*
+ * Effect allocations are capped (~EFFECT_ALLOC_NUM in decomp). Snapshots bounded parallel to item/weapons tooling.
+ */
+#define SYNETRB_SNAPSHOT_MAX_EFFECTS  48
 #define SYNETRB_SNAPSHOT_MAX_MAPOBJS  16
 
 extern void syNetRbSnapshotInit(void);
@@ -74,6 +78,8 @@ extern sb32 syNetRbSnapHeldItemWeaponNeedsSpawn(struct GObj *owner_gobj, s32 kin
 extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
 /* TRUE when live weapon link count != probe snapshot weapon_count (destroy/spawn boundary). */
 extern sb32 syNetRbSnapshotSynctestProbeWeaponMismatch(u32 probe_tick);
+/* PORT: live orphan effect count (userdata effects) != probe snapshot effect_count. */
+extern sb32 syNetRbSnapshotSynctestProbeEffectMismatch(u32 probe_tick);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
@@ -96,6 +102,10 @@ extern s32 syNetRbEnumerateActiveItemsSorted(struct GObj **out, s32 max, sb32 *t
 extern s32 syNetRbEnumerateActiveWeaponsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 
 #ifdef PORT
+extern s32 syNetRbEnumerateActiveEffectsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
+#endif
+
+#ifdef PORT
 /* Subsystem hashes stored on the slot (for load verify / diagnostics). */
 extern u32 syNetRbSnapshotGetSlotHashFighter(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
@@ -107,6 +117,9 @@ extern s32 syNetRbSnapshotGetSlotMapYakumonoCount(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashRng(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashCamera(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashAnimation(u32 tick);
+#ifdef PORT
+extern u32 syNetRbSnapshotGetSlotHashEffect(u32 tick);
+#endif
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
 /* Ring slot published for tick (valid + tick match + save completed). */
 extern sb32 syNetRbSnapshotIsTickCommitted(u32 tick);
