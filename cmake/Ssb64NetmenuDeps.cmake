@@ -8,24 +8,11 @@ function(ssb64_netmenu_attach_curl target)
     if(NOT SSB64_NETMENU)
         return()
     endif()
-    if(NOT OpenSSL_FOUND)
-        find_package(OpenSSL QUIET)
-    endif()
     if(NOT TARGET CURL::libcurl)
         message(FATAL_ERROR "SSB64_NETMENU=ON but CURL::libcurl is missing (vcpkg curl install / find_package failed)")
     endif()
 
     target_link_libraries(${target} PRIVATE CURL::libcurl)
-
-    if(NOT OpenSSL_FOUND)
-        find_package(OpenSSL QUIET)
-    endif()
-    if(OpenSSL_FOUND)
-        target_compile_definitions(${target} PRIVATE SSB64_HAVE_OPENSSL=1)
-        message(STATUS "SSB64 netmenu: OpenSSL found (TURN long-term credentials)")
-    else()
-        message(WARNING "SSB64 netmenu: OpenSSL not found — TURN coturn auth may fail (install openssl dev)")
-    endif()
 
     # Belt-and-suspenders: MSVC OBJECT targets may not pick up INTERFACE includes from
     # imported targets; always add an explicit -I when we know the vcpkg prefix.

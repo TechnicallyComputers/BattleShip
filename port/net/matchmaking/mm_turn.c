@@ -260,29 +260,189 @@ static void mmHmacSha1(const u8 *key, size_t key_len, const u8 *msg, size_t msg_
 	mmSha1Final(&ctx, out);
 }
 
-#if defined(SSB64_HAVE_OPENSSL)
-#include <openssl/md5.h>
-#endif
+/* ---- minimal MD5 (RFC 1321) for TURN long-term credential key ---- */
+
+typedef struct MmMd5Ctx
+{
+	u32 state[4];
+	u32 count[2];
+	u8 buffer[64];
+} MmMd5Ctx;
+
+#define MM_MD5_F(x, y, z) (((x) & (y)) | ((~x) & (z)))
+#define MM_MD5_G(x, y, z) (((x) & (z)) | ((y) & (~z)))
+#define MM_MD5_H(x, y, z) ((x) ^ (y) ^ (z))
+#define MM_MD5_I(x, y, z) ((y) ^ ((x) | (~z)))
+#define MM_MD5_ROT(x, n) (((x) << (n)) | ((x) >> (32U - (n))))
+
+static void mmMd5Transform(u32 state[4], const u8 block[64])
+{
+	u32 a = state[0];
+	u32 b = state[1];
+	u32 c = state[2];
+	u32 d = state[3];
+	u32 x[16];
+	u32 i;
+
+	for (i = 0U; i < 16U; i++)
+	{
+		x[i] = (u32)block[i * 4U] | ((u32)block[i * 4U + 1U] << 8) | ((u32)block[i * 4U + 2U] << 16) |
+		       ((u32)block[i * 4U + 3U] << 24);
+	}
+#define MM_MD5_R(f, a, b, c, d, k, s, t) \
+	do \
+	{ \
+		(a) += f((b), (c), (d)) + x[(k)] + (t); \
+		(a) = MM_MD5_ROT((a), (s)); \
+		(a) += (b); \
+	} while (0)
+
+	MM_MD5_R(MM_MD5_F, a, b, c, d, 0, 7, 0xD76AA478U);
+	MM_MD5_R(MM_MD5_F, d, a, b, c, 1, 12, 0xE8C7B756U);
+	MM_MD5_R(MM_MD5_F, c, d, a, b, 2, 17, 0x242070DBU);
+	MM_MD5_R(MM_MD5_F, b, c, d, a, 3, 22, 0xC1BDCEEEU);
+	MM_MD5_R(MM_MD5_F, a, b, c, d, 4, 7, 0xF57C0FAFU);
+	MM_MD5_R(MM_MD5_F, d, a, b, c, 5, 12, 0x4787C62AU);
+	MM_MD5_R(MM_MD5_F, c, d, a, b, 6, 17, 0xA8304613U);
+	MM_MD5_R(MM_MD5_F, b, c, d, a, 7, 22, 0xFD469501U);
+	MM_MD5_R(MM_MD5_F, a, b, c, d, 8, 7, 0x698098D8U);
+	MM_MD5_R(MM_MD5_F, d, a, b, c, 9, 12, 0x8B44F7AFU);
+	MM_MD5_R(MM_MD5_F, c, d, a, b, 10, 17, 0xFFFF5BB1U);
+	MM_MD5_R(MM_MD5_F, b, c, d, a, 11, 22, 0x895CD7BEU);
+	MM_MD5_R(MM_MD5_F, a, b, c, d, 12, 7, 0x6B901122U);
+	MM_MD5_R(MM_MD5_F, d, a, b, c, 13, 12, 0xFD987193U);
+	MM_MD5_R(MM_MD5_F, c, d, a, b, 14, 17, 0xA679438EU);
+	MM_MD5_R(MM_MD5_F, b, c, d, a, 15, 22, 0x49B40821U);
+	MM_MD5_R(MM_MD5_G, a, b, c, d, 1, 5, 0xF61E2562U);
+	MM_MD5_R(MM_MD5_G, d, a, b, c, 6, 9, 0xC040B340U);
+	MM_MD5_R(MM_MD5_G, c, d, a, b, 11, 14, 0x265E5A51U);
+	MM_MD5_R(MM_MD5_G, b, c, d, a, 0, 20, 0xE9B6C7AAU);
+	MM_MD5_R(MM_MD5_G, a, b, c, d, 5, 5, 0xD62F105DU);
+	MM_MD5_R(MM_MD5_G, d, a, b, c, 10, 9, 0x02441453U);
+	MM_MD5_R(MM_MD5_G, c, d, a, b, 15, 14, 0xD8A1E681U);
+	MM_MD5_R(MM_MD5_G, b, c, d, a, 4, 20, 0xE7D3FBC8U);
+	MM_MD5_R(MM_MD5_G, a, b, c, d, 9, 5, 0x21E1CDE6U);
+	MM_MD5_R(MM_MD5_G, d, a, b, c, 14, 9, 0xC33707D6U);
+	MM_MD5_R(MM_MD5_G, c, d, a, b, 3, 14, 0xF4D50D87U);
+	MM_MD5_R(MM_MD5_G, b, c, d, a, 8, 20, 0x455A14EDU);
+	MM_MD5_R(MM_MD5_G, a, b, c, d, 13, 5, 0xA9E3E905U);
+	MM_MD5_R(MM_MD5_G, d, a, b, c, 2, 9, 0xFCEFA3F8U);
+	MM_MD5_R(MM_MD5_G, c, d, a, b, 7, 14, 0x676F02D9U);
+	MM_MD5_R(MM_MD5_G, b, c, d, a, 12, 20, 0x8D2A4C8AU);
+	MM_MD5_R(MM_MD5_H, a, b, c, d, 5, 4, 0xFFFA3942U);
+	MM_MD5_R(MM_MD5_H, d, a, b, c, 8, 11, 0x8771F681U);
+	MM_MD5_R(MM_MD5_H, c, d, a, b, 11, 16, 0x6D9D6122U);
+	MM_MD5_R(MM_MD5_H, b, c, d, a, 14, 23, 0xFDE5380CU);
+	MM_MD5_R(MM_MD5_H, a, b, c, d, 1, 4, 0xA4BEEA44U);
+	MM_MD5_R(MM_MD5_H, d, a, b, c, 4, 11, 0x4BDECFA9U);
+	MM_MD5_R(MM_MD5_H, c, d, a, b, 7, 16, 0xF6BB4B60U);
+	MM_MD5_R(MM_MD5_H, b, c, d, a, 10, 23, 0xBEBFBC70U);
+	MM_MD5_R(MM_MD5_H, a, b, c, d, 13, 4, 0x289B7EC6U);
+	MM_MD5_R(MM_MD5_H, d, a, b, c, 0, 11, 0xEAA127FAU);
+	MM_MD5_R(MM_MD5_H, c, d, a, b, 3, 16, 0xD4EF3085U);
+	MM_MD5_R(MM_MD5_H, b, c, d, a, 6, 23, 0x04881D05U);
+	MM_MD5_R(MM_MD5_H, a, b, c, d, 9, 4, 0xD9D4D039U);
+	MM_MD5_R(MM_MD5_H, d, a, b, c, 12, 11, 0xE6DB99E5U);
+	MM_MD5_R(MM_MD5_H, c, d, a, b, 15, 16, 0x1FA27CF8U);
+	MM_MD5_R(MM_MD5_H, b, c, d, a, 2, 23, 0xC4AC5665U);
+	MM_MD5_R(MM_MD5_I, a, b, c, d, 0, 6, 0xF4292244U);
+	MM_MD5_R(MM_MD5_I, d, a, b, c, 7, 10, 0x432AFF97U);
+	MM_MD5_R(MM_MD5_I, c, d, a, b, 14, 15, 0xAB9423A7U);
+	MM_MD5_R(MM_MD5_I, b, c, d, a, 5, 21, 0xFC93A039U);
+	MM_MD5_R(MM_MD5_I, a, b, c, d, 12, 6, 0x655B59C3U);
+	MM_MD5_R(MM_MD5_I, d, a, b, c, 3, 10, 0x8F0CCC92U);
+	MM_MD5_R(MM_MD5_I, c, d, a, b, 10, 15, 0xFFEFF47DU);
+	MM_MD5_R(MM_MD5_I, b, c, d, a, 1, 21, 0x85845DD1U);
+	MM_MD5_R(MM_MD5_I, a, b, c, d, 8, 6, 0x6FA87E4FU);
+	MM_MD5_R(MM_MD5_I, d, a, b, c, 15, 10, 0xFE2CE6E0U);
+	MM_MD5_R(MM_MD5_I, c, d, a, b, 6, 15, 0xA3014314U);
+	MM_MD5_R(MM_MD5_I, b, c, d, a, 13, 21, 0x4E0811A1U);
+	MM_MD5_R(MM_MD5_I, a, b, c, d, 4, 6, 0xF7537E82U);
+	MM_MD5_R(MM_MD5_I, d, a, b, c, 11, 10, 0xBD3AF235U);
+	MM_MD5_R(MM_MD5_I, c, d, a, b, 2, 15, 0x2AD7D2BBU);
+	MM_MD5_R(MM_MD5_I, b, c, d, a, 9, 21, 0xEB86D391U);
+
+#undef MM_MD5_R
+
+	state[0] += a;
+	state[1] += b;
+	state[2] += c;
+	state[3] += d;
+}
+
+static void mmMd5Init(MmMd5Ctx *ctx)
+{
+	ctx->count[0] = 0U;
+	ctx->count[1] = 0U;
+	ctx->state[0] = 0x67452301U;
+	ctx->state[1] = 0xEFCDAB89U;
+	ctx->state[2] = 0x98BADCFEU;
+	ctx->state[3] = 0x10325476U;
+}
+
+static void mmMd5Update(MmMd5Ctx *ctx, const u8 *data, size_t len)
+{
+	u32 idx = (ctx->count[0] >> 3) & 63U;
+
+	ctx->count[0] += (u32)(len << 3);
+	if (ctx->count[0] < (u32)(len << 3))
+	{
+		ctx->count[1]++;
+	}
+	ctx->count[1] += (u32)(len >> 29);
+	while (len > 0U)
+	{
+		u32 chunk = 64U - idx;
+
+		if (chunk > len)
+		{
+			chunk = (u32)len;
+		}
+		memcpy(ctx->buffer + idx, data, chunk);
+		idx += chunk;
+		data += chunk;
+		len -= chunk;
+		if (idx == 64U)
+		{
+			mmMd5Transform(ctx->state, ctx->buffer);
+			idx = 0U;
+		}
+	}
+}
+
+static void mmMd5Final(MmMd5Ctx *ctx, u8 digest[16])
+{
+	u8 bits[8];
+	u8 pad[64];
+	u32 idx;
+	u32 pad_len;
+	u32 i;
+
+	for (i = 0U; i < 8U; i++)
+	{
+		bits[i] = (u8)((ctx->count[(i >= 4U) ? 0U : 1U] >> ((i & 3U) * 8)) & 0xFFU);
+	}
+	idx = (ctx->count[0] >> 3) & 63U;
+	pad_len = (idx < 56U) ? (56U - idx) : (120U - idx);
+	pad[0] = 0x80U;
+	memset(pad + 1, 0, pad_len - 1U);
+	mmMd5Update(ctx, pad, pad_len);
+	mmMd5Update(ctx, bits, 8U);
+	for (i = 0U; i < 16U; i++)
+	{
+		digest[i] = (u8)((ctx->state[i >> 2] >> ((i & 3U) * 8)) & 0xFFU);
+	}
+}
 
 static void mmTurnMd5LongTermKey(const char *user, const char *realm, const char *pass, u8 out[16])
 {
 	char buf[384];
+	MmMd5Ctx ctx;
 
 	snprintf(buf, sizeof(buf), "%s:%s:%s", user, realm, pass);
-#if defined(SSB64_HAVE_OPENSSL)
-	MD5((const unsigned char *)buf, strlen(buf), out);
-#else
-	{
-		MmSha1Ctx ctx;
-		u8 digest[20];
-
-		/* Without OpenSSL, long-term TURN auth will not match coturn — build with OPENSSL. */
-		mmSha1Init(&ctx);
-		mmSha1Update(&ctx, (const u8 *)buf, strlen(buf));
-		mmSha1Final(&ctx, digest);
-		memcpy(out, digest, 16U);
-	}
-#endif
+	mmMd5Init(&ctx);
+	mmMd5Update(&ctx, (const u8 *)buf, strlen(buf));
+	mmMd5Final(&ctx, out);
 }
 
 /* ---- STUN helpers ---- */
