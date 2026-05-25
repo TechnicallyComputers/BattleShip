@@ -156,6 +156,11 @@ endif()
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Belt-and-suspenders: GLES backend + skip desktop-only GL enums in gfx_opengl.cpp.
+    target_compile_definitions(libultraship PRIVATE USE_OPENGLES)
+endif()
+
 # Windows netmenu: MSVC uses libultraship vcpkg (curl + pthreads4w CONFIG packages).
 # MinGW cross uses mingw-w64-curl from CMAKE_FIND_ROOT_PATH (FindCURL module / pkg-config).
 if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
