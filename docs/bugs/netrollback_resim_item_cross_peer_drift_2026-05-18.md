@@ -19,8 +19,9 @@ After symmetric resim around sim tick **1737**, both peers logged identical loca
 ## Fixes shipped (2026-05-18)
 
 1. **`SSB64_NETPLAY_ITEM_HASH_TRACE=1`** — ordered `(gobj_id, kind, type)` walk + per-step fold at hash-compute time (`syNetSyncLogItemHashWalkTrace`).
-2. **Order-independent item hash** — `syNetSyncHashActiveItemsForRollback` sorts active items by `gobj_id` before XOR fold; fold includes `gobj_id`.
-3. **`SYNETPEER_PACKET_RESIM_POST` (25)** — cross-peer post-resim digest handshake; compare on local completion when episode keys match (`syNetRollbackTryEmitResimPostHandshake`).
+2. **`SSB64_NETPLAY_ITEM_OPCODE_TRACE=1`** (with hash trace on) — per-step **`atk_state`**, **`multi`**, **`lifetime`**, relation GObj ids, and **`proc_*`** fingerprints (`type` stays the procedural opcode index).
+3. **Order-independent item hash** — `syNetSyncHashActiveItemsForRollback` sorts active items by `gobj_id` before XOR fold; fold includes `gobj_id`.
+4. **`SYNETPEER_PACKET_RESIM_POST` (25)** — cross-peer post-resim digest handshake; compare on local completion when episode keys match (`syNetRollbackTryEmitResimPostHandshake`).
 
 ## Re-soak pass criteria
 

@@ -111,7 +111,12 @@ extern void syNetSyncResetNetplayBattleClock(void);
 extern void syNetSyncOnNetplayBattleGo(void);
 extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);
 extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
-/* `SSB64_NETPLAY_ITEM_HASH_TRACE=1`: log GObj walk order + per-item fold at hash-compute time. */
+/*
+ * `SSB64_NETPLAY_ITEM_HASH_TRACE=1`: log GObj walk order + per-item fold at hash-compute time.
+ * Optional `SSB64_NETPLAY_ITEM_OPCODE_TRACE=1` (requires hash trace — same emit sites): extend each step with item
+ * behavioral fields — `type` selects the item procedural table entry (the effective “opcode”); plus attack state,
+ * timers, relation GObj ids, and low bits of dispatch proc pointers (`proc_update`/hit/shield/setoff/damage/dead).
+ */
 extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
 /* Per-player `syNetSyncHashFighterStructLight` at `sim_state_tick` (`SSB64_NETPLAY_FIGHTER_SLOT_HASH_LOG`). */
 extern void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX]);

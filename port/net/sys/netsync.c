@@ -26,6 +26,7 @@
 #include <sys/netrollback.h>
 
 #include <stdlib.h>
+#include <stdint.h>
 
 extern void port_log(const char *fmt, ...);
 
@@ -1848,6 +1849,34 @@ static sb32 syNetSyncItemHashTraceEnabled(void)
 	return (s_env_cache != 0) ? TRUE : FALSE;
 }
 
+/* Item “opcode”: `ITStruct.type` selects procedural behavior / script step; atk_state + multi/ev/lifetime constrain it. */
+static sb32 syNetSyncItemOpcodeTraceEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_ITEM_OPCODE_TRACE");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+/* NULL-safe fingerprint of any code/data pointer (truncated XOR on LP64 — not symbolic). */
+static u32 syNetSyncPointerFingerprintLow32(const void *p)
+{
+	uintptr_t u;
+
+	u = (uintptr_t)p;
+	if (sizeof(u) > sizeof(u32))
+	{
+		u ^= u >> 32;
+	}
+	return (u32)u;
+}
+
 void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 {
 	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
@@ -1885,14 +1914,55 @@ void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 		fold = syNetSyncFoldActiveItemGobjForRollback(gobj);
 		hash ^= fold;
 		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
-		port_log(
-		    "SSB64 NetSync: item_hash_walk step=%u gobj_id=%u kind=%d type=%d fold=0x%08X hash=0x%08X\n",
-		    idx,
-		    (unsigned int)gobj->id,
-		    (int)ip->kind,
-		    (int)ip->type,
-		    fold,
-		    hash);
+		if (syNetSyncItemOpcodeTraceEnabled())
+		{
+			/*
+			 * `type` selects the active item procedural/script step (effective “opcode” for logs).
+			 * Proc columns are XOR-folded uintptr low halves — compare same build; different ASLR still useful within one run.
+			 */
+			port_log(
+			    "SSB64 NetSync: item_hash_walk step=%u gobj_id=%u kind=%d type=%d fold=0x%08X hash=0x%08X "
+			    "atk_state=%d multi=%u event_id=%u lifetime=%d dmg_gid=%u own_gid=%u ref_gid=%u "
+			    "hold=%u apick=%u thrwn=%u d_all=%u proc_up=%08X proc_map=%08X proc_hit=%08X proc_sd=%08X "
+			    "proc_hop=%08X proc_so=%08X proc_rf=%08X proc_dmg=%08X proc_dead=%08X\n",
+			    idx,
+			    (unsigned int)gobj->id,
+			    (int)ip->kind,
+			    (int)ip->type,
+			    fold,
+			    hash,
+			    (int)ip->attack_coll.attack_state,
+			    (unsigned int)ip->multi,
+			    (unsigned int)ip->event_id,
+			    (int)ip->lifetime,
+			    (unsigned int)((ip->damage_gobj != NULL) ? (u32)ip->damage_gobj->id : 0U),
+			    (unsigned int)((ip->owner_gobj != NULL) ? (u32)ip->owner_gobj->id : 0U),
+			    (unsigned int)((ip->reflect_gobj != NULL) ? (u32)ip->reflect_gobj->id : 0U),
+			    (unsigned int)(ip->is_hold ? 1U : 0U),
+			    (unsigned int)(ip->is_allow_pickup ? 1U : 0U),
+			    (unsigned int)(ip->is_thrown ? 1U : 0U),
+			    (unsigned int)(ip->is_damage_all ? 1U : 0U),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_update),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_map),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_hit),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_shield),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_hop),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_setoff),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_reflector),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_damage),
+			    syNetSyncPointerFingerprintLow32((const void *)ip->proc_dead));
+		}
+		else
+		{
+			port_log(
+			    "SSB64 NetSync: item_hash_walk step=%u gobj_id=%u kind=%d type=%d fold=0x%08X hash=0x%08X\n",
+			    idx,
+			    (unsigned int)gobj->id,
+			    (int)ip->kind,
+			    (int)ip->type,
+			    fold,
+			    hash);
+		}
 		idx++;
 	}
 	port_log("SSB64 NetSync: item_hash_walk end sim_tick=%u count=%u hash=0x%08X\n", sim_tick, idx, hash);
