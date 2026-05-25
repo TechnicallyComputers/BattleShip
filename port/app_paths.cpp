@@ -2,6 +2,7 @@
 #include <ssb64_paths_capi.h>
 
 #include <libultraship/libultraship.h>
+#include <SDL2/SDL.h>
 
 #include <cstring>
 #include <filesystem>
@@ -64,5 +65,35 @@ extern "C" int ssb64_RealAppBundlePathUtf8(char *out, size_t cap)
 
     memcpy(out, p.c_str(), p.size() + 1);
 
+    return 1;
+}
+
+extern "C" int ssb64_UserDataDirUtf8(char *out, size_t cap)
+{
+    std::string dir;
+
+    if (out == nullptr || cap == 0) {
+        return 0;
+    }
+
+    try {
+        dir = Ship::Context::GetAppDirectoryPath();
+    } catch (...) {
+        dir.clear();
+    }
+
+    if (dir.empty()) {
+        if (char *pref = SDL_GetPrefPath(nullptr, "BattleShip")) {
+            dir = pref;
+            SDL_free(pref);
+        }
+    }
+
+    if (dir.empty() || dir.size() + 1 > cap) {
+        out[0] = '\0';
+        return 0;
+    }
+
+    memcpy(out, dir.c_str(), dir.size() + 1);
     return 1;
 }

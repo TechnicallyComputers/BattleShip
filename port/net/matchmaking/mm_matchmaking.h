@@ -35,8 +35,11 @@ extern void mmMatchmakingStartup(void);
 extern void mmMatchmakingShutdown(void);
 
 /*
- * Credentials: load/store under XDG_CONFIG_HOME/ssb64/ (Linux) or %APPDATA%\\ssb64\\
- * (Windows). Worker thread + libcurl; compiled for all SSB64_NETMENU builds (incl. MinGW).
+ * Credentials: load/store as matchmaking.cred in the per-user app data dir (same tree as
+ * ssb64.log). Legacy XDG_CONFIG_HOME/ssb64/ and %APPDATA%\\ssb64\\ paths are migrated on load.
+ * If the server rejects cached creds (missing player row / bad token), the client backs up the
+ * file to matchmaking.cred.bak and registers a fresh player via POST /v1/players.
+ * Worker thread + libcurl; compiled for all SSB64_NETMENU builds (incl. MinGW).
  */
 extern sb32 mmMatchmakingLoadCredentials(sb32 verbose);
 
