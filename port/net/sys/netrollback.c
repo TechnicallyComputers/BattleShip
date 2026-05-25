@@ -58,6 +58,7 @@ static u32 sSYNetRollbackForceMismatchPendingTick;
 static sb32 sSYNetRollbackMismatchDebug;
 static sb32 sSYNetRollbackVerifyStrict;
 static sb32 sSYNetRollbackLoadHashVerify;
+static sb32 sSYNetRollbackVerifyEffectHash;
 static u32 sSYNetRollbackLoadFailCount;
 static u32 sMismatchAsymLogsRemaining;
 static s32 sSYNetRollbackForceMismatchPlayerSlot;
@@ -1108,6 +1109,16 @@ void syNetRollbackInit(void)
 		if ((env_lh != NULL) && (env_lh[0] != '\0') && (atoi(env_lh) == 0))
 		{
 			sSYNetRollbackLoadHashVerify = FALSE;
+		}
+	}
+	sSYNetRollbackVerifyEffectHash = FALSE;
+	{
+		const char *env_ef;
+
+		env_ef = getenv("SSB64_NETPLAY_ROLLBACK_VERIFY_EFFECT_HASH");
+		if ((env_ef != NULL) && (env_ef[0] != '\0') && (atoi(env_ef) != 0))
+		{
+			sSYNetRollbackVerifyEffectHash = TRUE;
 		}
 	}
 	sSYNetRollbackPeerSnapshotAbort = TRUE;
@@ -4332,6 +4343,7 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	u32 live_r;
 	u32 live_c;
 	u32 live_a;
+	u32 live_ef;
 
 	if (sSYNetRollbackLoadHashVerify == FALSE)
 	{
@@ -4345,14 +4357,18 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	live_r = syNetSyncHashRNGSeed();
 	live_c = syNetSyncHashGMCamera();
 	live_a = syNetSyncHashFighterAnimationStateForRollback();
+	live_ef = syNetSyncHashActiveEffectsForRollback();
 	if ((live_f != syNetRbSnapshotGetSlotHashFighter(tick)) || (live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
 	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) ||
 	    (live_m != syNetRbSnapshotGetSlotHashMap(tick)) || (live_r != syNetRbSnapshotGetSlotHashRng(tick)) ||
-	    (live_c != syNetRbSnapshotGetSlotHashCamera(tick)) || (live_a != syNetRbSnapshotGetSlotHashAnimation(tick)))
+	    (live_c != syNetRbSnapshotGetSlotHashCamera(tick)) || (live_a != syNetRbSnapshotGetSlotHashAnimation(tick)) ||
+	    ((sSYNetRollbackVerifyEffectHash != FALSE) &&
+	     (live_ef != syNetRbSnapshotGetSlotHashEffect(tick))))
 	{
 		port_log(
 		    "SSB64 NetRollback: LOAD_HASH_DRIFT tick=%u figh=0x%08X/0x%08X world=0x%08X/0x%08X item=0x%08X/0x%08X "
-		    "wpn=0x%08X/0x%08X map=0x%08X/0x%08X rng=0x%08X/0x%08X cam=0x%08X/0x%08X anim=0x%08X/0x%08X\n",
+		    "wpn=0x%08X/0x%08X map=0x%08X/0x%08X rng=0x%08X/0x%08X cam=0x%08X/0x%08X anim=0x%08X/0x%08X "
+		    "eff=0x%08X/0x%08X\n",
 		    tick,
 		    syNetRbSnapshotGetSlotHashFighter(tick),
 		    live_f,
@@ -4369,7 +4385,9 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		    syNetRbSnapshotGetSlotHashCamera(tick),
 		    live_c,
 		    syNetRbSnapshotGetSlotHashAnimation(tick),
-		    live_a);
+		    live_a,
+		    syNetRbSnapshotGetSlotHashEffect(tick),
+		    live_ef);
 		syNetRbSnapshotLogFighterLoadVerifyDiag(tick,
 		                                        live_f,
 		                                        syNetRbSnapshotGetSlotHashFighter(tick),

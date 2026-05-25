@@ -47,6 +47,11 @@ u32 syNetSyncHashActiveItemsForRollback(void)
 	return 0U;
 }
 
+u32 syNetSyncHashActiveEffectsForRollback(void)
+{
+	return 0U;
+}
+
 u32 syNetSyncHashActiveWeaponsForRollback(void)
 {
 	return 0U;
