@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-24 | [netplay_frame_commit_authority_digest](netplay_frame_commit_authority_digest_2026-05-24.md) | **FIX SHIPPED (soak pending)** — WAN 1v1 @120 spurious `FRAME_COMMIT_TOKEN_MISMATCH` (published vs authority digest); @840 `resolved_load=~0` when ring 64 < 120-tick validation cadence → failed reanchor + `PEER_SNAPSHOT_DIVERGE`. Authority checksum, commit-window promote, snapshot ring floor 128, pin load-safe at agreed validation. |
 | 2026-05-24 | [macos_shutdown_sigabrt](macos_shutdown_sigabrt_2026-05-24.md) | **RESOLVED (POSIX)** — Clean quit (Port menu ESC → Quit) SIGABRT in `__cxa_finalize` / `std::terminate` after `PortShutdown()`; `_exit()` after intentional shutdown skips static C++ dtors on macOS/Linux. |
 | 2026-05-23 | [netplay_nat_punchthrough](netplay_nat_punchthrough_2026-05-23.md) | **FIX SHIPPED (soak pending)** — Automatch NAT punch: reuse queue UDP socket for bootstrap, STUN re-probe at match, heartbeat endpoint refresh, configurable STUN servers + symmetric-NAT hint; deferred same-WAN `peer_lan` bootstrap tick. TURN still follow-up for hard CGNAT. |
 | 2026-05-22 | [windows_ci_ksguid_sdk](windows_ci_ksguid_sdk_2026-05-22.md) | **FIX SHIPPED** — Windows release CI: SDK 10.0.26100.0 `um\x64` without `ksguid.lib`; refresh vcvars on older SDK + multi-version scan + `WindowsSdkUmLib.cmake` full path. Re-tag after merging scripts. |
