@@ -914,6 +914,7 @@ static void syNetRollbackOnBaselineGateTimeout(void);
 static sb32 syNetRollbackTryRestartResimAtDeeperLoad(u32 deeper_load_tick);
 static sb32 syNetRollbackTryAlignActiveEpisodeTuple(s32 slot, u32 load_tick, u32 mismatch_tick, u32 target_tick,
 						    sb32 follower_local_auth);
+static sb32 syNetRollbackLoadPostTick(u32 tick);
 static sb32 syNetRollbackTryDeeperLoadBeforeResim(u32 *io_load_tick, u32 *io_mismatch_tick);
 static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, const SYNetRollbackHashSet *peer,
 							       const u32 *peer_fighter_slot);
@@ -4491,10 +4492,8 @@ static void syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	}
 	else
 	{
-		syNetRbSnapshotLoad(load_tick);
-		syNetRbSnapshotFinalizeLoad(load_tick);
-		syNetRbSnapshotRebindAllFighters();
-		syNetSyncReconcileBattleTimePassedForSimTick(load_tick);
+		/* Restore the same post-load contract as resim begin (coupling + verify), not a partial reload. */
+		(void)syNetRollbackLoadPostTick(load_tick);
 		syNetInputSetTick(probe_tick);
 	}
 }
@@ -5369,12 +5368,30 @@ static sb32 syNetRollbackBaselineFighterSlotsMatch(const u32 *peer_fighter_slot,
 	return TRUE;
 }
 
+static SYNetRollbackHashSet syNetRollbackCollectSlotBaselineDigests(u32 load_tick)
+{
+	SYNetRollbackHashSet slot;
+
+	memset(&slot, 0, sizeof(slot));
+	slot.fighter = syNetRbSnapshotGetSlotHashFighter(load_tick);
+	slot.world = syNetRbSnapshotGetSlotHashWorld(load_tick);
+	slot.item = syNetRbSnapshotGetSlotHashItem(load_tick);
+	slot.rng = syNetRbSnapshotGetSlotHashRng(load_tick);
+	slot.animation = syNetRbSnapshotGetSlotHashAnimation(load_tick);
+	slot.weapon = syNetRbSnapshotGetSlotHashWeapon(load_tick);
+	slot.map = syNetRbSnapshotGetSlotHashMap(load_tick);
+	slot.camera = syNetRbSnapshotGetSlotHashCamera(load_tick);
+	return slot;
+}
+
 static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 {
 	SYNetRollbackHashSet live;
+	SYNetRollbackHashSet wire;
 
 	load_tick = syNetRollbackClampLoadTickForPeerSend(load_tick);
 	live = syNetRollbackCollectHashes();
+	wire = syNetRollbackCollectSlotBaselineDigests(load_tick);
 	sSYNetRollbackResimLoadTick = load_tick;
 	sSYNetRollbackResimPreHashes = live;
 	sSYNetRollbackResimPreHashesValid = TRUE;
@@ -5382,14 +5399,15 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackResimBaselineDigestMatched = FALSE;
 	sSYNetRollbackResimSealRowsTimeoutRetries = 0U;
 	sSYNetRollbackPeerBaselineLoadTick = load_tick;
-	sSYNetRollbackPeerBaselineFigh = live.fighter;
-	sSYNetRollbackPeerBaselineWorld = live.world;
-	sSYNetRollbackPeerBaselineItem = live.item;
-	sSYNetRollbackPeerBaselineRng = live.rng;
-	sSYNetRollbackPeerBaselineAnim = live.animation;
-	sSYNetRollbackPeerBaselineWeapon = live.weapon;
-	sSYNetRollbackPeerBaselineMap = live.map;
-	sSYNetRollbackPeerBaselineCamera = live.camera;
+	/* Wire digests use ring slot hashes (saved at load_tick), not post-coupling live. */
+	sSYNetRollbackPeerBaselineFigh = wire.fighter;
+	sSYNetRollbackPeerBaselineWorld = wire.world;
+	sSYNetRollbackPeerBaselineItem = wire.item;
+	sSYNetRollbackPeerBaselineRng = wire.rng;
+	sSYNetRollbackPeerBaselineAnim = wire.animation;
+	sSYNetRollbackPeerBaselineWeapon = wire.weapon;
+	sSYNetRollbackPeerBaselineMap = wire.map;
+	sSYNetRollbackPeerBaselineCamera = wire.camera;
 	sSYNetRollbackPeerBaselineSlotFigh = syNetRbSnapshotGetSlotHashFighter(load_tick);
 	sSYNetRollbackPeerBaselineSlotWorld = syNetRbSnapshotGetSlotHashWorld(load_tick);
 	sSYNetRollbackPeerBaselineSlotItem = syNetRbSnapshotGetSlotHashItem(load_tick);
@@ -5420,17 +5438,18 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 		    slot_anim);
 	}
 	port_log(
-	    "SSB64 NetRollback: resim baseline (post-load tick=%u) live figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X | slot figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X\n",
+	    "SSB64 NetRollback: resim baseline (post-load tick=%u) wire(slot) figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X | live figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X\n",
 	    load_tick,
+	    wire.fighter,
+	    wire.world,
+	    wire.item,
+	    wire.rng,
+	    wire.animation,
 	    live.fighter,
 	    live.world,
 	    live.item,
 	    live.rng,
-	    live.animation,
-	    sSYNetRollbackPeerBaselineSlotFigh,
-	    sSYNetRollbackPeerBaselineSlotWorld,
-	    sSYNetRollbackPeerBaselineSlotItem,
-	    sSYNetRollbackPeerBaselineSlotRng);
+	    live.animation);
 	if ((live.fighter != sSYNetRollbackPeerBaselineSlotFigh) ||
 	    (live.world != sSYNetRollbackPeerBaselineSlotWorld) || (live.item != sSYNetRollbackPeerBaselineSlotItem) ||
 	    (live.rng != sSYNetRollbackPeerBaselineSlotRng))
@@ -6425,6 +6444,7 @@ static sb32 syNetRollbackTryRestartResimAtDeeperLoad(u32 deeper_load_tick)
 	correction_player = sSYNetRollbackResimCorrectionPlayer;
 	syNetSyncLogRollbackWorldDetail("rollback_load_deeper", deeper_load_tick);
 	syNetSyncLogFighterDetail("rollback_load_deeper", deeper_load_tick);
+	syNetRollbackArmResimBaselineAfterLoad(deeper_load_tick);
 	syNetRollbackMaybeResimAnchorProbe(deeper_load_tick);
 	syNetInputRollbackPrepareForResim(mismatch_tick);
 	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
@@ -6449,7 +6469,6 @@ static sb32 syNetRollbackTryRestartResimAtDeeperLoad(u32 deeper_load_tick)
 	syNetRollbackArmSymmetricNotifyEx(correction_player, mismatch_tick, target_tick, deeper_load_tick,
 					sSYNetRollbackEpochId, FALSE);
 	syNetPeerTrySendRollbackSyncNotice();
-	syNetRollbackArmResimBaselineAfterLoad(deeper_load_tick);
 	port_log(
 	    "SSB64 NetRollback: resim baseline deeper restart load_tick=%u mismatch_tick=%u target_tick=%u attempt=%u\n",
 	    deeper_load_tick,
@@ -6660,7 +6679,8 @@ static sb32 syNetRollbackTryDeeperLoadBeforeResim(u32 *io_load_tick, u32 *io_mis
 	{
 		return FALSE;
 	}
-	if ((live.fighter == slot_f) && (live.world == slot_w) && (live.item == slot_i) && (live.rng == slot_r))
+	/* syNetRollbackLoadPostTick verify runs before coupling finalize; world/item may drift after eject. */
+	if ((live.fighter == slot_f) && (live.rng == slot_r))
 	{
 		return FALSE;
 	}
@@ -7610,8 +7630,8 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 	}
 	syNetSyncLogRollbackWorldDetail("rollback_load", load_tick);
 	syNetSyncLogFighterDetail("rollback_load", load_tick);
-	syNetRollbackMaybeResimAnchorProbe(load_tick);
 	syNetRollbackArmResimBaselineAfterLoad(load_tick);
+	syNetRollbackMaybeResimAnchorProbe(load_tick);
 #endif
 	syNetInputRollbackPrepareForResim(mismatch_tick);
 #ifdef PORT
