@@ -15,13 +15,22 @@ extern int atoi(const char *s);
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <sys/timeb.h>
 #else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <sys/random.h>
+#elif defined(__APPLE__)
+void arc4random_buf(void *buf, size_t nbytes);
+#elif defined(__ANDROID__)
+#include <fcntl.h>
+#endif
 #endif
 
 #ifdef PORT
@@ -29,7 +38,11 @@ extern void port_log(const char *fmt, ...);
 #endif
 
 #define STUN_MAGIC 0x2112A442U
-#define MM_TURN_RECV_US 600000
+/* Per select() slice while waiting for a matching Allocate response. */
+#define MM_TURN_RECV_SLICE_US 500000
+/* Wall-clock budget per request/response exchange (coturn 401 + auth retry needs headroom). */
+#define MM_TURN_RECV_DEADLINE_US 3000000
+#define MM_TURN_ALLOCATE_ATTEMPTS 5
 #define MM_TURN_CHANNEL 0x4000U
 #define MM_TURN_MAX_MSG 1600
 
@@ -82,11 +95,16 @@ static struct
 	sb32 channel_bound;
 } sMmTurn;
 
+/* Resolved hostname for logs (coturn.technicallycomputers.ca, not just A record). */
+static char sMmTurnServerHost[128];
+
 #ifdef _WIN32
 typedef int mm_sock_len_t;
 #else
 typedef ssize_t mm_sock_len_t;
 #endif
+
+static sb32 mmTurnCheckResponse(const u8 *msg, mm_sock_len_t len, u16 method, u16 class_mask);
 
 /* ---- minimal SHA1 + HMAC-SHA1 (RFC 2104 / RFC 3174) ---- */
 
@@ -449,6 +467,23 @@ static void mmTurnMd5LongTermKey(const char *user, const char *realm, const char
 
 /* ---- STUN helpers ---- */
 
+#if defined(__ANDROID__)
+static sb32 mmTurnTryDevUrandom(u8 *buf, size_t len)
+{
+	int fd;
+	ssize_t n;
+
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0)
+	{
+		return FALSE;
+	}
+	n = read(fd, buf, len);
+	(void)close(fd);
+	return (n == (ssize_t)len) ? TRUE : FALSE;
+}
+#endif
+
 static void mmTurnFillTxId(u8 *tx_id)
 {
 	s32 i;
@@ -456,12 +491,31 @@ static void mmTurnFillTxId(u8 *tx_id)
 #ifdef _WIN32
 	for (i = 0; i < 12; i++)
 	{
-		tx_id[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 4099U));
+		tx_id[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 7919U));
 	}
 #else
-	for (i = 0; i < 12; i++)
+#if defined(__APPLE__)
+	arc4random_buf(tx_id, 12U);
+	return;
+#elif defined(__linux__) && !defined(__ANDROID__)
+	if (getrandom(tx_id, 12U, 0) == 12)
 	{
-		tx_id[i] = (u8)((u32)getpid() ^ ((u32)i * 4099U));
+		return;
+	}
+#elif defined(__ANDROID__)
+	if (mmTurnTryDevUrandom(tx_id, 12U) != FALSE)
+	{
+		return;
+	}
+#endif
+	{
+		static u32 sMmTurnTxSalt;
+
+		sMmTurnTxSalt++;
+		for (i = 0; i < 12; i++)
+		{
+			tx_id[i] = (u8)((u32)getpid() ^ sMmTurnTxSalt ^ ((u32)i * 7919U));
+		}
 	}
 #endif
 }
@@ -556,12 +610,14 @@ static sb32 mmTurnResolveServer(MmTurnServer *out)
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_DGRAM;
+	snprintf(sMmTurnServerHost, sizeof(sMmTurnServerHost), "%s", host);
 	if (getaddrinfo(host, NULL, &hints, &res) != 0 || res == NULL)
 	{
 		return FALSE;
 	}
 	memset(out, 0, sizeof(*out));
 	memcpy(&out->addr, res->ai_addr, sizeof(out->addr));
+	out->addr.sin_family = AF_INET;
 	out->addr.sin_port = htons((u16)port_l);
 	freeaddrinfo(res);
 	return TRUE;
@@ -577,11 +633,217 @@ static void mmTurnLoadCredentials(void)
 	snprintf(sMmTurn.password, sizeof(sMmTurn.password), "%s", (e != NULL && e[0] != '\0') ? e : MM_TURN_DEFAULT_PASS);
 }
 
-static sb32 mmTurnSendRecv(s32 sock, const u8 *req, u16 req_len, u8 *resp, u16 resp_cap, mm_sock_len_t *out_len)
+/*
+ * Discard datagrams already queued on the automatch socket (late STUN Binding
+ * replies, stray matchmaking probes). mm_stun drains in its own loop; TURN used
+ * to take a single recv and could consume a non-Allocate packet as the
+ * "response", then report no response from coturn while coturn had answered.
+ */
+static void mmTurnDrainSocket(s32 sock)
+{
+	u8 junk[MM_TURN_MAX_MSG];
+	struct timeval tv;
+	fd_set rfds;
+	s32 drained;
+
+	drained = 0;
+	for (;;)
+	{
+		tv.tv_sec = 0;
+		tv.tv_usec = 0;
+		FD_ZERO(&rfds);
+		FD_SET(sock, &rfds);
+#ifdef _WIN32
+		if (select(0, &rfds, NULL, NULL, &tv) <= 0 || !FD_ISSET(sock, &rfds))
+#else
+		if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0 || !FD_ISSET(sock, &rfds))
+#endif
+		{
+			break;
+		}
+#ifdef _WIN32
+		(void)recvfrom((SOCKET)(intptr_t)sock, (char *)junk, sizeof(junk), 0, NULL, NULL);
+#else
+		(void)recvfrom(sock, junk, sizeof(junk), MSG_DONTWAIT, NULL, NULL);
+#endif
+		drained++;
+		if (drained >= 64)
+		{
+			break;
+		}
+	}
+#ifdef PORT
+	if (drained > 0)
+	{
+		port_log("SSB64 Automatch TURN: drained %d stale datagram(s) before Allocate\n", drained);
+	}
+#endif
+}
+
+static sb32 mmTurnIsAllocateResponse(const u8 *msg, mm_sock_len_t len, u16 *out_class_bits)
+{
+	u16 typ;
+	u32 mc;
+	u16 class_bits;
+
+	if (len < 20 || memcmp(msg + 8, sMmTurn.last_tx_id, 12) != 0)
+	{
+		return FALSE;
+	}
+	typ = (u16)(((u16)msg[0] << 8) | msg[1]);
+	if ((typ & 0x3FFFU) != STUN_METHOD_ALLOCATE)
+	{
+		return FALSE;
+	}
+	class_bits = (u16)(typ & STUN_CLASS_MASK);
+	if ((class_bits != STUN_CLASS_SUCCESS) && (class_bits != STUN_CLASS_ERROR))
+	{
+		return FALSE;
+	}
+	mc = ((u32)msg[4] << 24) | ((u32)msg[5] << 16) | ((u32)msg[6] << 8) | (u32)msg[7];
+	if (mc != STUN_MAGIC)
+	{
+		return FALSE;
+	}
+	if (out_class_bits != NULL)
+	{
+		*out_class_bits = class_bits;
+	}
+	return TRUE;
+}
+
+static sb32 mmTurnSendRecvAllocate(s32 sock, const u8 *req, u16 req_len, u8 *resp, u16 resp_cap, mm_sock_len_t *out_len,
+                                   u16 *out_class_bits)
 {
 	fd_set rfds;
 	struct timeval tv;
+	struct timeval deadline;
+	struct timeval now;
 	mm_sock_len_t n;
+	u32 discarded;
+#ifdef _WIN32
+	struct _timeb tb;
+#endif
+
+	if (out_class_bits != NULL)
+	{
+		*out_class_bits = 0U;
+	}
+#ifdef _WIN32
+	if (sendto((SOCKET)(intptr_t)sock, (const char *)req, req_len, 0, (struct sockaddr *)&sMmTurn.server_addr,
+	           sizeof(sMmTurn.server_addr)) != (int)req_len)
+#else
+	if (sendto(sock, req, req_len, 0, (struct sockaddr *)&sMmTurn.server_addr, sizeof(sMmTurn.server_addr)) !=
+	    (ssize_t)req_len)
+#endif
+	{
+		return FALSE;
+	}
+#ifdef _WIN32
+	_ftime(&tb);
+	deadline.time = tb.time;
+	deadline.millitm = tb.millitm;
+	deadline.millitm += (u16)(MM_TURN_RECV_DEADLINE_US / 1000U);
+	if (deadline.millitm >= 1000U)
+	{
+		deadline.time += deadline.millitm / 1000U;
+		deadline.millitm %= 1000U;
+	}
+#else
+	gettimeofday(&deadline, NULL);
+	deadline.tv_usec += MM_TURN_RECV_DEADLINE_US;
+	if (deadline.tv_usec >= 1000000)
+	{
+		deadline.tv_sec += deadline.tv_usec / 1000000;
+		deadline.tv_usec %= 1000000;
+	}
+#endif
+	discarded = 0U;
+	for (;;)
+	{
+#ifdef _WIN32
+		_ftime(&tb);
+		now.time = tb.time;
+		now.millitm = tb.millitm;
+		if ((now.time > deadline.time) || (now.time == deadline.time && now.millitm >= deadline.millitm))
+		{
+			break;
+		}
+		tv.tv_sec = 0;
+		tv.tv_usec = MM_TURN_RECV_SLICE_US;
+#else
+		gettimeofday(&now, NULL);
+		if ((now.tv_sec > deadline.tv_sec) ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
+		{
+			break;
+		}
+		tv.tv_sec = 0;
+		tv.tv_usec = MM_TURN_RECV_SLICE_US;
+		if ((deadline.tv_usec - now.tv_usec) < (suseconds_t)tv.tv_usec)
+		{
+			tv.tv_usec = deadline.tv_usec - now.tv_usec;
+		}
+		if ((deadline.tv_sec - now.tv_sec) == 0 && tv.tv_usec <= 0)
+		{
+			break;
+		}
+#endif
+		FD_ZERO(&rfds);
+		FD_SET(sock, &rfds);
+#ifdef _WIN32
+		n = select(0, &rfds, NULL, NULL, &tv);
+#else
+		n = select(sock + 1, &rfds, NULL, NULL, &tv);
+#endif
+		if ((n <= 0) || !FD_ISSET(sock, &rfds))
+		{
+			continue;
+		}
+#ifdef _WIN32
+		n = recvfrom((SOCKET)(intptr_t)sock, (char *)resp, resp_cap, 0, NULL, NULL);
+#else
+		n = recvfrom(sock, resp, resp_cap, MSG_DONTWAIT, NULL, NULL);
+#endif
+		if (n < 20)
+		{
+			continue;
+		}
+		if (mmTurnIsAllocateResponse(resp, n, out_class_bits) != FALSE)
+		{
+			*out_len = n;
+#ifdef PORT
+			if (discarded > 0U)
+			{
+				port_log("SSB64 Automatch TURN: ignored %u non-matching datagram(s) before Allocate reply\n",
+				         discarded);
+			}
+#endif
+			return TRUE;
+		}
+		discarded++;
+	}
+#ifdef PORT
+	if (discarded > 0U)
+	{
+		port_log("SSB64 Automatch TURN: no Allocate reply within %u ms (%u datagram(s) ignored)\n",
+		         (unsigned int)(MM_TURN_RECV_DEADLINE_US / 1000U), discarded);
+	}
+#endif
+	return FALSE;
+}
+
+static sb32 mmTurnSendRecvForMethod(s32 sock, const u8 *req, u16 req_len, u8 *resp, u16 resp_cap, mm_sock_len_t *out_len,
+                                    u16 method, u16 want_class)
+{
+	fd_set rfds;
+	struct timeval tv;
+	struct timeval deadline;
+	struct timeval now;
+	mm_sock_len_t n;
+#ifdef _WIN32
+	struct _timeb tb;
+#endif
 
 #ifdef _WIN32
 	if (sendto((SOCKET)(intptr_t)sock, (const char *)req, req_len, 0, (struct sockaddr *)&sMmTurn.server_addr,
@@ -593,25 +855,78 @@ static sb32 mmTurnSendRecv(s32 sock, const u8 *req, u16 req_len, u8 *resp, u16 r
 	{
 		return FALSE;
 	}
-	tv.tv_sec = 0;
-	tv.tv_usec = MM_TURN_RECV_US;
-	FD_ZERO(&rfds);
-	FD_SET(sock, &rfds);
 #ifdef _WIN32
-	n = select(0, &rfds, NULL, NULL, &tv);
-#else
-	n = select(sock + 1, &rfds, NULL, NULL, &tv);
-#endif
-	if ((n <= 0) || !FD_ISSET(sock, &rfds))
+	_ftime(&tb);
+	deadline.time = tb.time;
+	deadline.millitm = tb.millitm;
+	deadline.millitm += (u16)(MM_TURN_RECV_DEADLINE_US / 1000U);
+	if (deadline.millitm >= 1000U)
 	{
-		return FALSE;
+		deadline.time += deadline.millitm / 1000U;
+		deadline.millitm %= 1000U;
 	}
-#ifdef _WIN32
-	*out_len = recvfrom((SOCKET)(intptr_t)sock, (char *)resp, resp_cap, 0, NULL, NULL);
 #else
-	*out_len = recvfrom(sock, resp, resp_cap, MSG_DONTWAIT, NULL, NULL);
+	gettimeofday(&deadline, NULL);
+	deadline.tv_usec += MM_TURN_RECV_DEADLINE_US;
+	if (deadline.tv_usec >= 1000000)
+	{
+		deadline.tv_sec += deadline.tv_usec / 1000000;
+		deadline.tv_usec %= 1000000;
+	}
 #endif
-	return (*out_len >= 20) ? TRUE : FALSE;
+	for (;;)
+	{
+#ifdef _WIN32
+		_ftime(&tb);
+		now.time = tb.time;
+		now.millitm = tb.millitm;
+		if ((now.time > deadline.time) || (now.time == deadline.time && now.millitm >= deadline.millitm))
+		{
+			break;
+		}
+		tv.tv_sec = 0;
+		tv.tv_usec = MM_TURN_RECV_SLICE_US;
+#else
+		gettimeofday(&now, NULL);
+		if ((now.tv_sec > deadline.tv_sec) ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
+		{
+			break;
+		}
+		tv.tv_sec = 0;
+		tv.tv_usec = MM_TURN_RECV_SLICE_US;
+		if ((deadline.tv_usec - now.tv_usec) < (suseconds_t)tv.tv_usec)
+		{
+			tv.tv_usec = deadline.tv_usec - now.tv_usec;
+		}
+#endif
+		FD_ZERO(&rfds);
+		FD_SET(sock, &rfds);
+#ifdef _WIN32
+		n = select(0, &rfds, NULL, NULL, &tv);
+#else
+		n = select(sock + 1, &rfds, NULL, NULL, &tv);
+#endif
+		if ((n <= 0) || !FD_ISSET(sock, &rfds))
+		{
+			continue;
+		}
+#ifdef _WIN32
+		n = recvfrom((SOCKET)(intptr_t)sock, (char *)resp, resp_cap, 0, NULL, NULL);
+#else
+		n = recvfrom(sock, resp, resp_cap, MSG_DONTWAIT, NULL, NULL);
+#endif
+		if (n < 20)
+		{
+			continue;
+		}
+		if (mmTurnCheckResponse(resp, n, method, want_class) != FALSE)
+		{
+			*out_len = n;
+			return TRUE;
+		}
+	}
+	return FALSE;
 }
 
 static sb32 mmTurnParseAttr(const u8 *msg, mm_sock_len_t len, u16 want_type, u8 *out, u16 out_cap, u16 *out_len)
@@ -657,6 +972,10 @@ static sb32 mmTurnParseXorRelayed(const u8 *msg, mm_sock_len_t len, struct socka
 	u32 i;
 
 	if (mmTurnParseAttr(msg, len, STUN_ATTR_XOR_RELAYED_ADDRESS, raw, sizeof(raw), &raw_len) == FALSE || raw_len < 8U)
+	{
+		return FALSE;
+	}
+	if ((raw[0] != 0U) || (raw[1] != 1U))
 	{
 		return FALSE;
 	}
@@ -876,17 +1195,20 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 	{
 		snprintf(server_hp, sizeof(server_hp), "(unknown)");
 	}
-	for (attempt = 0; attempt < 3; attempt++)
+	mmTurnDrainSocket(udp_fd);
+	for (attempt = 0; attempt < MM_TURN_ALLOCATE_ATTEMPTS; attempt++)
 	{
+		u16 resp_class;
+
 		if (mmTurnBuildAllocate(req, &req_len, FALSE) == FALSE)
 		{
 			continue;
 		}
-		if (mmTurnSendRecv(udp_fd, req, req_len, resp, sizeof(resp), &rlen) == FALSE)
+		if (mmTurnSendRecvAllocate(udp_fd, req, req_len, resp, sizeof(resp), &rlen, &resp_class) == FALSE)
 		{
 			continue;
 		}
-		if (mmTurnCheckResponse(resp, rlen, STUN_METHOD_ALLOCATE, STUN_CLASS_ERROR) != FALSE)
+		if (resp_class == STUN_CLASS_ERROR)
 		{
 			u16 rl;
 			u16 nl;
@@ -910,20 +1232,21 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 			{
 				continue;
 			}
-			if (mmTurnSendRecv(udp_fd, req, req_len, resp, sizeof(resp), &rlen) == FALSE)
+			if (mmTurnSendRecvAllocate(udp_fd, req, req_len, resp, sizeof(resp), &rlen, &resp_class) == FALSE)
 			{
 				continue;
 			}
-			if (mmTurnCheckResponse(resp, rlen, STUN_METHOD_ALLOCATE, STUN_CLASS_ERROR) != FALSE)
+			if (resp_class == STUN_CLASS_ERROR)
 			{
 				(void)mmTurnParseErrorCode(resp, rlen, &err_num);
 				if (err_num != 0U)
 				{
 					last_err = err_num;
 				}
+				continue;
 			}
 		}
-		if (mmTurnCheckResponse(resp, rlen, STUN_METHOD_ALLOCATE, STUN_CLASS_SUCCESS) == FALSE)
+		else if (resp_class != STUN_CLASS_SUCCESS)
 		{
 			continue;
 		}
@@ -942,20 +1265,27 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 		out->ok = TRUE;
 		snprintf(out->relay_endpoint, sizeof(out->relay_endpoint), "%s", sMmTurn.relay_endpoint);
 #ifdef PORT
-		port_log("SSB64 Automatch TURN: relay=%s server=%s user=%s\n", sMmTurn.relay_endpoint, server_hp,
-		         sMmTurn.username);
+		port_log("SSB64 Automatch TURN: relay=%s server=%s (%s) user=%s\n", sMmTurn.relay_endpoint, sMmTurnServerHost,
+		         server_hp, sMmTurn.username);
 #endif
 		return TRUE;
 	}
 #ifdef PORT
 	if (last_err != 0U)
 	{
-		port_log("SSB64 Automatch TURN: allocate failed server=%s stun_err=%u (timeout/unreachable or bad credentials)\n",
-		         server_hp, (unsigned int)last_err);
+		port_log(
+		    "SSB64 Automatch TURN: allocate failed server=%s (%s) stun_err=%u (coturn error or bad credentials)\n",
+		    sMmTurnServerHost,
+		    server_hp,
+		    (unsigned int)last_err);
 	}
 	else
 	{
-		port_log("SSB64 Automatch TURN: allocate failed server=%s (no response from coturn)\n", server_hp);
+		port_log(
+		    "SSB64 Automatch TURN: allocate failed server=%s (%s) (no matching Allocate reply — timeout or socket "
+		    "stray datagrams)\n",
+		    sMmTurnServerHost,
+		    server_hp);
 	}
 #endif
 	return FALSE;
@@ -1011,8 +1341,8 @@ sb32 mmTurnBeginRelayToPeer(s32 udp_fd, const char *peer_hostport)
 	{
 		return FALSE;
 	}
-	if (mmTurnSendRecv(udp_fd, req, req_len, resp, sizeof(resp), &rlen) == FALSE ||
-	    mmTurnCheckResponse(resp, rlen, STUN_METHOD_CREATE_PERMISSION, STUN_CLASS_SUCCESS) == FALSE)
+	if (mmTurnSendRecvForMethod(udp_fd, req, req_len, resp, sizeof(resp), &rlen, STUN_METHOD_CREATE_PERMISSION,
+	                            STUN_CLASS_SUCCESS) == FALSE)
 	{
 #ifdef PORT
 		port_log("SSB64 Automatch TURN: CreatePermission failed peer=%s\n", peer_hostport);
@@ -1028,8 +1358,8 @@ sb32 mmTurnBeginRelayToPeer(s32 udp_fd, const char *peer_hostport)
 	{
 		return FALSE;
 	}
-	if (mmTurnSendRecv(udp_fd, req, req_len, resp, sizeof(resp), &rlen) == FALSE ||
-	    mmTurnCheckResponse(resp, rlen, STUN_METHOD_CHANNEL_BIND, STUN_CLASS_SUCCESS) == FALSE)
+	if (mmTurnSendRecvForMethod(udp_fd, req, req_len, resp, sizeof(resp), &rlen, STUN_METHOD_CHANNEL_BIND,
+	                            STUN_CLASS_SUCCESS) == FALSE)
 	{
 #ifdef PORT
 		port_log("SSB64 Automatch TURN: ChannelBind failed peer=%s\n", peer_hostport);
