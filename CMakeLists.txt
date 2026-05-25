@@ -843,8 +843,12 @@ endif()
 add_dependencies(ssb64_game GenerateCreditsAssets)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 if(SSB64_NETMENU)
-    # ssb64_game: curl/pthreads attached in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
+    find_package(OpenSSL QUIET)
+    # ssb64_game: curl/pthreads/openssl compile defs in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
+    if(OpenSSL_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::Crypto)
+    endif()
     # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT MINGW)
         target_link_libraries(${PROJECT_NAME} PRIVATE PThreads4W::PThreads4W iphlpapi)
