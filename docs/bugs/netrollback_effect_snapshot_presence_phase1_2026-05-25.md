@@ -21,12 +21,12 @@ Instead:
    - For each blob with a live `gcFindGObjByID` hit, **`anim_frame` is rewritten** (`syNetRbSnapApplyEffectPresence`).
    - **Eject** free-floating effects (`EFStruct::fighter_gobj == NULL`) whose `gobj->id` is **missing** from the snapshot list. Fighter-coupled effects (shields, Fox reflector, egg-lay, …) **skip** this eject branch.
 
-Coupled-effect **pointers** inside `memcpy`’d `FTStatusVars` remain the long-standing “raw address” model (same as before this change); this phase does **not** add effect-gobj id reserialization on fighters.
+Coupled-effect **pointers** in `FTStatusVars` are always scrubbed on capture/apply and rebound from blob ids — see [`netrollback_coupled_pointer_stability_2026-05-25.md`](netrollback_coupled_pointer_stability_2026-05-25.md).
 
 ## Limits / follow-ups
 
 - **No** `effect_vars` blob / no pointer scrubbing table per `bank_id`.
-- **`hash_effect`** is stored on slots and exposed via `syNetRbSnapshotGetSlotHashEffect` but **is not wired into** `LOAD_HASH_DRIFT` yet (baseline / frame-commit bundles unchanged — avoids wire-protocol churn until soak proves stability).
+- **`hash_effect`** participates in peer baseline v2 compare and resim gate match when the peer packet includes the effect tail.
 - If live effect count exceeds 48 or snapshot save fails truncation guard, rollback save fails loudly (parity with item/weapons caps).
 
 ## Diagnostics

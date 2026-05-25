@@ -123,6 +123,10 @@ static u32 sSYNetRollbackPeerBaselineSlotFigh;
 static u32 sSYNetRollbackPeerBaselineSlotWorld;
 static u32 sSYNetRollbackPeerBaselineSlotItem;
 static u32 sSYNetRollbackPeerBaselineSlotRng;
+static u32 sSYNetRollbackPeerBaselineSlotWeapon;
+static u32 sSYNetRollbackPeerBaselineSlotMap;
+static u32 sSYNetRollbackPeerBaselineSlotCamera;
+static u32 sSYNetRollbackPeerBaselineSlotEffect;
 static u32 sSYNetRollbackPeerBaselineFighterSlot[GMCOMMON_PLAYERS_MAX];
 static u32 sSYNetRollbackPeerBaselineRetransmitCount;
 #define SYNETROLLBACK_BASELINE_UNIVERSE_REPEAT_CAP 12U
@@ -5436,6 +5440,10 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackPeerBaselineSlotWorld = syNetRbSnapshotGetSlotHashWorld(load_tick);
 	sSYNetRollbackPeerBaselineSlotItem = syNetRbSnapshotGetSlotHashItem(load_tick);
 	sSYNetRollbackPeerBaselineSlotRng = syNetRbSnapshotGetSlotHashRng(load_tick);
+	sSYNetRollbackPeerBaselineSlotWeapon = syNetRbSnapshotGetSlotHashWeapon(load_tick);
+	sSYNetRollbackPeerBaselineSlotMap = syNetRbSnapshotGetSlotHashMap(load_tick);
+	sSYNetRollbackPeerBaselineSlotCamera = syNetRbSnapshotGetSlotHashCamera(load_tick);
+	sSYNetRollbackPeerBaselineSlotEffect = syNetRbSnapshotGetSlotHashEffect(load_tick);
 	syNetRollbackCollectFighterSlotHashes(sSYNetRollbackPeerBaselineFighterSlot);
 	{
 		s32 live_yaku_n = gMPCollisionYakumonosNum;
@@ -6357,23 +6365,36 @@ static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, c
 	slot_ok = ((peer->fighter == sSYNetRollbackPeerBaselineSlotFigh) &&
 	           (peer->world == sSYNetRollbackPeerBaselineSlotWorld) &&
 	           (peer->item == sSYNetRollbackPeerBaselineSlotItem) &&
-	           (peer->rng == sSYNetRollbackPeerBaselineSlotRng))
+	           (peer->rng == sSYNetRollbackPeerBaselineSlotRng) &&
+	           (peer->weapon == sSYNetRollbackPeerBaselineSlotWeapon) &&
+	           (peer->map == sSYNetRollbackPeerBaselineSlotMap) &&
+	           (peer->camera == sSYNetRollbackPeerBaselineSlotCamera) &&
+	           ((sSYNetRollbackLastPeerOutcomeEffectValid == FALSE) ||
+	            (peer->effect == sSYNetRollbackPeerBaselineSlotEffect)))
 	              ? TRUE
 	              : FALSE;
 	if ((slot_ok != FALSE) &&
 	    (syNetRollbackBaselineFighterSlotsMatch(peer_fighter_slot, sSYNetRollbackPeerBaselineFighterSlot) != FALSE) &&
 	    (peer->fighter == sSYNetRollbackPeerBaselineFigh) && (peer->world == sSYNetRollbackPeerBaselineWorld) &&
 	    (peer->item == sSYNetRollbackPeerBaselineItem) && (peer->rng == sSYNetRollbackPeerBaselineRng) &&
+	    (peer->weapon == sSYNetRollbackPeerBaselineWeapon) && (peer->map == sSYNetRollbackPeerBaselineMap) &&
+	    (peer->camera == sSYNetRollbackPeerBaselineCamera) &&
+	    ((sSYNetRollbackLastPeerOutcomeEffectValid == FALSE) ||
+	     (peer->effect == sSYNetRollbackPeerBaselineEffect)) &&
 	    ((syNetRollbackEpisodeFsmBaselineRequiresAnimMatch() == FALSE) ||
 	     (peer->animation == sSYNetRollbackPeerBaselineAnim)))
 	{
 		port_log(
-		    "SSB64 NetRollback: resim baseline digest matched load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X\n",
+		    "SSB64 NetRollback: resim baseline digest matched load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X weapon=0x%08X map=0x%08X camera=0x%08X effect=0x%08X anim=0x%08X\n",
 		    load_tick,
 		    peer->fighter,
 		    peer->world,
 		    peer->item,
 		    peer->rng,
+		    peer->weapon,
+		    peer->map,
+		    peer->camera,
+		    peer->effect,
 		    peer->animation);
 		sSYNetRollbackResimBaselineDigestMatched = TRUE;
 		sSYNetRollbackResimBaselineWaitFrames = 0U;
@@ -6385,7 +6406,10 @@ static void syNetRollbackTryOpenResimBaselineGateFromPeerDigest(u32 load_tick, c
 	}
 	if ((slot_ok != FALSE) && (peer->fighter == sSYNetRollbackPeerBaselineFigh) &&
 	    (peer->world == sSYNetRollbackPeerBaselineWorld) && (peer->item == sSYNetRollbackPeerBaselineItem) &&
-	    (peer->rng == sSYNetRollbackPeerBaselineRng))
+	    (peer->rng == sSYNetRollbackPeerBaselineRng) && (peer->weapon == sSYNetRollbackPeerBaselineWeapon) &&
+	    (peer->map == sSYNetRollbackPeerBaselineMap) && (peer->camera == sSYNetRollbackPeerBaselineCamera) &&
+	    ((sSYNetRollbackLastPeerOutcomeEffectValid == FALSE) ||
+	     (peer->effect == sSYNetRollbackPeerBaselineEffect)))
 	{
 		syNetRollbackTryOpenResimReplayGateAfterAnimResync(load_tick, peer);
 		if (sSYNetRollbackResimBaselineDigestMatched != FALSE)
