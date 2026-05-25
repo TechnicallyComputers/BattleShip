@@ -745,7 +745,13 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
         discord_rpc
         GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
         GIT_TAG        v3.4.0
-        PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
+        # discord-rpc's configure-time file(DOWNLOAD) for rapidjson is flaky on
+        # Windows CI (leaves RAPIDJSON-NOTFOUND). Pre-populate thirdparty here.
+        PATCH_COMMAND
+            ${CMAKE_COMMAND} -E rm -f .clang-format
+        COMMAND
+            ${CMAKE_COMMAND} -DRJ_ROOT:PATH=<SOURCE_DIR>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PopulateDiscordRpcRapidjson.cmake
     )
     FetchContent_MakeAvailable(discord_rpc)
     # Belt and suspenders: enforce the runtime-library property on the

@@ -114,6 +114,8 @@ extern u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotGetLastLoadSafeTick(void);
 extern void syNetRbSnapshotMarkLoadUnsafe(u32 tick);
+/* Keep validation-boundary snapshot eligible for frame-commit reanchor loads. */
+extern void syNetRbSnapshotPinLoadSafeAtTick(u32 tick);
 #endif
 
 #endif /* _SYNETRB_SNAPSHOT_H_ */

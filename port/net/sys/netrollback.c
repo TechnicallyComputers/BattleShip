@@ -3019,6 +3019,17 @@ static u32 syNetRollbackResolveStateMismatchLoadTick(u32 validation_tick, u32 mi
 		resolved = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(sSYNetRollbackLastFrameCommitStateAgreedTick,
 									min_load);
 	}
+	if ((resolved == ~(u32)0) && (sSYNetRollbackDeferredStateMismatchInputAgreed != FALSE) &&
+	    (sSYNetRollbackLastFrameCommitStateAgreedTick > 0U))
+	{
+		/* Ring min_load can sit above last agreed validation; search full ring before giving up. */
+		resolved = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(probe, 0U);
+		if (resolved == ~(u32)0)
+		{
+			resolved =
+			    syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(sSYNetRollbackLastFrameCommitStateAgreedTick, 0U);
+		}
+	}
 	if (resolved == ~(u32)0)
 	{
 		resolved = syNetRbSnapshotFindLatestValidTickAtOrBefore(probe, min_load);
@@ -3032,6 +3043,12 @@ void syNetRollbackNoteFrameCommitStateAgreed(u32 validation_tick)
 	{
 		sSYNetRollbackLastFrameCommitStateAgreedTick = validation_tick;
 	}
+#ifdef PORT
+	if ((syNetRollbackIsActive() != FALSE) && (validation_tick > 0U))
+	{
+		syNetRbSnapshotPinLoadSafeAtTick(validation_tick);
+	}
+#endif
 }
 
 u32 syNetRollbackGetLastFrameCommitStateAgreedTick(void)

@@ -3782,6 +3782,64 @@ u32 syNetInputGetRemoteHistoryValueChecksumForPlayer(s32 player, u32 tick_begin,
 	return checksum;
 }
 
+static sb32 syNetInputResolveFrameCommitAuthorityFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	s32 local_slot;
+	s32 extra_slot;
+
+	if ((out_frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (tick == 0U))
+	{
+		return FALSE;
+	}
+	local_slot = syNetPeerGetLocalSimSlot();
+	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
+	if ((player == local_slot) || (player == extra_slot))
+	{
+		return syNetInputResolveLocalAuthorityFrame(player, tick, out_frame);
+	}
+	if (syNetInputIsRemoteHumanSlot(player) != FALSE)
+	{
+		return syNetInputResolveRemoteHumanAuthorityFrameEx(player, tick, out_frame, NULL);
+	}
+	return syNetInputGetHistoryFrame(player, tick, out_frame);
+}
+
+void syNetInputGetFrameCommitAuthorityChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
+						     u32 *out_combined_checksum)
+{
+	SYNetInputFrame frame;
+	u32 checksum = 2166136261U;
+	u32 tick_limit;
+	u32 tick;
+	s32 player;
+
+	tick_limit = tick_begin + frame_count;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		u32 player_checksum = 2166136261U;
+
+		for (tick = tick_begin; tick < tick_limit; tick++)
+		{
+			if (syNetInputResolveFrameCommitAuthorityFrame(player, tick, &frame) != FALSE)
+			{
+				player_checksum = syNetInputAccumulateInputChecksum(player_checksum, player, &frame);
+			}
+		}
+		checksum ^= player_checksum;
+		checksum *= 16777619U;
+
+		if (out_checksums != NULL)
+		{
+			out_checksums[player] = player_checksum;
+		}
+	}
+	if (out_combined_checksum != NULL)
+	{
+		*out_combined_checksum = checksum;
+	}
+}
+
 void syNetInputGetHistoryInputValueChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                   u32 *out_combined_checksum)
 {
@@ -5638,9 +5696,19 @@ static void syNetInputRollbackReconcileSpanTagged(u32 from_tick, u32 to_tick, s3
 
 void syNetInputRollbackReconcilePublishedCommitWindow(u32 win_begin, u32 win_end)
 {
+	u32 t;
+
 	if (win_begin >= win_end)
 	{
 		return;
+	}
+	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
+	{
+		for (t = win_begin; t < win_end; t++)
+		{
+			syNetInputPromoteAllLocalAuthoritySlots(t);
+			syNetInputPromoteAllRemoteHumanAuthoritySlots(t);
+		}
 	}
 	syNetInputRollbackReconcileSpanTagged(win_begin, win_end, -1, "commit_window_reconcile");
 }

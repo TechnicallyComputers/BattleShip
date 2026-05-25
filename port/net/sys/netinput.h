@@ -204,6 +204,9 @@ extern u32 syNetInputGetRemoteHistoryValueChecksumForPlayer(s32 player, u32 tick
 extern void syNetInputGetHistoryInputValueChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                        u32 *out_combined_checksum);
 #ifdef PORT
+/* Cross-peer frame-commit input_digest: per-slot local authority + remote wire authority (not published-only). */
+extern void syNetInputGetFrameCommitAuthorityChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
+							    u32 *out_combined_checksum);
 /* Same folding as published-window checksum, over `sSYNetInputRemoteHistory` (wire-fed ring before resolve). */
 extern void syNetInputGetRemoteHistoryValueChecksumWindow(u32 tick_begin, u32 frame_count, u32 *out_checksums,
                                                           u32 *out_combined_checksum);
