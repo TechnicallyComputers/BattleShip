@@ -100,6 +100,7 @@ typedef struct SYNetRollbackHashSet
 	u32 rng;
 	u32 camera;
 	u32 animation;
+	u32 effect;
 
 } SYNetRollbackHashSet;
 static SYNetRollbackHashSet sSYNetRollbackResimPreHashes;
@@ -116,6 +117,8 @@ static u32 sSYNetRollbackPeerBaselineAnim;
 static u32 sSYNetRollbackPeerBaselineWeapon;
 static u32 sSYNetRollbackPeerBaselineMap;
 static u32 sSYNetRollbackPeerBaselineCamera;
+static u32 sSYNetRollbackPeerBaselineEffect;
+static sb32 sSYNetRollbackLastPeerOutcomeEffectValid;
 static u32 sSYNetRollbackPeerBaselineSlotFigh;
 static u32 sSYNetRollbackPeerBaselineSlotWorld;
 static u32 sSYNetRollbackPeerBaselineSlotItem;
@@ -4319,6 +4322,7 @@ static SYNetRollbackHashSet syNetRollbackCollectHashes(void)
 	hashes.rng = syNetSyncHashRNGSeed();
 	hashes.camera = syNetSyncHashGMCamera();
 	hashes.animation = syNetSyncHashFighterAnimationStateForRollback();
+	hashes.effect = syNetSyncHashActiveEffectsForRollback();
 	return hashes;
 }
 
@@ -5399,6 +5403,7 @@ static SYNetRollbackHashSet syNetRollbackCollectSlotBaselineDigests(u32 load_tic
 	slot.weapon = syNetRbSnapshotGetSlotHashWeapon(load_tick);
 	slot.map = syNetRbSnapshotGetSlotHashMap(load_tick);
 	slot.camera = syNetRbSnapshotGetSlotHashCamera(load_tick);
+	slot.effect = syNetRbSnapshotGetSlotHashEffect(load_tick);
 	return slot;
 }
 
@@ -5426,6 +5431,7 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackPeerBaselineWeapon = wire.weapon;
 	sSYNetRollbackPeerBaselineMap = wire.map;
 	sSYNetRollbackPeerBaselineCamera = wire.camera;
+	sSYNetRollbackPeerBaselineEffect = wire.effect;
 	sSYNetRollbackPeerBaselineSlotFigh = syNetRbSnapshotGetSlotHashFighter(load_tick);
 	sSYNetRollbackPeerBaselineSlotWorld = syNetRbSnapshotGetSlotHashWorld(load_tick);
 	sSYNetRollbackPeerBaselineSlotItem = syNetRbSnapshotGetSlotHashItem(load_tick);
@@ -7028,7 +7034,7 @@ static sb32 syNetRollbackPeerBaselineDriftIsAnimOnly(const SYNetRollbackHashSet 
 	}
 	if ((peer->fighter != local->fighter) || (peer->world != local->world) || (peer->item != local->item) ||
 	    (peer->rng != local->rng) || (peer->weapon != local->weapon) || (peer->map != local->map) ||
-	    (peer->camera != local->camera))
+	    (peer->camera != local->camera) || (peer->effect != local->effect))
 	{
 		return FALSE;
 	}
@@ -7055,6 +7061,7 @@ static sb32 syNetRollbackPeerBaselineAnimOnlyVsArmedLive(const SYNetRollbackHash
 	local.map = sSYNetRollbackPeerBaselineMap;
 	local.camera = sSYNetRollbackPeerBaselineCamera;
 	local.animation = sSYNetRollbackPeerBaselineAnim;
+	local.effect = sSYNetRollbackPeerBaselineEffect;
 	return syNetRollbackPeerBaselineDriftIsAnimOnly(peer, &local);
 }
 
@@ -7095,7 +7102,7 @@ static sb32 syNetRollbackPeerBaselineDriftIsGameplayOnlyMap(const SYNetRollbackH
 	}
 	if ((peer->fighter != local->fighter) || (peer->world != local->world) || (peer->item != local->item) ||
 	    (peer->rng != local->rng) || (peer->animation != local->animation) || (peer->weapon != local->weapon) ||
-	    (peer->camera != local->camera))
+	    (peer->camera != local->camera) || (peer->effect != local->effect))
 	{
 		return FALSE;
 	}
@@ -7170,10 +7177,12 @@ static void syNetRollbackComparePeerBaselineToLocal(u32 load_tick, const SYNetRo
 		local.map = syNetRbSnapshotGetSlotHashMap(load_tick);
 		local.camera = syNetRbSnapshotGetSlotHashCamera(load_tick);
 		local.animation = syNetRbSnapshotGetSlotHashAnimation(load_tick);
+		local.effect = syNetRbSnapshotGetSlotHashEffect(load_tick);
 	}
 	if ((peer->fighter == local.fighter) && (peer->world == local.world) && (peer->item == local.item) &&
 	    (peer->rng == local.rng) && (peer->animation == local.animation) && (peer->weapon == local.weapon) &&
-	    (peer->map == local.map) && (peer->camera == local.camera))
+	    (peer->map == local.map) && (peer->camera == local.camera) &&
+	    ((sSYNetRollbackLastPeerOutcomeEffectValid == FALSE) || (peer->effect == local.effect)))
 	{
 		return;
 	}
@@ -7427,7 +7436,7 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 }
 
 void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim, u32 weapon,
-				     u32 map, u32 camera, const u32 *fighter_slot)
+				     u32 map, u32 camera, u32 effect, sb32 peer_effect_valid, const u32 *fighter_slot)
 {
 	SYNetRollbackHashSet peer;
 	SYNetRollbackHashSet local;
@@ -7444,6 +7453,8 @@ void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 i
 	peer.weapon = weapon;
 	peer.map = map;
 	peer.camera = camera;
+	peer.effect = effect;
+	sSYNetRollbackLastPeerOutcomeEffectValid = peer_effect_valid;
 	sSYNetRollbackLastPeerOutcomeHash = peer;
 	sSYNetRollbackLastPeerOutcomeTick = load_tick;
 	sSYNetRollbackLastPeerOutcomeValid = TRUE;
@@ -7523,13 +7534,14 @@ void syNetRollbackNotePeerBaselineDigestSent(void)
 
 sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
 					      u32 *out_rng, u32 *out_anim, u32 *out_weapon, u32 *out_map,
-					      u32 *out_camera, u32 *out_fighter_slot, s32 fighter_slot_count)
+					      u32 *out_camera, u32 *out_effect, u32 *out_fighter_slot,
+					      s32 fighter_slot_count)
 {
 	s32 si;
 
 	if ((sSYNetRollbackPeerBaselineSendPending == FALSE) || (out_load_tick == NULL) || (out_figh == NULL) ||
 	    (out_world == NULL) || (out_item == NULL) || (out_rng == NULL) || (out_anim == NULL) ||
-	    (out_weapon == NULL) || (out_map == NULL) || (out_camera == NULL))
+	    (out_weapon == NULL) || (out_map == NULL) || (out_camera == NULL) || (out_effect == NULL))
 	{
 		return FALSE;
 	}
@@ -7542,6 +7554,7 @@ sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_fig
 	*out_weapon = sSYNetRollbackPeerBaselineWeapon;
 	*out_map = sSYNetRollbackPeerBaselineMap;
 	*out_camera = sSYNetRollbackPeerBaselineCamera;
+	*out_effect = sSYNetRollbackPeerBaselineEffect;
 	if ((out_fighter_slot != NULL) && (fighter_slot_count >= GMCOMMON_PLAYERS_MAX))
 	{
 		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)

@@ -1,7 +1,7 @@
 # Audit: `lbCommonEjectTreeDObj` call sites vs netrollback apply order
 
 **Date:** 2026-05-25  
-**Status:** REFERENCE (no code change in this commit)  
+**Status:** FIX SHIPPED (2026-05-25 pass 2)  
 **Motivation:** Resim crash `SIGSEGV fault_addr=0x8` in `lbCommonEjectTreeDObj+0x25` — ROM helper assumes `dobj->child != NULL` when rewiring after `gcEjectDObj(dobj)` ([`decomp/src/lb/lbcommon.c`](../../decomp/src/lb/lbcommon.c) ~L1426). This document maps **every call site** and **rollback load ordering** so fixes target the right coupling (item hold display vs spawn setup vs sim throw).
 
 ---
@@ -81,7 +81,14 @@ So **item apply + orphan reconcile** happens **before** weapon apply and **befor
 
 ---
 
-## 7. Recommended next steps (engineering)
+## 7. Fix shipped (2026-05-25)
+
+| Change | Location |
+|--------|----------|
+| If `dobj->child == NULL` after `gcEjectDObj`, clear `parent_gobj->obj` or `parent->child` without dereferencing child | `decomp/src/lb/lbcommon.c`, `decomp/src/netplay/lb/lbcommon.c` (`#ifdef PORT`) |
+| Orphan detach / fighter release only call `lbCommonEjectTreeDObj` when `wrapper->child != NULL` | `decomp/src/it/itmain.c` |
+
+## 8. Recommended next steps (engineering)
 
 1. **gdb:** break on `lbCommonEjectTreeDObj`, print `dobj`, `dobj->child`, `dobj->parent`, caller `lr`, item `kind`/`type`/`is_hold`/`owner`.
 2. If caller is **`itMainDetachOrphanHoldDisplay`:** log whether **`syNetRbSnapReconcileOrphanHeldItems`** ran this tick (`SSB64_NETPLAY_SNAPSHOT_ITEM_DIAG=1`).

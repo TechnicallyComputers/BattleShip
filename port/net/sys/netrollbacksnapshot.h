@@ -107,6 +107,7 @@ extern s32 syNetRbEnumerateActiveWeaponsSorted(struct GObj **out, s32 max, sb32 
 
 #ifdef PORT
 extern s32 syNetRbEnumerateActiveEffectsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
+extern u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque);
 #endif
 
 #ifdef PORT

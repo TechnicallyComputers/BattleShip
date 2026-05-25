@@ -14,10 +14,11 @@ Tracks what the typed rollback ring captures vs what still risks crash or gamepl
 | Weapons | Y (cap 32) | `weapon` H | Y | N | `SynctestProbeWeaponMismatch` | baseline |
 | Camera | Y | `cam` H | Y | N | — | baseline |
 | Fighter animation (AObj cap 16) | Y (joint blobs) | `anim` H | Y | N | — | baseline |
-| Effects (`EFStruct`, links 6/8) | Y (presence + vars + quake respawn) | `effect` H | opt (`VERIFY_EFFECT_HASH`) | N | `SynctestProbeEffectMismatch` | 4 |
+| Effects (`EFStruct` + no-struct shells, links 6/8) | Y (vars + coupled prune + respawn whitelist) | `effect` H | opt (`VERIFY_EFFECT_HASH`) | N | `SynctestProbeEffectMismatch` | 4 |
 | Particles (`LBParticle`) | Y (rollback teardown) | N | N | N | — | 3 |
-| Fighter `effect_gobj` pointers | Y (id rebind) | in `figh` | Y | N | — | 5 |
-| Stage GObjs (ground, link 13, …) | N (audit only) | `gcRunAll` diag | N | N | `GObj link audit` env | 6 |
+| Fighter `effect_gobj` pointers | Y (id rebind + `is_effect_attach`) | in `figh` | Y | N | — | 5 |
+| Stage ground (`gGRCommonStruct` hazards) | Y (10 VS `gkind`s incl. Sector/Yoster/Inishie scales) | folded in `map` H | Y | v2 wire (`effect` + map) | `GObj link audit` env | 6 |
+| Stage GObjs (link 13 presentation, …) | N (audit only) | `gcRunAll` diag | N | N | `GObj link audit` env | 6 |
 | Particles RNG | cosmetic split | — | — | — | — | [`netrollback_rng_item_identity_drift_2026-05-17.md`](bugs/netrollback_rng_item_identity_drift_2026-05-17.md) |
 
 ## Caps (save fails if truncated)
@@ -41,6 +42,6 @@ Hash walks use the same caps as snapshot enumeration (`SYNET_SYNC_*_HASH_SORT_MA
 
 ## Open risks (explicit)
 
-- Universal effect respawn from `bank_id` — whitelist growth only (quake magnitude in blob).
-- `aobj->interpolate` (TraI) on yakumono — add per-stage if a stage needs it.
+- Effect respawn whitelist — extend when soak finds missing banks (shield/reflect/wave/quake covered).
+- `aobj->interpolate` on yakumono — already in `SYNetRbSnapAObjNodeBlob`; enable per-stage if map hash drifts.
 - Full particle population snapshot — only if probes show gameplay hash drift.

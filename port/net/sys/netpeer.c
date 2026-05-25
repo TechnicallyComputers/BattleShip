@@ -354,8 +354,10 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
 /* Frame commit token (NetSync validation cadence): header(12) + validation_tick + 8 token u32s + checksum(4) = 52. */
 #define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
-#define SYNETPEER_ROLLBACK_BASELINE_BYTES (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES_V1 (68)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES (72)
+#define SYNETPEER_ROLLBACK_BASELINE_BYTES_V2 (72)
 #define SYNETPEER_ROLLBACK_SYNC_BYTES_LEGACY (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
 #define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4)
 #define SYNETPEER_RESIM_POST_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
@@ -7550,6 +7552,7 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 
 			case SYNETPEER_PACKET_ROLLBACK_BASELINE:
 				if ((size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ||
+				    (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_V1) ||
 				    (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY))
 				{
 					syNetPeerHandleRollbackBaselinePacket(buffer, size);
@@ -8707,13 +8710,14 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	u32 weapon;
 	u32 map;
 	u32 camera;
+	u32 effect;
 	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
 	u32 chk;
 	s32 si;
 	int sent;
 
 	if (syNetRollbackTakePeerBaselineDigestForSend(&load_tick, &figh, &world, &item, &rng, &anim, &weapon, &map,
-						     &camera, fighter_slot, GMCOMMON_PLAYERS_MAX) == FALSE)
+						     &camera, &effect, fighter_slot, GMCOMMON_PLAYERS_MAX) == FALSE)
 	{
 		return;
 	}
@@ -8736,6 +8740,7 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	syNetPeerWriteU32(&cursor, weapon);
 	syNetPeerWriteU32(&cursor, map);
 	syNetPeerWriteU32(&cursor, camera);
+	syNetPeerWriteU32(&cursor, effect);
 	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
 	{
 		syNetPeerWriteU32(&cursor, fighter_slot[si]);
@@ -8929,20 +8934,26 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	u32 weapon;
 	u32 map;
 	u32 camera;
+	u32 effect;
 	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
 	u32 checksum;
 	u32 expected;
 	sb32 has_fighter_slots;
+	sb32 has_effect_hash;
 	s32 si;
 
 	if ((size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) &&
+	    (size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_V1) &&
 	    (size != (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY))
 	{
 		sSYNetPeerPacketsDropped++;
 		port_log("SSB64 NetPeer: RESIM_BASELINE_RECV_DROP reason=size size=%d\n", (int)size);
 		return;
 	}
-	has_fighter_slots = (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ? TRUE : FALSE;
+	has_fighter_slots =
+	    ((size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) || (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES_V1))
+	        ? TRUE
+	        : FALSE;
 	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
 	c = buffer;
 	magic = syNetPeerReadU32(&c);
@@ -8958,6 +8969,15 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	weapon = syNetPeerReadU32(&c);
 	map = syNetPeerReadU32(&c);
 	camera = syNetPeerReadU32(&c);
+	has_effect_hash = (size == (s32)SYNETPEER_ROLLBACK_BASELINE_BYTES) ? TRUE : FALSE;
+	if (has_effect_hash != FALSE)
+	{
+		effect = syNetPeerReadU32(&c);
+	}
+	else
+	{
+		effect = 0U;
+	}
 	if (has_fighter_slots != FALSE)
 	{
 		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
@@ -8988,7 +9008,8 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	    item,
 	    rng,
 	    (has_fighter_slots != FALSE) ? 1 : 0);
-	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng, anim, weapon, map, camera,
+	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng, anim, weapon, map, camera, effect,
+					  has_effect_hash,
 					  (has_fighter_slots != FALSE) ? fighter_slot : NULL);
 }
 

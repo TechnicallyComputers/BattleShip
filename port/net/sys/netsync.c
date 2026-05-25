@@ -2175,6 +2175,16 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		ep = efGetStruct(gobj);
 		if (ep == NULL)
 		{
+			if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect))
+			{
+				fold = 2166136261U;
+				fold = syNetSyncFnvAccumulateU32(fold, gobj->id);
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
+				fold = syNetSyncFnvAccumulateU32(
+				    fold, syNetSyncPointerFingerprintLow32((const void *)gobj->gobjproc_head));
+				hash ^= fold;
+				hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
+			}
 			continue;
 		}
 		fold = 2166136261U;

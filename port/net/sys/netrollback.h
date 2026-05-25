@@ -105,7 +105,8 @@ extern void syNetRollbackNotifyLocalAuthorityTransmitRevision(s32 player, u32 si
 /* FALSE during post-resim debounce for ticks at/after last committed mismatch (quiet OOO patch only). */
 extern sb32 syNetRollbackShouldQueueGgpoCorrection(u32 sim_tick);
 extern void syNetRollbackOnPeerBaselineDigest(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
-					      u32 weapon, u32 map, u32 camera, const u32 *fighter_slot);
+					      u32 weapon, u32 map, u32 camera, u32 effect, sb32 peer_effect_valid,
+					      const u32 *fighter_slot);
 extern void syNetRollbackPumpResimBaselineIfAwaiting(void);
 /* Cross-peer frame-commit state digest mismatch: queue rollback from start of validation window. */
 extern void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNetFrameCommitToken *local,
@@ -120,7 +121,8 @@ extern void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 
 extern void syNetRollbackNotePeerBaselineDigestSent(void);
 extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_figh, u32 *out_world, u32 *out_item,
 						     u32 *out_rng, u32 *out_anim, u32 *out_weapon, u32 *out_map,
-						     u32 *out_camera, u32 *out_fighter_slot, s32 fighter_slot_count);
+						     u32 *out_camera, u32 *out_effect, u32 *out_fighter_slot,
+						     s32 fighter_slot_count);
 extern void syNetRollbackTryOpenResimReplayGate(void);
 #endif
 
