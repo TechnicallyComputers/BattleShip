@@ -14,6 +14,15 @@ function(ssb64_netmenu_attach_curl target)
 
     target_link_libraries(${target} PRIVATE CURL::libcurl)
 
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        target_link_libraries(${target} PRIVATE OpenSSL::Crypto)
+        target_compile_definitions(${target} PRIVATE SSB64_HAVE_OPENSSL=1)
+        message(STATUS "SSB64 netmenu: OpenSSL::Crypto linked (TURN long-term credentials)")
+    else()
+        message(WARNING "SSB64 netmenu: OpenSSL not found — TURN coturn auth may fail (install openssl dev)")
+    endif()
+
     # Belt-and-suspenders: MSVC OBJECT targets may not pick up INTERFACE includes from
     # imported targets; always add an explicit -I when we know the vcpkg prefix.
     if(SSB64_VCPKG_CURL_PREFIX AND EXISTS "${SSB64_VCPKG_CURL_PREFIX}/include/curl/curl.h")

@@ -96,6 +96,8 @@ typedef struct MmJob
 	u8 fighter_kind;
 	sb32 has_fighter_kind;
 	sb32 heartbeat_has_endpoints;
+	char turn_endpoint[128];
+	sb32 has_turn_endpoint;
 } MmJob;
 
 typedef struct MmMemBuf
@@ -1162,7 +1164,16 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		r->peer_lan_hostport[0] = '\0';
 	}
+	r->peer_turn_hostport[0] = '\0';
+	if (mmJsonCopyQuotedValue(body, "peer_turn", r->peer_turn_hostport, sizeof(r->peer_turn_hostport)) == FALSE)
+	{
+		r->peer_turn_hostport[0] = '\0';
+	}
 #ifdef PORT
+	if (r->peer_turn_hostport[0] != '\0')
+	{
+		port_log("SSB64 Automatch: match JSON peer_turn=%s\n", r->peer_turn_hostport);
+	}
 	if (r->peer_lan_hostport[0] == '\0')
 	{
 		port_log("SSB64 Automatch: match JSON has no peer_lan (opponent did not report lan_endpoint)\n");
@@ -1358,6 +1369,31 @@ static void mmRunEnsure(sb32 verb)
 	}
 }
 
+static void mmJsonInsertTurnEndpoint(char *jbuf, size_t cap, const char *turn_ep)
+{
+	char *end;
+	char frag[192];
+	size_t flen;
+
+	if ((jbuf == NULL) || (turn_ep == NULL) || (turn_ep[0] == '\0'))
+	{
+		return;
+	}
+	end = strrchr(jbuf, '}');
+	if (end == NULL)
+	{
+		return;
+	}
+	snprintf(frag, sizeof(frag), ",\"turn_endpoint\":\"%s\"", turn_ep);
+	flen = strlen(frag);
+	if ((size_t)(end - jbuf) + flen + strlen(end) + 1U >= cap)
+	{
+		return;
+	}
+	memmove(end + flen, end, strlen(end) + 1U);
+	memcpy(end, frag, flen);
+}
+
 static void mmRunJoin(const MmJob *job)
 {
 	char jbuf[448];
@@ -1408,9 +1444,14 @@ static void mmRunJoin(const MmJob *job)
 			         job->udp_endpoint);
 		}
 	}
+	if (job->has_turn_endpoint != FALSE)
+	{
+		mmJsonInsertTurnEndpoint(jbuf, sizeof(jbuf), job->turn_endpoint);
+	}
 #ifdef PORT
-	port_log("SSB64 Automatch: POST /v1/queue udp=%s lan=%s\n", job->udp_endpoint,
-	         (job->has_lan_endpoint != FALSE) ? job->lan_endpoint : "(none)");
+	port_log("SSB64 Automatch: POST /v1/queue udp=%s lan=%s turn=%s\n", job->udp_endpoint,
+	         (job->has_lan_endpoint != FALSE) ? job->lan_endpoint : "(none)",
+	         (job->has_turn_endpoint != FALSE) ? job->turn_endpoint : "(none)");
 #endif
 	hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
 	if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, TRUE) != FALSE) &&
@@ -1478,6 +1519,10 @@ static void mmRunHeartbeat(const MmJob *job)
 		snprintf(jbuf, sizeof(jbuf),
 		         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
 		         job->ticket_id);
+	}
+	if (job->has_turn_endpoint != FALSE)
+	{
+		mmJsonInsertTurnEndpoint(jbuf, sizeof(jbuf), job->turn_endpoint);
 	}
 	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, job->verbose != FALSE, &resp);
 	if (hc == 404)
@@ -1870,6 +1915,12 @@ void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose)
 void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                    const char *lan_endpoint_opt)
 {
+	mmMatchmakingEnqueueJoinQueueEx(verbose, udp_endpoint, fighter_kind, has_fkind, lan_endpoint_opt, NULL);
+}
+
+void mmMatchmakingEnqueueJoinQueueEx(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
+                                     const char *lan_endpoint_opt, const char *turn_endpoint_opt)
+{
 	MmJob j;
 
 	mmMatchmakingStartup();
@@ -1889,16 +1940,29 @@ void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fi
 		snprintf(j.lan_endpoint, sizeof(j.lan_endpoint), "%s", lan_endpoint_opt);
 		j.has_lan_endpoint = TRUE;
 	}
+	j.has_turn_endpoint = FALSE;
+	j.turn_endpoint[0] = '\0';
+	if ((turn_endpoint_opt != NULL) && (turn_endpoint_opt[0] != '\0'))
+	{
+		snprintf(j.turn_endpoint, sizeof(j.turn_endpoint), "%s", turn_endpoint_opt);
+		j.has_turn_endpoint = TRUE;
+	}
 	mmEnqueueSubmit(&j);
 }
 
 void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id)
 {
-	mmMatchmakingEnqueueHeartbeatWithEndpoints(verbose, ticket_id, NULL, NULL);
+	mmMatchmakingEnqueueHeartbeatWithEndpointsEx(verbose, ticket_id, NULL, NULL, NULL);
 }
 
 void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
                                                 const char *lan_endpoint_opt)
+{
+	mmMatchmakingEnqueueHeartbeatWithEndpointsEx(verbose, ticket_id, udp_endpoint, lan_endpoint_opt, NULL);
+}
+
+void mmMatchmakingEnqueueHeartbeatWithEndpointsEx(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
+                                                  const char *lan_endpoint_opt, const char *turn_endpoint_opt)
 {
 	MmJob j;
 
@@ -1920,6 +1984,13 @@ void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket
 	{
 		snprintf(j.lan_endpoint, sizeof(j.lan_endpoint), "%s", lan_endpoint_opt);
 		j.has_lan_endpoint = TRUE;
+	}
+	j.has_turn_endpoint = FALSE;
+	j.turn_endpoint[0] = '\0';
+	if ((turn_endpoint_opt != NULL) && (turn_endpoint_opt[0] != '\0'))
+	{
+		snprintf(j.turn_endpoint, sizeof(j.turn_endpoint), "%s", turn_endpoint_opt);
+		j.has_turn_endpoint = TRUE;
 	}
 	mmEnqueueSubmit(&j);
 }

@@ -26,6 +26,7 @@
 #include <sys/nettickgridlock.h>
 
 #ifdef SSB64_NETMENU
+#include <mm_turn.h>
 #include "bootstrap/mm_server_barrier.h"
 extern sb32 mnVSNetLevelPrefsMapsCheckLocked(s32 gkind);
 extern s32 mnVSNetLevelPrefsMapsGetGroundKind(s32 slot);
@@ -2628,13 +2629,85 @@ void syNetPeerCommitStagedBootstrapMetadataForBattleStart(void)
 }
 #endif
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+static sb32 sSYNetPeerTurnOutboundRelay;
+#endif
+
 #if defined(PORT)
+void syNetPeerSetTurnOutboundRelay(sb32 enabled)
+{
+#if defined(SSB64_NETMENU)
+	sSYNetPeerTurnOutboundRelay = (enabled != FALSE) ? TRUE : FALSE;
+#else
+	(void)enabled;
+#endif
+}
+
+sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport)
+{
+	s32 fd;
+
+#if defined(SSB64_NETMENU)
+	fd = syNetPeerGetUdpSocketFd();
+	if ((fd < 0) || (peer_permission_hostport == NULL) || (peer_permission_hostport[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (mmTurnBeginRelayToPeer(fd, peer_permission_hostport) == FALSE)
+	{
+		return FALSE;
+	}
+	sSYNetPeerTurnOutboundRelay = TRUE;
+	return TRUE;
+#else
+	(void)peer_permission_hostport;
+	return FALSE;
+#endif
+}
+
+static int syNetPeerRecvDatagramUnwrap(u8 *buffer, int cap, struct sockaddr_in *from_out, sb32 *would_block_out)
+{
+	int size;
+#if defined(SSB64_NETMENU)
+	u8 unwrapped[SYNETPEER_PACKET_RECV_MAX];
+	s32 ulen;
+#endif
+
+	if (would_block_out != NULL)
+	{
+		*would_block_out = FALSE;
+	}
+	size = syNetPeerOsRecvFrom(sSYNetPeerSocket, buffer, (size_t)cap, would_block_out);
+	if (size <= 0)
+	{
+		return size;
+	}
+#if defined(SSB64_NETMENU)
+	if ((from_out != NULL) && (mmTurnRelayUnwrap(buffer, size, from_out, unwrapped, (u32)sizeof(unwrapped), &ulen) != FALSE))
+	{
+		if (ulen > 0 && ulen <= cap)
+		{
+			memcpy(buffer, unwrapped, (size_t)ulen);
+			return (int)ulen;
+		}
+	}
+#endif
+	return size;
+}
+
 void syNetPeerSendBytes(const u8 *buffer, u32 size)
 {
 	if ((buffer == NULL) || (size == 0U) || (syNetPeerDatagramSocketIsUsable() == FALSE))
 	{
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	if ((sSYNetPeerTurnOutboundRelay != FALSE) && (mmTurnRelaySessionActive() != FALSE))
+	{
+		(void)mmTurnRelaySend((s32)sSYNetPeerSocket, buffer, size);
+		return;
+	}
+#endif
 	(void)syNetPeerOsSendTo(sSYNetPeerSocket, buffer, (size_t)size, &sSYNetPeerPeerAddress);
 }
 #endif
@@ -3966,7 +4039,8 @@ static void syNetPeerPumpUdpLinkSyncRecv(void)
 	for (;;)
 	{
 		sb32 wb = FALSE;
-		int n = syNetPeerOsRecvFrom(sSYNetPeerSocket, buf, sizeof(buf), &wb);
+		struct sockaddr_in from;
+		int n = syNetPeerRecvDatagramUnwrap(buf, (int)sizeof(buf), &from, &wb);
 
 		if (n < 0)
 		{
@@ -5174,7 +5248,8 @@ void syNetPeerReceiveBootstrapPackets(void)
 	while (TRUE)
 	{
 		sb32 wb = FALSE;
-		int size = syNetPeerOsRecvFrom(sSYNetPeerSocket, buffer, sizeof(buffer), &wb);
+		struct sockaddr_in from;
+		int size = syNetPeerRecvDatagramUnwrap(buffer, (int)sizeof(buffer), &from, &wb);
 
 		if (size < 0)
 		{
@@ -5222,6 +5297,10 @@ static void syNetPeerResetAutomatchBootstrapTransportState(void)
 
 void syNetPeerCancelAutomatchBootstrap(void)
 {
+#if defined(SSB64_NETMENU)
+	sSYNetPeerTurnOutboundRelay = FALSE;
+	mmTurnEndRelaySession();
+#endif
 	syNetPeerCloseSocket();
 	syNetPeerResetAutomatchBootstrapAttemptState();
 }
@@ -7907,7 +7986,8 @@ void syNetPeerReceiveRemoteInput(void)
 	while (TRUE)
 	{
 		sb32 wb = FALSE;
-		int size = syNetPeerOsRecvFrom(sSYNetPeerSocket, buffer, sizeof(buffer), &wb);
+		struct sockaddr_in from;
+		int size = syNetPeerRecvDatagramUnwrap(buffer, (int)sizeof(buffer), &from, &wb);
 
 		if (size < 0)
 		{
