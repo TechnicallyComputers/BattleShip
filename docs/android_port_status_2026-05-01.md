@@ -176,7 +176,7 @@ Local build:
 - `ssl/cacert.pem` — HTTPS matchmaking TLS
 - `port/net/assets/` — VS netmenu PNGs
 
-**Paths:** `RealAppBundlePath()` on Android uses `Ship::Context::GetAppDirectoryPath()` (`externalFilesDir`). Matchmaking credentials: `<appData>/ssb64/matchmaking_credentials`.
+**Paths:** `RealAppBundlePath()` on Android uses `Ship::Context::GetAppDirectoryPath()` (`externalFilesDir`). Matchmaking credentials: `<appData>/matchmaking.cred` (same tree as `ssb64.log`; legacy `<appData>/ssb64/matchmaking.cred` is migrated on load). If the server rejects the cached player/token, the client copies the file to `matchmaking.cred.bak` and registers a new player automatically.
 
 **Manifest:** `INTERNET`, `ACCESS_NETWORK_STATE` (required for automatch; present in all APK builds).
 

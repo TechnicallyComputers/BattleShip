@@ -696,8 +696,43 @@ static void mmCurlConfigureSsl(CURL *c)
 #endif
 }
 
-/* Persist matchmaking API token outside the install dir (netplay/include/stdlib.h shadows <stdlib.h>). */
+static void mmCredJoinPath(char *out, size_t cap, const char *dir, const char *filename)
+{
+	size_t dlen;
+
+	if ((out == NULL) || (cap == 0U) || (dir == NULL) || (filename == NULL))
+	{
+		if ((out != NULL) && (cap > 0U))
+		{
+			out[0] = '\0';
+		}
+		return;
+	}
+	dlen = strlen(dir);
+	if ((dlen > 0U) && ((dir[dlen - 1U] == '/') || (dir[dlen - 1U] == '\\')))
+	{
+		snprintf(out, cap, "%s%s", dir, filename);
+	}
+	else
+	{
+		snprintf(out, cap, "%s/%s", dir, filename);
+	}
+}
+
+/* Same writable tree as ssb64.log (SDL pref path / Ship app directory). */
 static void mmCredPath(char *out, size_t cap)
+{
+	char base[512];
+
+	if ((ssb64_UserDataDirUtf8(base, sizeof(base)) != 0) && (base[0] != '\0'))
+	{
+		mmCredJoinPath(out, cap, base, MM_CRED_FILENAME);
+		return;
+	}
+	snprintf(out, cap, "./%s", MM_CRED_FILENAME);
+}
+
+static sb32 mmCredPathLegacy(char *out, size_t cap)
 {
 #ifdef _WIN32
 	const char *appdata = getenv("APPDATA");
@@ -705,21 +740,15 @@ static void mmCredPath(char *out, size_t cap)
 	if ((appdata != NULL) && (appdata[0] != '\0'))
 	{
 		snprintf(out, cap, "%s\\ssb64\\%s", appdata, MM_CRED_FILENAME);
-	}
-	else
-	{
-		snprintf(out, cap, ".\\%s", MM_CRED_FILENAME);
+		return TRUE;
 	}
 #elif defined(__ANDROID__)
 	char base[384];
 
 	if ((ssb64_RealAppBundlePathUtf8(base, sizeof(base)) != 0) && (base[0] != '\0'))
 	{
-		snprintf(out, cap, "%s/ssb64/%s", base, MM_CRED_FILENAME);
-	}
-	else
-	{
-		snprintf(out, cap, "./%s", MM_CRED_FILENAME);
+		mmCredJoinPath(out, cap, base, "ssb64/" MM_CRED_FILENAME);
+		return TRUE;
 	}
 #else
 	const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -728,16 +757,17 @@ static void mmCredPath(char *out, size_t cap)
 	if ((xdg != NULL) && (xdg[0] != '\0'))
 	{
 		snprintf(out, cap, "%s/ssb64/%s", xdg, MM_CRED_FILENAME);
+		return TRUE;
 	}
-	else if ((home != NULL) && (home[0] != '\0'))
+	if ((home != NULL) && (home[0] != '\0'))
 	{
 		snprintf(out, cap, "%s/.config/ssb64/%s", home, MM_CRED_FILENAME);
-	}
-	else
-	{
-		snprintf(out, cap, "./%s", MM_CRED_FILENAME);
+		return TRUE;
 	}
 #endif
+	(void)out;
+	(void)cap;
+	return FALSE;
 }
 
 static sb32 mmEnsureCredDir(const char *fullpath)
@@ -829,19 +859,196 @@ static void mmCredSave(void)
 	fclose(fp);
 }
 
+static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap);
+static long mmHttpsRequest(const char *method, const char *path_suffix, const char *json_body, sb32 verb,
+                           char **resp_body_out);
+
+static void mmCredClearMemory(void)
+{
+	sPlayerId[0] = '\0';
+	sApiToken[0] = '\0';
+}
+
+static sb32 mmCredBackupCurrentFile(void)
+{
+	char path[512];
+	char bak[560];
+	FILE *in;
+	FILE *out;
+	char buf[256];
+	size_t nread;
+
+	mmCredPath(path, sizeof(path));
+	in = fopen(path, "r");
+	if (in == NULL)
+	{
+		return FALSE;
+	}
+	snprintf(bak, sizeof(bak), "%s.bak", path);
+	out = fopen(bak, "w");
+	if (out == NULL)
+	{
+		fclose(in);
+#ifdef PORT
+		port_log("SSB64 Matchmaking: cred backup fopen failed errno=%d\n", errno);
+#endif
+		return FALSE;
+	}
+	while ((nread = fread(buf, 1, sizeof(buf), in)) > 0U)
+	{
+		if (fwrite(buf, 1, nread, out) != nread)
+		{
+			fclose(in);
+			fclose(out);
+#ifdef PORT
+			port_log("SSB64 Matchmaking: cred backup write failed\n");
+#endif
+			return FALSE;
+		}
+	}
+	fclose(in);
+	fclose(out);
+#ifdef PORT
+	port_log("SSB64 Matchmaking: backed up cred file -> %s\n", bak);
+#endif
+	return TRUE;
+}
+
+static sb32 mmCredShouldRepopulate(long http_code, const char *resp_body, sb32 not_found_means_stale)
+{
+	if ((http_code == 401) || (http_code == 403))
+	{
+		return TRUE;
+	}
+	if ((not_found_means_stale != FALSE) && (http_code == 404))
+	{
+		return TRUE;
+	}
+	if ((http_code == 400) && (resp_body != NULL))
+	{
+		if ((strstr(resp_body, "invalid player credentials") != NULL) ||
+		    (strstr(resp_body, "invalid player") != NULL))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 mmCredRepopulate(sb32 verbose)
+{
+	char *resp;
+	long hc;
+	char pid[96];
+	char tok[288];
+
+	if ((sPlayerId[0] != '\0') || (sApiToken[0] != '\0'))
+	{
+		(void)mmCredBackupCurrentFile();
+	}
+	mmCredClearMemory();
+
+	hc = mmHttpsRequest("POST", "/v1/players", "{}", verbose, &resp);
+	if (((hc != 200) && (hc != 201)) || (resp == NULL))
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+		}
+#ifdef PORT
+		port_log("SSB64 Matchmaking: cred repopulate POST /v1/players failed HTTP %ld\n", hc);
+#endif
+		return FALSE;
+	}
+	if ((mmJsonCopyQuotedValue(resp, "player_id", pid, sizeof(pid)) == FALSE) ||
+	    (mmJsonCopyQuotedValue(resp, "api_token", tok, sizeof(tok)) == FALSE))
+	{
+		free(resp);
+#ifdef PORT
+		port_log("SSB64 Matchmaking: cred repopulate JSON parse failed\n");
+#endif
+		return FALSE;
+	}
+	snprintf(sPlayerId, sizeof(sPlayerId), "%s", pid);
+	snprintf(sApiToken, sizeof(sApiToken), "%s", tok);
+	mmCredSave();
+	free(resp);
+#ifdef PORT
+	port_log("SSB64 Matchmaking: repopulated player cred (new player_id %.8s...)\n", pid);
+#endif
+	return TRUE;
+}
+
+/* Heartbeat with unknown ticket: 404 means auth OK; 400/401 means stale cred file. */
+static sb32 mmCredVerifyLoaded(sb32 verbose)
+{
+	char jbuf[256];
+	char *resp;
+	long hc;
+
+	if ((sPlayerId[0] == '\0') || (sApiToken[0] == '\0'))
+	{
+		return FALSE;
+	}
+	snprintf(jbuf, sizeof(jbuf),
+	         "{\"ticket_id\":\"00000000-0000-0000-0000-000000000000\",\"client_time_ms\":0,"
+	         "\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}");
+	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, verbose, &resp);
+	if (hc == 404)
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+		}
+		return TRUE;
+	}
+	if (mmCredShouldRepopulate(hc, resp, FALSE) != FALSE)
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+		}
+#ifdef PORT
+		port_log("SSB64 Matchmaking: cached cred rejected by server (HTTP %ld), repopulating\n", hc);
+#endif
+		return mmCredRepopulate(verbose);
+	}
+	if (resp != NULL)
+	{
+		free(resp);
+	}
+	return (hc == 200) ? TRUE : FALSE;
+}
+
 sb32 mmMatchmakingLoadCredentials(sb32 verbose)
 {
 	FILE *fp;
 	char path[512];
+	char loaded_from[512];
 	char line[512];
 	char key[96];
 	char val[320];
 
 	mmCredPath(path, sizeof(path));
+	snprintf(loaded_from, sizeof(loaded_from), "%s", path);
 	fp = fopen(path, "r");
 	if (fp == NULL)
 	{
-		return FALSE;
+		char legacy[512];
+
+		if (mmCredPathLegacy(legacy, sizeof(legacy)) == FALSE)
+		{
+			return FALSE;
+		}
+		fp = fopen(legacy, "r");
+		if (fp == NULL)
+		{
+			return FALSE;
+		}
+		snprintf(loaded_from, sizeof(loaded_from), "%s", legacy);
+#ifdef PORT
+		port_log("SSB64 Matchmaking: loaded cred from legacy path (will migrate)\n");
+#endif
 	}
 	while (fgets(line, sizeof(line), fp) != NULL)
 	{
@@ -859,13 +1066,21 @@ sb32 mmMatchmakingLoadCredentials(sb32 verbose)
 		}
 	}
 	fclose(fp);
+	if ((sPlayerId[0] == '\0') || (sApiToken[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (strcmp(loaded_from, path) != 0)
+	{
+		mmCredSave();
+	}
 	if ((verbose != FALSE) && ((sPlayerId[0] != '\0')))
 	{
 #ifdef PORT
 		port_log("SSB64 Matchmaking: loaded cred player_id prefix %.8s...\n", sPlayerId);
 #endif
 	}
-	return (sPlayerId[0] != '\0') && (sApiToken[0] != '\0');
+	return TRUE;
 }
 
 static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap)
@@ -1078,16 +1293,29 @@ static void mmRunEnsure(sb32 verb)
 	char tok[288];
 
 	mmMatchmakingLoadCredentials(FALSE);
-	if ((sPlayerId[0] != '\0'))
+	if ((sPlayerId[0] != '\0') && (sApiToken[0] != '\0'))
+	{
+		if (mmCredVerifyLoaded(verb) != FALSE)
+		{
+			MmMatchResult ok;
+
+#ifdef PORT
+			if (verb != FALSE)
+			{
+				port_log("SSB64 Matchmaking: reusing cached player credential\n");
+			}
+#endif
+			memset(&ok, 0, sizeof(ok));
+			ok.kind = MM_POLL_PLAYER_READY;
+			mmPushDone(&ok);
+			return;
+		}
+	}
+
+	if (mmCredRepopulate(verb) != FALSE)
 	{
 		MmMatchResult ok;
 
-#ifdef PORT
-		if (verb != FALSE)
-		{
-			port_log("SSB64 Matchmaking: reusing cached player credential\n");
-		}
-#endif
 		memset(&ok, 0, sizeof(ok));
 		ok.kind = MM_POLL_PLAYER_READY;
 		mmPushDone(&ok);
@@ -1181,6 +1409,16 @@ static void mmRunJoin(const MmJob *job)
 		}
 	}
 	hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
+	if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, TRUE) != FALSE) &&
+	    (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+			resp = NULL;
+		}
+		hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
+	}
 	if ((hc != 200) || (resp == NULL))
 	{
 		mmPushDoneError(hc, "POST /v1/queue failed");
@@ -1252,6 +1490,36 @@ static void mmRunHeartbeat(const MmJob *job)
 		memset(&ok, 0, sizeof(ok));
 		ok.kind = MM_POLL_HEARTBEAT_OK;
 		mmPushDone(&ok);
+	}
+	else if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, FALSE) != FALSE) &&
+	         (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+			resp = NULL;
+		}
+		hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, job->verbose != FALSE, &resp);
+		if (hc == 404)
+		{
+			MmMatchResult ok;
+
+			memset(&ok, 0, sizeof(ok));
+			ok.kind = MM_POLL_HEARTBEAT_OK;
+			mmPushDone(&ok);
+		}
+		else if ((hc != 200) || (resp == NULL))
+		{
+			mmPushDoneError(hc, "POST /v1/heartbeat failed after cred refresh");
+		}
+		else
+		{
+			MmMatchResult ok;
+
+			memset(&ok, 0, sizeof(ok));
+			ok.kind = MM_POLL_HEARTBEAT_OK;
+			mmPushDone(&ok);
+		}
 	}
 	else if ((hc != 200) || (resp == NULL))
 	{
@@ -1342,6 +1610,28 @@ static void mmRunCancel(const MmJob *job)
 		memset(&ok, 0, sizeof(ok));
 		ok.kind = MM_POLL_CANCEL_OK;
 		mmPushDone(&ok);
+	}
+	else if ((mmCredShouldRepopulate(hc, resp, FALSE) != FALSE) &&
+	         (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	{
+		if (resp != NULL)
+		{
+			free(resp);
+			resp = NULL;
+		}
+		hc = mmHttpsRequest("POST", "/v1/queue/cancel", jbuf, job->verbose != FALSE, &resp);
+		if ((((hc >= 200) && (hc <= 299)) || (hc == 404)))
+		{
+			MmMatchResult ok;
+
+			memset(&ok, 0, sizeof(ok));
+			ok.kind = MM_POLL_CANCEL_OK;
+			mmPushDone(&ok);
+		}
+		else
+		{
+			mmPushDoneError(hc, "cancel failed after cred refresh");
+		}
 	}
 	else
 	{
