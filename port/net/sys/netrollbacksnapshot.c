@@ -6000,6 +6000,11 @@ static void syNetRbSnapApplyCamera(const SYNetRbSnapCameraBlob *cam)
 	}
 	gGMCameraPauseCameraEyeX = cam->pause_eye_x;
 	gGMCameraPauseCameraEyeY = cam->pause_eye_y;
+	/* Push restored GMCamera fields into the battle CObj; blob copy alone leaves projection stale until gcRunAll. */
+	if (gGMCameraGObj != NULL)
+	{
+		gmCameraRunFuncCamera(gGMCameraGObj);
+	}
 }
 
 static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick)

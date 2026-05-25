@@ -205,6 +205,10 @@ Related menu fixes in the same family:
 
 Submodule: **`JRickey/libultraship` branch `ssb64`** (not upstream Kenix3).
 
+### N64 address tokens vs host pointers / C strings (umbrella)
+
+**Doc:** [fast3d_n64_address_token_as_pointer_2026-05-25.md](bugs/fast3d_n64_address_token_as_pointer_2026-05-25.md) — shareable write-up: `SegAddr` fallthrough, `0x24720`-class offsets, OTR filepath `strlen`, SETTIMG/VTX guards. Not decomp gameplay bugs.
+
 ### SETTIMG unresolved-address guard (`gfx_set_timg_handler_rdp`)
 
 **File:** `libultraship/src/fast/interpreter.cpp` (~5474–5524)
