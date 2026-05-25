@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-23 | [netplay_joint_anim_desync_bisect](netplay_joint_anim_desync_bisect_2026-05-23.md) | **INVESTIGATION** — v10 auto3/4: agreed `inp`, joint-anim anchor probe diffs; function bisect Tier0–3 (`ftParamUpdateAnimKeys`, figatree load, AObj cap 16). `FIGHTER_PHASE_TRACE` hooks wired in `ftmain.c` / `ifcommon.c`. |
 | 2026-05-23 | [netplay_resim_baseline_slot_digest](netplay_resim_baseline_slot_digest_2026-05-23.md) | **FIX SHIPPED (soak pending)** — WAN @4200: agreed FC reanchor @4080, `LOAD_SLOT_LIVE_DRIFT` world after coupling; baseline wire used live world → `PEER_SNAPSHOT_DIVERGE`. Slot digests on wire; baseline before anchor probe; deeper-load ignores post-eject world-only. Momentum already in `FTPhysics` blob. |
 | 2026-05-23 | [netplay_fc_live_guard_false_positive](netplay_fc_live_guard_false_positive_2026-05-23.md) | **FIX SHIPPED (soak pending)** — FC @480 tokens agree but client `LIVE_HASH_GUARD` (live vs snap N−1); 120-tick resim + `SEAL_ROWS_TIMEOUT` / host `stale_episode_tuple`. Snapshot-primary guard; no `SessionReset` on FSM `Live`. |
 | 2026-05-23 | [netplay_strict_r_abort_live_hash_guard](netplay_strict_r_abort_live_hash_guard_2026-05-23.md) | **FIX SHIPPED (soak pending)** — Soak `1748056141`: guest **2576× R** @1104 without strict abort; host live ahead of FC token (snap N−1). Abort verdict no longer `AllowAll`; snapshot-primary live guard (see false-positive slug). |
