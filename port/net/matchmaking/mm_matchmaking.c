@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <string.h>
 /* decomp/src/netplay/include/stdlib.h shadows decomp/include before the system header; use include_next for POSIX. */
 #ifdef _WIN32
 #include <stdlib.h>
@@ -1390,7 +1391,15 @@ static void mmJsonInsertTurnEndpoint(char *jbuf, size_t cap, const char *turn_ep
 	{
 		return;
 	}
-	memmove(end + flen, end, strlen(end) + 1U);
+	{
+		size_t tail = strlen(end) + 1U;
+		size_t off;
+
+		for (off = 0U; off < tail; off++)
+		{
+			end[flen + off] = end[off];
+		}
+	}
 	memcpy(end, frag, flen);
 }
 
