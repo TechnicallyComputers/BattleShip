@@ -23,32 +23,13 @@ function(ssb64_android_fetch_mbedtls)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
     set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 
+    # v3.5.2: no mbedtls-framework submodule (v3.6+ breaks FetchContent on CI). Sufficient for curl HTTPS.
     FetchContent_Declare(
         mbedtls
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-        GIT_TAG        v3.6.2
+        GIT_TAG        v3.5.2
+        GIT_SHALLOW    TRUE
     )
-    FetchContent_GetProperties(mbedtls)
-    if(NOT mbedtls_POPULATED)
-        FetchContent_Populate(mbedtls)
-        if(NOT EXISTS "${mbedtls_SOURCE_DIR}/framework/CMakeLists.txt")
-            find_package(Git QUIET)
-            if(NOT Git_FOUND)
-                message(FATAL_ERROR
-                    "ssb64_android_provide_curl: Git is required to init mbedtls's framework submodule")
-            endif()
-            message(STATUS "SSB64 Android netmenu: initializing mbedtls framework submodule")
-            execute_process(
-                COMMAND ${GIT_EXECUTABLE} -C "${mbedtls_SOURCE_DIR}" submodule update --init --depth 1 framework
-                RESULT_VARIABLE _ssb64_mbedtls_fw_rv
-                ERROR_VARIABLE _ssb64_mbedtls_fw_err
-            )
-            if(_ssb64_mbedtls_fw_rv OR NOT EXISTS "${mbedtls_SOURCE_DIR}/framework/CMakeLists.txt")
-                message(FATAL_ERROR
-                    "mbedtls framework submodule init failed (exit ${_ssb64_mbedtls_fw_rv}): ${_ssb64_mbedtls_fw_err}")
-            endif()
-        endif()
-    endif()
     FetchContent_MakeAvailable(mbedtls)
 
     if(NOT (TARGET mbedtls AND TARGET mbedx509 AND TARGET mbedcrypto))
@@ -113,5 +94,5 @@ function(ssb64_android_provide_curl)
         message(FATAL_ERROR "ssb64_android_provide_curl: FetchContent curl did not define CURL::libcurl")
     endif()
 
-    message(STATUS "SSB64 Android netmenu: CURL::libcurl from FetchContent (mbedTLS HTTPS)")
+    message(STATUS "SSB64 Android netmenu: CURL::libcurl from FetchContent (mbedTLS 3.5.2 HTTPS)")
 endfunction()
