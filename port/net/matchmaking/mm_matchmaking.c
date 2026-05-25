@@ -95,6 +95,7 @@ typedef struct MmJob
 	char ticket_id[64];
 	u8 fighter_kind;
 	sb32 has_fighter_kind;
+	sb32 heartbeat_has_endpoints;
 } MmJob;
 
 typedef struct MmMemBuf
@@ -1209,13 +1210,33 @@ static void mmRunJoin(const MmJob *job)
 
 static void mmRunHeartbeat(const MmJob *job)
 {
-	char jbuf[256];
+	char jbuf[512];
 	long hc;
 	char *resp;
 
-	snprintf(jbuf, sizeof(jbuf),
-	         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
-	         job->ticket_id);
+	if (job->heartbeat_has_endpoints != FALSE)
+	{
+		if (job->has_lan_endpoint != FALSE)
+		{
+			snprintf(jbuf, sizeof(jbuf),
+			         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,"
+			         "\"loss_pct\":0.0,\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\"}",
+			         job->ticket_id, job->udp_endpoint, job->lan_endpoint);
+		}
+		else
+		{
+			snprintf(jbuf, sizeof(jbuf),
+			         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,"
+			         "\"loss_pct\":0.0,\"udp_endpoint\":\"%s\"}",
+			         job->ticket_id, job->udp_endpoint);
+		}
+	}
+	else
+	{
+		snprintf(jbuf, sizeof(jbuf),
+		         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
+		         job->ticket_id);
+	}
 	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, job->verbose != FALSE, &resp);
 	if (hc == 404)
 	{
@@ -1579,6 +1600,12 @@ void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fi
 
 void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id)
 {
+	mmMatchmakingEnqueueHeartbeatWithEndpoints(verbose, ticket_id, NULL, NULL);
+}
+
+void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
+                                                const char *lan_endpoint_opt)
+{
 	MmJob j;
 
 	memset(&j, 0, sizeof(j));
@@ -1587,6 +1614,18 @@ void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id)
 	if (ticket_id != NULL)
 	{
 		snprintf(j.ticket_id, sizeof(j.ticket_id), "%s", ticket_id);
+	}
+	if ((udp_endpoint != NULL) && (udp_endpoint[0] != '\0'))
+	{
+		snprintf(j.udp_endpoint, sizeof(j.udp_endpoint), "%s", udp_endpoint);
+		j.heartbeat_has_endpoints = TRUE;
+	}
+	j.has_lan_endpoint = FALSE;
+	j.lan_endpoint[0] = '\0';
+	if ((lan_endpoint_opt != NULL) && (lan_endpoint_opt[0] != '\0'))
+	{
+		snprintf(j.lan_endpoint, sizeof(j.lan_endpoint), "%s", lan_endpoint_opt);
+		j.has_lan_endpoint = TRUE;
 	}
 	mmEnqueueSubmit(&j);
 }

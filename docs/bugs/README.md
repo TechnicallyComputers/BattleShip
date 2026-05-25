@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-23 | [netplay_nat_punchthrough](netplay_nat_punchthrough_2026-05-23.md) | **FIX SHIPPED (soak pending)** — Automatch NAT punch: reuse queue UDP socket for bootstrap, STUN re-probe at match, heartbeat endpoint refresh, configurable STUN servers + symmetric-NAT hint; deferred same-WAN `peer_lan` bootstrap tick. TURN still follow-up for hard CGNAT. |
 | 2026-05-22 | [windows_ci_ksguid_sdk](windows_ci_ksguid_sdk_2026-05-22.md) | **FIX SHIPPED** — Windows release CI: SDK 10.0.26100.0 `um\x64` without `ksguid.lib`; refresh vcvars on older SDK + multi-version scan + `WindowsSdkUmLib.cmake` full path. Re-tag after merging scripts. |
 | 2026-05-22 | [linux_menu_rendering_fixes](../linux_menu_rendering_fixes_2026-05-22.md) | **INDEX — Linux menu rendering family** — Umbrella doc for intermittent Linux/OpenGL menu corruption (CSS, pause, training, HUD sprites): scene heap recycle, reloc/sprite fixups, forked libultraship SETTIMG/G_VTX/PrimDepth/IA4/OGL FB deltas. Links all related bug slugs; upstream Kenix3/libultraship still missing several Fast3D fixes. |
 | 2026-05-23 | [grab_coupling_geometry_handoff](../grab_coupling_geometry_handoff_2026-05-23.md) | **HANDOFF — upstream main dev** — Ness→DK upside-down grab hold (all characters): split XZ/rot vs floor Y, stale grabber joint cache, slope-tilt engine fixes, rollback finalize order; ROM slope grab patches reverted. |

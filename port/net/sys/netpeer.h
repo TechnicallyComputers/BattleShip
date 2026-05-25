@@ -272,7 +272,7 @@ extern sb32 gSYNetPeerSuppressBootstrapSceneAdvance;
 
 /* Runtime netplay/session (explicit config wins vs env vars for automatch bootstrap). */
 extern sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *peer_hostport, u32 session_id,
-                                              sb32 you_are_host, u32 input_delay);
+                                              sb32 you_are_host, u32 input_delay, sb32 reuse_existing_socket);
 extern sb32 syNetPeerSetAutomatchNegotiation(sb32 enabled);
 extern void syNetPeerSetAutomatchLocalOffer(u16 ban_mask_le, u8 fkind, u8 costume, u32 nonce_opt);
 extern s32 syNetPeerGetUdpSocketFd(void); /* Requires bound socket (-1 otherwise). */

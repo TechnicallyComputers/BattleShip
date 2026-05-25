@@ -44,6 +44,8 @@ extern void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose);
 extern void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                           const char *lan_endpoint_opt);
 extern void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id);
+extern void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
+                                                       const char *lan_endpoint_opt);
 extern void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id);
 
@@ -69,6 +71,7 @@ typedef struct MmMatchResult
 #define mmMatchmakingEnqueueEnsurePlayer(v)
 #define mmMatchmakingEnqueueJoinQueue(v, e, fk, hk, lan) ((void)0)
 #define mmMatchmakingEnqueueHeartbeat(v, t)
+#define mmMatchmakingEnqueueHeartbeatWithEndpoints(v, t, u, l)
 #define mmMatchmakingEnqueuePollMatch(v, t)
 #define mmMatchmakingEnqueueCancel(v, t)
 #define mmMatchmakingDrainCompleted(out) FALSE

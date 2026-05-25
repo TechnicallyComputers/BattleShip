@@ -1478,10 +1478,9 @@ sb32 syNetPeerOpenSocket(void)
 {
 	int reuse = 1;
 
-	/* Always bind a fresh socket per bootstrap attempt (back-to-back LAN/reflexive retries). */
 	if (syNetPeerOsSocketIsValid(sSYNetPeerSocket) != FALSE)
 	{
-		syNetPeerCloseSocket();
+		return TRUE;
 	}
 	syNetPeerSocketOsStartup();
 	sSYNetPeerSocket = syNetPeerOsSocketCreateDgram();
@@ -5182,13 +5181,14 @@ static void syNetPeerResetAutomatchBootstrapAttemptState(void)
 
 static void syNetPeerResetAutomatchBootstrapTransportState(void)
 {
-	syNetPeerCloseSocket();
+	/* Keep queue/bootstrap UDP socket across reflexive/LAN retries (NAT mapping must stay stable). */
 	syNetPeerResetAutomatchBootstrapAttemptState();
 }
 
 void syNetPeerCancelAutomatchBootstrap(void)
 {
-	syNetPeerResetAutomatchBootstrapTransportState();
+	syNetPeerCloseSocket();
+	syNetPeerResetAutomatchBootstrapAttemptState();
 }
 
 void syNetPeerPauseBetweenBootstrapAttempts(void)
@@ -5567,10 +5567,28 @@ void syNetPeerSetAutomatchLocalOffer(u16 ban_mask, u8 fkind, u8 costume, u32 non
 	sAutoPeerCostume = 0U;
 }
 
-sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *peer_hostport, u32 session_id,
-                                       sb32 you_are_host, u32 input_delay)
+static sb32 syNetPeerAutomatchBindMatches(const char *bind_hostport)
 {
-	syNetPeerCloseSocket();
+	struct sockaddr_in want;
+
+	if ((bind_hostport == NULL) || (bind_hostport[0] == '\0') ||
+	    (syNetPeerParseIPv4Address(bind_hostport, &want) == FALSE))
+	{
+		return FALSE;
+	}
+	return (want.sin_family == sSYNetPeerBindAddress.sin_family) &&
+	       (want.sin_addr.s_addr == sSYNetPeerBindAddress.sin_addr.s_addr) &&
+	       (want.sin_port == sSYNetPeerBindAddress.sin_port) ? TRUE : FALSE;
+}
+
+sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *peer_hostport, u32 session_id,
+                                       sb32 you_are_host, u32 input_delay, sb32 reuse_existing_socket)
+{
+	if ((reuse_existing_socket == FALSE) || (syNetPeerOsSocketIsValid(sSYNetPeerSocket) == FALSE) ||
+	    (syNetPeerAutomatchBindMatches(bind_hostport) == FALSE))
+	{
+		syNetPeerCloseSocket();
+	}
 
 	if ((bind_hostport == NULL) || (peer_hostport == NULL))
 	{
