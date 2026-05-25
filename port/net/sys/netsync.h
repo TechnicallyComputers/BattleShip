@@ -16,6 +16,9 @@
 /* Item rollback hash uses the same active-item cap as snapshot blobs (no silent hash-only extras). */
 #define SYNET_SYNC_ITEM_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_ITEMS
 #define SYNET_SYNC_WEAPON_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_WEAPONS
+#ifdef PORT
+#define SYNET_SYNC_EFFECT_HASH_SORT_MAX SYNETRB_SNAPSHOT_MAX_EFFECTS
+#endif
 
 struct FTStruct;
 
@@ -47,6 +50,9 @@ extern u32 syNetSyncHashActiveWeapons(void);
  */
 extern u32 syNetSyncHashActiveItemsForRollback(void);
 extern u32 syNetSyncHashActiveWeaponsForRollback(void);
+#ifdef PORT
+extern u32 syNetSyncHashActiveEffectsForRollback(void);
+#endif
 extern u32 syNetSyncHashRNGSeed(void);
 extern u32 syNetSyncHashGMCamera(void);
 /*
