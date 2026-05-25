@@ -1564,143 +1564,33 @@ static void syNetRbSnapCaptureFighterCoupledIds(SYNetRbSnapFighterBlob *blob, co
 	}
 }
 
+/* Coupled GObj pointers in status_vars/passive_vars are never trusted from memcpy — ids on the fighter blob are authoritative. */
+static void syNetRbSnapClearCoupledGObjPointersInStatusPassive(union FTStatusVars *status_vars,
+							       union FTPassiveVars *passive_vars)
+{
+	status_vars->common.guard.effect_gobj = NULL;
+	status_vars->common.captureyoshi.effect_gobj = NULL;
+	status_vars->fox.speciallw.effect_gobj = NULL;
+	passive_vars->link.boomerang_gobj = NULL;
+	passive_vars->kirby.copylink_boomerang_gobj = NULL;
+	status_vars->yoshi.specialhi.egg_gobj = NULL;
+	status_vars->link.specialhi.spin_attack_gobj = NULL;
+	status_vars->kirby.copysamus_specialn.charge_gobj = NULL;
+	status_vars->samus.specialn.charge_gobj = NULL;
+	status_vars->ness.specialhi.pkthunder_gobj = NULL;
+	status_vars->pikachu.speciallw.thunder_gobj = NULL;
+}
+
 static void syNetRbSnapScrubCoupledPointersInBlob(SYNetRbSnapFighterBlob *blob)
 {
-	union FTStatusVars *status_vars = (union FTStatusVars *)blob->status_vars;
-	union FTPassiveVars *passive_vars = (union FTPassiveVars *)blob->passive_vars;
-
-	if (blob->guard_effect_gobj_id != 0U)
-	{
-		status_vars->common.guard.effect_gobj = NULL;
-	}
-	if (blob->captureyoshi_effect_gobj_id != 0U)
-	{
-		status_vars->common.captureyoshi.effect_gobj = NULL;
-	}
-	if (blob->fox_speciallw_effect_gobj_id != 0U)
-	{
-		status_vars->fox.speciallw.effect_gobj = NULL;
-	}
-	if (blob->fkind == nFTKindYoshi)
-	{
-		if ((blob->status_id == nFTYoshiStatusSpecialHi) || (blob->status_id == nFTYoshiStatusSpecialAirHi))
-		{
-			status_vars->yoshi.specialhi.egg_gobj = NULL;
-		}
-	}
-	if (blob->fkind == nFTKindLink)
-	{
-		passive_vars->link.boomerang_gobj = NULL;
-		if ((blob->status_id == nFTLinkStatusSpecialHi) || (blob->status_id == nFTLinkStatusSpecialAirHi))
-		{
-			status_vars->link.specialhi.spin_attack_gobj = NULL;
-		}
-	}
-	if (blob->fkind == nFTKindKirby)
-	{
-		passive_vars->kirby.copylink_boomerang_gobj = NULL;
-		if ((blob->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
-		    (blob->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
-		    (blob->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
-		{
-			status_vars->kirby.copysamus_specialn.charge_gobj = NULL;
-		}
-	}
-	if (blob->fkind == nFTKindSamus)
-	{
-		if ((blob->status_id == nFTSamusStatusSpecialNStart) || (blob->status_id == nFTSamusStatusSpecialNLoop) ||
-		    (blob->status_id == nFTSamusStatusSpecialAirNStart))
-		{
-			status_vars->samus.specialn.charge_gobj = NULL;
-		}
-	}
-	if (blob->fkind == nFTKindNess)
-	{
-		if ((blob->status_id == nFTNessStatusSpecialHiStart) || (blob->status_id == nFTNessStatusSpecialHiHold) ||
-		    (blob->status_id == nFTNessStatusSpecialAirHiStart) ||
-		    (blob->status_id == nFTNessStatusSpecialAirHiHold))
-		{
-			status_vars->ness.specialhi.pkthunder_gobj = NULL;
-		}
-	}
-	if (blob->fkind == nFTKindPikachu)
-	{
-		if ((blob->status_id == nFTPikachuStatusSpecialLwStart) ||
-		    (blob->status_id == nFTPikachuStatusSpecialLwLoop) ||
-		    (blob->status_id == nFTPikachuStatusSpecialAirLwStart) ||
-		    (blob->status_id == nFTPikachuStatusSpecialAirLwLoop))
-		{
-			status_vars->pikachu.speciallw.thunder_gobj = NULL;
-		}
-	}
+	syNetRbSnapClearCoupledGObjPointersInStatusPassive((union FTStatusVars *)blob->status_vars,
+							   (union FTPassiveVars *)blob->passive_vars);
 }
 
 static void syNetRbSnapScrubCoupledPointersInFighter(FTStruct *fp, const SYNetRbSnapFighterBlob *blob)
 {
-	if (blob->guard_effect_gobj_id != 0U)
-	{
-		fp->status_vars.common.guard.effect_gobj = NULL;
-	}
-	if (blob->captureyoshi_effect_gobj_id != 0U)
-	{
-		fp->status_vars.common.captureyoshi.effect_gobj = NULL;
-	}
-	if (blob->fox_speciallw_effect_gobj_id != 0U)
-	{
-		fp->status_vars.fox.speciallw.effect_gobj = NULL;
-	}
-	if (fp->fkind == nFTKindYoshi)
-	{
-		if ((blob->status_id == nFTYoshiStatusSpecialHi) || (blob->status_id == nFTYoshiStatusSpecialAirHi))
-		{
-			fp->status_vars.yoshi.specialhi.egg_gobj = NULL;
-		}
-	}
-	if (fp->fkind == nFTKindLink)
-	{
-		fp->passive_vars.link.boomerang_gobj = NULL;
-		if ((blob->status_id == nFTLinkStatusSpecialHi) || (blob->status_id == nFTLinkStatusSpecialAirHi))
-		{
-			fp->status_vars.link.specialhi.spin_attack_gobj = NULL;
-		}
-	}
-	if (fp->fkind == nFTKindKirby)
-	{
-		fp->passive_vars.kirby.copylink_boomerang_gobj = NULL;
-		if ((blob->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
-		    (blob->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
-		    (blob->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
-		{
-			fp->status_vars.kirby.copysamus_specialn.charge_gobj = NULL;
-		}
-	}
-	if (fp->fkind == nFTKindSamus)
-	{
-		if ((blob->status_id == nFTSamusStatusSpecialNStart) || (blob->status_id == nFTSamusStatusSpecialNLoop) ||
-		    (blob->status_id == nFTSamusStatusSpecialAirNStart))
-		{
-			fp->status_vars.samus.specialn.charge_gobj = NULL;
-		}
-	}
-	if (fp->fkind == nFTKindNess)
-	{
-		if ((blob->status_id == nFTNessStatusSpecialHiStart) || (blob->status_id == nFTNessStatusSpecialHiHold) ||
-		    (blob->status_id == nFTNessStatusSpecialAirHiStart) ||
-		    (blob->status_id == nFTNessStatusSpecialAirHiHold))
-		{
-			fp->status_vars.ness.specialhi.pkthunder_gobj = NULL;
-		}
-	}
-	if (fp->fkind == nFTKindPikachu)
-	{
-		if ((blob->status_id == nFTPikachuStatusSpecialLwStart) ||
-		    (blob->status_id == nFTPikachuStatusSpecialLwLoop) ||
-		    (blob->status_id == nFTPikachuStatusSpecialAirLwStart) ||
-		    (blob->status_id == nFTPikachuStatusSpecialAirLwLoop))
-		{
-			fp->status_vars.pikachu.speciallw.thunder_gobj = NULL;
-		}
-	}
+	(void)blob;
+	syNetRbSnapClearCoupledGObjPointersInStatusPassive(&fp->status_vars, &fp->passive_vars);
 }
 
 /* Any live fighter with catch/capture GObj coupling (all link slots, not just human players). */
@@ -5371,32 +5261,29 @@ static void syNetRbSnapApplyEffectBlobToGObj(GObj *gobj, const SYNetRbSnapEffect
 	ep->fighter_gobj = fighter_gobj;
 }
 
-static void syNetRbSnapRebindFighterEffectGobjs(const SYNetRbSnapFighterBlob *blob, FTStruct *fp)
+static GObj *syNetRbSnapResolveCoupledEffectGobj(u32 effect_gobj_id)
 {
 	GObj *eg;
 
+	if (effect_gobj_id == 0U)
+	{
+		return NULL;
+	}
+	eg = gcFindGObjByID(effect_gobj_id);
+	return ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
+}
+
+static void syNetRbSnapRebindFighterEffectGobjs(const SYNetRbSnapFighterBlob *blob, FTStruct *fp)
+{
 	if ((blob == NULL) || (fp == NULL) || (blob->is_valid == FALSE))
 	{
 		return;
 	}
-	if (blob->guard_effect_gobj_id != 0U)
-	{
-		eg = gcFindGObjByID(blob->guard_effect_gobj_id);
-		fp->status_vars.common.guard.effect_gobj =
-		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
-	}
-	if (blob->captureyoshi_effect_gobj_id != 0U)
-	{
-		eg = gcFindGObjByID(blob->captureyoshi_effect_gobj_id);
-		fp->status_vars.common.captureyoshi.effect_gobj =
-		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
-	}
-	if (blob->fox_speciallw_effect_gobj_id != 0U)
-	{
-		eg = gcFindGObjByID(blob->fox_speciallw_effect_gobj_id);
-		fp->status_vars.fox.speciallw.effect_gobj =
-		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
-	}
+	fp->status_vars.common.guard.effect_gobj = syNetRbSnapResolveCoupledEffectGobj(blob->guard_effect_gobj_id);
+	fp->status_vars.common.captureyoshi.effect_gobj =
+	    syNetRbSnapResolveCoupledEffectGobj(blob->captureyoshi_effect_gobj_id);
+	fp->status_vars.fox.speciallw.effect_gobj =
+	    syNetRbSnapResolveCoupledEffectGobj(blob->fox_speciallw_effect_gobj_id);
 }
 
 static void syNetRbSnapResetParticlesForRollback(void)
@@ -6395,6 +6282,7 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapRebindAllFighterMPCollPointers();
 	syNetRbSnapApplyWeapons(slot);
 #ifdef PORT
+	syNetRbSnapRebindFighterCoupledGObjs(slot, FALSE);
 	syNetRbSnapRebindFighterGrabCoupling();
 	syNetRbSnapRebindFighterItemHoldCoupling();
 #endif
