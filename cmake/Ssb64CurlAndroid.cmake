@@ -30,6 +30,11 @@ function(ssb64_android_fetch_mbedtls)
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
         GIT_TAG        v3.5.2
         GIT_SHALLOW    TRUE
+        CMAKE_ARGS
+            -DENABLE_TESTING=OFF
+            -DENABLE_PROGRAMS=OFF
+            -DMBEDTLS_FATAL_WARNINGS=OFF
+            -DDISABLE_PACKAGE_CONFIG_AND_INSTALL=ON
     )
     FetchContent_MakeAvailable(mbedtls)
 
@@ -92,6 +97,15 @@ function(ssb64_android_provide_curl)
             ${CMAKE_COMMAND} -E copy_if_different
             "${SSB64_CURL_FIND_MBEDTLS}"
             "CMake/FindMbedTLS.cmake"
+        CMAKE_ARGS
+            -DBUILD_SHARED_LIBS=OFF
+            -DBUILD_CURL_EXE=OFF
+            -DCURL_USE_MBEDTLS=ON
+            -DCMAKE_USE_MBEDTLS=ON
+            -DCURL_ZLIB=OFF
+            -DCURL_DISABLE_INSTALL=ON
+            -DCURL_ENABLE_EXPORT_TARGET=OFF
+            -DCURL_USE_LIBPSL=OFF
     )
     FetchContent_MakeAvailable(curl)
 
@@ -99,5 +113,6 @@ function(ssb64_android_provide_curl)
         message(FATAL_ERROR "ssb64_android_provide_curl: FetchContent curl did not define CURL::libcurl")
     endif()
 
+    set(SSB64_CURL_SOURCE_DIR "${curl_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
     message(STATUS "SSB64 Android netmenu: CURL::libcurl from FetchContent (mbedTLS 3.5.2 HTTPS)")
 endfunction()
