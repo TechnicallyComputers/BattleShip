@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-25 | [netplay_anim_hash_code_trace](netplay_anim_hash_code_trace_2026-05-25.md) | **REFERENCE + FIX** — `anim=`/`hash_animation` merge is **slot-major** (parity with `figh` light); pre-2026-05-25 used **`link_next` order** → false-positive cross-peer **`anim`** split when **`anim_hash` per slot agreed. Numeric anim hash **changed**. |
 | 2026-05-23 | [netplay_joint_anim_desync_bisect](netplay_joint_anim_desync_bisect_2026-05-23.md) | **INVESTIGATION** — v10 auto3/4: agreed `inp`, joint-anim anchor probe diffs; function bisect Tier0–3 (`ftParamUpdateAnimKeys`, figatree load, AObj cap 16). `FIGHTER_PHASE_TRACE` hooks wired in `ftmain.c` / `ifcommon.c`. |
 | 2026-05-23 | [netplay_resim_baseline_slot_digest](netplay_resim_baseline_slot_digest_2026-05-23.md) | **FIX SHIPPED (soak pending)** — WAN @4200: agreed FC reanchor @4080, `LOAD_SLOT_LIVE_DRIFT` world after coupling; baseline wire used live world → `PEER_SNAPSHOT_DIVERGE`. Slot digests on wire; baseline before anchor probe; deeper-load ignores post-eject world-only. Momentum already in `FTPhysics` blob. |
 | 2026-05-23 | [netplay_fc_live_guard_false_positive](netplay_fc_live_guard_false_positive_2026-05-23.md) | **FIX SHIPPED (soak pending)** — FC @480 tokens agree but client `LIVE_HASH_GUARD` (live vs snap N−1); 120-tick resim + `SEAL_ROWS_TIMEOUT` / host `stale_episode_tuple`. Snapshot-primary guard; no `SessionReset` on FSM `Live`. |

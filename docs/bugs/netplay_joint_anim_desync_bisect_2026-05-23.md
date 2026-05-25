@@ -45,7 +45,8 @@
 | `sim_state_tick figh=` | `syNetSyncHashBattleFighters()` (light) | Periodic NetSync |
 | FC `token_figh_*` | Ring `hash_fighter` @ `validation_tick - 1` | `syNetFrameCommitBuildToken` |
 | `LOAD_HASH_DRIFT figh=` | `syNetSyncHashBattleFightersFull()` | Slot vs live after load |
-| `fighter_slot_hash anim_hash=` | `syNetSyncHashFighterSlotAnim` | Per-player anim partition |
+| `fighter_slot_hash anim_hash=` | `syNetSyncHashFighterSlotAnim` | Per-player anim partition (same fold as one fighter in rollback anim hash) |
+| `sim_state_tick anim=` (global) | `syNetSyncHashFighterAnimationStateForRollback()` | **Slot-major merge** (`slot_hash[player]` → fixed merge), same structural pattern as `syNetSyncHashBattleFighters`; **historical**: pre-2026-05-25 merged folds in **`link_next` order** (order-dependent). Trace: [netplay_anim_hash_code_trace_2026-05-25.md](netplay_anim_hash_code_trace_2026-05-25.md). |
 
 ---
 
