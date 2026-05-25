@@ -72,13 +72,10 @@ option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstr
 # CMAKE_FIND_ROOT_PATH when cross-compiling (see scripts/package-mingw-windows.sh).
 # MSVC: libultraship bootstraps vcpkg in add_subdirectory(); curl is installed there
 # via LUS_VCPKG_EXTRA_PACKAGES when SSB64_NETMENU=ON.
-# Android: static curl+mbedTLS via cmake/Ssb64CurlAndroid.cmake (no system libcurl on NDK).
-if(SSB64_NETMENU)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Android")
-        include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
-        ssb64_android_provide_curl()
-        find_package(Threads REQUIRED)
-    elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+# Android curl is provisioned after libultraship (see below) so FetchContent does not
+# force BUILD_SHARED_LIBS=OFF before SDL2 is configured — netplay APK needs libSDL2.so.
+if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
         find_package(CURL REQUIRED)
         find_package(Threads REQUIRED)
     endif()
@@ -159,6 +156,13 @@ add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
     # Belt-and-suspenders: GLES backend + skip desktop-only GL enums in gfx_opengl.cpp.
     target_compile_definitions(libultraship PRIVATE USE_OPENGLES)
+endif()
+
+# Android netmenu: static curl+mbedTLS (after libultraship / SDL2 configure).
+if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Android")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
+    ssb64_android_provide_curl()
+    find_package(Threads REQUIRED)
 endif()
 
 # Windows netmenu: MSVC uses libultraship vcpkg (curl + pthreads4w CONFIG packages).
@@ -836,6 +840,14 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     add_dependencies(${PROJECT_NAME} libultraship)
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+    # libultraship is STATIC; propagate SDL2 as a separate .so for SDLActivity.loadLibrary("SDL2").
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2)
+    elseif(TARGET SDL2::SDL2-static)
+        message(FATAL_ERROR
+            "Android requires shared libSDL2.so (SDLActivity loads it before libmain.so). "
+            "SDL2 was configured static — check SDL_SHARED and that netmenu curl runs after libultraship.")
+    endif()
 else()
     add_dependencies(${PROJECT_NAME} libultraship TorchExternal discord-rpc)
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
