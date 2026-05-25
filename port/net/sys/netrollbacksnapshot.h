@@ -85,6 +85,8 @@ extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
  * Prefer syNetRbSnapshotFinalizeLoad for rollback commit paths — it runs this plus coupled-weapon rebind.
  */
 extern void syNetRbSnapshotSyncFighterPresentation(void);
+/* Re-apply blob joint anim after post-verify rebind (figatree attach can clobber AObj chains). */
+extern void syNetRbSnapshotReapplyJointAnimAtTick(u32 completed_sim_tick);
 
 /*
  * Collect active item GObjs (valid ITStruct), insertion-sorted by gobj->id.
