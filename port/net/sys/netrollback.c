@@ -4511,6 +4511,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 		return FALSE;
 	}
 	syNetRbSnapshotRebindAllFighters();
+	syNetRbSnapshotReapplyJointAnimAtTick(tick);
 	syNetRbSnapshotFinalizeLoadCoupling(tick);
 	return TRUE;
 }
@@ -5070,7 +5071,8 @@ static void syNetRollbackEpisodeBegin(u32 mismatch_tick, u32 load_tick, u32 targ
 	{
 		syNetRollbackEpisodeFsmBegin(sSYNetRollbackEpochId, mismatch_tick, load_tick, target_tick, corrected_slot,
 					     initiator, from_peer_notify);
-		syNetRollbackEpisodeSealInputs(mismatch_tick, target_tick, corrected_slot);
+		/* Seal through FSM-clamped target (span may exceed SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN). */
+		syNetRollbackEpisodeSealInputs(mismatch_tick, syNetRollbackEpisodeFsmGetTargetTick(), corrected_slot);
 		sSYNetRollbackEpisode.mismatch_tick = mismatch_tick;
 		sSYNetRollbackEpisode.load_tick = load_tick;
 		sSYNetRollbackEpisode.target_tick = syNetRollbackEpisodeFsmGetTargetTick();

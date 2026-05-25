@@ -5040,6 +5040,21 @@ static void syNetRbSnapReapplyFighterJointAnimFromSlot(const SYNetRbSnapshotSlot
 	}
 }
 
+void syNetRbSnapshotReapplyJointAnimAtTick(u32 completed_sim_tick)
+{
+#ifdef PORT
+	SYNetRbSnapshotSlot *slot;
+
+	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
+	if ((slot != NULL) && (slot->is_valid != FALSE) && (slot->tick == completed_sim_tick))
+	{
+		syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
+	}
+#else
+	(void)completed_sim_tick;
+#endif
+}
+
 void syNetRbSnapshotSyncFighterPresentation(void)
 {
 #ifdef PORT

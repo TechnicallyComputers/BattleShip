@@ -3,6 +3,10 @@
 #include <sys/netinput.h>
 #include <sys/netsync.h>
 
+#ifdef PORT
+#include <sys/netrollbacksnapshot.h>
+#endif
+
 #include <string.h>
 
 static u32 syNetFrameCommitFnvMixU32(u32 h, u32 v)
@@ -57,10 +61,37 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	out->slot_binding_hash = syNetFrameCommitHashSlotBindings(local_sim_slot, remote_sim_slot, extra_local_sim_slot,
 								  peer_sender_count, peer_sender_slots);
 	out->tick_anchor = syNetInputGetTick();
-	out->fighter_digest = syNetSyncHashBattleFightersFull();
-	out->world_digest = syNetSyncHashRollbackWorld();
-	out->item_digest = syNetSyncHashActiveItemsForRollback();
-	out->rng_digest = syNetSyncHashRNGSeed();
+#ifdef PORT
+	/*
+	 * Snapshot is saved in syNetRollbackAfterBattleUpdate for the tick completed before
+	 * syNetInputAdvanceAuthoritativeSimTick; frame-commit runs on the advanced tick.
+	 */
+	{
+		u32 snap_tick;
+		u32 snap_f;
+		u32 snap_w;
+		u32 snap_i;
+		u32 snap_r;
+
+		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
+		if (syNetRbSnapshotGetStoredSubsystemHashes(snap_tick, &snap_f, &snap_w, &snap_i, &snap_r) != FALSE)
+		{
+			out->fighter_digest = snap_f;
+			out->world_digest = snap_w;
+			out->item_digest = snap_i;
+			out->rng_digest = snap_r;
+		}
+		else
+#endif
+		{
+			out->fighter_digest = syNetSyncHashBattleFightersFull();
+			out->world_digest = syNetSyncHashRollbackWorld();
+			out->item_digest = syNetSyncHashActiveItemsForRollback();
+			out->rng_digest = syNetSyncHashRNGSeed();
+		}
+#ifdef PORT
+	}
+#endif
 }
 
 sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b,
