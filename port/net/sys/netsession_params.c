@@ -23,14 +23,63 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_PREDICTION_MAX 7U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 48U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 128U
-/* NetSync / frame-commit validation cadence (SYNETPEER_LOG_INTERVAL in netpeer.c). */
-#define SYNETSESSION_FRAME_COMMIT_VALIDATION_TICKS 120U
+/* Frame-commit / NetSync validation cadence defaults (netpeer uses GetEffective). */
+#define SYNETSESSION_FC_VALIDATION_TICKS_DEFAULT 120U
+#define SYNETSESSION_FC_VALIDATION_TICKS_LAN     120U
+#define SYNETSESSION_FC_VALIDATION_TICKS_WAN      60U
+#define SYNETSESSION_FC_VALIDATION_WAN_RTT_MS    150U
+#define SYNETSESSION_FC_VALIDATION_TICKS_MIN      30U
+#define SYNETSESSION_FC_VALIDATION_TICKS_MAX     120U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MAX 16U
 
 static sb32 sSYNetSessionParamsNegotiatedValid;
 static SYNetSessionParams sSYNetSessionParamsNegotiated;
 static u32 sSYNetSessionParamsEffectiveDelayCeil;
+static u32 sSYNetSessionParamsFcValidationTicksCached = SYNETSESSION_FC_VALIDATION_TICKS_DEFAULT;
+
+static u32 syNetSessionParamsClampFcValidationTicks(s32 ticks)
+{
+	u32 t;
+
+	if (ticks <= 0)
+	{
+		return SYNETSESSION_FC_VALIDATION_TICKS_DEFAULT;
+	}
+	t = (u32)ticks;
+	if (t < SYNETSESSION_FC_VALIDATION_TICKS_MIN)
+	{
+		return SYNETSESSION_FC_VALIDATION_TICKS_MIN;
+	}
+	if (t > SYNETSESSION_FC_VALIDATION_TICKS_MAX)
+	{
+		return SYNETSESSION_FC_VALIDATION_TICKS_MAX;
+	}
+	return t;
+}
+
+static u32 syNetSessionParamsReadFcValidationTicksFromEnv(const char *name)
+{
+	const char *e;
+	s32 parsed;
+
+	e = getenv(name);
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		return 0U;
+	}
+	parsed = atoi(e);
+	return syNetSessionParamsClampFcValidationTicks(parsed);
+}
+
+u32 syNetSessionParamsComputeFrameCommitValidationTicks(u32 rtt_ms)
+{
+	if (rtt_ms < SYNETSESSION_FC_VALIDATION_WAN_RTT_MS)
+	{
+		return SYNETSESSION_FC_VALIDATION_TICKS_LAN;
+	}
+	return SYNETSESSION_FC_VALIDATION_TICKS_WAN;
+}
 
 static u32 syNetSessionParamsReadSimHz(void)
 {
@@ -96,6 +145,7 @@ void syNetSessionParamsResetForNewMatch(void)
 	sSYNetSessionParamsNegotiatedValid = FALSE;
 	memset(&sSYNetSessionParamsNegotiated, 0, sizeof(sSYNetSessionParamsNegotiated));
 	sSYNetSessionParamsEffectiveDelayCeil = 0U;
+	sSYNetSessionParamsFcValidationTicksCached = SYNETSESSION_FC_VALIDATION_TICKS_DEFAULT;
 }
 
 static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
@@ -108,13 +158,15 @@ static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
 		frames = 64U;
 	}
 	/*
-	 * Frame-commit recovery reanchors from the last agreed validation tick (120-tick cadence).
+	 * Frame-commit recovery reanchors from the last agreed validation tick (RTT-tier cadence).
 	 * Ring depth must cover that span plus delay/prediction slack or resolved_load fails (~0xFFFFFFFF).
 	 */
 	{
 		u32 fc_floor;
+		u32 fc_cadence;
 
-		fc_floor = SYNETSESSION_FRAME_COMMIT_VALIDATION_TICKS + SYNETSESSION_PARAMS_PREDICTION_MAX + 8U;
+		fc_cadence = syNetSessionParamsComputeFrameCommitValidationTicks(rtt_ms);
+		fc_floor = fc_cadence + SYNETSESSION_PARAMS_PREDICTION_MAX + 8U;
 		if (fc_floor > SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX)
 		{
 			fc_floor = SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX;
@@ -420,6 +472,8 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	sSYNetSessionParamsNegotiated = *params;
 	sSYNetSessionParamsNegotiated.version = SYNETSESSION_PARAMS_WIRE_VERSION;
 	sSYNetSessionParamsNegotiatedValid = TRUE;
+	sSYNetSessionParamsFcValidationTicksCached =
+	    syNetSessionParamsComputeFrameCommitValidationTicks((u32)params->rtt_ms);
 	if (params->delay_adaptive_headroom > 0U)
 	{
 		ceil_d = (u32)params->input_delay + (u32)params->delay_adaptive_headroom;
@@ -456,11 +510,12 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	}
 	syNetRollbackApplySessionNegotiated(params);
 	port_log(
-	    "SSB64 NetSession: apply tag=%s tier=%s rtt_ms=%u D=%u phase_lock=%u redundancy=%u pumps=%u fuzz=%u "
-	    "rb_snap=%u rb_resim=%u rb_flags=0x%02X ceil=%u manual_D=%d\n",
+	    "SSB64 NetSession: apply tag=%s tier=%s rtt_ms=%u fc_validation_ticks=%u D=%u phase_lock=%u redundancy=%u "
+	    "pumps=%u fuzz=%u rb_snap=%u rb_resim=%u rb_flags=0x%02X ceil=%u manual_D=%d\n",
 	    (tag != NULL) ? tag : "?",
 	    syNetSessionParamsRttTierName((u32)params->rtt_ms),
 	    (unsigned int)params->rtt_ms,
+	    (unsigned int)sSYNetSessionParamsFcValidationTicksCached,
 	    (unsigned int)params->input_delay,
 	    (unsigned int)params->phase_lock_ticks,
 	    (unsigned int)params->bundle_redundancy,
@@ -471,6 +526,27 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	    (unsigned int)params->rollback_flags,
 	    (unsigned int)ceil_d,
 	    (syNetSessionParamsManualDelayOverrideActive() != FALSE) ? 1 : 0);
+}
+
+u32 syNetSessionParamsGetEffectiveFrameCommitValidationTicks(void)
+{
+	u32 env_ticks;
+
+	env_ticks = syNetSessionParamsReadFcValidationTicksFromEnv("SSB64_NETPLAY_FRAME_COMMIT_VALIDATION_TICKS");
+	if (env_ticks != 0U)
+	{
+		return env_ticks;
+	}
+	if (sSYNetSessionParamsNegotiatedValid != FALSE)
+	{
+		return sSYNetSessionParamsFcValidationTicksCached;
+	}
+	env_ticks = syNetSessionParamsReadFcValidationTicksFromEnv("SSB64_NETPLAY_NETSYNC_LOG_INTERVAL");
+	if (env_ticks != 0U)
+	{
+		return env_ticks;
+	}
+	return SYNETSESSION_FC_VALIDATION_TICKS_DEFAULT;
 }
 
 u32 syNetSessionParamsGetEffectiveInputDelay(void)

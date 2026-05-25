@@ -33,5 +33,11 @@ sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFra
 				  sb32 *out_delta_tick_anchor);
 /* TRUE when fighter/world/item/rng digests disagree (sim state desync at validation boundary). */
 sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b);
+/*
+ * TRUE when frame-commit tokens agree on state digests but live sim hashes disagree with committed
+ * token digests (sim advanced past snapshot tick N-1 used for tokens, or peer token stale vs local live).
+ */
+sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, const SYNetFrameCommitToken *peer,
+					  u32 *out_live_figh, u32 *out_live_world);
 
 #endif /* _SYNETPEER_FRAME_COMMIT_H_ */

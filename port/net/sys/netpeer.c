@@ -218,7 +218,8 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 	            : (SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES)))
 #define SYNETPEER_MAX_REMOTE_PLAYLIST 4
 #define SYNETPEER_SECONDARY_SLOT_ABSENT 255
-#define SYNETPEER_VALIDATION_INPUT_WINDOW 120
+/* Default validation window; runtime uses syNetSessionParamsGetEffectiveFrameCommitValidationTicks(). */
+#define SYNETPEER_VALIDATION_INPUT_WINDOW_DEFAULT 120
 /*
  * Linux UDP recv buffer sizing for VS INPUT flood (frame-commit / control starvation).
  * Wire V4 INPUT bundle is SYNETPEER_PACKET_BYTES_V4 (200 B in current layout). NetPeer `stg=` in periodic
@@ -488,6 +489,7 @@ static u32 sSYNetPeerBootstrapRetryCountCached;
 static u32 sSYNetPeerBootstrapRetrySleepUsCached;
 static sb32 sSYNetPeerBootstrapTimingCached;
 static u32 sSYNetPeerLastFrameCommitValidationTick;
+static sb32 sSYNetPeerFrameCommitCadenceLogged;
 static void syNetPeerRefreshBootstrapTimingFromEnv(void);
 static u32 syNetPeerBootstrapRetryCount(void);
 static u32 syNetPeerBootstrapRetrySleepUs(void);
@@ -5972,6 +5974,7 @@ void syNetPeerStartVSSession(void)
 	sSYNetPeerInputChecksum = 2166136261U;
 	sSYNetPeerLastLogTick = 0;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
+	sSYNetPeerFrameCommitCadenceLogged = FALSE;
 	sSYNetPeerSendSeq = 0;
 	sSYNetPeerRecvSeqInitialized = FALSE;
 	sSYNetPeerRecvSeqHighWater = 0;
@@ -7362,6 +7365,7 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 
 #if defined(PORT)
 static int syNetPeerFrameCommitGetEnv(void);
+static sb32 syNetPeerFrameCommitLiveGuardEnabled(void);
 static sb32 syNetPeerFrameCommitDiagEnabled(void);
 static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void);
 static void syNetPeerLogFrameCommitRecvDrop(const char *reason, s32 size, u32 magic, u16 wire_version, u16 packet_type,
@@ -8067,6 +8071,7 @@ static u32 sSYNetPeerFrameCommitMismatchLogCount;
 static sb32 sSYNetPeerFrameCommitPeerEver;
 static int sSYNetPeerFrameCommitEnvCache = -999;
 static int sSYNetPeerFrameCommitDiagEnvCache = -999;
+static int sSYNetPeerFrameCommitLiveGuardEnvCache = -999;
 
 typedef struct SYNetPeerFrameCommitDiag
 {
@@ -8075,6 +8080,7 @@ typedef struct SYNetPeerFrameCommitDiag
 	u32 fc_compared;
 	u32 fc_pairing_fail;
 	u32 fc_state_diverge;
+	u32 fc_live_hash_guard;
 	u32 fc_deferred_armed;
 	u32 fc_recovery_started;
 	u32 fc_recovery_skipped_no_snap;
@@ -8273,13 +8279,14 @@ void syNetPeerEmitFrameCommitDiagReport(void)
 {
 	port_log(
 	    "SSB64 NetPeer: FRAME_COMMIT_DIAG sent=%u recv=%u compared=%u pairing_fail=%u state_diverge=%u "
-	    "deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u "
+	    "live_hash_guard=%u deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u "
 	    "recv_drop_size=%u recv_drop_header=%u recv_drop_checksum=%u\n",
 	    sSYNetPeerFrameCommitDiag.fc_sent,
 	    sSYNetPeerFrameCommitDiag.fc_recv,
 	    sSYNetPeerFrameCommitDiag.fc_compared,
 	    sSYNetPeerFrameCommitDiag.fc_pairing_fail,
 	    sSYNetPeerFrameCommitDiag.fc_state_diverge,
+	    sSYNetPeerFrameCommitDiag.fc_live_hash_guard,
 	    sSYNetPeerFrameCommitDiag.fc_deferred_armed,
 	    sSYNetPeerFrameCommitDiag.fc_recovery_started,
 	    sSYNetPeerFrameCommitDiag.fc_recovery_skipped_no_snap,
@@ -8330,6 +8337,28 @@ static int syNetPeerFrameCommitGetEnv(void)
 	return sSYNetPeerFrameCommitEnvCache;
 }
 
+static sb32 syNetPeerFrameCommitLiveGuardEnabled(void)
+{
+	const char *e;
+
+	if (syNetPeerFrameCommitGetEnv() == 0)
+	{
+		return FALSE;
+	}
+	if (sSYNetPeerFrameCommitLiveGuardEnvCache != -999)
+	{
+		return (sSYNetPeerFrameCommitLiveGuardEnvCache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_FRAME_COMMIT_LIVE_GUARD");
+	if ((e != NULL) && (e[0] != '\0') && (e[0] == '0'))
+	{
+		sSYNetPeerFrameCommitLiveGuardEnvCache = 0;
+		return FALSE;
+	}
+	sSYNetPeerFrameCommitLiveGuardEnvCache = 1;
+	return TRUE;
+}
+
 static void syNetPeerFrameCommitReset(void)
 {
 	u32 i;
@@ -8347,6 +8376,7 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerConvergenceFailEpochs = 0U;
 	sSYNetPeerFrameCommitMismatchLogCount = 0U;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
+	sSYNetPeerFrameCommitCadenceLogged = FALSE;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
 
@@ -8500,6 +8530,35 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
 		return;
+	}
+	if (syNetPeerFrameCommitLiveGuardEnabled() != FALSE)
+	{
+		u32 live_figh;
+		u32 live_world;
+
+		if (syNetFrameCommitLiveHashGuardTripped(local, peer, &live_figh, &live_world) != FALSE)
+		{
+			if (syNetPeerFrameCommitDiagEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetPeer: FRAME_COMMIT_LIVE_HASH_GUARD validation=%u live_figh=0x%08X live_world=0x%08X "
+				    "token_figh_local=0x%08X token_figh_peer=0x%08X token_world_local=0x%08X token_world_peer=0x%08X "
+				    "inp_local=0x%08X inp_peer=0x%08X\n",
+				    vtick,
+				    live_figh,
+				    live_world,
+				    local->fighter_digest,
+				    peer->fighter_digest,
+				    local->world_digest,
+				    peer->world_digest,
+				    local->input_digest,
+				    peer->input_digest);
+			}
+			sSYNetPeerFrameCommitDiag.fc_live_hash_guard++;
+			syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
+			syNetRollbackOnFrameCommitLiveHashGuard(vtick, local, peer, live_figh, live_world);
+			return;
+		}
 	}
 	syNetRollbackNoteFrameCommitStateAgreed(vtick);
 	syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
@@ -9191,6 +9250,7 @@ static void syNetPeerRefreshCachedNetplayEnvCachesOnly(void)
 	sSYNetPeerStateDetailDiagEnvCache = -999;
 	sSYNetPeerGcTraversalDiagEnvCache = -999;
 	sSYNetPeerFrameCommitEnvCache = -999;
+	sSYNetPeerFrameCommitLiveGuardEnvCache = -999;
 	sSYNetPeerUdpFrameTraceEnvCache = -1;
 	sSYNetPeerDelaySyncDiagEnvCache = -999;
 	syNetPeerResetMatchBufferMinSlackEnv();
@@ -9208,6 +9268,18 @@ void syNetPeerRefreshCachedNetplayEnvForNewMatch(void)
 	syNetInputClearSessionTransportOverrides();
 }
 
+static u32 syNetPeerValidationWindowTicks(void)
+{
+	u32 w;
+
+	w = syNetSessionParamsGetEffectiveFrameCommitValidationTicks();
+	if (w == 0U)
+	{
+		w = SYNETPEER_VALIDATION_INPUT_WINDOW_DEFAULT;
+	}
+	return w;
+}
+
 void syNetPeerLogNetSyncValidation(u32 tick)
 {
 	u32 checksums[MAXCONTROLLERS];
@@ -9222,15 +9294,17 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 	u32 animation_hash;
 	u32 win_begin = 0;
 	u32 win_length = tick;
+	u32 val_win;
 
 	if ((sSYNetPeerIsActive == FALSE) || (syNetPeerCheckBattleExecutionReady() == FALSE))
 	{
 		return;
 	}
-	if (tick >= SYNETPEER_VALIDATION_INPUT_WINDOW)
+	val_win = syNetPeerValidationWindowTicks();
+	if (tick >= val_win)
 	{
-		win_begin = tick - SYNETPEER_VALIDATION_INPUT_WINDOW;
-		win_length = SYNETPEER_VALIDATION_INPUT_WINDOW;
+		win_begin = tick - val_win;
+		win_length = val_win;
 	}
 	{
 		s32 abort_mask = syNetInputGetAbortOnInputMismatchMask();
@@ -9482,29 +9556,7 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 
 static u32 syNetPeerNetSyncLogInterval(void)
 {
-	static s32 sCachedInterval = -999;
-	s32 parsed;
-
-	if (sCachedInterval != -999)
-	{
-		return (u32)sCachedInterval;
-	}
-	parsed = SYNETPEER_LOG_INTERVAL;
-	{
-		const char *env;
-
-		env = getenv("SSB64_NETPLAY_NETSYNC_LOG_INTERVAL");
-		if ((env != NULL) && (env[0] != '\0'))
-		{
-			parsed = atoi(env);
-		}
-	}
-	if (parsed <= 0)
-	{
-		parsed = SYNETPEER_LOG_INTERVAL;
-	}
-	sCachedInterval = parsed;
-	return (u32)sCachedInterval;
+	return syNetSessionParamsGetEffectiveFrameCommitValidationTicks();
 }
 
 void syNetPeerLogStats(void)
@@ -9553,12 +9605,17 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		return;
 	}
 	sSYNetPeerLastFrameCommitValidationTick = tick;
-	win_length = tick;
-	win_begin = 0U;
-	if (tick >= SYNETPEER_VALIDATION_INPUT_WINDOW)
 	{
-		win_begin = tick - SYNETPEER_VALIDATION_INPUT_WINDOW;
-		win_length = SYNETPEER_VALIDATION_INPUT_WINDOW;
+		u32 val_win;
+
+		val_win = syNetPeerValidationWindowTicks();
+		win_length = tick;
+		win_begin = 0U;
+		if (tick >= val_win)
+		{
+			win_begin = tick - val_win;
+			win_length = val_win;
+		}
 	}
 	if (sSYNetPeerMpTicDiagAssertEnvCache == -999)
 	{
@@ -9616,6 +9673,15 @@ void syNetPeerLogExecutionBegin(void)
 		    syNetInputGetTick(), sSYNetPeerExecutionHoldFrames, sSYNetPeerBattleBarrierWaitFrames,
 		    sSYNetPeerHighestRemoteTick, sSYNetPeerLateFrames, port_get_push_frame_count(),
 		    dSYTaskmanUpdateCount, dSYTaskmanFrameCount, (unsigned int)(u32)gSCManagerSceneData.scene_curr);
+		if (sSYNetPeerFrameCommitCadenceLogged == FALSE)
+		{
+			sSYNetPeerFrameCommitCadenceLogged = TRUE;
+			port_log(
+			    "SSB64 NetPeer: frame_commit_validation_ticks=%u rtt_ms=%u negotiated=%d\n",
+			    (unsigned int)syNetPeerValidationWindowTicks(),
+			    (unsigned int)syNetSessionParamsGetNegotiatedRttMs(),
+			    (syNetSessionParamsAreNegotiated() != FALSE) ? 1 : 0);
+		}
 		if (syNetPeerTickDiagLevel() >= 1)
 		{
 			syNetPeerLogTickFrameSnapshot("exec_begin", TRUE);

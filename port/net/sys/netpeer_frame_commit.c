@@ -138,3 +138,38 @@ sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const S
 	}
 	return FALSE;
 }
+
+sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, const SYNetFrameCommitToken *peer,
+					  u32 *out_live_figh, u32 *out_live_world)
+{
+	u32 live_figh;
+	u32 live_world;
+
+	if ((local == NULL) || (peer == NULL))
+	{
+		return FALSE;
+	}
+	if (syNetFrameCommitStateDigestsDiverge(local, peer) != FALSE)
+	{
+		return FALSE;
+	}
+	live_figh = syNetSyncHashBattleFightersFull();
+	live_world = syNetSyncHashRollbackWorld();
+	if (out_live_figh != NULL)
+	{
+		*out_live_figh = live_figh;
+	}
+	if (out_live_world != NULL)
+	{
+		*out_live_world = live_world;
+	}
+	if ((live_figh != local->fighter_digest) || (live_world != local->world_digest))
+	{
+		return TRUE;
+	}
+	if ((live_figh != peer->fighter_digest) || (live_world != peer->world_digest))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}

@@ -31,6 +31,8 @@ extern sb32 syNetSessionParamsAutoNegotiationEnabled(void);
 extern sb32 syNetSessionParamsManualDelayOverrideActive(void);
 
 extern void syNetSessionParamsResetForNewMatch(void);
+/* RTT-tier frame-commit / NetSync validation cadence (ticks); both peers must match. */
+extern u32 syNetSessionParamsComputeFrameCommitValidationTicks(u32 rtt_ms);
 extern void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_params);
 extern sb32 syNetSessionParamsAreNegotiated(void);
 extern void syNetSessionParamsGetNegotiated(SYNetSessionParams *out_params);
@@ -51,6 +53,7 @@ extern u32 syNetSessionParamsGetEffectiveDelayCeil(void);
 extern u32 syNetSessionParamsGetEffectiveRollbackSnapshotFrames(void);
 extern u32 syNetSessionParamsGetEffectiveRollbackResimTicksPerFrame(void);
 extern u32 syNetSessionParamsGetEffectiveStrictRingFuzzTicks(void);
+extern u32 syNetSessionParamsGetEffectiveFrameCommitValidationTicks(void);
 extern sb32 syNetSessionParamsRollbackEnabled(void);
 extern sb32 syNetSessionParamsRollbackSymmetricEnabled(void);
 
