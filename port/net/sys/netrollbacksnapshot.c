@@ -2,6 +2,7 @@
 
 #include <sys/netsync.h>
 #include <sys/objdef.h>
+#include <sys/objanim.h>
 #include <sys/objhelper.h>
 #include <sys/objman.h>
 #include <sys/utils.h>
@@ -78,6 +79,8 @@
 #include <ef/effect.h>
 #include <ef/efmanager.h>
 #include <ef/eftypes.h>
+#include <gr/ground.h>
+#include <gr/grdef.h>
 #include <ef/efdef.h>
 #include <mp/map.h>
 #include <lb/lbparticle.h>
@@ -258,6 +261,8 @@ typedef struct SYNetRbSnapFighterBlob
 	ub32 is_cliff_hold;
 	ub32 is_catchstatus;
 	ub32 is_catch_or_capture;
+	u8 is_effect_attach;
+	u8 fighter_snap_pad[3];
 	u32 camera_mode;
 
 	FTAnimDesc anim_desc;
@@ -420,19 +425,174 @@ typedef struct SYNetRbSnapWeaponBlob
 
 } SYNetRbSnapWeaponBlob;
 
+#define SYNETRB_EFFECT_SNAP_NO_STRUCT (1U << 0)
+
+#define SYNETRB_EFFECT_RESPAWN_NONE          0U
+#define SYNETRB_EFFECT_RESPAWN_QUAKE           1U
+#define SYNETRB_EFFECT_RESPAWN_SHIELD          2U
+#define SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD    3U
+#define SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR   4U
+#define SYNETRB_EFFECT_RESPAWN_NESS_PK_WAVE    5U
+
+#define SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX 128U
+
+typedef struct SYNetRbSnapGroundHyrule
+{
+	u32 twister_gobj_id;
+	f32 twister_leftedge_x;
+	f32 twister_rightedge_x;
+	f32 twister_vel;
+	u16 twister_wait;
+	u16 twister_speed_wait;
+	u16 twister_turn_wait;
+	u16 twister_line_id;
+	u8 twister_status;
+	u8 twister_pos_count;
+
+} SYNetRbSnapGroundHyrule;
+
+typedef struct SYNetRbSnapGroundJungle
+{
+	u32 tarucann_gobj_id;
+	u8 tarucann_status;
+	u8 pad;
+	u16 tarucann_wait;
+	f32 tarucann_rotate_step;
+
+} SYNetRbSnapGroundJungle;
+
+typedef struct SYNetRbSnapGroundZebes
+{
+	f32 acid_level_curr;
+	f32 acid_level_step;
+	u16 acid_level_wait;
+	u8 acid_status;
+	u8 acid_attr_id;
+	u8 rumble_wait;
+	u8 pad;
+
+} SYNetRbSnapGroundZebes;
+
+typedef struct SYNetRbSnapGroundYamabuki
+{
+	u32 monster_gobj_id;
+	u32 gate_gobj_id;
+	Vec3f gate_pos;
+	u8 gate_status;
+	ub8 gate_noentry;
+	u8 pad;
+	u16 monster_wait;
+	u16 gate_wait;
+	u8 monster_id_prev;
+
+} SYNetRbSnapGroundYamabuki;
+
+typedef struct SYNetRbSnapGroundInishieScale
+{
+	f32 platform_base_y;
+	f32 string_length;
+	Vec3f platform_translate;
+	Vec3f string_translate;
+
+} SYNetRbSnapGroundInishieScale;
+
+typedef struct SYNetRbSnapGroundInishie
+{
+	f32 splat_alt;
+	f32 splat_accelerate;
+	u16 splat_wait;
+	u8 splat_status;
+	u8 pblock_status;
+	u32 pblock_gobj_id;
+	u16 pblock_appear_wait;
+	u8 pblock_pos_count;
+	u8 players_tt[4];
+	ub8 players_ga[4];
+	u32 pakkun_gobj_id[2];
+	SYNetRbSnapGroundInishieScale scale[2];
+
+} SYNetRbSnapGroundInishie;
+
+typedef struct SYNetRbSnapGroundYosterCloud
+{
+	u32 gobj_id;
+	f32 altitude;
+	f32 pressure;
+	u8 status;
+	s8 anim_id;
+	ub8 is_cloud_line_active;
+	s8 pressure_timer;
+	u8 evaporate_wait;
+	u8 pad;
+
+} SYNetRbSnapGroundYosterCloud;
+
+typedef struct SYNetRbSnapGroundYoster
+{
+	SYNetRbSnapGroundYosterCloud clouds[3];
+
+} SYNetRbSnapGroundYoster;
+
+typedef struct SYNetRbSnapGroundSector
+{
+	u32 map_gobj_id;
+	f32 arwing_target_x;
+	u16 arwing_appear_timer;
+	u16 arwing_state_timer;
+	u8 arwing_status;
+	s8 arwing_flight_pattern;
+	u8 arwing_type_cycle;
+	u8 arwing_laser_ammo;
+	u16 arwing_laser_timer;
+	u8 arwing_laser_count;
+	u8 arwing_pilot_curr;
+	u8 arwing_pilot_prev;
+	ub8 is_arwing_z_near;
+	ub8 is_arwing_z_collision;
+	ub8 is_arwing_line_active;
+	ub8 is_arwing_line_collision;
+
+} SYNetRbSnapGroundSector;
+
+typedef struct SYNetRbSnapGroundPupupu
+{
+	u16 whispy_wind_wait;
+	u16 whispy_wind_duration;
+	s16 whispy_blink_wait;
+	u8 whispy_status;
+	s8 whispy_eyes_status;
+	s8 whispy_mouth_status;
+
+} SYNetRbSnapGroundPupupu;
+
+typedef struct SYNetRbSnapGroundCastle
+{
+	u32 bumper_gobj_id;
+	Vec3f bumper_pos;
+
+} SYNetRbSnapGroundCastle;
+
+typedef struct SYNetRbSnapGroundBlob
+{
+	u8 gkind;
+	u8 pad;
+	u16 payload_len;
+	u8 payload[SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX];
+
+} SYNetRbSnapGroundBlob;
+
 typedef struct SYNetRbSnapEffectBlob
 {
 	sb32 is_valid;
 	u32 gobj_id;
 	u16 bank_id;
 	u8 link_id;
-	u8 pad;
+	u8 snap_flags;
+	u8 respawn_kind;
+	u8 quake_magnitude;
 	u32 fighter_gobj_id;
 	f32 anim_frame;
 	u32 proc_update_fingerprint;
-	/* 0xFF = not a quake effect; else magnitude 0..3 for `efManagerQuakeMakeEffect`. */
-	u8 quake_magnitude;
-	u8 effect_pad[3];
 	/* Sanitized copy of `EFStruct::effect_vars` (pointer slots cleared on capture). */
 	u8 effect_vars[sizeof(((EFStruct){0}).effect_vars)];
 
@@ -484,6 +644,8 @@ typedef struct SYNetRbSnapshotSlot
 	SYNetRbSnapEffectBlob effects[SYNETRB_SNAPSHOT_MAX_EFFECTS];
 	sb32 mp_bounds_captured;
 	MPAllBounds mp_bounds;
+	sb32 ground_captured;
+	SYNetRbSnapGroundBlob ground;
 	SYNetRbSnapCameraBlob camera;
 
 } SYNetRbSnapshotSlot;
@@ -2506,6 +2668,7 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	blob->is_cliff_hold = fp->is_cliff_hold;
 	blob->is_catchstatus = fp->is_catchstatus;
 	blob->is_catch_or_capture = fp->is_catch_or_capture;
+	blob->is_effect_attach = (u8)(fp->is_effect_attach != FALSE);
 	blob->camera_mode = fp->camera_mode;
 
 	blob->anim_desc = fp->anim_desc;
@@ -2633,6 +2796,7 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	fp->is_cliff_hold = blob->is_cliff_hold;
 	fp->is_catchstatus = blob->is_catchstatus;
 	fp->is_catch_or_capture = blob->is_catch_or_capture;
+	fp->is_effect_attach = (blob->is_effect_attach != 0U) ? TRUE : FALSE;
 	fp->camera_mode = blob->camera_mode;
 
 	fp->anim_desc = blob->anim_desc;
@@ -3396,17 +3560,29 @@ s32 syNetRbEnumerateActiveEffectsSorted(GObj **out, s32 max, sb32 *truncated_out
 		    gGCCommonLinks[(link_pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
 		for (gobj = link_head; gobj != NULL; gobj = gobj->link_next)
 		{
-			if ((gobj->user_data.p == NULL) || (efGetStruct(gobj) == NULL))
+			if (efGetStruct(gobj) != NULL)
 			{
+				if (count < max)
+				{
+					out[count++] = gobj;
+				}
+				else
+				{
+					saw_extra = TRUE;
+				}
 				continue;
 			}
-			if (count < max)
+			/* Particle-shell effects (e.g. dust-heavy) have no EFStruct. */
+			if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect))
 			{
-				out[count++] = gobj;
-			}
-			else
-			{
-				saw_extra = TRUE;
+				if (count < max)
+				{
+					out[count++] = gobj;
+				}
+				else
+				{
+					saw_extra = TRUE;
+				}
 			}
 		}
 	}
@@ -4425,6 +4601,15 @@ static sb32 syNetRbSnapCaptureWeapons(SYNetRbSnapshotSlot *slot)
 
 #ifdef PORT
 
+static u32 syNetRbSnapFnvAccumulateU32(u32 hash, u32 value)
+{
+	hash ^= value;
+	hash *= 16777619U;
+	return hash;
+}
+
+static sb32 syNetRbSnapLiveEffectListedInSnapshot(const SYNetRbSnapshotSlot *slot, u32 gobj_id);
+
 static sb32 syNetRbSnapSnapshotEffectDiagEnabled(void)
 {
 	static int s_env_cache = -999;
@@ -4451,6 +4636,624 @@ static u32 syNetRbSnapPointerFingerprintLow32(const void *p)
 	return (u32)u;
 }
 
+static u32 syNetRbSnapGObjFuncProcFingerprint(GObj *gobj)
+{
+	GObjProcess *proc;
+
+	if (gobj == NULL)
+	{
+		return 0U;
+	}
+	for (proc = gobj->gobjproc_head; proc != NULL; proc = proc->link_next)
+	{
+		if (proc->kind == nGCProcessKindFunc)
+		{
+			return syNetRbSnapPointerFingerprintLow32((const void *)proc->exec.func);
+		}
+	}
+	return 0U;
+}
+
+static u8 syNetRbSnapEffectRespawnKindFromLive(const GObj *gobj, const EFStruct *ep)
+{
+	FTStruct *fp;
+
+	if ((gobj == NULL) || (ep == NULL))
+	{
+		return SYNETRB_EFFECT_RESPAWN_NONE;
+	}
+	if (ep->proc_update == efManagerQuakeProcUpdate)
+	{
+		return SYNETRB_EFFECT_RESPAWN_QUAKE;
+	}
+	if (ep->proc_update == efManagerFoxReflectorProcUpdate)
+	{
+		return SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR;
+	}
+	if (ep->proc_update == efManagerShieldProcUpdate)
+	{
+		if (ep->fighter_gobj != NULL)
+		{
+			fp = ftGetStruct(ep->fighter_gobj);
+			if ((fp != NULL) && (fp->fkind == nFTKindYoshi))
+			{
+				return SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD;
+			}
+		}
+		return SYNETRB_EFFECT_RESPAWN_SHIELD;
+	}
+	if ((ep->proc_update == gcPlayAnimAll) && (ep->fighter_gobj != NULL))
+	{
+		fp = ftGetStruct(ep->fighter_gobj);
+		if ((fp != NULL) && (fp->fkind == nFTKindNess) && (fp->is_effect_attach != FALSE))
+		{
+			return SYNETRB_EFFECT_RESPAWN_NESS_PK_WAVE;
+		}
+	}
+	return SYNETRB_EFFECT_RESPAWN_NONE;
+}
+
+static sb32 syNetRbSnapEffectIdAllowed(const SYNetRbSnapshotSlot *slot, u32 gobj_id)
+{
+	s32 ei;
+	s32 pi;
+
+	if ((slot == NULL) || (gobj_id == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapLiveEffectListedInSnapshot(slot, gobj_id) != FALSE)
+	{
+		return TRUE;
+	}
+	for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+	{
+		const SYNetRbSnapFighterBlob *fb;
+
+		if (slot->fighters[pi].is_valid == FALSE)
+		{
+			continue;
+		}
+		fb = &slot->fighters[pi];
+		if ((fb->guard_effect_gobj_id == gobj_id) || (fb->captureyoshi_effect_gobj_id == gobj_id) ||
+		    (fb->fox_speciallw_effect_gobj_id == gobj_id))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static void syNetRbSnapClearFighterEffectPointerIfMatch(FTStruct *fp, GObj *ejected_gobj)
+{
+	if ((fp == NULL) || (ejected_gobj == NULL))
+	{
+		return;
+	}
+	if (fp->status_vars.common.guard.effect_gobj == ejected_gobj)
+	{
+		fp->status_vars.common.guard.effect_gobj = NULL;
+	}
+	if (fp->status_vars.common.captureyoshi.effect_gobj == ejected_gobj)
+	{
+		fp->status_vars.common.captureyoshi.effect_gobj = NULL;
+	}
+	if (fp->status_vars.fox.speciallw.effect_gobj == ejected_gobj)
+	{
+		fp->status_vars.fox.speciallw.effect_gobj = NULL;
+	}
+}
+
+static void syNetRbSnapPruneOrphanFighterAttachedEffects(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pass;
+	GObj *gobj;
+	GObj *next;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *link_head;
+
+		link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = next)
+		{
+			EFStruct *ep;
+			FTStruct *fp;
+
+			next = gobj->link_next;
+			ep = efGetStruct(gobj);
+			if ((ep == NULL) || (ep->fighter_gobj == NULL))
+			{
+				continue;
+			}
+			if (syNetRbSnapEffectIdAllowed(slot, gobj->id) != FALSE)
+			{
+				continue;
+			}
+			fp = ftGetStruct(ep->fighter_gobj);
+			syNetRbSnapClearFighterEffectPointerIfMatch(fp, gobj);
+			if ((fp != NULL) && (fp->is_effect_attach != FALSE))
+			{
+				fp->is_effect_attach = FALSE;
+			}
+			gcEjectGObj(gobj);
+		}
+	}
+}
+
+static void syNetRbSnapFinalizeFighterEffectAttachFlags(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pi;
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		const SYNetRbSnapFighterBlob *blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		pi = fp->player;
+		if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		blob = &slot->fighters[pi];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		fp->is_effect_attach = (blob->is_effect_attach != 0U) ? TRUE : FALSE;
+		if (fp->is_effect_attach == FALSE)
+		{
+			continue;
+		}
+		if ((blob->guard_effect_gobj_id == 0U) && (blob->captureyoshi_effect_gobj_id == 0U) &&
+		    (blob->fox_speciallw_effect_gobj_id == 0U))
+		{
+			fp->is_effect_attach = FALSE;
+		}
+	}
+}
+
+static u32 syNetRbSnapFoldGroundPayloadHash(const SYNetRbSnapGroundBlob *ground)
+{
+	u32 hash;
+	u32 n;
+
+	if ((ground == NULL) || (ground->payload_len == 0U))
+	{
+		return 2166136261U;
+	}
+	hash = 2166136261U;
+	hash = syNetRbSnapFnvAccumulateU32(hash, (u32)ground->gkind);
+	n = (u32)ground->payload_len;
+	if (n > SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX)
+	{
+		n = SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX;
+	}
+	{
+		u32 i;
+
+		for (i = 0; i < n; i++)
+		{
+			hash = syNetRbSnapFnvAccumulateU32(hash, (u32)ground->payload[i]);
+		}
+	}
+	return hash;
+}
+
+static void syNetRbSnapCaptureGround(SYNetRbSnapshotSlot *slot)
+{
+	u8 gkind;
+
+	memset(&slot->ground, 0, sizeof(slot->ground));
+	slot->ground_captured = FALSE;
+	if (gSCManagerBattleState == NULL)
+	{
+		return;
+	}
+	gkind = gSCManagerBattleState->gkind;
+	slot->ground.gkind = gkind;
+	switch (gkind)
+	{
+	case nGRKindHyrule:
+	{
+		const GRCommonGroundVarsHyrule *src = &gGRCommonStruct.hyrule;
+		SYNetRbSnapGroundHyrule *dst = (SYNetRbSnapGroundHyrule *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->twister_gobj_id = (src->twister_gobj != NULL) ? (u32)src->twister_gobj->id : 0U;
+		dst->twister_leftedge_x = src->twister_leftedge_x;
+		dst->twister_rightedge_x = src->twister_rightedge_x;
+		dst->twister_vel = src->twister_vel;
+		dst->twister_wait = src->twister_wait;
+		dst->twister_speed_wait = src->twister_speed_wait;
+		dst->twister_turn_wait = src->twister_turn_wait;
+		dst->twister_line_id = src->twister_line_id;
+		dst->twister_status = src->twister_status;
+		dst->twister_pos_count = src->twister_pos_count;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindJungle:
+	{
+		const GRCommonGroundVarsJungle *src = &gGRCommonStruct.jungle;
+		SYNetRbSnapGroundJungle *dst = (SYNetRbSnapGroundJungle *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->tarucann_gobj_id = (src->tarucann_gobj != NULL) ? (u32)src->tarucann_gobj->id : 0U;
+		dst->tarucann_status = src->tarucann_status;
+		dst->tarucann_wait = src->tarucann_wait;
+		dst->tarucann_rotate_step = src->tarucann_rotate_step;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindZebes:
+	{
+		const GRCommonGroundVarsZebes *src = &gGRCommonStruct.zebes;
+		SYNetRbSnapGroundZebes *dst = (SYNetRbSnapGroundZebes *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->acid_level_curr = src->acid_level_curr;
+		dst->acid_level_step = src->acid_level_step;
+		dst->acid_level_wait = src->acid_level_wait;
+		dst->acid_status = src->acid_status;
+		dst->acid_attr_id = src->acid_attr_id;
+		dst->rumble_wait = src->rumble_wait;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindYamabuki:
+	{
+		const GRCommonGroundVarsYamabuki *src = &gGRCommonStruct.yamabuki;
+		SYNetRbSnapGroundYamabuki *dst = (SYNetRbSnapGroundYamabuki *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->monster_gobj_id = (src->monster_gobj != NULL) ? (u32)src->monster_gobj->id : 0U;
+		dst->gate_gobj_id = (src->gate_gobj != NULL) ? (u32)src->gate_gobj->id : 0U;
+		dst->gate_pos = src->gate_pos;
+		dst->gate_status = src->gate_status;
+		dst->gate_noentry = src->gate_noentry;
+		dst->monster_wait = src->monster_wait;
+		dst->gate_wait = src->gate_wait;
+		dst->monster_id_prev = src->monster_id_prev;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindInishie:
+	{
+		const GRCommonGroundVarsInishie *src = &gGRCommonStruct.inishie;
+		SYNetRbSnapGroundInishie *dst = (SYNetRbSnapGroundInishie *)slot->ground.payload;
+		s32 ci;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->splat_alt = src->splat_alt;
+		dst->splat_accelerate = src->splat_accelerate;
+		dst->splat_wait = src->splat_wait;
+		dst->splat_status = src->splat_status;
+		dst->pblock_status = src->pblock_status;
+		dst->pblock_gobj_id = (src->pblock_gobj != NULL) ? (u32)src->pblock_gobj->id : 0U;
+		dst->pblock_appear_wait = src->pblock_appear_wait;
+		dst->pblock_pos_count = src->pblock_pos_count;
+		memcpy(dst->players_tt, src->players_tt, sizeof(dst->players_tt));
+		memcpy(dst->players_ga, src->players_ga, sizeof(dst->players_ga));
+		dst->pakkun_gobj_id[0] = (src->pakkun_gobj[0] != NULL) ? (u32)src->pakkun_gobj[0]->id : 0U;
+		dst->pakkun_gobj_id[1] = (src->pakkun_gobj[1] != NULL) ? (u32)src->pakkun_gobj[1]->id : 0U;
+		for (ci = 0; ci < 2; ci++)
+		{
+			SYNetRbSnapGroundInishieScale *sd = &dst->scale[ci];
+			const GRInishieScale *ls = &src->scale[ci];
+
+			sd->platform_base_y = ls->platform_base_y;
+			sd->string_length = ls->string_length;
+			if (ls->platform_dobj != NULL)
+			{
+				sd->platform_translate = ls->platform_dobj->translate.vec.f;
+			}
+			if (ls->string_dobj != NULL)
+			{
+				sd->string_translate = ls->string_dobj->translate.vec.f;
+			}
+		}
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindYoster:
+	{
+		const GRCommonGroundVarsYoster *src = &gGRCommonStruct.yoster;
+		SYNetRbSnapGroundYoster *dst = (SYNetRbSnapGroundYoster *)slot->ground.payload;
+		s32 ci;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		for (ci = 0; ci < 3; ci++)
+		{
+			const GRYosterCloud *lc = &src->clouds[ci];
+			SYNetRbSnapGroundYosterCloud *sc = &dst->clouds[ci];
+
+			sc->gobj_id = (lc->gobj != NULL) ? (u32)lc->gobj->id : 0U;
+			sc->altitude = lc->altitude;
+			sc->pressure = lc->pressure;
+			sc->status = lc->status;
+			sc->anim_id = lc->anim_id;
+			sc->is_cloud_line_active = lc->is_cloud_line_active;
+			sc->pressure_timer = lc->pressure_timer;
+			sc->evaporate_wait = lc->evaporate_wait;
+		}
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindSector:
+	{
+		const GRCommonGroundVarsSector *src = &gGRCommonStruct.sector;
+		SYNetRbSnapGroundSector *dst = (SYNetRbSnapGroundSector *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->map_gobj_id = (src->map_gobj != NULL) ? (u32)src->map_gobj->id : 0U;
+		dst->arwing_target_x = src->arwing_target_x;
+		dst->arwing_appear_timer = src->arwing_appear_timer;
+		dst->arwing_state_timer = src->arwing_state_timer;
+		dst->arwing_status = src->arwing_status;
+		dst->arwing_flight_pattern = src->arwing_flight_pattern;
+		dst->arwing_type_cycle = src->arwing_type_cycle;
+		dst->arwing_laser_ammo = src->arwing_laser_ammo;
+		dst->arwing_laser_timer = src->arwing_laser_timer;
+		dst->arwing_laser_count = src->arwing_laser_count;
+		dst->arwing_pilot_curr = src->arwing_pilot_curr;
+		dst->arwing_pilot_prev = src->arwing_pilot_prev;
+		dst->is_arwing_z_near = src->is_arwing_z_near;
+		dst->is_arwing_z_collision = src->is_arwing_z_collision;
+		dst->is_arwing_line_active = src->is_arwing_line_active;
+		dst->is_arwing_line_collision = src->is_arwing_line_collision;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindPupupu:
+	{
+		const GRCommonGroundVarsPupupu *src = &gGRCommonStruct.pupupu;
+		SYNetRbSnapGroundPupupu *dst = (SYNetRbSnapGroundPupupu *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->whispy_wind_wait = src->whispy_wind_wait;
+		dst->whispy_wind_duration = src->whispy_wind_duration;
+		dst->whispy_blink_wait = src->whispy_blink_wait;
+		dst->whispy_status = src->whispy_status;
+		dst->whispy_eyes_status = src->whispy_eyes_status;
+		dst->whispy_mouth_status = src->whispy_mouth_status;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	case nGRKindCastle:
+	{
+		const GRCommonGroundVarsCastle *src = &gGRCommonStruct.castle;
+		SYNetRbSnapGroundCastle *dst = (SYNetRbSnapGroundCastle *)slot->ground.payload;
+
+		slot->ground.payload_len = (u16)sizeof(*dst);
+		dst->bumper_gobj_id = (src->bumper_gobj != NULL) ? (u32)src->bumper_gobj->id : 0U;
+		dst->bumper_pos = src->bumper_pos;
+		slot->ground_captured = TRUE;
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+static void syNetRbSnapApplyGround(const SYNetRbSnapshotSlot *slot)
+{
+	const SYNetRbSnapGroundBlob *ground;
+
+	if ((slot == NULL) || (slot->ground_captured == FALSE))
+	{
+		return;
+	}
+	ground = &slot->ground;
+	if (gSCManagerBattleState == NULL)
+	{
+		return;
+	}
+	if (ground->gkind != gSCManagerBattleState->gkind)
+	{
+		return;
+	}
+	switch (ground->gkind)
+	{
+	case nGRKindHyrule:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundHyrule))
+		{
+			const SYNetRbSnapGroundHyrule *src = (const SYNetRbSnapGroundHyrule *)ground->payload;
+			GRCommonGroundVarsHyrule *dst = &gGRCommonStruct.hyrule;
+
+			dst->twister_gobj = (src->twister_gobj_id != 0U) ? gcFindGObjByID(src->twister_gobj_id) : NULL;
+			dst->twister_leftedge_x = src->twister_leftedge_x;
+			dst->twister_rightedge_x = src->twister_rightedge_x;
+			dst->twister_vel = src->twister_vel;
+			dst->twister_wait = src->twister_wait;
+			dst->twister_speed_wait = src->twister_speed_wait;
+			dst->twister_turn_wait = src->twister_turn_wait;
+			dst->twister_line_id = src->twister_line_id;
+			dst->twister_status = src->twister_status;
+			dst->twister_pos_count = src->twister_pos_count;
+		}
+		break;
+	case nGRKindJungle:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundJungle))
+		{
+			const SYNetRbSnapGroundJungle *src = (const SYNetRbSnapGroundJungle *)ground->payload;
+			GRCommonGroundVarsJungle *dst = &gGRCommonStruct.jungle;
+
+			dst->tarucann_gobj = (src->tarucann_gobj_id != 0U) ? gcFindGObjByID(src->tarucann_gobj_id) : NULL;
+			dst->tarucann_status = src->tarucann_status;
+			dst->tarucann_wait = src->tarucann_wait;
+			dst->tarucann_rotate_step = src->tarucann_rotate_step;
+		}
+		break;
+	case nGRKindZebes:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundZebes))
+		{
+			const SYNetRbSnapGroundZebes *src = (const SYNetRbSnapGroundZebes *)ground->payload;
+			GRCommonGroundVarsZebes *dst = &gGRCommonStruct.zebes;
+
+			dst->acid_level_curr = src->acid_level_curr;
+			dst->acid_level_step = src->acid_level_step;
+			dst->acid_level_wait = src->acid_level_wait;
+			dst->acid_status = src->acid_status;
+			dst->acid_attr_id = src->acid_attr_id;
+			dst->rumble_wait = src->rumble_wait;
+		}
+		break;
+	case nGRKindYamabuki:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundYamabuki))
+		{
+			const SYNetRbSnapGroundYamabuki *src = (const SYNetRbSnapGroundYamabuki *)ground->payload;
+			GRCommonGroundVarsYamabuki *dst = &gGRCommonStruct.yamabuki;
+
+			dst->monster_gobj = (src->monster_gobj_id != 0U) ? gcFindGObjByID(src->monster_gobj_id) : NULL;
+			dst->gate_gobj = (src->gate_gobj_id != 0U) ? gcFindGObjByID(src->gate_gobj_id) : NULL;
+			dst->gate_pos = src->gate_pos;
+			dst->gate_status = src->gate_status;
+			dst->gate_noentry = src->gate_noentry;
+			dst->monster_wait = src->monster_wait;
+			dst->gate_wait = src->gate_wait;
+			dst->monster_id_prev = src->monster_id_prev;
+		}
+		break;
+	case nGRKindInishie:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundInishie))
+		{
+			const SYNetRbSnapGroundInishie *src = (const SYNetRbSnapGroundInishie *)ground->payload;
+			GRCommonGroundVarsInishie *dst = &gGRCommonStruct.inishie;
+			s32 ci;
+
+			dst->splat_alt = src->splat_alt;
+			dst->splat_accelerate = src->splat_accelerate;
+			dst->splat_wait = src->splat_wait;
+			dst->splat_status = src->splat_status;
+			dst->pblock_status = src->pblock_status;
+			dst->pblock_gobj = (src->pblock_gobj_id != 0U) ? gcFindGObjByID(src->pblock_gobj_id) : NULL;
+			dst->pblock_appear_wait = src->pblock_appear_wait;
+			dst->pblock_pos_count = src->pblock_pos_count;
+			memcpy(dst->players_tt, src->players_tt, sizeof(dst->players_tt));
+			memcpy(dst->players_ga, src->players_ga, sizeof(dst->players_ga));
+			dst->pakkun_gobj[0] = (src->pakkun_gobj_id[0] != 0U) ? gcFindGObjByID(src->pakkun_gobj_id[0]) : NULL;
+			dst->pakkun_gobj[1] = (src->pakkun_gobj_id[1] != 0U) ? gcFindGObjByID(src->pakkun_gobj_id[1]) : NULL;
+			for (ci = 0; ci < 2; ci++)
+			{
+				const SYNetRbSnapGroundInishieScale *ss = &src->scale[ci];
+				GRInishieScale *ls = &dst->scale[ci];
+
+				ls->platform_base_y = ss->platform_base_y;
+				ls->string_length = ss->string_length;
+				if (ls->platform_dobj != NULL)
+				{
+					ls->platform_dobj->translate.vec.f = ss->platform_translate;
+				}
+				if (ls->string_dobj != NULL)
+				{
+					ls->string_dobj->translate.vec.f = ss->string_translate;
+				}
+			}
+		}
+		break;
+	case nGRKindYoster:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundYoster))
+		{
+			const SYNetRbSnapGroundYoster *src = (const SYNetRbSnapGroundYoster *)ground->payload;
+			GRCommonGroundVarsYoster *dst = &gGRCommonStruct.yoster;
+			s32 ci;
+
+			for (ci = 0; ci < 3; ci++)
+			{
+				const SYNetRbSnapGroundYosterCloud *sc = &src->clouds[ci];
+				GRYosterCloud *lc = &dst->clouds[ci];
+
+				lc->gobj = (sc->gobj_id != 0U) ? gcFindGObjByID(sc->gobj_id) : NULL;
+				lc->altitude = sc->altitude;
+				lc->pressure = sc->pressure;
+				lc->status = sc->status;
+				lc->anim_id = sc->anim_id;
+				lc->is_cloud_line_active = sc->is_cloud_line_active;
+				lc->pressure_timer = sc->pressure_timer;
+				lc->evaporate_wait = sc->evaporate_wait;
+			}
+		}
+		break;
+	case nGRKindSector:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundSector))
+		{
+			const SYNetRbSnapGroundSector *src = (const SYNetRbSnapGroundSector *)ground->payload;
+			GRCommonGroundVarsSector *dst = &gGRCommonStruct.sector;
+
+			dst->map_gobj = (src->map_gobj_id != 0U) ? gcFindGObjByID(src->map_gobj_id) : NULL;
+			dst->arwing_target_x = src->arwing_target_x;
+			dst->arwing_appear_timer = src->arwing_appear_timer;
+			dst->arwing_state_timer = src->arwing_state_timer;
+			dst->arwing_status = src->arwing_status;
+			dst->arwing_flight_pattern = src->arwing_flight_pattern;
+			dst->arwing_type_cycle = src->arwing_type_cycle;
+			dst->arwing_laser_ammo = src->arwing_laser_ammo;
+			dst->arwing_laser_timer = src->arwing_laser_timer;
+			dst->arwing_laser_count = src->arwing_laser_count;
+			dst->arwing_pilot_curr = src->arwing_pilot_curr;
+			dst->arwing_pilot_prev = src->arwing_pilot_prev;
+			dst->is_arwing_z_near = src->is_arwing_z_near;
+			dst->is_arwing_z_collision = src->is_arwing_z_collision;
+			dst->is_arwing_line_active = src->is_arwing_line_active;
+			dst->is_arwing_line_collision = src->is_arwing_line_collision;
+		}
+		break;
+	case nGRKindPupupu:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundPupupu))
+		{
+			const SYNetRbSnapGroundPupupu *src = (const SYNetRbSnapGroundPupupu *)ground->payload;
+			GRCommonGroundVarsPupupu *dst = &gGRCommonStruct.pupupu;
+
+			dst->whispy_wind_wait = src->whispy_wind_wait;
+			dst->whispy_wind_duration = src->whispy_wind_duration;
+			dst->whispy_blink_wait = src->whispy_blink_wait;
+			dst->whispy_status = src->whispy_status;
+			dst->whispy_eyes_status = src->whispy_eyes_status;
+			dst->whispy_mouth_status = src->whispy_mouth_status;
+		}
+		break;
+	case nGRKindCastle:
+		if (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundCastle))
+		{
+			const SYNetRbSnapGroundCastle *src = (const SYNetRbSnapGroundCastle *)ground->payload;
+			GRCommonGroundVarsCastle *dst = &gGRCommonStruct.castle;
+
+			dst->bumper_gobj = (src->bumper_gobj_id != 0U) ? gcFindGObjByID(src->bumper_gobj_id) : NULL;
+			dst->bumper_pos = src->bumper_pos;
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque)
+{
+	const SYNetRbSnapshotSlot *slot = (const SYNetRbSnapshotSlot *)slot_opaque;
+
+	if ((slot == NULL) || (slot->ground_captured == FALSE))
+	{
+		return 2166136261U;
+	}
+	return syNetRbSnapFoldGroundPayloadHash(&slot->ground);
+}
+
 static void syNetRbSnapSanitizeEffectVarsBlob(u8 *vars_out, const EFStruct *ep)
 {
 	EFStruct scratch;
@@ -4468,11 +5271,58 @@ static void syNetRbSnapSanitizeEffectVarsBlob(u8 *vars_out, const EFStruct *ep)
 
 static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapEffectBlob *blob)
 {
-	if ((blob == NULL) || (blob->is_valid == FALSE) || (blob->quake_magnitude == 0xFFU))
+	GObj *fighter_gobj;
+	GObj *effect_gobj;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
 	{
 		return NULL;
 	}
-	return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+	fighter_gobj = NULL;
+	if (blob->fighter_gobj_id != 0U)
+	{
+		fighter_gobj = gcFindGObjByID(blob->fighter_gobj_id);
+		if ((fighter_gobj != NULL) && (ftGetStruct(fighter_gobj) == NULL))
+		{
+			fighter_gobj = NULL;
+		}
+	}
+	switch (blob->respawn_kind)
+	{
+	case SYNETRB_EFFECT_RESPAWN_QUAKE:
+		if (blob->quake_magnitude != 0xFFU)
+		{
+			return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+		}
+		break;
+	case SYNETRB_EFFECT_RESPAWN_SHIELD:
+		if (fighter_gobj != NULL)
+		{
+			return efManagerShieldMakeEffect(fighter_gobj);
+		}
+		break;
+	case SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD:
+		if (fighter_gobj != NULL)
+		{
+			return efManagerYoshiShieldMakeEffect(fighter_gobj);
+		}
+		break;
+	case SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR:
+		if (fighter_gobj != NULL)
+		{
+			return efManagerFoxReflectorMakeEffect(fighter_gobj);
+		}
+		break;
+	case SYNETRB_EFFECT_RESPAWN_NESS_PK_WAVE:
+		if (fighter_gobj != NULL)
+		{
+			return efManagerNessPKThunderWaveMakeEffect(fighter_gobj);
+		}
+		break;
+	default:
+		break;
+	}
+	return NULL;
 }
 
 static void syNetRbSnapApplyEffectBlobToGObj(GObj *gobj, const SYNetRbSnapEffectBlob *blob)
@@ -4491,6 +5341,11 @@ static void syNetRbSnapApplyEffectBlobToGObj(GObj *gobj, const SYNetRbSnapEffect
 		{
 			return;
 		}
+	}
+	if ((blob->snap_flags & SYNETRB_EFFECT_SNAP_NO_STRUCT) != 0U)
+	{
+		gobj->anim_frame = blob->anim_frame;
+		return;
 	}
 	ep = efGetStruct(gobj);
 	if (ep == NULL)
@@ -4583,7 +5438,7 @@ void syNetRbSnapshotGObjLinkAudit(u32 tick)
 		}
 	}
 	port_log(
-	    "SSB64 NetRbSnapshot: gobj_link_audit tick=%u f=%d i=%d w=%d ef6=%d ef8=%d g=%d l13=%d\n",
+	    "SSB64 NetRbSnapshot: gobj_link_audit tick=%u f=%d i=%d w=%d ef6=%d ef8=%d g=%d ia=%d l13=%d\n",
 	    tick,
 	    counts[nGCCommonLinkIDFighter],
 	    counts[nGCCommonLinkIDItem],
@@ -4591,6 +5446,7 @@ void syNetRbSnapshotGObjLinkAudit(u32 tick)
 	    counts[nGCCommonLinkIDEffect],
 	    counts[nGCCommonLinkIDSpecialEffect],
 	    counts[nGCCommonLinkIDGround],
+	    counts[nGCCommonLinkIDItemActor],
 	    counts[13]);
 }
 
@@ -4613,8 +5469,8 @@ static sb32 syNetRbSnapLiveEffectListedInSnapshot(const SYNetRbSnapshotSlot *slo
 }
 
 /*
- * Tear down orphaned world/free effects that speculative sim piled up; EFStructs pinned to fighters (shield/reflector…) are never
- * touched here — their `fighter_gobj` field is snapshots-consistent via full fighter status_vars capture.
+ * Apply snapshot effects, then eject predicted extras: free-floating EFStructs, fighter-attached effects not
+ * listed in the snapshot, and no-struct particle-shell effect GObjs.
  */
 static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshotSlot *slot)
 {
@@ -4639,6 +5495,7 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		gobj = gcFindGObjByID(blob->gobj_id);
 		syNetRbSnapApplyEffectBlobToGObj(gobj, blob);
 	}
+	syNetRbSnapPruneOrphanFighterAttachedEffects(slot);
 	for (pass = 0; pass < 2; pass++)
 	{
 		GObj *link_head;
@@ -4649,15 +5506,21 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			EFStruct *ep;
 
 			next = gobj->link_next;
-			if ((gobj->user_data.p == NULL) || ((ep = efGetStruct(gobj)) == NULL))
+			ep = efGetStruct(gobj);
+			if (ep != NULL)
 			{
+				if (ep->fighter_gobj != NULL)
+				{
+					continue;
+				}
+				if (syNetRbSnapLiveEffectListedInSnapshot(slot, gobj->id) == FALSE)
+				{
+					gcEjectGObj(gobj);
+				}
 				continue;
 			}
-			if (ep->fighter_gobj != NULL)
-			{
-				continue;
-			}
-			if (syNetRbSnapLiveEffectListedInSnapshot(slot, gobj->id) == FALSE)
+			if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect) &&
+			    (syNetRbSnapLiveEffectListedInSnapshot(slot, gobj->id) == FALSE))
 			{
 				gcEjectGObj(gobj);
 			}
@@ -4686,17 +5549,27 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 		memset(blob, 0, sizeof(*blob));
 		blob->is_valid = TRUE;
 		blob->gobj_id = gobj_iter->id;
-		blob->bank_id = ep->bank_id;
 		blob->link_id = gobj_iter->link_id;
-		blob->fighter_gobj_id = (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U;
 		blob->anim_frame = gobj_iter->anim_frame;
-		blob->proc_update_fingerprint = syNetRbSnapPointerFingerprintLow32((const void *)ep->proc_update);
 		blob->quake_magnitude = 0xFFU;
-		if (ep->proc_update == efManagerQuakeProcUpdate)
+		blob->respawn_kind = SYNETRB_EFFECT_RESPAWN_NONE;
+		if (ep != NULL)
 		{
-			blob->quake_magnitude = (u8)(3 - ep->effect_vars.quake.priority);
+			blob->bank_id = ep->bank_id;
+			blob->fighter_gobj_id = (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U;
+			blob->proc_update_fingerprint = syNetRbSnapPointerFingerprintLow32((const void *)ep->proc_update);
+			blob->respawn_kind = syNetRbSnapEffectRespawnKindFromLive(gobj_iter, ep);
+			if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
+			{
+				blob->quake_magnitude = (u8)(3 - ep->effect_vars.quake.priority);
+			}
+			syNetRbSnapSanitizeEffectVarsBlob(blob->effect_vars, ep);
 		}
-		syNetRbSnapSanitizeEffectVarsBlob(blob->effect_vars, ep);
+		else
+		{
+			blob->snap_flags = SYNETRB_EFFECT_SNAP_NO_STRUCT;
+			blob->proc_update_fingerprint = syNetRbSnapGObjFuncProcFingerprint(gobj_iter);
+		}
 	}
 	slot->effect_count = count;
 	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
@@ -5413,6 +6286,7 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	}
 
 	syNetRbSnapCaptureMap(slot);
+	syNetRbSnapCaptureGround(slot);
 	syNetRbSnapCaptureWorld(&slot->world);
 	if (syNetRbSnapCaptureItems(slot) == FALSE)
 	{
@@ -5439,6 +6313,13 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	slot->hash_item = syNetSyncHashActiveItemsForRollback();
 	slot->hash_weapon = syNetSyncHashActiveWeaponsForRollback();
 	slot->hash_map = syNetSyncHashMapCollisionKinematics();
+#ifdef PORT
+	{
+		u32 ground_hash = syNetRbSnapshotFoldGroundHash(slot);
+
+		slot->hash_map = syNetRbSnapFnvAccumulateU32(slot->hash_map ^ ground_hash, 0x47524F55U);
+	}
+#endif
 	slot->hash_rng = syNetSyncHashRNGSeed();
 	slot->hash_camera = syNetSyncHashGMCamera();
 	slot->hash_animation = syNetSyncHashFighterAnimationStateForRollback();
@@ -5482,6 +6363,7 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	}
 
 	syNetRbSnapApplyMap(slot);
+	syNetRbSnapApplyGround(slot);
 	syNetRbSnapApplyWorld(&slot->world, slot->tick);
 #ifdef PORT
 	syNetRbSnapResetParticlesForRollback();
@@ -5506,6 +6388,7 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 				syNetRbSnapRebindFighterEffectGobjs(&slot->fighters[pidx], fp_re);
 			}
 		}
+		syNetRbSnapFinalizeFighterEffectAttachFlags(slot);
 	}
 #endif
 	syNetRbSnapApplyItems(slot);
