@@ -201,6 +201,8 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_NETPLAY_RESIM_ANCHOR_PROBE=1`** — After rollback load, run one sealed sim step and log `RESIM_ANCHOR_PROBE` (ring vs live hashes at `load_tick+1`). Separates load poison vs replay poison. [`netrollback.c`](port/net/sys/netrollback.c)
 - **`SSB64_NETPLAY_FRAME_COMMIT_DIAG=2`** — Adds `FRAME_COMMIT_STATE_DIVERGE_DETAIL` (commit-token `figh`/`world` vs live hashes at validation). [`netpeer.c`](port/net/sys/netpeer.c)
 - **`SSB64_NETPLAY_SNAPSHOT_ITEM_DIAG=1`** — Save `item_count`/`truncated`; apply `ejected`/`matched`/`respawned`. [`netrollbacksnapshot.c`](port/net/sys/netrollbacksnapshot.c)
+- **`SSB64_NETPLAY_RESIM_BASELINE_GATE_TIMEOUT_MIN`** — Floor (frames) for the resim baseline+seal gate while awaiting peer baseline. Default derived: **10 + 4×ceil(seal_span/24)** capped at **96** (e.g. span 120 → 30 frames). Raise on high-latency WAN if `RESIM_SEAL_ROWS_TIMEOUT` persists after the span>64 seal-mask fix.
+- **`SSB64_NETPLAY_RESIM_BASELINE_PROCEED_ON_TIMEOUT`** — When **1**, open the replay gate after baseline gate timeout even if peer seal rows are incomplete (bisect only; risks `EPISODE_REPLAY_DIVERGE`).
 - **`SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME`** — Max authoritative sim ticks to replay per NetPeer update during catch-up (default **4**, max **32**).
 - **`SSB64_NETPLAY_RESIM_TICK_TRACE`**, **`SSB64_NETPLAY_ROLLBACK_SCAN_DIAG`**
 - **`SSB64_NETPLAY_SIM_HZ`** — Sim Hz hint for rollback-related timing.

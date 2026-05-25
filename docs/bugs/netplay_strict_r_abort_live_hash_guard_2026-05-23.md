@@ -26,7 +26,7 @@ Secondary: counter used “reset to 0 on first stall frame” semantics (needed 
 ## Fixes
 
 1. **Strict abort:** On abort, verdict stays blocked (`strict_remote_stall_abort`, admission **`A`**); FuncRead returns immediately without publish. Abort also runs on skew-pacing **R** hold. Counter no longer reset on transient `shared.advance == TRUE` (removed mid-evaluate reset; only cleared after successful **P** publish or after abort fires).
-2. **Live-hash guard:** When frame-commit is enabled (default on with `SSB64_NETPLAY_FRAME_COMMIT_TOKEN`), compare live `figh`/`world` to local and peer **token** digests after token state digests agree. On mismatch: `FRAME_COMMIT_LIVE_HASH_GUARD` log, `fc_live_hash_guard` diag counter, `syNetRollbackOnFrameCommitLiveHashGuard` (same recovery core as state diverge). Disable with `SSB64_NETPLAY_FRAME_COMMIT_LIVE_GUARD=0`.
+2. **Live-hash guard:** When frame-commit is enabled (default on with `SSB64_NETPLAY_FRAME_COMMIT_TOKEN`), after token state digests agree, verify rollback snapshot @ `validation_tick−1` matches local token digests; fallback live compare only when sim is **>1 tick** past validation (see [netplay_fc_live_guard_false_positive](netplay_fc_live_guard_false_positive_2026-05-23.md)). Disable with `SSB64_NETPLAY_FRAME_COMMIT_LIVE_GUARD=0`.
 
 ## Verify
 

@@ -178,6 +178,7 @@ static sb32 sSYNetRollbackResimAwaitingPeerBaseline;
 static sb32 sSYNetRollbackResimBaselineGateOpen;
 static sb32 sSYNetRollbackResimBaselineDigestMatched;
 static u32 sSYNetRollbackResimBaselineWaitFrames;
+static u32 sSYNetRollbackResimSealRowsTimeoutRetries;
 static u32 sSYNetRollbackLastBaselineEchoLoadTick;
 static u32 sSYNetRollbackLastBaselineEchoSimTick;
 static u32 sSYNetRollbackPeerBaselineResyncSteps;
@@ -870,6 +871,9 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 
 /* Frame-commit validation cadence is RTT-tiered via syNetSessionParamsGetEffectiveFrameCommitValidationTicks(). */
 #define SYNETROLLBACK_BASELINE_GATE_TIMEOUT_FRAMES 10U
+#define SYNETROLLBACK_BASELINE_GATE_TIMEOUT_SPAN_CHUNK_FRAMES 4U
+#define SYNETROLLBACK_BASELINE_GATE_TIMEOUT_MAX_FRAMES 96U
+#define SYNETROLLBACK_SEAL_ROWS_TIMEOUT_MAX_RETRIES 2U
 #define SYNETROLLBACK_BASELINE_DEEPER_MAX_ATTEMPTS 2U
 #define SYNETROLLBACK_BASELINE_TIMEOUT_STREAK_MAX 3U
 #define SYNETROLLBACK_BASELINE_TIMEOUT_STREAK_WINDOW_TICKS 300U
@@ -5070,6 +5074,51 @@ static sb32 syNetRollbackBaselineProceedOnTimeoutEnabled(void)
 	return ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? TRUE : FALSE;
 }
 
+static sb32 syNetRollbackResimAwaitingPeerSealRows(void)
+{
+	if ((syNetRollbackEpisodeFsmEnabled() == FALSE) || (syNetRollbackEpisodeInputsSealed() == FALSE) ||
+	    (sSYNetRollbackResimBaselineDigestMatched == FALSE))
+	{
+		return FALSE;
+	}
+	return (syNetRollbackEpisodeAllPeerSealRowsComplete() == FALSE) ? TRUE : FALSE;
+}
+
+static u32 syNetRollbackGetResimBaselineGateTimeoutFrames(void)
+{
+	u32 span;
+	u32 chunks;
+	u32 timeout;
+	const char *env;
+	int env_min;
+
+	timeout = SYNETROLLBACK_BASELINE_GATE_TIMEOUT_FRAMES;
+	if (syNetRollbackEpisodeInputsSealed() != FALSE)
+	{
+		span = syNetRollbackEpisodeGetSealSpan();
+		if (span > 0U)
+		{
+			chunks = (span + SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX - 1U) /
+			         SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX;
+			timeout += chunks * SYNETROLLBACK_BASELINE_GATE_TIMEOUT_SPAN_CHUNK_FRAMES;
+		}
+	}
+	env = getenv("SSB64_NETPLAY_RESIM_BASELINE_GATE_TIMEOUT_MIN");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		env_min = atoi(env);
+		if (env_min > (int)timeout)
+		{
+			timeout = (u32)env_min;
+		}
+	}
+	if (timeout > SYNETROLLBACK_BASELINE_GATE_TIMEOUT_MAX_FRAMES)
+	{
+		timeout = SYNETROLLBACK_BASELINE_GATE_TIMEOUT_MAX_FRAMES;
+	}
+	return timeout;
+}
+
 static void syNetRollbackEpisodeReset(void)
 {
 	memset(&sSYNetRollbackEpisode, 0, sizeof(sSYNetRollbackEpisode));
@@ -5266,29 +5315,40 @@ void syNetRollbackPumpResimBaselineIfAwaiting(void)
 
 static void syNetRollbackPumpResimBaselineSend(void)
 {
+	sb32 seal_stall;
+	sb32 baseline_storm;
+
 	if ((sSYNetRollbackResimPending == FALSE) || (sSYNetRollbackResimAwaitingPeerBaseline == FALSE) ||
 	    (sSYNetRollbackResimBaselineGateOpen != FALSE))
 	{
 		return;
 	}
-	/* Rate-limit retransmits so baseline packets are not drowned by INPUT bundles. */
-	if ((sSYNetRollbackPeerBaselineRetransmitCount > 0U) &&
-	    ((sSYNetRollbackResimBaselineWaitFrames & 1U) != 0U))
-	{
-		return;
-	}
+	seal_stall = syNetRollbackResimAwaitingPeerSealRows();
+	baseline_storm = FALSE;
 	if ((sSYNetRollbackLastPeerOutcomeValid != FALSE) &&
 	    (sSYNetRollbackLastPeerOutcomeTick == sSYNetRollbackResimLoadTick) &&
 	    (syNetRollbackBaselineUniverseRepeatStorm(sSYNetRollbackResimLoadTick,
 						       sSYNetRollbackLastPeerOutcomeHash.fighter,
 						       sSYNetRollbackPeerBaselineFigh) != FALSE))
 	{
+		baseline_storm = TRUE;
+	}
+	/* Rate-limit baseline retransmits; keep pumping seal rows when baseline already matched. */
+	if ((baseline_storm == FALSE) && (sSYNetRollbackPeerBaselineRetransmitCount > 0U) &&
+	    ((sSYNetRollbackResimBaselineWaitFrames & 1U) != 0U) && (seal_stall == FALSE))
+	{
 		return;
 	}
-	sSYNetRollbackPeerBaselineSendPending = TRUE;
-	syNetPeerTrySendRollbackBaselineDigest();
-	syNetRollbackEpisodePrepareSealRowsRetransmit();
-	syNetPeerTrySendEpisodeSealRows();
+	if (baseline_storm == FALSE)
+	{
+		sSYNetRollbackPeerBaselineSendPending = TRUE;
+		syNetPeerTrySendRollbackBaselineDigest();
+	}
+	if ((seal_stall != FALSE) || (syNetRollbackEpisodeInputsSealed() != FALSE))
+	{
+		syNetRollbackEpisodePrepareSealRowsRetransmit();
+		syNetPeerTrySendEpisodeSealRows();
+	}
 }
 
 static sb32 syNetRollbackBaselineFighterSlotsMatch(const u32 *peer_fighter_slot, const u32 *local_fighter_slot)
@@ -5320,6 +5380,7 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackResimPreHashesValid = TRUE;
 	sSYNetRollbackPeerBaselineSendPending = TRUE;
 	sSYNetRollbackResimBaselineDigestMatched = FALSE;
+	sSYNetRollbackResimSealRowsTimeoutRetries = 0U;
 	sSYNetRollbackPeerBaselineLoadTick = load_tick;
 	sSYNetRollbackPeerBaselineFigh = live.fighter;
 	sSYNetRollbackPeerBaselineWorld = live.world;
@@ -6321,8 +6382,10 @@ void syNetRollbackTryOpenResimReplayGate(void)
 		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_WAIT load_tick=%u missing_slots=0x%X\n",
 		    sSYNetRollbackResimLoadTick,
 		    missing);
+		syNetRollbackEpisodeLogSealRowsWaitDetail(sSYNetRollbackResimLoadTick, missing);
 		return;
 	}
+	sSYNetRollbackResimSealRowsTimeoutRetries = 0U;
 	port_log(
 	    "SSB64 NetRollback: resim replay gate open load_tick=%u mismatch=%u target=%u\n",
 	    sSYNetRollbackResimLoadTick,
@@ -6490,10 +6553,32 @@ static void syNetRollbackOnBaselineGateTimeout(void)
 	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) &&
 	    (syNetRollbackEpisodeAllPeerSealRowsComplete() == FALSE))
 	{
+		u32 missing_seal;
+
+		missing_seal = syNetRollbackEpisodeGetMissingPeerSealSlotsMask();
 		port_log(
 		    "SSB64 NetRollback: RESIM_SEAL_ROWS_TIMEOUT load_tick=%u missing_slots=0x%X\n",
 		    load_tick,
-		    syNetRollbackEpisodeGetMissingPeerSealSlotsMask());
+		    missing_seal);
+		syNetRollbackEpisodeLogSealRowsWaitDetail(load_tick, missing_seal);
+		if ((sSYNetRollbackResimBaselineDigestMatched != FALSE) &&
+		    (sSYNetRollbackBaselineTimeoutStreak < SYNETROLLBACK_BASELINE_TIMEOUT_STREAK_MAX) &&
+		    (sSYNetRollbackResimSealRowsTimeoutRetries < SYNETROLLBACK_SEAL_ROWS_TIMEOUT_MAX_RETRIES))
+		{
+			sSYNetRollbackResimSealRowsTimeoutRetries++;
+			sSYNetRollbackResimBaselineWaitFrames = 0U;
+			sSYNetRollbackResimAwaitingPeerBaseline = TRUE;
+			sSYNetRollbackResimPending = TRUE;
+			syNetRollbackEpisodePrepareSealRowsRetransmit();
+			syNetPeerTrySendEpisodeSealRows();
+			port_log(
+			    "SSB64 NetRollback: RESIM_SEAL_ROWS_TIMEOUT retry load_tick=%u attempt=%u span=%u gate_timeout_frames=%u\n",
+			    load_tick,
+			    (unsigned int)sSYNetRollbackResimSealRowsTimeoutRetries,
+			    syNetRollbackEpisodeGetSealSpan(),
+			    syNetRollbackGetResimBaselineGateTimeoutFrames());
+			return;
+		}
 	}
 	if ((syNetRollbackBaselineProceedOnTimeoutEnabled() != FALSE) &&
 	    (syNetRollbackSymmetricWireLockActive() == FALSE))
@@ -6608,7 +6693,7 @@ static void syNetRollbackArmPeerBaselineResync(u32 load_tick)
 	}
 	else
 	{
-		mismatch_tick = load_tick;
+		mismatch_tick = load_tick + 1U;
 	}
 	if (syNetRollbackPeerBaselineResyncStormLimitReached(load_tick) != FALSE)
 	{
@@ -7787,7 +7872,7 @@ static void syNetRollbackAdvanceResimBudget(void)
 	{
 		syNetRollbackPumpResimBaselineSend();
 		sSYNetRollbackResimBaselineWaitFrames++;
-		if (sSYNetRollbackResimBaselineWaitFrames >= SYNETROLLBACK_BASELINE_GATE_TIMEOUT_FRAMES)
+		if (sSYNetRollbackResimBaselineWaitFrames >= syNetRollbackGetResimBaselineGateTimeoutFrames())
 		{
 			syNetRollbackOnBaselineGateTimeout();
 			if ((sSYNetRollbackResimPending == FALSE) ||

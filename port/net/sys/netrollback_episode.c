@@ -31,7 +31,8 @@ typedef struct SYNetRollbackEpisodeFsmState
 	SYNetRollbackEpisodeReplayLogEntry replay_log[SYNETROLLBACK_EPISODE_REPLAY_LOG_MAX];
 	SYNetInputFrame sealed[SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN][MAXCONTROLLERS];
 	ub8 sealed_valid[SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN][MAXCONTROLLERS];
-	u64 peer_seal_tick_mask[MAXCONTROLLERS];
+	u64 peer_seal_tick_mask_lo[MAXCONTROLLERS];
+	u64 peer_seal_tick_mask_hi[MAXCONTROLLERS];
 	u8 seal_send_row_begin[MAXCONTROLLERS];
 	u32 event_head;
 	u32 event_tail;
@@ -157,35 +158,55 @@ static void syNetRollbackEpisodeMarkPeerSealTick(s32 player, u32 row_offset)
 {
 	u64 bit;
 
-	if ((player < 0) || (player >= MAXCONTROLLERS) || (row_offset >= 64U))
+	if ((player < 0) || (player >= MAXCONTROLLERS) || (row_offset >= SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN))
 	{
 		return;
 	}
-	bit = (u64)1 << row_offset;
-	sSYNetRollbackEpisodeFsm.peer_seal_tick_mask[player] |= bit;
+	if (row_offset < 64U)
+	{
+		bit = (u64)1 << row_offset;
+		sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo[player] |= bit;
+	}
+	else
+	{
+		bit = (u64)1 << (row_offset - 64U);
+		sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi[player] |= bit;
+	}
 }
 
 static sb32 syNetRollbackEpisodePeerSealTickMaskComplete(s32 player, u32 span)
 {
-	u64 need;
+	u64 need_lo;
+	u64 need_hi;
+	u32 lo_span;
+	u32 hi_span;
 	u32 i;
 
-	if ((player < 0) || (player >= MAXCONTROLLERS) || (span == 0U) || (span > 64U))
+	if ((player < 0) || (player >= MAXCONTROLLERS) || (span == 0U) ||
+	    (span > SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN))
 	{
 		return FALSE;
 	}
-	need = (span >= 64U) ? ~(u64)0 : (((u64)1 << span) - 1U);
 	for (i = 0; i < span; i++)
 	{
-		u32 idx;
-
-		idx = i;
-		if (sSYNetRollbackEpisodeFsm.sealed_valid[idx][player] == FALSE)
+		if (sSYNetRollbackEpisodeFsm.sealed_valid[i][player] == FALSE)
 		{
 			return FALSE;
 		}
 	}
-	return ((sSYNetRollbackEpisodeFsm.peer_seal_tick_mask[player] & need) == need) ? TRUE : FALSE;
+	lo_span = (span < 64U) ? span : 64U;
+	hi_span = (span > 64U) ? (span - 64U) : 0U;
+	need_lo = (lo_span >= 64U) ? ~(u64)0 : (((u64)1 << lo_span) - 1U);
+	need_hi = (hi_span == 0U) ? 0U : ((hi_span >= 64U) ? ~(u64)0 : (((u64)1 << hi_span) - 1U));
+	if ((sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo[player] & need_lo) != need_lo)
+	{
+		return FALSE;
+	}
+	if (hi_span == 0U)
+	{
+		return TRUE;
+	}
+	return ((sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi[player] & need_hi) == need_hi) ? TRUE : FALSE;
 }
 
 static void syNetRollbackEpisodeClearPendingPeerSealRows(void)
@@ -195,10 +216,6 @@ static void syNetRollbackEpisodeClearPendingPeerSealRows(void)
 
 static sb32 syNetRollbackEpisodeEpisodeTupleMatches(u32 epoch_id, u32 mismatch_tick, u32 target_tick)
 {
-	if (sSYNetRollbackEpisodeFsm.phase == nSYNetRollbackEpisodeFsmPhaseLive)
-	{
-		return FALSE;
-	}
 	return ((epoch_id == sSYNetRollbackEpisodeFsm.epoch_id) &&
 		(mismatch_tick == sSYNetRollbackEpisodeFsm.mismatch_tick) &&
 		(target_tick == sSYNetRollbackEpisodeFsm.target_tick))
@@ -369,7 +386,8 @@ void syNetRollbackEpisodeFsmBegin(u32 epoch_id, u32 mismatch_tick, u32 load_tick
 
 	memset(sSYNetRollbackEpisodeFsm.sealed, 0, sizeof(sSYNetRollbackEpisodeFsm.sealed));
 	memset(sSYNetRollbackEpisodeFsm.sealed_valid, 0, sizeof(sSYNetRollbackEpisodeFsm.sealed_valid));
-	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi));
 	memset(sSYNetRollbackEpisodeFsm.seal_send_row_begin, nSYNetRollbackEpisodeSealSendDone,
 	       sizeof(sSYNetRollbackEpisodeFsm.seal_send_row_begin));
 	sSYNetRollbackEpisodeFsm.replay_log_count = 0U;
@@ -451,10 +469,6 @@ void syNetRollbackEpisodeFsmSetPhase(SYNetRollbackEpisodeFsmPhase phase)
 	    sSYNetRollbackEpisodeFsm.mismatch_tick,
 	    sSYNetRollbackEpisodeFsm.target_tick);
 	sSYNetRollbackEpisodeFsm.phase = phase;
-	if (phase == nSYNetRollbackEpisodeFsmPhaseLive)
-	{
-		syNetRollbackEpisodeFsmSessionReset();
-	}
 #endif
 }
 
@@ -542,7 +556,8 @@ void syNetRollbackEpisodeSealInputs(u32 mismatch_tick, u32 target_tick, s32 corr
 		syNetInputRollbackReconcilePeerSymmetricAuthority(authority_slot, mismatch_tick, target_tick);
 	}
 	memset(sSYNetRollbackEpisodeFsm.sealed_valid, 0, sizeof(sSYNetRollbackEpisodeFsm.sealed_valid));
-	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi));
 	sSYNetRollbackEpisodeFsm.frozen_post_input_digest_valid = FALSE;
 	sSYNetRollbackEpisodeFsm.frozen_post_input_digest = 0U;
 	for (t = mismatch_tick; t < target_tick; t++)
@@ -960,7 +975,8 @@ void syNetRollbackEpisodeResetPeerSealRowsState(void)
 #ifdef PORT
 	s32 player;
 
-	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo));
+	memset(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi, 0, sizeof(sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi));
 	for (player = 0; player < MAXCONTROLLERS; player++)
 	{
 		sSYNetRollbackEpisodeFsm.seal_send_row_begin[player] = nSYNetRollbackEpisodeSealSendDone;
@@ -1305,6 +1321,98 @@ sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void)
 	return TRUE;
 #else
 	return TRUE;
+#endif
+}
+
+u32 syNetRollbackEpisodeGetSealSpan(void)
+{
+#ifdef PORT
+	return syNetRollbackEpisodeSealSpan();
+#else
+	return 0U;
+#endif
+}
+
+void syNetRollbackEpisodeLogSealRowsWaitDetail(u32 load_tick, u32 missing_mask)
+{
+#ifdef PORT
+	static u32 sLastLogLoadTick;
+	static u32 sLastLogMissingMask;
+	s32 slots[MAXCONTROLLERS];
+	s32 count;
+	s32 i;
+	u32 span;
+
+	if (missing_mask == 0U)
+	{
+		return;
+	}
+	if ((load_tick == sLastLogLoadTick) && (missing_mask == sLastLogMissingMask))
+	{
+		return;
+	}
+	sLastLogLoadTick = load_tick;
+	sLastLogMissingMask = missing_mask;
+	span = syNetRollbackEpisodeSealSpan();
+	if (syNetRollbackEpisodeEnumerateRequiredPeerSealSlots(slots, MAXCONTROLLERS, &count) == FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_WAIT_DETAIL load_tick=%u missing_slots=0x%X span=%u (no required slots)\n",
+		    load_tick,
+		    missing_mask,
+		    span);
+		return;
+	}
+	for (i = 0; i < count; i++)
+	{
+		s32 player;
+		u32 first_invalid;
+		u32 j;
+		u32 lo_recv;
+		u32 hi_recv;
+
+		player = slots[i];
+		if (((missing_mask & (u32)(1U << player)) == 0U) || (player < 0) || (player >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		first_invalid = ~(u32)0;
+		for (j = 0; j < span; j++)
+		{
+			if (sSYNetRollbackEpisodeFsm.sealed_valid[j][player] == FALSE)
+			{
+				first_invalid = j;
+				break;
+			}
+		}
+		lo_recv = 0U;
+		hi_recv = 0U;
+		for (j = 0; j < span && j < 64U; j++)
+		{
+			if ((sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_lo[player] & ((u64)1 << j)) != 0U)
+			{
+				lo_recv++;
+			}
+		}
+		for (j = 64U; j < span; j++)
+		{
+			if ((sSYNetRollbackEpisodeFsm.peer_seal_tick_mask_hi[player] & ((u64)1 << (j - 64U))) != 0U)
+			{
+				hi_recv++;
+			}
+		}
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_WAIT_DETAIL load_tick=%u slot=%d span=%u first_invalid_idx=%u lo_mask_bits=%u hi_mask_bits=%u\n",
+		    load_tick,
+		    (int)player,
+		    span,
+		    first_invalid,
+		    lo_recv,
+		    hi_recv);
+	}
+#else
+	(void)load_tick;
+	(void)missing_mask;
 #endif
 }
 

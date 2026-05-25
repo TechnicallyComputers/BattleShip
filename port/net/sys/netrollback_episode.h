@@ -134,7 +134,9 @@ extern sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatc
 						       u32 row_begin, const SYNetInputFrame *rows, u32 row_count);
 extern sb32 syNetRollbackEpisodePeerSealRowsComplete(s32 player);
 extern sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void);
+extern u32 syNetRollbackEpisodeGetSealSpan(void);
 extern u32 syNetRollbackEpisodeGetMissingPeerSealSlotsMask(void);
+extern void syNetRollbackEpisodeLogSealRowsWaitDetail(u32 load_tick, u32 missing_mask);
 extern sb32 syNetRollbackEpisodeTakeSealRowsChunkForSend(u32 *out_epoch_id, u32 *out_mismatch_tick, u32 *out_target_tick,
 							 s32 *out_slot, u32 *out_row_begin, SYNetInputFrame *out_frames,
 							 u32 max_frames, u32 *out_row_count);
