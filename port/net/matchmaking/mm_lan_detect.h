@@ -14,7 +14,9 @@ extern sb32 mmLanPeerHostportIsOnLocalLan(const char *peer_hostport);
 
 /*
  * TRUE when both host:port strings parse as IPv4 and addresses match (STUN reflexive WAN IPs).
- * Automatch tries reflexive peer first; peer_lan is attempted only when this is TRUE (same WAN).
+ * Automatch uses this to detect same public IP; peer_lan is tried first only when
+ * mmLanPeerHostportIsOnLocalLan(peer_lan) is also TRUE (same subnet). Otherwise reflexive
+ * host:port is attempted (same-WAN CGNAT / hairpin cases).
  */
 extern sb32 mmHostportWanIpv4Equal(const char *local_wan_hostport, const char *peer_wan_hostport);
 
