@@ -49,10 +49,17 @@ extern u32 syNetSyncHashActiveItemsForRollback(void);
 extern u32 syNetSyncHashActiveWeaponsForRollback(void);
 extern u32 syNetSyncHashRNGSeed(void);
 extern u32 syNetSyncHashGMCamera(void);
+/*
+ * Diagnostic animation fingerprint: full AObj walk per joint (no 16-node cap). Merges fighter folds by player slot like
+ * `syNetSyncHashBattleFighters` — **not** used for rollback (`syNetSyncHashFighterAnimationStateForRollback`).
+ */
 extern u32 syNetSyncHashFighterAnimationState(void);
 /*
  * Animation fingerprint constrained to rollback snapshot coverage: first SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX
  * AObj nodes per joint, same fields as `SYNetRbSnapAObjNodeBlob`. Must match `netrollbacksnapshot.c` capture/apply.
+ *
+ * Fold is per fighter slot (player index); slots merge in fixed 0..GMCOMMON_PLAYERS_MAX-1 order like
+ * `syNetSyncHashBattleFighters`, not fighter common-link traversal order — cross-peer-stable when per-slot folds match.
  */
 /* Yoshi grab/throw (and similar) can reach 9+ AObj nodes per joint; 8 truncated resim (joint4/6 @ tick 569). */
 #define SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX 16

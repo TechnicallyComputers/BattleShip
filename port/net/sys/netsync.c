@@ -2077,70 +2077,131 @@ u32 syNetSyncHashGMCamera(void)
 	return hash;
 }
 
+/* Full-chain diagnostic fold (all AObj nodes; no rollback cap). See `syNetSyncHashFighterAnimationState`. */
+static u32 syNetSyncFoldFighterAnimationStateDiagnostic(const FTStruct *fp, GObj *fighter_gobj)
+{
+	u32 fold = 2166136261U;
+	s32 ji;
+
+	if ((fp == NULL) || (fighter_gobj == NULL))
+	{
+		return fold;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			AObj *aobj;
+
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
+			for (aobj = fp->joints[ji]->aobj; aobj != NULL; aobj = aobj->next)
+			{
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
+			}
+		}
+	}
+	return fold;
+}
+
 u32 syNetSyncHashFighterAnimationState(void)
 {
 	GObj *fighter_gobj;
-	u32 hash = 2166136261U;
-	s32 ji;
+	u32 slot_hash[GMCOMMON_PLAYERS_MAX];
+	s32 si;
 
-	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
-	     fighter_gobj = fighter_gobj->link_next)
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
 	{
-		FTStruct *fp = ftGetStruct(fighter_gobj);
-		u32 fold = 2166136261U;
-
-		if (fp == NULL)
-		{
-			continue;
-		}
-		fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
-		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));
-		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
-		{
-			if (fp->joints[ji] != NULL)
-			{
-				AObj *aobj;
-
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_frame));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_wait));
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fp->joints[ji]->anim_speed));
-				for (aobj = fp->joints[ji]->aobj; aobj != NULL; aobj = aobj->next)
-				{
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->track);
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)aobj->kind);
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length_invert));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->length));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_base));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->value_target));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_base));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(aobj->rate_target));
-				}
-			}
-		}
-		hash ^= fold;
-		hash = syNetSyncFnvAccumulateU32(hash, (u32)fp->player);
+		slot_hash[si] = 2166136261U;
 	}
-	return hash;
-}
-
-u32 syNetSyncHashFighterAnimationStateForRollback(void)
-{
-	GObj *fighter_gobj;
-	u32 hash = 2166136261U;
 
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
 	     fighter_gobj = fighter_gobj->link_next)
 	{
 		FTStruct *fp = ftGetStruct(fighter_gobj);
 		u32 fold;
+		s32 slot;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		fold = syNetSyncFoldFighterAnimationStateDiagnostic(fp, fighter_gobj);
+		slot = fp->player;
+
+		if ((slot >= 0) && (slot < GMCOMMON_PLAYERS_MAX))
+		{
+			slot_hash[slot] =
+			    syNetSyncFnvAccumulateU32(slot_hash[slot] ^ fold, (u32)slot ^ 0x9E3779B9U);
+		}
+		else
+		{
+			slot_hash[0] = syNetSyncFnvAccumulateU32(slot_hash[0] ^ fold, (u32)slot ^ 0x85EBCA77U);
+		}
+	}
+	{
+		u32 merged = 2166136261U;
+
+		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+		{
+			merged = syNetSyncFnvAccumulateU32(merged ^ slot_hash[si], (u32)si);
+		}
+		return merged;
+	}
+}
+
+u32 syNetSyncHashFighterAnimationStateForRollback(void)
+{
+	GObj *fighter_gobj;
+	u32 slot_hash[GMCOMMON_PLAYERS_MAX];
+	s32 si;
+
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		slot_hash[si] = 2166136261U;
+	}
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		u32 fold;
+		s32 slot;
 
 		if (fp == NULL)
 		{
 			continue;
 		}
 		fold = syNetSyncFoldFighterAnimRollback(fp, fighter_gobj);
-		hash ^= fold;
-		hash = syNetSyncFnvAccumulateU32(hash, (u32)fp->player);
+		slot = fp->player;
+
+		if ((slot >= 0) && (slot < GMCOMMON_PLAYERS_MAX))
+		{
+			slot_hash[slot] =
+			    syNetSyncFnvAccumulateU32(slot_hash[slot] ^ fold, (u32)slot ^ 0x9E3779B9U);
+		}
+		else
+		{
+			slot_hash[0] = syNetSyncFnvAccumulateU32(slot_hash[0] ^ fold, (u32)slot ^ 0x85EBCA77U);
+		}
 	}
-	return hash;
+	{
+		u32 merged = 2166136261U;
+
+		for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+		{
+			merged = syNetSyncFnvAccumulateU32(merged ^ slot_hash[si], (u32)si);
+		}
+		return merged;
+	}
 }
