@@ -367,6 +367,9 @@ static void syNetInputAdmissionBump(char path)
 	case 'R':
 		sSYNetInputAdmissionR++;
 		break;
+	case 'A':
+		sSYNetInputAdmissionR++;
+		break;
 	default:
 		break;
 	}
@@ -5110,6 +5113,8 @@ static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
  * When rollback has used predicted remote input and arms recovery, `syNetRollbackPredictionRecoveryRequiresConfirmed`
  * returns TRUE until `sim_tick` reaches `frontier + PHASE_LOCK_PREDICTION_TICKS` — then missing `wire_base` stalls as **R**
  * (no prediction escape) until inputs arrive or `SSB64_NETPLAY_STRICT_R_ABORT_FRAMES` tears down VS.
+ * On abort: verdict stays blocked (`strict_remote_stall_abort`); FuncRead returns without publish (must not
+ * `syNetTickCommitVerdictAllowAll` or the stall counter resets on the accidental publish path).
  */
 static void syNetInputLogStrictDecision(u32 tick, u32 wire_base, u32 d, u32 hr, sb32 miss)
 {
@@ -5140,9 +5145,9 @@ static sb32 syNetInputStrictRemoteMissAbortIfStuck(u32 sim_tick)
 	if (sSYNetInputStrictRStuckSimTick != sim_tick)
 	{
 		sSYNetInputStrictRStuckSimTick = sim_tick;
-		sSYNetInputStrictRStuckFrames = 0U;
+		sSYNetInputStrictRStuckFrames = 1U;
 	}
-	else
+	else if (sSYNetInputStrictRStuckFrames < ~(u32)0)
 	{
 		sSYNetInputStrictRStuckFrames++;
 	}
@@ -5164,6 +5169,8 @@ static sb32 syNetInputStrictRemoteMissAbortIfStuck(u32 sim_tick)
 	{
 		return FALSE;
 	}
+	sSYNetInputStrictRStuckSimTick = ~(u32)0;
+	sSYNetInputStrictRStuckFrames = 0U;
 	port_log(
 	    "SSB64 NetInput: strict remote MISS stall abort sim=%u frames=%u hr=%u wire_base=%u wire_strict=%u D=%u "
 	    "slack=%d pred_rec=%d (gate uses wire_base; see STRICT log) - ending VS session\n",
@@ -5216,6 +5223,7 @@ static void syNetTickCommitVerdictAllowAll(SYNetTickCommitVerdict *o)
 	o->allow_battle_sim_step = TRUE;
 	o->suppress_scene_update = FALSE;
 	o->strict_partial_publish_local = FALSE;
+	o->strict_remote_stall_abort = FALSE;
 	o->admission_letter = 'P';
 }
 
@@ -5303,7 +5311,12 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 				syNetInputMaybeIngressExtraPumpsOnStall();
 				if (syNetInputStrictRemoteMissAbortIfStuck(tick) != FALSE)
 				{
-					syNetTickCommitVerdictAllowAll(out);
+					out->allow_full_input_publish = FALSE;
+					out->allow_battle_sim_step = FALSE;
+					out->suppress_scene_update = TRUE;
+					out->strict_partial_publish_local = FALSE;
+					out->strict_remote_stall_abort = TRUE;
+					out->admission_letter = 'A';
 					return;
 				}
 				syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
@@ -5311,8 +5324,6 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			}
 			return;
 		}
-		sSYNetInputStrictRStuckSimTick = ~(u32)0;
-		sSYNetInputStrictRStuckFrames = 0U;
 		if (syNetPeerShouldHoldSimTickForSkewPacing(tick, NULL) != FALSE)
 		{
 			out->allow_full_input_publish = FALSE;
@@ -5321,6 +5332,16 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			out->strict_partial_publish_local = TRUE;
 			out->admission_letter = 'R';
 			syNetInputMaybeIngressExtraPumpsOnStall();
+			if (syNetInputStrictRemoteMissAbortIfStuck(tick) != FALSE)
+			{
+				out->allow_full_input_publish = FALSE;
+				out->allow_battle_sim_step = FALSE;
+				out->suppress_scene_update = TRUE;
+				out->strict_partial_publish_local = FALSE;
+				out->strict_remote_stall_abort = TRUE;
+				out->admission_letter = 'A';
+				return;
+			}
 			return;
 		}
 		if (syNetInputRemoteHumanWireReadyForSimTick(tick) == FALSE)
@@ -5333,7 +5354,12 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			syNetInputMaybeIngressExtraPumpsOnStall();
 			if (syNetInputStrictRemoteMissAbortIfStuck(tick) != FALSE)
 			{
-				syNetTickCommitVerdictAllowAll(out);
+				out->allow_full_input_publish = FALSE;
+				out->allow_battle_sim_step = FALSE;
+				out->suppress_scene_update = TRUE;
+				out->strict_partial_publish_local = FALSE;
+				out->strict_remote_stall_abort = TRUE;
+				out->admission_letter = 'A';
 				return;
 			}
 			syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
@@ -5438,6 +5464,12 @@ void syNetInputFuncRead(void)
 
 			syNetTickCommitEvaluate(tick, nSYNetTickCommitPhase_FuncReadWireAdmission, &tcv);
 			syNetTickCommitStoreFuncReadCache(&tcv, tick);
+			if (tcv.strict_remote_stall_abort != FALSE)
+			{
+				syNetInputAdmissionBump(tcv.admission_letter);
+				syNetInputMaybeLogFrameCommitDiag(tick, tcv.admission_letter, FALSE, FALSE);
+				return;
+			}
 			if (tcv.allow_full_input_publish == FALSE)
 			{
 				if (tcv.strict_partial_publish_local != FALSE)

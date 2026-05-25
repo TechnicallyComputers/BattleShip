@@ -159,7 +159,8 @@ typedef struct SYNetTickCommitVerdict
 	sb32 allow_battle_sim_step;
 	sb32 suppress_scene_update;
 	sb32 strict_partial_publish_local; /* TRUE: FuncRead must partial-publish local from latch (R/V paths). */
-	char admission_letter;             /* P / E / W / R / V / S / K */
+	sb32 strict_remote_stall_abort;    /* TRUE: strict R stall limit hit; FuncRead must not publish or advance. */
+	char admission_letter;             /* P / E / W / R / V / S / K / A (strict abort) */
 
 } SYNetTickCommitVerdict;
 

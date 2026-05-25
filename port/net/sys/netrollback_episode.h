@@ -6,7 +6,7 @@
 
 #include <sys/netinput.h>
 
-/* Must cover frame-commit validation cadence (120) + slack for FC recovery spans. */
+/* Must cover max frame-commit validation cadence (120 LAN) + slack for FC recovery spans. */
 #define SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN 128U
 #define SYNETROLLBACK_EPISODE_REPLAY_LOG_MAX 64U
 #define SYNETROLLBACK_EPISODE_EVENT_QUEUE_MAX 8U

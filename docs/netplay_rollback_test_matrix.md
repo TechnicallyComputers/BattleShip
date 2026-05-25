@@ -34,7 +34,9 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Prediction recovery | **Off** by default. `SSB64_NETPLAY_PREDICTION_RECOVERY=1` debug only |
 | Delay vs prediction ratio | See `NetSession: apply tier=…`: excellent → `D` 3–4, `phase_lock` ≤5; good → `D` 4–6, `phase_lock` 5–7; playable → `phase_lock` cap 6; high → `phase_lock` cap 7 |
 | State detail | `SSB64_NETPLAY_STATE_DETAIL_DIAG=1` (world); `=2` (+ fighter detail) |
-| NetSync log interval | `SSB64_NETPLAY_NETSYNC_LOG_INTERVAL=60` (default 120 sim ticks between NetSync checkpoints) |
+| NetSync / FC validation cadence | Default **120** sim ticks; WAN auto (**`rtt_ms >= 150`**) → **60**. Override: `SSB64_NETPLAY_FRAME_COMMIT_VALIDATION_TICKS=60` (both peers). Legacy: `SSB64_NETPLAY_NETSYNC_LOG_INTERVAL`. Log: `frame_commit_validation_ticks=` at execution begin; `NetSession: apply … fc_validation_ticks=` |
+| WAN FC cadence soak | Auto-negotiate with **`rtt_ms >= 150`** (or netem ~200 ms); `FRAME_COMMIT_DIAG=2`; pass = first `MM_POLL` boundaries @**60**/**120**/…, both peers same `fc_validation_ticks`, `resolved_load` valid on late diverge; fail = spurious `FRAME_COMMIT_TOKEN_MISMATCH` @120-only boundary with WAN RTT |
+| NetSync log interval (dev) | `SSB64_NETPLAY_NETSYNC_LOG_INTERVAL=45` or `FRAME_COMMIT_VALIDATION_TICKS=45` (both peers; overrides tier) |
 | Resim defer diag | `SSB64_NETPLAY_ROLLBACK_DEFER_DIAG=1` |
 | Resim trace | `SSB64_NETPLAY_RESIM_TICK_TRACE=1` |
 | Resim RNG verify | Default on with rollback; `SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables |
