@@ -5144,6 +5144,28 @@ u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque)
 	return syNetRbSnapFoldGroundPayloadHash(&slot->ground);
 }
 
+u32 syNetRbSnapshotComputeMapHashLive(void)
+{
+	u32 hash;
+
+	hash = syNetSyncHashMapCollisionKinematics();
+#ifdef PORT
+	{
+		SYNetRbSnapshotSlot scratch;
+
+		memset(&scratch, 0, sizeof(scratch));
+		syNetRbSnapCaptureGround(&scratch);
+		if (scratch.ground_captured != FALSE)
+		{
+			u32 ground_hash = syNetRbSnapFoldGroundPayloadHash(&scratch.ground);
+
+			hash = syNetRbSnapFnvAccumulateU32(hash ^ ground_hash, 0x47524F55U);
+		}
+	}
+#endif
+	return hash;
+}
+
 static void syNetRbSnapSanitizeEffectVarsBlob(u8 *vars_out, const EFStruct *ep)
 {
 	EFStruct scratch;

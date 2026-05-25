@@ -2,6 +2,8 @@
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
+extern "C" int syNetPeerIsVSSessionActive(void);
+
 #include <cstddef>
 #include <cstdint>
 
@@ -311,6 +313,9 @@ void ApplyHazardDisable() {
 } // namespace
 
 extern "C" void port_enhancement_stage_hazards_tick(void) {
+    if (syNetPeerIsVSSessionActive() != 0) {
+        return;
+    }
     LatchBattleSettingIfNeeded();
 
     if (sWasInBattle && sDisableHazardsForBattle) {

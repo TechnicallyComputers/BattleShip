@@ -42,11 +42,13 @@ extern void port_log(const char *fmt, ...);
 #define STUN_ATTR_XOR_RELAYED_ADDRESS 0x0016U
 #define STUN_ATTR_REQUESTED_TRANSPORT 0x0019U
 #define STUN_ATTR_LIFETIME 0x000DU
+#define STUN_ATTR_ERROR_CODE 0x0009U
 
 #define STUN_METHOD_ALLOCATE 0x0003U
 #define STUN_METHOD_CREATE_PERMISSION 0x0008U
 #define STUN_METHOD_CHANNEL_BIND 0x0009U
 
+#define STUN_CLASS_MASK 0x0110U /* RFC 5389 class bits (C0/C1) */
 #define STUN_CLASS_REQUEST 0x0000U
 #define STUN_CLASS_SUCCESS 0x0100U
 #define STUN_CLASS_ERROR 0x0110U
@@ -632,6 +634,10 @@ static sb32 mmTurnParseAttr(const u8 *msg, mm_sock_len_t len, u16 want_type, u8 
 				copy = out_cap;
 			}
 			memcpy(out, msg + pos + 4U, copy);
+			if (out_cap > 0U)
+			{
+				out[(copy < out_cap) ? copy : (u16)(out_cap - 1U)] = '\0';
+			}
 			if (out_len != NULL)
 			{
 				*out_len = copy;
@@ -669,6 +675,26 @@ static sb32 mmTurnParseXorRelayed(const u8 *msg, mm_sock_len_t len, struct socka
 	return TRUE;
 }
 
+static sb32 mmTurnParseErrorCode(const u8 *msg, mm_sock_len_t len, u16 *out_number)
+{
+	u8 raw[4];
+	u16 raw_len;
+
+	if (out_number != NULL)
+	{
+		*out_number = 0U;
+	}
+	if (mmTurnParseAttr(msg, len, STUN_ATTR_ERROR_CODE, raw, sizeof(raw), &raw_len) == FALSE || raw_len < 4U)
+	{
+		return FALSE;
+	}
+	if (out_number != NULL)
+	{
+		*out_number = (u16)(((u16)raw[2] << 8) | (u16)raw[3]);
+	}
+	return TRUE;
+}
+
 static sb32 mmTurnCheckResponse(const u8 *msg, mm_sock_len_t len, u16 method, u16 class_mask)
 {
 	u16 typ;
@@ -683,7 +709,7 @@ static sb32 mmTurnCheckResponse(const u8 *msg, mm_sock_len_t len, u16 method, u1
 	{
 		return FALSE;
 	}
-	if ((typ & 0xC100U) != class_mask)
+	if ((typ & STUN_CLASS_MASK) != class_mask)
 	{
 		return FALSE;
 	}
@@ -797,6 +823,18 @@ sb32 mmTurnIsClientEnabled(void)
 	return TRUE;
 }
 
+sb32 mmTurnIsRequired(void)
+{
+	const char *e;
+
+	if (mmTurnIsClientEnabled() == FALSE)
+	{
+		return FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_TURN_REQUIRED");
+	return ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? TRUE : FALSE;
+}
+
 void mmTurnEndRelaySession(void)
 {
 	memset(&sMmTurn, 0, sizeof(sMmTurn));
@@ -812,6 +850,9 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 	s32 attempt;
 	char ip_buf[INET_ADDRSTRLEN];
 
+	u16 last_err = 0U;
+	char server_hp[INET_ADDRSTRLEN + 16];
+
 	if ((udp_fd < 0) || (out == NULL) || (mmTurnIsClientEnabled() == FALSE))
 	{
 		return FALSE;
@@ -821,9 +862,20 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 	mmTurnLoadCredentials();
 	if (mmTurnResolveServer(&server) == FALSE)
 	{
+#ifdef PORT
+		port_log("SSB64 Automatch TURN: server resolve failed (check SSB64_MATCHMAKING_TURN_SERVER)\n");
+#endif
 		return FALSE;
 	}
 	sMmTurn.server_addr = server.addr;
+	if (inet_ntop(AF_INET, &server.addr.sin_addr, ip_buf, sizeof(ip_buf)) != NULL)
+	{
+		snprintf(server_hp, sizeof(server_hp), "%s:%u", ip_buf, (unsigned int)ntohs(server.addr.sin_port));
+	}
+	else
+	{
+		snprintf(server_hp, sizeof(server_hp), "(unknown)");
+	}
 	for (attempt = 0; attempt < 3; attempt++)
 	{
 		if (mmTurnBuildAllocate(req, &req_len, FALSE) == FALSE)
@@ -838,12 +890,19 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 		{
 			u16 rl;
 			u16 nl;
+			u16 err_num;
 
+			(void)mmTurnParseErrorCode(resp, rlen, &err_num);
+			if (err_num != 0U)
+			{
+				last_err = err_num;
+			}
 			sMmTurn.realm[0] = '\0';
 			sMmTurn.nonce[0] = '\0';
-			(void)mmTurnParseAttr(resp, rlen, STUN_ATTR_REALM, (u8 *)sMmTurn.realm, sizeof(sMmTurn.realm) - 1U, &rl);
-			(void)mmTurnParseAttr(resp, rlen, STUN_ATTR_NONCE, (u8 *)sMmTurn.nonce, sizeof(sMmTurn.nonce) - 1U, &nl);
-			if (sMmTurn.realm[0] == '\0' || sMmTurn.nonce[0] == '\0')
+			if (mmTurnParseAttr(resp, rlen, STUN_ATTR_REALM, (u8 *)sMmTurn.realm, sizeof(sMmTurn.realm) - 1U, &rl) ==
+			        FALSE ||
+			    mmTurnParseAttr(resp, rlen, STUN_ATTR_NONCE, (u8 *)sMmTurn.nonce, sizeof(sMmTurn.nonce) - 1U, &nl) ==
+			        FALSE)
 			{
 				continue;
 			}
@@ -854,6 +913,14 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 			if (mmTurnSendRecv(udp_fd, req, req_len, resp, sizeof(resp), &rlen) == FALSE)
 			{
 				continue;
+			}
+			if (mmTurnCheckResponse(resp, rlen, STUN_METHOD_ALLOCATE, STUN_CLASS_ERROR) != FALSE)
+			{
+				(void)mmTurnParseErrorCode(resp, rlen, &err_num);
+				if (err_num != 0U)
+				{
+					last_err = err_num;
+				}
 			}
 		}
 		if (mmTurnCheckResponse(resp, rlen, STUN_METHOD_ALLOCATE, STUN_CLASS_SUCCESS) == FALSE)
@@ -875,13 +942,21 @@ sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out)
 		out->ok = TRUE;
 		snprintf(out->relay_endpoint, sizeof(out->relay_endpoint), "%s", sMmTurn.relay_endpoint);
 #ifdef PORT
-		port_log("SSB64 Automatch TURN: relay=%s server=%s user=%s\n", sMmTurn.relay_endpoint, MM_TURN_DEFAULT_HOST,
+		port_log("SSB64 Automatch TURN: relay=%s server=%s user=%s\n", sMmTurn.relay_endpoint, server_hp,
 		         sMmTurn.username);
 #endif
 		return TRUE;
 	}
 #ifdef PORT
-	port_log("SSB64 Automatch TURN: allocate failed (coturn unreachable or bad credentials)\n");
+	if (last_err != 0U)
+	{
+		port_log("SSB64 Automatch TURN: allocate failed server=%s stun_err=%u (timeout/unreachable or bad credentials)\n",
+		         server_hp, (unsigned int)last_err);
+	}
+	else
+	{
+		port_log("SSB64 Automatch TURN: allocate failed server=%s (no response from coturn)\n", server_hp);
+	}
 #endif
 	return FALSE;
 }

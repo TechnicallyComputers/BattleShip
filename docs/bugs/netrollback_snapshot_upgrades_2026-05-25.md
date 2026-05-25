@@ -28,7 +28,7 @@ Per-`gkind` sanitized payloads (pointer fields → GObj ids or omitted):
 | Pupupu | Whispy timers/status |
 | Castle | Bumper pos + `bumper_gobj_id` |
 
-Folded into `hash_map` at save (tag `0x47524F55`). Apply after map, before world.
+Folded into `hash_map` at save (tag `0x47524F55`). Apply after map, before world. Load verify must use `syNetRbSnapshotComputeMapHashLive()` (same fold) — see [`netrollback_map_hash_verify_ground_fold_2026-05-25.md`](netrollback_map_hash_verify_ground_fold_2026-05-25.md).
 
 ### Audit
 
