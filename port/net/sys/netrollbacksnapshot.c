@@ -7136,4 +7136,24 @@ void syNetRbSnapshotMarkLoadUnsafe(u32 tick)
 		sSYNetRbSnapshotLastLoadSafeTick = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(probe, 0U);
 	}
 }
+
+void syNetRbSnapshotPinLoadSafeAtTick(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	if (tick == 0U)
+	{
+		return;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return;
+	}
+	slot->is_load_safe = TRUE;
+	if (tick > sSYNetRbSnapshotLastLoadSafeTick)
+	{
+		sSYNetRbSnapshotLastLoadSafeTick = tick;
+	}
+}
 #endif

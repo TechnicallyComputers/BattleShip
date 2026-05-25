@@ -52,7 +52,7 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 
 	memset(out, 0, sizeof(*out));
 	out->frame_id = (s32)validation_tick;
-	syNetInputGetHistoryInputValueChecksumWindow(hist_win_begin, hist_win_len, sums, &inp_all);
+	syNetInputGetFrameCommitAuthorityChecksumWindow(hist_win_begin, hist_win_len, sums, &inp_all);
 	out->input_digest = inp_all;
 	out->slot_binding_hash = syNetFrameCommitHashSlotBindings(local_sim_slot, remote_sim_slot, extra_local_sim_slot,
 								  peer_sender_count, peer_sender_slots);

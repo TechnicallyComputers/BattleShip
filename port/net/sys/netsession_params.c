@@ -23,6 +23,8 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_PREDICTION_MAX 7U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 48U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 128U
+/* NetSync / frame-commit validation cadence (SYNETPEER_LOG_INTERVAL in netpeer.c). */
+#define SYNETSESSION_FRAME_COMMIT_VALIDATION_TICKS 120U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
 #define SYNETSESSION_PARAMS_RESIM_TICKS_MAX 16U
 
@@ -104,6 +106,23 @@ static u32 syNetSessionParamsComputeSnapshotFramesFromRtt(u32 rtt_ms)
 	if ((rtt_ms >= 80U) && (rtt_ms < 150U) && (frames < 64U))
 	{
 		frames = 64U;
+	}
+	/*
+	 * Frame-commit recovery reanchors from the last agreed validation tick (120-tick cadence).
+	 * Ring depth must cover that span plus delay/prediction slack or resolved_load fails (~0xFFFFFFFF).
+	 */
+	{
+		u32 fc_floor;
+
+		fc_floor = SYNETSESSION_FRAME_COMMIT_VALIDATION_TICKS + SYNETSESSION_PARAMS_PREDICTION_MAX + 8U;
+		if (fc_floor > SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX)
+		{
+			fc_floor = SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX;
+		}
+		if (frames < fc_floor)
+		{
+			frames = fc_floor;
+		}
 	}
 	if (frames < SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN)
 	{
