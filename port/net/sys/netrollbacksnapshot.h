@@ -108,6 +108,8 @@ extern s32 syNetRbEnumerateActiveWeaponsSorted(struct GObj **out, s32 max, sb32 
 #ifdef PORT
 extern s32 syNetRbEnumerateActiveEffectsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 extern u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque);
+/* Live map digest: collision yakumono + ground fold (must match slot->hash_map at save). */
+extern u32 syNetRbSnapshotComputeMapHashLive(void);
 #endif
 
 #ifdef PORT

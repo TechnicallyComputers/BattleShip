@@ -4322,7 +4322,7 @@ static SYNetRollbackHashSet syNetRollbackCollectHashes(void)
 	hashes.world = syNetSyncHashRollbackWorld();
 	hashes.item = syNetSyncHashActiveItemsForRollback();
 	hashes.weapon = syNetSyncHashActiveWeaponsForRollback();
-	hashes.map = syNetSyncHashMapCollisionKinematics();
+	hashes.map = syNetRbSnapshotComputeMapHashLive();
 	hashes.rng = syNetSyncHashRNGSeed();
 	hashes.camera = syNetSyncHashGMCamera();
 	hashes.animation = syNetSyncHashFighterAnimationStateForRollback();
@@ -4361,7 +4361,7 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	live_w = syNetSyncHashRollbackWorld();
 	live_i = syNetSyncHashActiveItemsForRollback();
 	live_wp = syNetSyncHashActiveWeaponsForRollback();
-	live_m = syNetSyncHashMapCollisionKinematics();
+	live_m = syNetRbSnapshotComputeMapHashLive();
 	live_r = syNetSyncHashRNGSeed();
 	live_c = syNetSyncHashGMCamera();
 	live_a = syNetSyncHashFighterAnimationStateForRollback();

@@ -221,7 +221,6 @@ static u32 syNetSyncFoldFighterAnimRollback(const FTStruct *fp, GObj *fighter_go
 		return 2166136261U;
 	}
 	fold = 2166136261U;
-	fold = syNetSyncFnvAccumulateU32(fold, fighter_gobj->id);
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)fp->status_id);
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)fp->motion_id);
 	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(fighter_gobj->anim_frame));

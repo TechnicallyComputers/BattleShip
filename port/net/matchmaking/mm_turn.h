@@ -14,6 +14,8 @@ typedef struct MmTurnRelayResult
 } MmTurnRelayResult;
 
 extern sb32 mmTurnIsClientEnabled(void);
+/* Non-zero SSB64_NETPLAY_TURN_REQUIRED: queue/match fail without a relay (or peer_turn at bootstrap). */
+extern sb32 mmTurnIsRequired(void);
 extern sb32 mmTurnAllocateIpv4Relay(s32 udp_fd, MmTurnRelayResult *out);
 
 /*

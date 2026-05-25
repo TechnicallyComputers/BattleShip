@@ -6,7 +6,9 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-05-25 | [mm_turn_stun_class_mask](mm_turn_stun_class_mask_2026-05-25.md) | **FIX SHIPPED** — TURN Allocate: wrong STUN class mask (`0xC100` vs `0x0110`) skipped 401 REALM/NONCE retry; REALM/NONCE not null-terminated for MESSAGE-INTEGRITY. |
 | 2026-05-25 | [lbCommonEjectTreeDObj_rollback_audit](lbCommonEjectTreeDObj_rollback_audit_2026-05-25.md) | **REFERENCE** — All `lbCommonEjectTreeDObj` call sites + rollback `ApplySlotToLive` / `ApplyItems` order vs orphan reconcile and resim throw (`itMainSetFighterRelease`). |
+| 2026-05-25 | [netrollback_map_hash_verify_ground_fold](netrollback_map_hash_verify_ground_fold_2026-05-25.md) | **FIX SHIPPED** — `LOAD_HASH_DRIFT` on `map` only after ground blob fold: verify used yakumono hash vs slot yakumono+ground. `syNetRbSnapshotComputeMapHashLive`; netplay locks neutral spawns / hazard-disable CVars. |
 | 2026-05-25 | [netrollback_effect_snapshot_presence_phase1](netrollback_effect_snapshot_presence_phase1_2026-05-25.md) | **SHIPPED (phase 1)** — Snapshot ring captures effect **presence** (48 cap) + `hash_effect`; load **reconciles orphaned free-floating effects before items**; superseded by closure pass for vars/rebind. |
 | 2026-05-25 | [netrollback_snapshot_closure](netrollback_snapshot_closure_2026-05-25.md) | **SHIPPED** — MP bounds, particle teardown, effect vars + quake respawn, fighter effect id rebind, GObj link audit, optional effect LOAD verify. Matrix: [`netplay_rollback_snapshot_coverage.md`](../netplay_rollback_snapshot_coverage.md). |
 | 2026-05-25 | [netrollback_snapshot_upgrades](netrollback_snapshot_upgrades_2026-05-25.md) | **SHIPPED** — Effect coupled prune + respawn whitelist (shield/reflect/Ness wave), no-struct shells, `gGRCommonStruct` ground blobs, `is_effect_attach`. |
