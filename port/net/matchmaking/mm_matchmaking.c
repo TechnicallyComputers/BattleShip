@@ -1086,27 +1086,17 @@ sb32 mmMatchmakingLoadCredentials(sb32 verbose)
 static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap)
 {
 	char needle[80];
-	size_t lk;
 	const char *p;
 	size_t wi;
 
-	snprintf(needle, sizeof(needle), "\"%s\"", key_name);
+	/* Require exact JSON key token (avoids matching "peer" inside "peer_player_id"). */
+	snprintf(needle, sizeof(needle), "\"%s\":", key_name);
 	p = strstr(body, needle);
 	if (p == NULL)
 	{
 		return FALSE;
 	}
-	lk = strlen(key_name) + 2U;
-	p += lk;
-	while ((*p != '\0') && (*p != ':'))
-	{
-		p++;
-	}
-	if (*p != ':')
-	{
-		return FALSE;
-	}
-	p++;
+	p += strlen(needle);
 	while ((*p == ' ') || (*p == '\t') || (*p == '\r') || (*p == '\n'))
 	{
 		p++;
@@ -1172,6 +1162,16 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		r->peer_lan_hostport[0] = '\0';
 	}
+#ifdef PORT
+	if (r->peer_lan_hostport[0] == '\0')
+	{
+		port_log("SSB64 Automatch: match JSON has no peer_lan (opponent did not report lan_endpoint)\n");
+	}
+	else
+	{
+		port_log("SSB64 Automatch: match JSON peer_lan=%s\n", r->peer_lan_hostport);
+	}
+#endif
 	if (strstr(body, "\"you_are_host\":true") != NULL)
 	{
 		r->you_are_host = TRUE;
@@ -1408,6 +1408,10 @@ static void mmRunJoin(const MmJob *job)
 			         job->udp_endpoint);
 		}
 	}
+#ifdef PORT
+	port_log("SSB64 Automatch: POST /v1/queue udp=%s lan=%s\n", job->udp_endpoint,
+	         (job->has_lan_endpoint != FALSE) ? job->lan_endpoint : "(none)");
+#endif
 	hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
 	if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, TRUE) != FALSE) &&
 	    (mmCredRepopulate(job->verbose != FALSE) != FALSE))
