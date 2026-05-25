@@ -45,6 +45,10 @@
 #include <filesystem>
 #include <system_error>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 /* MinGW cross: dbghelp/psapi linked from CMakeLists.txt; MSVC uses #pragma comment below. */
 #include <windows.h>
@@ -322,6 +326,21 @@ static LONG WINAPI portWindowsCrashFilter(EXCEPTION_POINTERS* info)
 #endif
 
 static std::shared_ptr<Ship::Context> sContext;
+
+/* After PortShutdown(), returning from main still runs libc++ static
+ * destructors (__cxa_finalize). Teardown order between spdlog, BS::thread_pool,
+ * Ship::IResource holders, and other TU globals can call std::terminate() on
+ * macOS (SIGABRT with exit/cxa_finalize in the crash log) even though the game
+ * already shut down cleanly — e.g. Port menu Quit after ESC. Skip that phase on
+ * POSIX the same way lbreloc_bridge uses _exit for stale-o2r (see
+ * docs/bugs/macos_shutdown_sigabrt_2026-05-24.md). */
+static void port_exit_process(int code) {
+#if defined(__unix__) || defined(__APPLE__)
+	_exit(code);
+#else
+	std::exit(code);
+#endif
+}
 
 // Port-side replacement for Ship::Context::LocateFileAcrossAppDirs.
 //
@@ -822,7 +841,8 @@ int main(int argc, char* argv[]) {
 	portRenderDocInit();
 
 	if (PortInit(argc, argv) != 0) {
-		return 1;
+		PortShutdown();
+		port_exit_process(1);
 	}
 
 #if defined(__ANDROID__)
@@ -929,19 +949,22 @@ int main(int argc, char* argv[]) {
 	PortGameShutdown();
 	port_log("SSB64: PortGameShutdown returned\n");
 
+	port_log("SSB64: clean shutdown — skipping static C++ destructors\n");
 	PortShutdown();
 	portRenderDocShutdown();
-	return 0;
+	port_exit_process(0);
 
 	} catch (const std::exception& e) {
 		port_log("\n*** main: unhandled C++ exception ***\n"
 		         "    type: %s\n    what: %s\n",
 		         typeid(e).name(), e.what());
-		port_log_close();
-		return 1;
+		PortGameShutdown();
+		PortShutdown();
+		port_exit_process(1);
 	} catch (...) {
 		port_log("\n*** main: unhandled non-std exception ***\n");
-		port_log_close();
-		return 1;
+		PortGameShutdown();
+		PortShutdown();
+		port_exit_process(1);
 	}
 }
