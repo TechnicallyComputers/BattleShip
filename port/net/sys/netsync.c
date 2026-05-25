@@ -20,6 +20,7 @@
 
 #ifdef PORT
 #include <ef/effect.h>
+#include <mp/map.h>
 #endif
 
 #include <it/itmanager.h>
@@ -352,12 +353,31 @@ u32 syNetSyncHashBattleFighters(void)
 	}
 }
 
-#define SYNETSYNC_MAX_MP_YAKU 64
+#define SYNETSYNC_MAX_MP_YAKU SYNETRB_SNAPSHOT_MAX_YAKU
 
 /*
  * Sample up to SYNETSYNC_MAX_MP_YAKU yakumono kinematic entries (stage moving pieces / hazards).
  * Intended as a canary for “map half of sim diverged”; not a full world hash.
  */
+static u32 syNetSyncFoldMpCollisionBounds(void)
+{
+	u32 hash;
+	const MPBounds *b;
+
+	hash = 2166136261U;
+	b = &gMPCollisionBounds.current;
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->top));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->bottom));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->left));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->right));
+	b = &gMPCollisionBounds.diff;
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->top));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->bottom));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->left));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(b->right));
+	return hash;
+}
+
 u32 syNetSyncHashMapCollisionKinematics(void)
 {
 	u32 hash;
@@ -368,6 +388,7 @@ u32 syNetSyncHashMapCollisionKinematics(void)
 
 	hash = 2166136261U;
 	hash = syNetSyncFnvAccumulateU32(hash, (u32)gMPCollisionUpdateTic);
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncFoldMpCollisionBounds());
 	n = gMPCollisionYakumonosNum;
 	if (n < 0)
 	{
@@ -2164,6 +2185,7 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
 		fold =
 		    syNetSyncFnvAccumulateU32(fold, syNetSyncPointerFingerprintLow32((const void *)ep->proc_update));
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
 		dobj = DObjGetStruct(gobj);
 		if (dobj != NULL)
 		{

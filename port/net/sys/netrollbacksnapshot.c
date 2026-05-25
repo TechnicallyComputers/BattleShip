@@ -16,6 +16,7 @@
 #include <ft/ftchar/ftness/ftnessfunctions.h>
 #include <ft/ftchar/ftsamus/ftsamus.h>
 #include <ft/ftchar/ftsamus/ftsamusfunctions.h>
+#include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftchar/ftyoshi/ftyoshifunctions.h>
 #include <ft/ftdef.h>
@@ -75,7 +76,11 @@
 #include <it/itfighter/itlinkbomb.h>
 
 #include <ef/effect.h>
+#include <ef/efmanager.h>
 #include <ef/eftypes.h>
+#include <ef/efdef.h>
+#include <mp/map.h>
+#include <lb/lbparticle.h>
 
 extern ITDesc dItLinkBombItemDesc;
 
@@ -313,6 +318,11 @@ typedef struct SYNetRbSnapFighterBlob
 	u32 coupled_pkthunder_weapon_gobj_id;
 	u32 coupled_thunder_weapon_gobj_id;
 
+	/* Fighter-attached effect GObjs (rebound after effect reconcile; scrubbed from status_vars blob). */
+	u32 guard_effect_gobj_id;
+	u32 captureyoshi_effect_gobj_id;
+	u32 fox_speciallw_effect_gobj_id;
+
 } SYNetRbSnapFighterBlob;
 
 typedef struct SYNetRbSnapYakuBlob
@@ -420,6 +430,11 @@ typedef struct SYNetRbSnapEffectBlob
 	u32 fighter_gobj_id;
 	f32 anim_frame;
 	u32 proc_update_fingerprint;
+	/* 0xFF = not a quake effect; else magnitude 0..3 for `efManagerQuakeMakeEffect`. */
+	u8 quake_magnitude;
+	u8 effect_pad[3];
+	/* Sanitized copy of `EFStruct::effect_vars` (pointer slots cleared on capture). */
+	u8 effect_vars[sizeof(((EFStruct){0}).effect_vars)];
 
 } SYNetRbSnapEffectBlob;
 
@@ -467,6 +482,8 @@ typedef struct SYNetRbSnapshotSlot
 	SYNetRbSnapWeaponBlob weapons[SYNETRB_SNAPSHOT_MAX_WEAPONS];
 	s32 effect_count;
 	SYNetRbSnapEffectBlob effects[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	sb32 mp_bounds_captured;
+	MPAllBounds mp_bounds;
 	SYNetRbSnapCameraBlob camera;
 
 } SYNetRbSnapshotSlot;
@@ -1298,6 +1315,30 @@ static void syNetRbSnapCaptureFighterCoupledIds(SYNetRbSnapFighterBlob *blob, co
 	blob->coupled_charge_weapon_gobj_id = 0U;
 	blob->coupled_pkthunder_weapon_gobj_id = 0U;
 	blob->coupled_thunder_weapon_gobj_id = 0U;
+	blob->guard_effect_gobj_id = 0U;
+	blob->captureyoshi_effect_gobj_id = 0U;
+	blob->fox_speciallw_effect_gobj_id = 0U;
+
+	if ((fp->is_shield != FALSE) || ((fp->status_id >= nFTCommonStatusGuardStart) &&
+	                               (fp->status_id <= nFTCommonStatusGuardEnd)))
+	{
+		blob->guard_effect_gobj_id = syNetRbSnapGobjId(fp->status_vars.common.guard.effect_gobj);
+	}
+	if (fp->status_id == nFTCommonStatusCaptureYoshi)
+	{
+		blob->captureyoshi_effect_gobj_id =
+		    syNetRbSnapGobjId(fp->status_vars.common.captureyoshi.effect_gobj);
+	}
+	if (fp->fkind == nFTKindFox)
+	{
+		if (((fp->status_id >= nFTFoxStatusSpecialLwScopeStart) &&
+		     (fp->status_id <= nFTFoxStatusSpecialLwScopeEnd)) ||
+		    ((fp->status_id >= nFTFoxStatusSpecialAirLwStart) &&
+		     (fp->status_id <= nFTFoxStatusSpecialAirLwTurn)))
+		{
+			blob->fox_speciallw_effect_gobj_id = syNetRbSnapGobjId(fp->status_vars.fox.speciallw.effect_gobj);
+		}
+	}
 
 	if (fp->fkind == nFTKindYoshi)
 	{
@@ -1366,6 +1407,18 @@ static void syNetRbSnapScrubCoupledPointersInBlob(SYNetRbSnapFighterBlob *blob)
 	union FTStatusVars *status_vars = (union FTStatusVars *)blob->status_vars;
 	union FTPassiveVars *passive_vars = (union FTPassiveVars *)blob->passive_vars;
 
+	if (blob->guard_effect_gobj_id != 0U)
+	{
+		status_vars->common.guard.effect_gobj = NULL;
+	}
+	if (blob->captureyoshi_effect_gobj_id != 0U)
+	{
+		status_vars->common.captureyoshi.effect_gobj = NULL;
+	}
+	if (blob->fox_speciallw_effect_gobj_id != 0U)
+	{
+		status_vars->fox.speciallw.effect_gobj = NULL;
+	}
 	if (blob->fkind == nFTKindYoshi)
 	{
 		if ((blob->status_id == nFTYoshiStatusSpecialHi) || (blob->status_id == nFTYoshiStatusSpecialAirHi))
@@ -1422,6 +1475,18 @@ static void syNetRbSnapScrubCoupledPointersInBlob(SYNetRbSnapFighterBlob *blob)
 
 static void syNetRbSnapScrubCoupledPointersInFighter(FTStruct *fp, const SYNetRbSnapFighterBlob *blob)
 {
+	if (blob->guard_effect_gobj_id != 0U)
+	{
+		fp->status_vars.common.guard.effect_gobj = NULL;
+	}
+	if (blob->captureyoshi_effect_gobj_id != 0U)
+	{
+		fp->status_vars.common.captureyoshi.effect_gobj = NULL;
+	}
+	if (blob->fox_speciallw_effect_gobj_id != 0U)
+	{
+		fp->status_vars.fox.speciallw.effect_gobj = NULL;
+	}
 	if (fp->fkind == nFTKindYoshi)
 	{
 		if ((blob->status_id == nFTYoshiStatusSpecialHi) || (blob->status_id == nFTYoshiStatusSpecialAirHi))
@@ -3015,6 +3080,8 @@ static void syNetRbSnapCaptureMap(SYNetRbSnapshotSlot *slot)
 		syNetRbSnapCaptureYakuDObj(&slot->mp_yaku[i], dobj, &gMPCollisionSpeeds[i]);
 	}
 	slot->mp_yaku_captured = TRUE;
+	slot->mp_bounds = gMPCollisionBounds;
+	slot->mp_bounds_captured = TRUE;
 }
 
 static void syNetRbSnapApplyMap(const SYNetRbSnapshotSlot *slot)
@@ -3055,6 +3122,10 @@ static void syNetRbSnapApplyMap(const SYNetRbSnapshotSlot *slot)
 			continue;
 		}
 		syNetRbSnapApplyYakuDObj(dobj, &slot->mp_yaku[i], &gMPCollisionSpeeds[i]);
+	}
+	if (slot->mp_bounds_captured != FALSE)
+	{
+		gMPCollisionBounds = slot->mp_bounds;
 	}
 }
 
@@ -4380,13 +4451,147 @@ static u32 syNetRbSnapPointerFingerprintLow32(const void *p)
 	return (u32)u;
 }
 
-static void syNetRbSnapApplyEffectPresence(GObj *gobj, const SYNetRbSnapEffectBlob *blob)
+static void syNetRbSnapSanitizeEffectVarsBlob(u8 *vars_out, const EFStruct *ep)
 {
-	if ((gobj == NULL) || (blob == NULL) || (blob->is_valid == FALSE))
+	EFStruct scratch;
+
+	if ((vars_out == NULL) || (ep == NULL))
+	{
+		return;
+	}
+	memcpy(&scratch.effect_vars, &ep->effect_vars, sizeof(scratch.effect_vars));
+	scratch.effect_vars.common.xf = NULL;
+	scratch.effect_vars.dust_light.xf = NULL;
+	scratch.effect_vars.dust_heavy.xf = NULL;
+	memcpy(vars_out, &scratch.effect_vars, sizeof(scratch.effect_vars));
+}
+
+static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE) || (blob->quake_magnitude == 0xFFU))
+	{
+		return NULL;
+	}
+	return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+}
+
+static void syNetRbSnapApplyEffectBlobToGObj(GObj *gobj, const SYNetRbSnapEffectBlob *blob)
+{
+	EFStruct *ep;
+	GObj *fighter_gobj;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return;
+	}
+	if (gobj == NULL)
+	{
+		gobj = syNetRbSnapTryRespawnEffectFromBlob(blob);
+		if (gobj == NULL)
+		{
+			return;
+		}
+	}
+	ep = efGetStruct(gobj);
+	if (ep == NULL)
 	{
 		return;
 	}
 	gobj->anim_frame = blob->anim_frame;
+	memcpy(&ep->effect_vars, blob->effect_vars, sizeof(ep->effect_vars));
+	ep->xf = NULL;
+	ep->effect_vars.common.xf = NULL;
+	ep->effect_vars.dust_light.xf = NULL;
+	ep->effect_vars.dust_heavy.xf = NULL;
+	ep->bank_id = blob->bank_id;
+	fighter_gobj = NULL;
+	if (blob->fighter_gobj_id != 0U)
+	{
+		fighter_gobj = gcFindGObjByID(blob->fighter_gobj_id);
+		if ((fighter_gobj != NULL) && (ftGetStruct(fighter_gobj) == NULL))
+		{
+			fighter_gobj = NULL;
+		}
+	}
+	ep->fighter_gobj = fighter_gobj;
+}
+
+static void syNetRbSnapRebindFighterEffectGobjs(const SYNetRbSnapFighterBlob *blob, FTStruct *fp)
+{
+	GObj *eg;
+
+	if ((blob == NULL) || (fp == NULL) || (blob->is_valid == FALSE))
+	{
+		return;
+	}
+	if (blob->guard_effect_gobj_id != 0U)
+	{
+		eg = gcFindGObjByID(blob->guard_effect_gobj_id);
+		fp->status_vars.common.guard.effect_gobj =
+		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
+	}
+	if (blob->captureyoshi_effect_gobj_id != 0U)
+	{
+		eg = gcFindGObjByID(blob->captureyoshi_effect_gobj_id);
+		fp->status_vars.common.captureyoshi.effect_gobj =
+		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
+	}
+	if (blob->fox_speciallw_effect_gobj_id != 0U)
+	{
+		eg = gcFindGObjByID(blob->fox_speciallw_effect_gobj_id);
+		fp->status_vars.fox.speciallw.effect_gobj =
+		    ((eg != NULL) && (efGetStruct(eg) != NULL)) ? eg : NULL;
+	}
+}
+
+static void syNetRbSnapResetParticlesForRollback(void)
+{
+	lbParticleEjectStructAll();
+	lbParticleEjectGeneratorAll();
+}
+
+static sb32 syNetRbSnapGObjLinkAuditEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_GOBJ_LINK_AUDIT");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+void syNetRbSnapshotGObjLinkAudit(u32 tick)
+{
+	s32 link_id;
+	GObj *gobj;
+	s32 counts[17];
+
+	if (syNetRbSnapGObjLinkAuditEnabled() == FALSE)
+	{
+		return;
+	}
+	memset(counts, 0, sizeof(counts));
+	for (link_id = 0; link_id < (s32)(sizeof(counts) / sizeof(counts[0])); link_id++)
+	{
+		for (gobj = gGCCommonLinks[link_id]; gobj != NULL; gobj = gobj->link_next)
+		{
+			counts[link_id]++;
+		}
+	}
+	port_log(
+	    "SSB64 NetRbSnapshot: gobj_link_audit tick=%u f=%d i=%d w=%d ef6=%d ef8=%d g=%d l13=%d\n",
+	    tick,
+	    counts[nGCCommonLinkIDFighter],
+	    counts[nGCCommonLinkIDItem],
+	    counts[nGCCommonLinkIDWeapon],
+	    counts[nGCCommonLinkIDEffect],
+	    counts[nGCCommonLinkIDSpecialEffect],
+	    counts[nGCCommonLinkIDGround],
+	    counts[13]);
 }
 
 static sb32 syNetRbSnapLiveEffectListedInSnapshot(const SYNetRbSnapshotSlot *slot, u32 gobj_id)
@@ -4432,10 +4637,7 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			continue;
 		}
 		gobj = gcFindGObjByID(blob->gobj_id);
-		if ((gobj != NULL) && (efGetStruct(gobj) != NULL))
-		{
-			syNetRbSnapApplyEffectPresence(gobj, blob);
-		}
+		syNetRbSnapApplyEffectBlobToGObj(gobj, blob);
 	}
 	for (pass = 0; pass < 2; pass++)
 	{
@@ -4489,6 +4691,12 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 		blob->fighter_gobj_id = (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U;
 		blob->anim_frame = gobj_iter->anim_frame;
 		blob->proc_update_fingerprint = syNetRbSnapPointerFingerprintLow32((const void *)ep->proc_update);
+		blob->quake_magnitude = 0xFFU;
+		if (ep->proc_update == efManagerQuakeProcUpdate)
+		{
+			blob->quake_magnitude = (u8)(3 - ep->effect_vars.quake.priority);
+		}
+		syNetRbSnapSanitizeEffectVarsBlob(blob->effect_vars, ep);
 	}
 	slot->effect_count = count;
 	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
@@ -5056,6 +5264,38 @@ sb32 syNetRbSnapshotSynctestProbeEffectMismatch(u32 probe_tick)
 	return ((truncated != FALSE) || (live_count != slot->effect_count)) ? TRUE : FALSE;
 }
 
+sb32 syNetRbSnapshotSynctestProbeMapMismatch(u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *slot;
+	s32 live_n;
+	sb32 truncated;
+
+	slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != probe_tick))
+	{
+		return FALSE;
+	}
+	if (slot->mp_bounds_captured == FALSE)
+	{
+		return FALSE;
+	}
+	live_n = gMPCollisionYakumonosNum;
+	if (live_n < 0)
+	{
+		live_n = 0;
+	}
+	truncated = FALSE;
+	if (live_n > SYNETRB_SNAPSHOT_MAX_YAKU)
+	{
+		truncated = TRUE;
+		live_n = SYNETRB_SNAPSHOT_MAX_YAKU;
+	}
+	return ((truncated != FALSE) || (live_n != slot->mp_yakumono_count) ||
+	        (slot->mp_yaku_captured == FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
 static u32 sSYNetRbSnapshotLastCommittedTick;
 static u32 sSYNetRbSnapshotLastLoadSafeTick;
 
@@ -5244,7 +5484,29 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapApplyMap(slot);
 	syNetRbSnapApplyWorld(&slot->world, slot->tick);
 #ifdef PORT
+	syNetRbSnapResetParticlesForRollback();
 	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
+	{
+		GObj *fighter_gobj_re;
+
+		for (fighter_gobj_re = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj_re != NULL;
+		     fighter_gobj_re = fighter_gobj_re->link_next)
+		{
+			FTStruct *fp_re;
+			s32 pidx;
+
+			fp_re = ftGetStruct(fighter_gobj_re);
+			if (fp_re == NULL)
+			{
+				continue;
+			}
+			pidx = fp_re->player;
+			if ((pidx >= 0) && (pidx < GMCOMMON_PLAYERS_MAX))
+			{
+				syNetRbSnapRebindFighterEffectGobjs(&slot->fighters[pidx], fp_re);
+			}
+		}
+	}
 #endif
 	syNetRbSnapApplyItems(slot);
 	syNetRbSnapRebindAllFighterMPCollPointers();
@@ -5254,6 +5516,9 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapRebindFighterItemHoldCoupling();
 #endif
 	syNetRbSnapApplyCamera(&slot->camera);
+#ifdef PORT
+	syNetRbSnapshotGObjLinkAudit(slot->tick);
+#endif
 }
 
 sb32 syNetRbSnapshotCaptureLiveEmergency(void)

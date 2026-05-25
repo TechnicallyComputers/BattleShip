@@ -1,6 +1,6 @@
 # Netplay rollback refactor contracts (GGPO / GekkoNet alignment)
 
-This note tracks the **target** rollback architecture during the GGPO-style refactor. It complements [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md).
+This note tracks the **target** rollback architecture during the GGPO-style refactor. It complements [`netplay_rollback_test_matrix.md`](netplay_rollback_test_matrix.md) and the per-subsystem matrix in [`netplay_rollback_snapshot_coverage.md`](netplay_rollback_snapshot_coverage.md).
 
 ## Authoritative sim tick
 

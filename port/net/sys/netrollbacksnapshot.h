@@ -80,6 +80,10 @@ extern sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out);
 extern sb32 syNetRbSnapshotSynctestProbeWeaponMismatch(u32 probe_tick);
 /* PORT: live orphan effect count (userdata effects) != probe snapshot effect_count. */
 extern sb32 syNetRbSnapshotSynctestProbeEffectMismatch(u32 probe_tick);
+/* PORT: yakumono count / bounds capture mismatch vs live at probe tick. */
+extern sb32 syNetRbSnapshotSynctestProbeMapMismatch(u32 probe_tick);
+/* PORT: `SSB64_NETPLAY_GOBJ_LINK_AUDIT=1` — log per-link GObj census after snapshot apply. */
+extern void syNetRbSnapshotGObjLinkAudit(u32 tick);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
