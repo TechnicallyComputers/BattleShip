@@ -22,6 +22,7 @@ function(ssb64_android_fetch_mbedtls)
     set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
     set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
 
     # v3.5.2: no mbedtls-framework submodule (v3.6+ breaks FetchContent on CI). Sufficient for curl HTTPS.
     FetchContent_Declare(
@@ -74,6 +75,10 @@ function(ssb64_android_provide_curl)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
     set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
+    # Embedded FetchContent build: skip install/export (CMake 3.31 errors if mbedtls is not exported).
+    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
 
     # curl prepends ${curl_SOURCE}/CMake to CMAKE_MODULE_PATH before find_package(MbedTLS),
     # so a parent CMAKE_MODULE_PATH never wins. Replace curl's FindMbedTLS.cmake with ours
