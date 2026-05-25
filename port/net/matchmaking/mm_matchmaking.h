@@ -22,6 +22,8 @@ typedef struct MmMatchResult
 	u32 session_id;
 	char peer_hostport[128];
 	char peer_lan_hostport[128];
+	/** Opponent coturn relay `ip:port` when they allocated TURN (CGNAT fallback). */
+	char peer_turn_hostport[128];
 	sb32 you_are_host;
 	char match_id[64];
 	char peer_player_id[64];
@@ -46,9 +48,13 @@ extern sb32 mmMatchmakingLoadCredentials(sb32 verbose);
 extern void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose);
 extern void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                           const char *lan_endpoint_opt);
+extern void mmMatchmakingEnqueueJoinQueueEx(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
+                                            const char *lan_endpoint_opt, const char *turn_endpoint_opt);
 extern void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
                                                        const char *lan_endpoint_opt);
+extern void mmMatchmakingEnqueueHeartbeatWithEndpointsEx(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
+                                                         const char *lan_endpoint_opt, const char *turn_endpoint_opt);
 extern void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id);
 

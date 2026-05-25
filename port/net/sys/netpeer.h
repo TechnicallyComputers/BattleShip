@@ -288,6 +288,9 @@ extern void syNetPeerRequestAutomatchAbort(void);
 extern sb32 syNetPeerAutomatchBootstrapWasAborted(void);
 /* Brief cooperative pause between LAN/reflexive bootstrap attempts (frame pump + audio). */
 extern void syNetPeerPauseBetweenBootstrapAttempts(void);
+/* Coturn relay: outbound ChannelData to peer (permission hostport = peer reflexive or relay). */
+extern void syNetPeerSetTurnOutboundRelay(sb32 enabled);
+extern sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport);
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
 extern sb32 syNetPeerBeginStageSceneRendezvous(void);
 extern sb32 syNetPeerUpdateStageSceneRendezvous(void);
