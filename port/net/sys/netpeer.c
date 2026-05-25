@@ -3117,7 +3117,7 @@ void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const 
 	{
 		sSYNetPeerInputDelayCeil = sSYNetPeerInputDelayFloor;
 	}
-	sSYNetPeerAdaptiveDelayEnabled = TRUE;
+	sSYNetPeerAdaptiveDelayEnabled = syNetSessionParamsAdaptiveDelayEnvEnabled();
 }
 
 void syNetPeerApplyAutoNegotiatedTransportParams(u32 phase_lock_ticks, u32 bundle_redundancy, u32 ingress_extra_pumps,
@@ -5687,7 +5687,6 @@ sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *pe
 			sSYNetPeerInputDelay = 1U;
 			sSYNetPeerInputDelayFloor = 1U;
 			sSYNetPeerInputDelayCeil = 20U;
-			sSYNetPeerAdaptiveDelayEnabled = TRUE;
 			sSYNetPeerInputDelaySource = "auto_pending";
 		}
 		sSYNetPeerIsEnabled = TRUE;
