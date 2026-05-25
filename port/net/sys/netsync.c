@@ -2228,6 +2228,11 @@ u32 syNetSyncHashGMCamera(void)
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pzoom_eye_y));
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraPauseCameraEyeX));
 	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraPauseCameraEyeY));
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)gGMCameraStruct.status_curr);
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pzoom_dist));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pfollow_dist));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pfollow_eye_x));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gGMCameraStruct.pfollow_eye_y));
 	if (gGMCameraStruct.pzoom_fighter_gobj != NULL)
 	{
 		FTStruct *pzoom_fp = ftGetStruct(gGMCameraStruct.pzoom_fighter_gobj);
@@ -2235,6 +2240,15 @@ u32 syNetSyncHashGMCamera(void)
 		if (pzoom_fp != NULL)
 		{
 			hash = syNetSyncFnvAccumulateU32(hash, (u32)pzoom_fp->player);
+		}
+	}
+	if (gGMCameraStruct.pfollow_fighter_gobj != NULL)
+	{
+		FTStruct *pfollow_fp = ftGetStruct(gGMCameraStruct.pfollow_fighter_gobj);
+
+		if (pfollow_fp != NULL)
+		{
+			hash = syNetSyncFnvAccumulateU32(hash, (u32)pfollow_fp->player);
 		}
 	}
 	return hash;

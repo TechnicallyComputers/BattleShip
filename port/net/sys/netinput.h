@@ -251,6 +251,11 @@ extern sb32 syNetInputSimTickUsedPredictedRemote(u32 sim_tick);
 extern u32 syNetInputFindEarliestPredictedRemoteUsageInSpan(u32 from_tick, u32 to_tick);
 /* Per-tick published vs sim-effective vs remote-confirmed row when SSB64_NETPLAY_DIVERGENCE_INPUT_LOG=1. */
 extern void syNetInputMaybeLogDivergenceInputRow(u32 tick, const SYNetInputFrame *sim_consumed);
+/* Bracketed fork bisect: SSB64_NETPLAY_INPUT_FORK_DIAG=1 (+ MIN/MAX sim ticks, default 515–530). */
+extern sb32 syNetInputForkDiagWireInWindow(u32 wire_tick);
+extern void syNetInputMaybeLogForkDiagIngressSlot(s32 player, u32 packet_seq, u32 wire_tick, u16 buttons, s8 stick_x,
+                                                  s8 stick_y, u32 local_sim);
+extern void syNetInputMaybeLogForkDiagSimRow(u32 tick, const SYNetInputFrame *sim_consumed);
 #endif
 extern void syNetInputSetRecordingEnabled(sb32 is_enabled);
 extern sb32 syNetInputGetRecordingEnabled(void);

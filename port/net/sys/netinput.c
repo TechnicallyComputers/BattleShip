@@ -614,6 +614,9 @@ static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y);
 static void syNetInputSnapStickDominantAxisForPrediction(s8 *stick_x, s8 *stick_y);
 static void syNetInputNoteLocalEncodingOnSample(s32 player, s8 stick_x, s8 stick_y, u32 tick);
 static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame);
+static sb32 syNetInputForkDiagWindow(u32 sim_tick, u32 *out_begin, u32 *out_end);
+static void syNetInputMaybeLogForkDiagRemoteWire(s32 player, u32 wire_tick, u32 sim_tick, const SYNetInputFrame *frame,
+                                                 const char *reason);
 #endif
 
 static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
@@ -2605,6 +2608,9 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 	syNetInputStoreRemotePacketSeq(player, wire_tick, packet_seq);
 	syNetInputTimelineOnRemoteConfirmedWire(player, wire_tick, frame);
 	sim_tick = syNetPeerDelaySimTickFromWire(wire_tick);
+#ifdef PORT
+	syNetInputMaybeLogForkDiagRemoteWire(player, wire_tick, sim_tick, frame, "commit_remote_wire");
+#endif
 	if ((sim_tick != 0U) && (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
 	    (syNetInputAuthoritativeWireContractEnabled() != FALSE))
 	{
@@ -4756,6 +4762,209 @@ static sb32 syNetInputDivergenceInputLogWindow(u32 tick, u32 *out_begin, u32 *ou
 	return (tick >= sBegin) && (tick <= sEnd) ? TRUE : FALSE;
 }
 
+/*
+ * Bracketed per-tick input trace for fighter-state fork bisect (session-4 class @519).
+ * SSB64_NETPLAY_INPUT_FORK_DIAG=1
+ * SSB64_NETPLAY_INPUT_FORK_DIAG_MIN=515  SSB64_NETPLAY_INPUT_FORK_DIAG_MAX=530  (defaults)
+ */
+static sb32 syNetInputForkDiagWindow(u32 sim_tick, u32 *out_begin, u32 *out_end)
+{
+	const char *e;
+	static sb32 sCached = -999;
+	static u32 sBegin = 515U;
+	static u32 sEnd = 530U;
+
+	if (sCached == -999)
+	{
+		e = getenv("SSB64_NETPLAY_INPUT_FORK_DIAG");
+		sCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+		if (sCached != 0)
+		{
+			e = getenv("SSB64_NETPLAY_INPUT_FORK_DIAG_MIN");
+			if ((e != NULL) && (e[0] != '\0'))
+			{
+				sBegin = (u32)atoi(e);
+			}
+			e = getenv("SSB64_NETPLAY_INPUT_FORK_DIAG_MAX");
+			if ((e != NULL) && (e[0] != '\0'))
+			{
+				sEnd = (u32)atoi(e);
+			}
+		}
+	}
+	if (sCached == 0)
+	{
+		return FALSE;
+	}
+	if ((out_begin != NULL) && (out_end != NULL))
+	{
+		*out_begin = sBegin;
+		*out_end = sEnd;
+	}
+	return (sim_tick >= sBegin) && (sim_tick <= sEnd) ? TRUE : FALSE;
+}
+
+sb32 syNetInputForkDiagWireInWindow(u32 wire_tick)
+{
+	return syNetInputForkDiagWindow(syNetPeerDelaySimTickFromWire(wire_tick), NULL, NULL);
+}
+
+static void syNetInputMaybeLogForkDiagRemoteWire(s32 player, u32 wire_tick, u32 sim_tick, const SYNetInputFrame *frame,
+                                                 const char *reason)
+{
+	u32 begin;
+	u32 end;
+	u32 hr;
+	u32 remote_sim_frontier;
+	u32 req_wire;
+	u32 d;
+
+	if ((frame == NULL) || (syNetInputForkDiagWindow(sim_tick, &begin, &end) == FALSE))
+	{
+		return;
+	}
+	hr = syNetPeerGetHighestRemoteTick();
+	remote_sim_frontier = (hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U;
+	req_wire = syNetPeerGetBaseRequiredWireTick(sim_tick);
+	d = syNetPeerGetCommittedInputDelay();
+	port_log(
+	    "SSB64 NetInput: fork_wire_commit player=%d wire=%u sim=%u reason=%s window=[%u,%u] "
+	    "btn=0x%04X sx=%d sy=%d D=%u req_wire=%u hr=%u remote_sim_frontier=%u local_sim=%u\n",
+	    (int)player,
+	    (unsigned int)wire_tick,
+	    (unsigned int)sim_tick,
+	    (reason != NULL) ? reason : "unknown",
+	    begin,
+	    end,
+	    (unsigned int)frame->buttons,
+	    (int)frame->stick_x,
+	    (int)frame->stick_y,
+	    (unsigned int)d,
+	    (unsigned int)req_wire,
+	    (unsigned int)hr,
+	    (unsigned int)remote_sim_frontier,
+	    (unsigned int)syNetInputGetTick());
+}
+
+void syNetInputMaybeLogForkDiagIngressSlot(s32 player, u32 packet_seq, u32 wire_tick, u16 buttons, s8 stick_x,
+                                           s8 stick_y, u32 local_sim)
+{
+	u32 sim_tick;
+	u32 begin;
+	u32 end;
+	SYNetInputFrame frame;
+
+	if (syNetInputForkDiagWireInWindow(wire_tick) == FALSE)
+	{
+		return;
+	}
+	sim_tick = syNetPeerDelaySimTickFromWire(wire_tick);
+	if (syNetInputForkDiagWindow(sim_tick, &begin, &end) == FALSE)
+	{
+		return;
+	}
+	syNetInputMakeFrame(&frame, wire_tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteConfirmed, FALSE);
+	port_log(
+	    "SSB64 NetInput: fork_ingress player=%d pkt_seq=%u wire=%u sim=%u btn=0x%04X sx=%d sy=%d "
+	    "window=[%u,%u] local_sim=%u hr=%u remote_sim_frontier=%u\n",
+	    (int)player,
+	    (unsigned int)packet_seq,
+	    (unsigned int)wire_tick,
+	    (unsigned int)sim_tick,
+	    (unsigned int)buttons,
+	    (int)stick_x,
+	    (int)stick_y,
+	    begin,
+	    end,
+	    (unsigned int)local_sim,
+	    (unsigned int)syNetPeerGetHighestRemoteTick(),
+	    (unsigned int)((syNetPeerGetHighestRemoteTick() != 0U)
+	                        ? syNetPeerDelaySimTickFromWire(syNetPeerGetHighestRemoteTick())
+	                        : 0U));
+}
+
+void syNetInputMaybeLogForkDiagSimRow(u32 tick, const SYNetInputFrame *sim_consumed)
+{
+	u32 begin;
+	u32 end;
+	s32 player;
+	SYNetInputFrame published;
+	SYNetInputFrame remote_confirmed;
+	SYNetInputFrame remote_wire;
+	SYNetInputFrame local_delayed;
+	const SYNetInputFrame *sim_row;
+	u32 req_wire;
+	u32 wire_from_sim;
+	u32 hr;
+	u32 remote_sim_frontier;
+	u32 d;
+	sb32 used_pred;
+
+	if ((sim_consumed == NULL) || (syNetInputForkDiagWindow(tick, &begin, &end) == FALSE))
+	{
+		return;
+	}
+	req_wire = syNetPeerGetBaseRequiredWireTick(tick);
+	wire_from_sim = syNetPeerDelayWireTickFromSim(tick);
+	hr = syNetPeerGetHighestRemoteTick();
+	remote_sim_frontier = (hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U;
+	d = syNetPeerGetCommittedInputDelay();
+	used_pred = syNetInputSimTickUsedPredictedRemote(tick);
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		sb32 has_pub;
+		sb32 has_conf;
+		sb32 has_wire;
+		sb32 has_local_delayed;
+
+		sim_row = &sim_consumed[player];
+		has_pub = syNetInputGetHistoryFrame(player, tick, &published);
+		has_conf = syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, tick, &remote_confirmed);
+		has_wire = syNetInputTryGetRemoteHistoryForSimTick(player, tick, &remote_wire);
+		has_local_delayed = syNetInputGetLocalDelayedFrame(player, tick, &local_delayed);
+		port_log(
+		    "SSB64 NetInput: fork_sim_row tick=%u player=%d window=[%u,%u] D=%u req_wire=%u wire_from_sim=%u "
+		    "hr=%u remote_sim_frontier=%u used_pred_remote=%d local_slot=%d "
+		    "pub_valid=%d pub_btn=0x%04X pub_sx=%d pub_sy=%d pub_pred=%u | "
+		    "sim_valid=%d sim_btn=0x%04X sim_sx=%d sim_sy=%d sim_pred=%u | "
+		    "conf=%d conf_btn=0x%04X conf_sx=%d conf_sy=%d | "
+		    "wire_ring=%d wire_btn=0x%04X wire_pred=%u | "
+		    "local_delayed=%d ld_btn=0x%04X ld_sx=%d ld_sy=%d\n",
+		    tick,
+		    (int)player,
+		    begin,
+		    end,
+		    (unsigned int)d,
+		    (unsigned int)req_wire,
+		    (unsigned int)wire_from_sim,
+		    (unsigned int)hr,
+		    (unsigned int)remote_sim_frontier,
+		    (int)used_pred,
+		    (int)syNetPeerGetLocalSimSlot(),
+		    (int)has_pub,
+		    has_pub ? (unsigned int)published.buttons : 0U,
+		    has_pub ? (int)published.stick_x : 0,
+		    has_pub ? (int)published.stick_y : 0,
+		    has_pub ? (unsigned int)published.is_predicted : 0U,
+		    (int)sim_row->is_valid,
+		    (unsigned int)sim_row->buttons,
+		    (int)sim_row->stick_x,
+		    (int)sim_row->stick_y,
+		    (unsigned int)sim_row->is_predicted,
+		    (int)has_conf,
+		    has_conf ? (unsigned int)remote_confirmed.buttons : 0U,
+		    has_conf ? (int)remote_confirmed.stick_x : 0,
+		    has_conf ? (int)remote_confirmed.stick_y : 0,
+		    (int)has_wire,
+		    has_wire ? (unsigned int)remote_wire.buttons : 0U,
+		    has_wire ? (unsigned int)remote_wire.is_predicted : 0U,
+		    (int)has_local_delayed,
+		    has_local_delayed ? (unsigned int)local_delayed.buttons : 0U,
+		    has_local_delayed ? (int)local_delayed.stick_x : 0,
+		    has_local_delayed ? (int)local_delayed.stick_y : 0);
+	}
+}
+
 void syNetInputMaybeLogDivergenceInputRow(u32 tick, const SYNetInputFrame *sim_consumed)
 {
 	u32 begin;
@@ -4936,13 +5145,15 @@ static void syNetInputMaybeLogFrameCommitDiag(u32 tick, char path, sb32 exec_ok,
 	{
 		return;
 	}
-	if ((sSYNetInputFrameCommitDiagLevelCache < 2) && ((tick % 60U) != 0U))
+	if ((sSYNetInputFrameCommitDiagLevelCache < 2) &&
+	    (syNetInputForkDiagWindow(tick, NULL, NULL) == FALSE) && ((tick % 60U) != 0U))
 	{
 		return;
 	}
 	hr = syNetPeerGetHighestRemoteTick();
 	port_log(
-	    "SSB64 NetInput: frame_commit_diag tick=%u path=%c exec_ok=%d publish=%d sup=%d hr=%u wire=%u commit_gen=%u pred_win=%u\n",
+	    "SSB64 NetInput: frame_commit_diag tick=%u path=%c exec_ok=%d publish=%d sup=%d hr=%u wire=%u commit_gen=%u pred_win=%u "
+	    "remote_sim_frontier=%u D=%u\n",
 	    tick,
 	    (int)(unsigned char)path,
 	    (exec_ok != FALSE) ? 1 : 0,
@@ -4951,7 +5162,9 @@ static void syNetInputMaybeLogFrameCommitDiag(u32 tick, char path, sb32 exec_ok,
 	    (unsigned int)hr,
 	    (unsigned int)syNetPeerGetBaseRequiredWireTick(tick),
 	    (unsigned int)syNetPeerGetGlobalCommitGen(),
-	    (unsigned int)syNetPeerGetPhaseLockPredictionWindowTicks());
+	    (unsigned int)syNetPeerGetPhaseLockPredictionWindowTicks(),
+	    (unsigned int)((hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U),
+	    (unsigned int)syNetPeerGetCommittedInputDelay());
 }
 
 #define SYNETINPUT_DELAY_SYNC_DIAG_BOOT_TICKS 300U
@@ -5506,6 +5719,7 @@ void syNetInputFuncRead(void)
 	syNetInputNoteSimTickPredictedRemoteUsage(tick, synchronized);
 	syNetInputMaybeLogInputPredictDiag(tick, synchronized);
 	syNetInputMaybeLogDivergenceInputRow(tick, synchronized);
+	syNetInputMaybeLogForkDiagSimRow(tick, synchronized);
 #endif
 	for (player = 0; player < MAXCONTROLLERS; player++)
 	{
@@ -5542,6 +5756,7 @@ void syNetInputPublishSynchronizedTick(u32 tick)
 #ifdef PORT
 	syNetInputNoteSimTickPredictedRemoteUsage(tick, synchronized);
 	syNetInputMaybeLogDivergenceInputRow(tick, synchronized);
+	syNetInputMaybeLogForkDiagSimRow(tick, synchronized);
 #endif
 	for (player = 0; player < MAXCONTROLLERS; player++)
 	{

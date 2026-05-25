@@ -7440,6 +7440,11 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 	for (i = 0; i < frame_count; i++)
 	{
 #ifdef PORT
+		if (syNetInputForkDiagWireInWindow(frames[i].tick) != FALSE)
+		{
+			syNetInputMaybeLogForkDiagIngressSlot(target_player, packet_seq, frames[i].tick, frames[i].buttons,
+			                                      frames[i].stick_x, frames[i].stick_y, current_tick);
+		}
 		syNetRollbackDebugOnIncomingRemoteFrame((u32 *)&frames[i].tick, (u16 *)&frames[i].buttons,
 		                                       (s8 *)&frames[i].stick_x, (s8 *)&frames[i].stick_y);
 #endif
