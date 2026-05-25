@@ -30,6 +30,7 @@
 extern sb32 mnVSNetLevelPrefsMapsCheckLocked(s32 gkind);
 extern s32 mnVSNetLevelPrefsMapsGetGroundKind(s32 slot);
 extern void mnVSNetAutomatchForceRequeueAfterBarrierTimeout(void);
+extern sb32 mnVSNetAutomatchAMPollAbortDuringBootstrap(void);
 #endif
 
 #ifdef PORT
@@ -811,6 +812,9 @@ u32 syNetPeerGetDelaySyncDiagExecReadySimTick(void)
 
 #if defined(PORT) && defined(SSB64_NETMENU)
 sb32 gSYNetPeerSuppressBootstrapSceneAdvance;
+#if defined(PORT) && defined(SSB64_NETMENU)
+static sb32 sSYNetPeerAutomatchAbortRequested;
+#endif
 static sb32 sSYNetPeerAutomatchHandshakeActive;
 static u16 sAutoLocalBanMask;
 static u8 sAutoLocalFkind;
@@ -1278,6 +1282,44 @@ static u32 syNetPeerBootstrapPauseBetweenAttempts(void)
 	return slices;
 }
 
+static sb32 syNetPeerPollAutomatchBootstrapAbort(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (sSYNetPeerAutomatchHandshakeActive != FALSE)
+	{
+		if (mnVSNetAutomatchAMPollAbortDuringBootstrap() != FALSE)
+		{
+			sSYNetPeerAutomatchAbortRequested = TRUE;
+			return TRUE;
+		}
+	}
+#endif
+	return (sSYNetPeerAutomatchAbortRequested != FALSE) ? TRUE : FALSE;
+}
+
+void syNetPeerClearAutomatchAbort(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetPeerAutomatchAbortRequested = FALSE;
+#endif
+}
+
+void syNetPeerRequestAutomatchAbort(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetPeerAutomatchAbortRequested = TRUE;
+#endif
+}
+
+sb32 syNetPeerAutomatchBootstrapWasAborted(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	return (sSYNetPeerAutomatchAbortRequested != FALSE) ? TRUE : FALSE;
+#else
+	return FALSE;
+#endif
+}
+
 void syNetPeerSleepBootstrapRetry(void)
 {
 	u32 remain;
@@ -1290,6 +1332,7 @@ void syNetPeerSleepBootstrapRetry(void)
 		syNetPeerOsSleepMicros(slice);
 		port_watchdog_note_yield();
 		port_coroutine_yield();
+		(void)syNetPeerPollAutomatchBootstrapAbort();
 		remain -= slice;
 	}
 }
@@ -3571,6 +3614,11 @@ static sb32 syNetPeerAutomatchExchangeOffers(void)
 	sSYAutoGotPeerOffer = FALSE;
 	for (i = 0; i < (s32)syNetPeerBootstrapRetryCount(); i++)
 	{
+		if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
+		{
+			port_log("SSB64 NetPeer: automatch offer exchange aborted\n");
+			return FALSE;
+		}
 		syNetPeerSendAutomatchOfferPacketMaybe();
 		syNetPeerReceiveBootstrapPackets();
 		if ((sSYNetPeerBootstrapIsHost != FALSE) && (sSYAutoGotPeerOffer != FALSE))
@@ -3922,6 +3970,11 @@ static sb32 syNetPeerRunUdpLinkSync(void)
 	syNetPeerUdpSyncSendRequest();
 	for (i = 0; i < (s32)(syNetPeerBootstrapRetryCount() * 8U); i++)
 	{
+		if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
+		{
+			port_log("SSB64 NetPeer: automatch bootstrap aborted during UDP link sync\n");
+			return FALSE;
+		}
 		syNetPeerPumpUdpLinkSyncRecv();
 		if (sSYNetPeerUdpLinkRoundsRemaining == 0U)
 		{
@@ -5189,6 +5242,7 @@ sb32 syNetPeerRunBootstrap(void)
 	}
 	syNetPeerRefreshBootstrapTimingFromEnv();
 #if defined(PORT) && defined(SSB64_NETMENU)
+	syNetPeerClearAutomatchAbort();
 	syNetPeerResetAutomatchBootstrapTransportState();
 #endif
 	if (syNetPeerOpenSocket() == FALSE)
@@ -5235,6 +5289,12 @@ sb32 syNetPeerRunBootstrap(void)
 
 		for (i = 0; i < (s32)syNetPeerBootstrapRetryCount(); i++)
 		{
+			if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
+			{
+				port_log("SSB64 NetPeer: automatch bootstrap aborted (host READY)\n");
+				syNetPeerBootstrapFailTeardown();
+				return FALSE;
+			}
 			syNetPeerSendMatchConfigPacket();
 			syNetPeerReceiveBootstrapPackets();
 
@@ -5246,6 +5306,12 @@ sb32 syNetPeerRunBootstrap(void)
 		}
 		if (sSYNetPeerBootstrapPeerReady == FALSE)
 		{
+			if (syNetPeerAutomatchBootstrapWasAborted() != FALSE)
+			{
+				port_log("SSB64 NetPeer: automatch bootstrap aborted (host READY timeout)\n");
+				syNetPeerBootstrapFailTeardown();
+				return FALSE;
+			}
 			port_log("SSB64 NetPeer: bootstrap host timed out waiting for READY\n");
 			syNetPeerBootstrapFailTeardown();
 			return FALSE;
@@ -5282,6 +5348,12 @@ sb32 syNetPeerRunBootstrap(void)
 	{
 		for (i = 0; i < (s32)syNetPeerBootstrapRetryCount(); i++)
 		{
+			if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
+			{
+				port_log("SSB64 NetPeer: automatch bootstrap aborted (MATCH_CONFIG)\n");
+				syNetPeerBootstrapFailTeardown();
+				return FALSE;
+			}
 			syNetPeerReceiveBootstrapPackets();
 
 			if ((sSYNetPeerBootstrapMetadataApplied != FALSE) || (sSYNetPeerBootstrapMetadataStaged != FALSE))
@@ -5295,12 +5367,24 @@ sb32 syNetPeerRunBootstrap(void)
 
 	if ((sSYNetPeerBootstrapMetadataApplied == FALSE) && (sSYNetPeerBootstrapMetadataStaged == FALSE))
 	{
+		if (syNetPeerAutomatchBootstrapWasAborted() != FALSE)
+		{
+			port_log("SSB64 NetPeer: automatch bootstrap aborted (MATCH_CONFIG timeout)\n");
+			syNetPeerBootstrapFailTeardown();
+			return FALSE;
+		}
 		port_log("SSB64 NetPeer: bootstrap client timed out waiting for MATCH_CONFIG\n");
 		syNetPeerBootstrapFailTeardown();
 		return FALSE;
 	}
 	for (i = 0; i < (s32)syNetPeerBootstrapRetryCount(); i++)
 	{
+		if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
+		{
+			port_log("SSB64 NetPeer: automatch bootstrap aborted (START)\n");
+			syNetPeerBootstrapFailTeardown();
+			return FALSE;
+		}
 		syNetPeerSendControlPacket(SYNETPEER_PACKET_READY);
 		syNetPeerReceiveBootstrapPackets();
 
@@ -5312,6 +5396,12 @@ sb32 syNetPeerRunBootstrap(void)
 	}
 	if (sSYNetPeerBootstrapStartReceived == FALSE)
 	{
+		if (syNetPeerAutomatchBootstrapWasAborted() != FALSE)
+		{
+			port_log("SSB64 NetPeer: automatch bootstrap aborted (START timeout)\n");
+			syNetPeerBootstrapFailTeardown();
+			return FALSE;
+		}
 		port_log("SSB64 NetPeer: bootstrap client timed out waiting for START\n");
 		syNetPeerBootstrapFailTeardown();
 		return FALSE;

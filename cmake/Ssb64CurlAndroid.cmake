@@ -93,10 +93,13 @@ function(ssb64_android_provide_curl)
         GIT_REPOSITORY https://github.com/curl/curl.git
         GIT_TAG        curl-8_11_1
         GIT_SHALLOW    TRUE
+        # PATCH runs once per populated source; patches option defaults + disables export(TARGETS).
         PATCH_COMMAND
-            ${CMAKE_COMMAND} -E copy_if_different
-            "${SSB64_CURL_FIND_MBEDTLS}"
-            "CMake/FindMbedTLS.cmake"
+            ${CMAKE_COMMAND}
+                -DPATCH_CURL_SOURCE_DIR=<SOURCE_DIR>
+                -DPATCH_FIND_MBEDTLS=${SSB64_CURL_FIND_MBEDTLS}
+                -DPATCH_EMBED_FILE=${CMAKE_SOURCE_DIR}/cmake/curl/Ssb64CurlAndroidEmbed.cmake
+                -P ${CMAKE_SOURCE_DIR}/cmake/curl/patch_curl_android.cmake
         CMAKE_ARGS
             -DBUILD_SHARED_LIBS=OFF
             -DBUILD_CURL_EXE=OFF

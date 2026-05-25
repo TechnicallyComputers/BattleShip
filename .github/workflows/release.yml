@@ -367,6 +367,8 @@ jobs:
             echo "SSB64_RELEASE_KEY_ALIAS=$SSB64_ANDROID_KEY_ALIAS"
             echo "SSB64_RELEASE_KEY_PASSWORD=$SSB64_ANDROID_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
+      - name: Clear stale Android CMake/FetchContent cache
+        run: rm -rf android/app/.cxx
       - name: Build netplay APK
         working-directory: android
         run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true

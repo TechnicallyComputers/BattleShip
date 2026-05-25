@@ -10,7 +10,7 @@ on:
       - 'port/net/**'
       - 'decomp/src/netplay/**'
       - 'cmake/Ssb64CurlAndroid.cmake'
-      - 'cmake/curl/FindMbedTLS.cmake'
+      - 'cmake/curl/**'
       - 'libultraship/cmake/dependencies/**'
       - 'cmake/Ssb64Netmenu*.cmake'
       - 'CMakeLists.txt'
@@ -38,6 +38,8 @@ jobs:
       - name: Generate f3d.o2r
         working-directory: libultraship/src/fast
         run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Clear stale Android CMake/FetchContent cache
+        run: rm -rf android/app/.cxx
       - name: Build netplay APK
         working-directory: android
         run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true
