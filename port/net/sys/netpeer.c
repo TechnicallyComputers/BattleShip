@@ -5103,11 +5103,13 @@ void syNetPeerHandleMatchConfigPacket(const u8 *buffer, s32 size)
 #if defined(SSB64_NETMENU)
 	if ((sSYNetPeerAutomatchHandshakeActive != FALSE) && (sSYNetPeerBootstrapIsHost == FALSE))
 	{
+		/* Host-authoritative item policy: automatch default is no-items (0); AUTOMATCH_ITEMS=1 sends ~0. */
 		if ((metadata.scene_kind != (u32)nSCKindVSBattle) || (metadata.player_count != 2U) ||
 		    (metadata.stocks != 3U) || ((s32)metadata.time_limit != SCBATTLE_TIMELIMIT_INFINITE) ||
 		    (metadata.game_rules != SCBATTLE_GAMERULE_STOCK) ||
 		    (metadata.game_type != (u8)nSCBattleGameTypeRoyal) ||
-		    (metadata.stage_kind == (u32)(0xDE)) || (metadata.item_toggles != ~(u32)0) ||
+		    (metadata.stage_kind == (u32)(0xDE)) ||
+		    ((metadata.item_toggles != 0U) && (metadata.item_toggles != ~(u32)0)) ||
 		    (metadata.netplay_sim_slot_host_hw != 0U) || (metadata.netplay_sim_slot_client_hw != 1U))
 		{
 			sSYNetPeerPacketsDropped++;
