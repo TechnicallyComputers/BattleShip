@@ -372,14 +372,18 @@ jobs:
       - name: Build netplay APK
         working-directory: android
         run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true
-      - name: Log libmain.so size
+      - name: Verify APK native libraries
         run: |
-          so="$(find android/app/.cxx android/app/build -name 'libmain.so' 2>/dev/null | head -n 1 || true)"
-          if [ -n "$so" ] && [ -f "$so" ]; then
-            ls -la "$so"
-          else
-            echo "::warning::libmain.so not found for size log"
-          fi
+          apk="$(find android/app/build/outputs/apk/release -name 'app-release*.apk' | head -n 1)"
+          test -n "$apk" -a -f "$apk"
+          for lib in libSDL2.so libmain.so libtorch_runner.so libc++_shared.so; do
+            unzip -l "$apk" "lib/arm64-v8a/$lib" >/dev/null || {
+              echo "::error::missing lib/arm64-v8a/$lib in $apk"
+              unzip -l "$apk" 'lib/*/*.so' || true
+              exit 1
+            }
+          done
+          echo "jniLibs OK: libSDL2.so libmain.so libtorch_runner.so libc++_shared.so"
       - name: Stage release APK under a stable name
         run: |
           mkdir -p dist

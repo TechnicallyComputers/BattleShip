@@ -57,7 +57,9 @@ function(ssb64_android_provide_curl)
     # Visible to curl's patched FindMbedTLS.cmake when curl is a FetchContent subdir.
     set(SSB64_MBEDTLS_SOURCE_DIR "${mbedtls_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
 
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    # Do not CACHE FORCE — that poisons SDL2 and other deps configured later in the same tree.
+    set(_ssb64_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
     set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
     set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
@@ -111,6 +113,8 @@ function(ssb64_android_provide_curl)
             -DCURL_USE_LIBPSL=OFF
     )
     FetchContent_MakeAvailable(curl)
+    set(BUILD_SHARED_LIBS "${_ssb64_saved_build_shared_libs}")
+    unset(_ssb64_saved_build_shared_libs)
 
     if(NOT TARGET CURL::libcurl)
         message(FATAL_ERROR "ssb64_android_provide_curl: FetchContent curl did not define CURL::libcurl")

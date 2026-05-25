@@ -69,10 +69,28 @@ fi
 cp "${apk[0]}" "$DIST_DIR/$APK_NAME"
 ls -la "$DIST_DIR/$APK_NAME"
 
+# SDLActivity loads libSDL2.so then libmain.so; ANDROID_STL=c++_shared needs libc++_shared.so.
+step "Verifying native libraries in APK"
+required_jni_libs=( libSDL2.so libmain.so libtorch_runner.so libc++_shared.so )
+missing=()
+for lib in "${required_jni_libs[@]}"; do
+	if ! unzip -l "$DIST_DIR/$APK_NAME" "lib/arm64-v8a/$lib" >/dev/null 2>&1; then
+		missing+=( "$lib" )
+	fi
+done
+if (( ${#missing[@]} > 0 )); then
+	fail "APK missing jniLibs (lib/arm64-v8a/): ${missing[*]}"
+fi
+printf '  jniLibs OK: %s\n' "${required_jni_libs[*]}"
+
 # Log native lib size when the CMake tree is present.
 so=$(find "$ANDROID_DIR/app/.cxx" "$ANDROID_DIR/app/build" -name 'libmain.so' 2>/dev/null | head -n 1 || true)
 if [[ -n "$so" && -f "$so" ]]; then
 	ls -la "$so"
+fi
+sdl=$(find "$ANDROID_DIR/app/.cxx" "$ANDROID_DIR/app/build" -name 'libSDL2.so' 2>/dev/null | head -n 1 || true)
+if [[ -n "$sdl" && -f "$sdl" ]]; then
+	ls -la "$sdl"
 fi
 
 printf '\nDone: %s\n' "$DIST_DIR/$APK_NAME"

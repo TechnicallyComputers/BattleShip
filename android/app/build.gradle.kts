@@ -170,9 +170,10 @@ android {
                 //   torch_runner  — libtorch_runner.so (first-run ROM
                 //                   extractor, loaded standalone by Java
                 //                   before SDLActivity is up)
-                // Transitive deps (libultraship.a, libSDL2.so, libtinyxml2,
-                // libtorch.a, etc.) get pulled in automatically — and only
-                // SHARED libs end up in the APK.
+                // Transitive SHARED libs linked from ssb64/torch_runner are
+                // packaged under lib/arm64-v8a/ (required at runtime):
+                //   libSDL2.so, libc++_shared.so (ANDROID_STL=c++_shared),
+                //   libmain.so, libtorch_runner.so
                 targets += listOf("ssb64", "torch_runner")
             }
         }
