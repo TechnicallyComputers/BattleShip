@@ -578,8 +578,7 @@ sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_sp
 	}
 
 #ifdef PORT
-	port_log("SSB64 Automatch LAN detect: using %s (env overrides: SSB64_MATCHMAKING_LAN_ENDPOINT, SSB64_MATCHMAKING_LAN_INTERFACE)\n",
-	         buf);
+	port_log("SSB64 Automatch LAN detect: using %s\n", buf);
 #endif
 	return TRUE;
 }
