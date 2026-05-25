@@ -143,6 +143,46 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.x));
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.y));
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_prev.z));
+	/*
+	 * Cover scalars that the fighter sim state-machine reads but the original
+	 * fhash_light fold missed. These were the exact fields that let the Mario
+	 * WalkMiddle→KneeBend desync from session 4 (tick 519) and session 5
+	 * (tick 577) slip past every FC checkpoint silently:
+	 *
+	 *   - tap_stick_x/y, hold_stick_x/y  drive smash / tap-jump / dash
+	 *     detection (ftCommonKneeBendGetInputType*, ftCommonAttack4Check*,
+	 *     ftCommonDamageSmashDI*). Without them in the fold, two peers with
+	 *     diverged tap-frame counters hash identically.
+	 *   - coll_data.pos  is read every tick by ground-collision / camera /
+	 *     state-machine checks. Only pos_prev was hashed before, so a
+	 *     1-tick-late drift in current pos was undetectable.
+	 *   - anim_vel  is added into physics each tick and modifies grounded
+	 *     position; an unhashed delta translates to silent positional drift.
+	 *
+	 * (See docs/bugs/netplay_tap_jump_local_cvar_desync_2026-05-25.md.)
+	 */
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->tap_stick_x);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->tap_stick_y);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->hold_stick_x);
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->hold_stick_y);
+	/*
+	 * MPCollData has no .pos — the live world position is the indirected
+	 * `*p_translate` vector (the fighter's TopN joint translation). Fold both
+	 * pos_diff (per-tick movement delta) and the indirected p_translate so any
+	 * sim/physics step divergence shows up in fhash_light immediately.
+	 */
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_diff.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_diff.y));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.pos_diff.z));
+	if (fp->coll_data.p_translate != NULL)
+	{
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.p_translate->x));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.p_translate->y));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.p_translate->z));
+	}
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.x));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.y));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.z));
 	return h;
 }
 
