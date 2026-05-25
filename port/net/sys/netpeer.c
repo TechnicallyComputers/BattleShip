@@ -8536,7 +8536,7 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 		u32 live_figh;
 		u32 live_world;
 
-		if (syNetFrameCommitLiveHashGuardTripped(local, peer, &live_figh, &live_world) != FALSE)
+		if (syNetFrameCommitLiveHashGuardTripped(local, peer, vtick, &live_figh, &live_world) != FALSE)
 		{
 			if (syNetPeerFrameCommitDiagEnabled() != FALSE)
 			{

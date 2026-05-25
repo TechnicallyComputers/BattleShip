@@ -140,10 +140,14 @@ sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const S
 }
 
 sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, const SYNetFrameCommitToken *peer,
-					  u32 *out_live_figh, u32 *out_live_world)
+					  u32 validation_tick, u32 *out_diag_figh, u32 *out_diag_world)
 {
-	u32 live_figh;
-	u32 live_world;
+	u32 sim_tick;
+	u32 snap_tick;
+	u32 snap_figh;
+	u32 snap_world;
+	u32 snap_item;
+	u32 snap_rng;
 
 	if ((local == NULL) || (peer == NULL))
 	{
@@ -153,23 +157,56 @@ sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, co
 	{
 		return FALSE;
 	}
-	live_figh = syNetSyncHashBattleFightersFull();
-	live_world = syNetSyncHashRollbackWorld();
-	if (out_live_figh != NULL)
+	sim_tick = syNetInputGetTick();
+	snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
+#ifdef PORT
+	if (syNetRbSnapshotGetStoredSubsystemHashes(snap_tick, &snap_figh, &snap_world, &snap_item, &snap_rng) != FALSE)
 	{
-		*out_live_figh = live_figh;
+		if (out_diag_figh != NULL)
+		{
+			*out_diag_figh = snap_figh;
+		}
+		if (out_diag_world != NULL)
+		{
+			*out_diag_world = snap_world;
+		}
+		if ((snap_figh != local->fighter_digest) || (snap_world != local->world_digest))
+		{
+			return TRUE;
+		}
+		return FALSE;
 	}
-	if (out_live_world != NULL)
+#endif
+	/*
+	 * No ring slot: only compare live hashes when sim has run more than one tick past validation.
+	 * A single-tick lag at the validation boundary is normal (token uses snap N-1; compare may run after ingress).
+	 */
+	if (sim_tick <= validation_tick + 1U)
 	{
-		*out_live_world = live_world;
+		return FALSE;
 	}
-	if ((live_figh != local->fighter_digest) || (live_world != local->world_digest))
 	{
-		return TRUE;
-	}
-	if ((live_figh != peer->fighter_digest) || (live_world != peer->world_digest))
-	{
-		return TRUE;
+		u32 live_figh;
+		u32 live_world;
+
+		live_figh = syNetSyncHashBattleFightersFull();
+		live_world = syNetSyncHashRollbackWorld();
+		if (out_diag_figh != NULL)
+		{
+			*out_diag_figh = live_figh;
+		}
+		if (out_diag_world != NULL)
+		{
+			*out_diag_world = live_world;
+		}
+		if ((live_figh != local->fighter_digest) || (live_world != local->world_digest))
+		{
+			return TRUE;
+		}
+		if ((live_figh != peer->fighter_digest) || (live_world != peer->world_digest))
+		{
+			return TRUE;
+		}
 	}
 	return FALSE;
 }
