@@ -10313,6 +10313,26 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 		u32 cam_h = syNetSyncHashGMCamera();
 		u32 anim_h = syNetSyncHashFighterAnimationStateForRollback();
 		u32 gch_h = syNetSyncHashGcRunAllTraversalFingerprint();
+		/*
+		 * `eff_h` covers the same population that the rollback-load verify hashes
+		 * (`syNetSyncHashActiveEffectsForRollback`). It used to be checked only at
+		 * load-time, which meant a forward-sim effect-population drift only became
+		 * visible AFTER a frame-commit failure attempted recovery. Logging it per
+		 * tick lets the next session's bisect pin the exact tick a free-floating
+		 * effect (e.g. DK Jungle TaruCann particles) spawned on one peer but not
+		 * the other. See docs/bugs/netplay_dk_jungle_effect_pop_desync_2026-05-25.md.
+		 */
+		u32 eff_h = syNetSyncHashActiveEffectsForRollback();
+		/*
+		 * `cseed` is the raw value of the per-peer cosmetic LCG seed
+		 * (`sSYUtilsCosmeticRandomSeed`). Effect manager and particle system
+		 * consume this seed for all visual randomness; the `rng` partition does
+		 * NOT cover it. If `cseed` diverges between peers it is a sufficient
+		 * (and likely) cause for `eff` partition divergence in normal forward
+		 * sim — distinguishing this from a display-loop / sub-tick asymmetry
+		 * was the main blocker on bisecting session DK Jungle Match 2.
+		 */
+		u32 cseed_h = (u32)syUtilsCosmeticRandSeed();
 		const char *ht_env;
 		static sb32 sHashTransitionLogCache = -999;
 		static u32 sHashTransitionPrevTick;
@@ -10322,6 +10342,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 		static u32 sHashTransitionPrevItem;
 		static u32 sHashTransitionPrevRng;
 		static u32 sHashTransitionPrevGch;
+		static u32 sHashTransitionPrevEff;
 
 		if (sHashTransitionLogCache == -999)
 		{
@@ -10381,6 +10402,14 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 					    sHashTransitionPrevGch,
 					    gch_h);
 				}
+				if (eff_h != sHashTransitionPrevEff)
+				{
+					port_log(
+					    "SSB64 NetSync: hash_transition tick=%u partition=eff old=0x%08X new=0x%08X\n",
+					    tick,
+					    sHashTransitionPrevEff,
+					    eff_h);
+				}
 			}
 			sHashTransitionPrevTick = tick;
 			sHashTransitionPrevFigh = f;
@@ -10389,6 +10418,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			sHashTransitionPrevItem = item_h;
 			sHashTransitionPrevRng = rng_h;
 			sHashTransitionPrevGch = gch_h;
+			sHashTransitionPrevEff = eff_h;
 		}
 		{
 			u32 hr;
@@ -10402,7 +10432,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			                    syNetPeerGetPhaseLockPredictionWindowTicks())
 			                 : 0U;
 			port_log(
-			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d\n",
+			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X eff=0x%08X cseed=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d\n",
 			    tick,
 			    f,
 			    m,
@@ -10413,6 +10443,8 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			    cam_h,
 			    anim_h,
 			    gch_h,
+			    eff_h,
+			    cseed_h,
 			    (unsigned int)syNetRollbackGetAppliedResimCount(),
 			    (unsigned int)syNetRollbackGetLoadFailCount(),
 			    port_get_push_frame_count(),
