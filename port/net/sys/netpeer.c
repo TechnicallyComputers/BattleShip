@@ -3581,22 +3581,51 @@ static sb32 syNetPeerComposeAutomatchMatchMetadata(void)
 
 	m->stocks = (u32)3;
 	m->time_limit = (u32)SCBATTLE_TIMELIMIT_INFINITE;
-	m->item_toggles = ~(u32)0;
-	m->item_appearance_rate = (u8)nSCBattleItemSwitchMiddle;
-#ifdef PORT
-	/* Host-only: MATCH_CONFIG carries this to the peer. `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS=0` or unset = default (items on). */
+	/*
+	 * Host-only MATCH_CONFIG carry: default automatch matches have **no** items (fewer rollback
+	 * vectors while stabilizing netplay).
+	 *
+	 * Enable items: `SSB64_NETPLAY_AUTOMATCH_ITEMS=1` (or any non-zero). Sets middle spawn rate +
+	 * all toggles + item_switch aligned with mn VS defaults.
+	 *
+	 * Legacy: when `AUTOMATCH_ITEMS` is unset, `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS=0` (explicit zero)
+	 * enables items — old scripts that flipped only NO_ITEMS still work.
+	 *
+	 * Hard off: non-zero `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS` overrides and forces items off.
+	 *
+	 * If neither env is relevant, `syNetPeerMakeBootstrapMetadata` already zeroed toggles /
+	 * appearance_rate / item_switch off.
+	 */
 	{
+		const char *items_env;
 		const char *no_items_env;
+		sb32 want_items;
 
+		want_items = FALSE;
+		items_env = getenv("SSB64_NETPLAY_AUTOMATCH_ITEMS");
 		no_items_env = getenv("SSB64_NETPLAY_AUTOMATCH_NO_ITEMS");
+
+		if ((items_env != NULL) && (items_env[0] != '\0'))
+		{
+			want_items = (atoi(items_env) != 0) ? TRUE : FALSE;
+		}
+		else if ((no_items_env != NULL) && (no_items_env[0] != '\0'))
+		{
+			want_items = (atoi(no_items_env) == 0) ? TRUE : FALSE;
+		}
+
 		if ((no_items_env != NULL) && (no_items_env[0] != '\0') && (atoi(no_items_env) != 0))
 		{
-			m->item_appearance_rate = (u8)nSCBattleItemSwitchNone;
-			m->item_toggles = 0U;
-			m->item_switch = (u32)nSCBattleItemSwitchNone;
+			want_items = FALSE;
+		}
+
+		if (want_items != FALSE)
+		{
+			m->item_toggles = ~(u32)0;
+			m->item_appearance_rate = (u8)nSCBattleItemSwitchMiddle;
+			m->item_switch = (u32)nSCBattleItemSwitchMiddle;
 		}
 	}
-#endif
 	m->game_type = (u8)nSCBattleGameTypeRoyal;
 	m->game_rules = SCBATTLE_GAMERULE_STOCK;
 	m->rng_seed = syNetPeerAutomix32(

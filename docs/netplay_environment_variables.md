@@ -133,7 +133,8 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 
 **Automatch / Linux**
 
-- **`SSB64_NETPLAY_AUTOMATCH_NO_ITEMS`** — Item policy for automatch offer path.
+- **`SSB64_NETPLAY_AUTOMATCH_ITEMS`** — **Automatch-only:** when **`1`** or any non-zero, host `MATCH_CONFIG` uses **middle** item spawn rate, **all** item toggles on, and `item_switch` aligned with VS defaults. When **unset**, automatch battles default to **no items** (fewer rollback variables during netplay stabilization). Does not affect direct / IP VS (CSS rules).
+- **`SSB64_NETPLAY_AUTOMATCH_NO_ITEMS`** — **Legacy override:** explicit non-zero forces **items off** (after `AUTOMATCH_ITEMS`). Explicit **`SSB64_NETPLAY_AUTOMATCH_NO_ITEMS=0`** enables items when **`AUTOMATCH_ITEMS`** is unset (compat with older soak scripts).
 - **`SSB64_NETPLAY_UDP_LINK_SYNC`** — **`1`** or unset (default): run **5** UDP echo rounds (`UDP_SYNC_REQ`/`REP`) at bootstrap to prove the path before `MATCH_CONFIG`. **`0`**: skip the probe entirely. On timeout, bootstrap **continues automatically** (fallback) unless **`SSB64_NETPLAY_UDP_LINK_SYNC_REQUIRED=1`**.
 - **`SSB64_NETPLAY_UDP_LINK_SYNC_REQUIRED`** — Non-zero: **`UDP_LINK_SYNC` timeout aborts bootstrap** (legacy strict). Default off (fallback continue).
 - **`SSB64_NETPLAY_UDP_LINK_SYNC_RETRANSMIT_MS`** — While awaiting each echo `REP`, re-send the **same** challenge token at this interval (default **300** ms). Must exceed one-way+return RTT; increase for heavy `tc netem` (e.g. **400** for 120 ms each way).
