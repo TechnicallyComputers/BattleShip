@@ -1,8 +1,31 @@
 # Netplay joint-animation desync — function bisect (v10 auto3/4 class)
 
-**Date:** 2026-05-23  
-**Status:** INVESTIGATION — bisect map + soak protocol  
+**Date:** 2026-05-23 (updated 2026-05-25: Tier 1 fix landed)  
+**Status:** TIER 1 PATCHED — AObj chain rebuild on snapshot apply; awaiting WAN soak  
 **Evidence:** `client-auto3`/`gangster3` (resim @1560, `match_f=0`, `joint_anim_frame` diffs), `client-auto4`/`gangster4` (fork @958, `LOAD_HASH_DRIFT` figh+anim @900)
+
+## 2026-05-25 fix — Tier 1 AObj chain rebuild
+
+**Root cause:** `syNetRbSnapApplyDObjAnim` patched node *values* in place on the existing live `dobj->aobj` linked list. The live chain topology (node count and per-slot track/kind ordering) was never restored. The chain is grown monotonically by `gcParseDObjAnimJoint` calling `gcAddAObjForDObj` (head-prepend) as the figatree event stream advances; if `anim_frame` drifted even one f32 ULP between peers, the parser reached "add new track" events at different ticks, leading to different chain lengths or orderings. The cross-peer animation hash (`syNetSyncFoldFighterAnimJointContribution`) folds the FULL live chain count and walks head→tail for the first 16 nodes — so a topology mismatch produced a silent `anim_hash` divergence even when every fighter scalar matched.
+
+**Patch (`port/net/sys/netrollbacksnapshot.c`):**
+
+1. Extended `SYNetRbSnapAObjNodeBlob` with `interpolate_ptr` (uintptr_t — code-segment pointer set by `nGCAnimEvent32SetInterp`; stable intra-process across rollback).
+2. Extended `SYNetRbSnapDObjAnimBlob` with `is_anim_root` (u8), `dobj_flags` (u8), `event32_ptr` (uintptr_t — active figatree event cursor).
+3. Capture now records all of the above and emits `aobj_chain_overflow` diagnostic if a captured chain exceeds the 16-node cap.
+4. Apply now **drops the live chain entirely** via `syNetRbSnapDObjDrainAObjChain` (inlined `gcRemoveAObjFromDObj`-equivalent, without the `anim_wait = AOBJ_ANIM_NULL` side-effect we'd overwrite anyway), then reconstructs the snapshot order by allocating fresh AObj nodes via `gcAddAObjForDObj` walking the blob `aobj[N-1..0]` so head-prepend yields blob[0] at the live chain head — bit-for-bit identical to capture order.
+5. Apply also restores `is_anim_root`, `dobj->flags`, and `dobj->anim_joint.event32` from the DObjAnimBlob, so the next `gcPlayDObjAnimJoint`/`gcParseDObjAnimJoint` cycle advances from the exact captured stream position.
+6. A/B safety: `SSB64_NETPLAY_AOBJ_CHAIN_REBUILD=0` falls back to the legacy in-place patch path for bisect comparison. Default is **rebuild ON**.
+
+**Architectural invariants now upheld by the snapshot pipeline:**
+
+- *Topology determinism:* the AObj chain on every DObj is reproduced exactly (count + node order) after `syNetRbSnapApplyDObjAnim`. Any further parser advance proceeds from a known-equal starting topology.
+- *Cursor determinism:* `anim_wait`, `anim_speed`, `anim_frame`, `is_anim_root`, `flags`, and `anim_joint.event32` are all part of the per-DObj snapshot footprint; `gcParseDObjAnimJoint` cannot start advancing from a stale cursor.
+- *Hash equivalence:* every field the netsync animation fold reads (`syNetSyncFoldFighterAnimJointContribution`) is now part of the round-trip — including the `chain_total` count, which previously could drift without being restored.
+
+**Coverage:** the fix applies uniformly to every `SYNetRbSnapDObjAnimBlob` site (fighter joints, yaku DObjs, weapon DObjs) since they share the same capture/apply helpers.
+
+**Verification plan:** rerun the v10 auto3/auto4 soak with `SSB64_NETPLAY_RESIM_ANCHOR_PROBE=1` and confirm `match_f=1` on reanchor at tick 1560 (pair3) and that pair4-class load drifts at 900 either disappear or contain *only* topology-invariant scalars. If `anim_hash` still forks during pure-locomotion windows after this patch, the remaining divergence is Tier 2B (per-tick `gcPlayDObjAnimJoint` arithmetic), not Tier 1.
 
 ## Log verdict (what we already know)
 
@@ -152,7 +175,7 @@ Optional isolate Tier 1: `export SSB64_NETPLAY_SNAPSHOT_FIGHTER_CLEANUP=force` (
 
 ## Fix direction (after bisect confirms joint anim)
 
-1. **If Tier 1:** Extend AObj capture / rebuild chain on apply; or defer `ftMainRefreshFigatreeVisual` until after verify; verify-after-coupling + reapply (see [`netrollback_weapon_load_finalize_order_2026-05-20.md`](netrollback_weapon_load_finalize_order_2026-05-20.md)).
+1. **If Tier 1:** Extend AObj capture / rebuild chain on apply; or defer `ftMainRefreshFigatreeVisual` until after verify; verify-after-coupling + reapply (see [`netrollback_weapon_load_finalize_order_2026-05-20.md`](netrollback_weapon_load_finalize_order_2026-05-20.md)). **— Landed 2026-05-25 (see top of this doc).**
 2. **If Tier 2B:** Breakpoint bisect inside `ftParamUpdateAnimKeys` (`is_anim_joint` vs figatree path) at first `anim_hash` mismatch tick.
 3. **If Tier 2C:** Audit `ftMainSetStatus` joint reset vs snapshot `joint_translate` at hitstun boundaries; ensure motion script pointer state is in blob (already `motion_scripts[][]`).
 4. **Policy:** On inp-agree FC drift, allow **`ROLLBACK_LOAD_HASH_SOFT`** or anim-only continue for **figh** at reanchor load (pair4 @900) so resim can run.

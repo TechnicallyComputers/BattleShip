@@ -171,12 +171,21 @@ typedef struct SYNetRbSnapAObjNodeBlob
 {
 	u8 track;
 	u8 kind;
+	u8 pad[2];
 	f32 length_invert;
 	f32 length;
 	f32 value_base;
 	f32 value_target;
 	f32 rate_base;
 	f32 rate_target;
+	/*
+	 * `interpolate` is a code-segment function pointer set by `nGCAnimEvent32SetInterp` events. It is
+	 * stable across rollback within a single process, so we serialize it as `uintptr_t` and restore by
+	 * literal write. It is NOT folded into the cross-peer anim hash (see
+	 * `syNetSyncFoldFighterAnimJointContribution`), so absolute-address differences between peers don't
+	 * matter — only intra-process determinism does.
+	 */
+	uintptr_t interpolate_ptr;
 
 } SYNetRbSnapAObjNodeBlob;
 
@@ -187,7 +196,14 @@ typedef struct SYNetRbSnapDObjAnimBlob
 	f32 anim_frame;
 	u8 aobj_count;
 	u8 aobj_chain_total;
-	u8 pad[2];
+	u8 is_anim_root;
+	u8 dobj_flags;
+	/*
+	 * Cache the active figatree event32 cursor at capture time. Restored before the AObj chain rebuild so
+	 * any subsequent `gcParseDObjAnimJoint` advances from the exact stream position. Stored as a literal
+	 * runtime pointer (same intra-process stability rationale as `interpolate_ptr`).
+	 */
+	uintptr_t event32_ptr;
 	SYNetRbSnapAObjNodeBlob aobj[SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX];
 
 } SYNetRbSnapDObjAnimBlob;
@@ -2095,6 +2111,7 @@ static void syNetRbSnapCaptureAObjNode(SYNetRbSnapAObjNodeBlob *dst, const AObj 
 	dst->value_target = aobj->value_target;
 	dst->rate_base = aobj->rate_base;
 	dst->rate_target = aobj->rate_target;
+	dst->interpolate_ptr = (uintptr_t)aobj->interpolate;
 }
 
 static void syNetRbSnapApplyAObjNode(AObj *aobj, const SYNetRbSnapAObjNodeBlob *src)
@@ -2111,7 +2128,41 @@ static void syNetRbSnapApplyAObjNode(AObj *aobj, const SYNetRbSnapAObjNodeBlob *
 	aobj->value_target = src->value_target;
 	aobj->rate_base = src->rate_base;
 	aobj->rate_target = src->rate_target;
+	aobj->interpolate = (void *)src->interpolate_ptr;
 }
+
+#ifdef PORT
+/*
+ * AObj chain rebuild on apply (default ON). Disable via SSB64_NETPLAY_AOBJ_CHAIN_REBUILD=0 for A/B
+ * bisect against the legacy in-place patch path. The chain topology (node count + per-slot track/kind)
+ * depends on the script-parser history (`gcParseDObjAnimJoint`) and is monotonically grown by
+ * `gcAddAObjForDObj` during playback. The legacy apply only patched node field VALUES — if the live
+ * chain length or order differed from the captured chain, leftover live nodes or missing nodes silently
+ * desynced the hash (`syNetSyncFoldFighterAnimJointContribution` folds the FULL live chain count and the
+ * first 16 nodes' fields). The rebuild path drops the live chain entirely, then re-allocates the exact
+ * snapshot topology in head→tail capture order.
+ */
+static sb32 syNetRbSnapAObjChainRebuildEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_AOBJ_CHAIN_REBUILD");
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		s_env_cache = 1;
+	}
+	else
+	{
+		s_env_cache = (atoi(e) != 0) ? 1 : 0;
+	}
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+#endif
 
 static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 {
@@ -2126,6 +2177,9 @@ static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 	dst->anim_wait = dobj->anim_wait;
 	dst->anim_speed = dobj->anim_speed;
 	dst->anim_frame = dobj->anim_frame;
+	dst->is_anim_root = (u8)(dobj->is_anim_root != FALSE);
+	dst->dobj_flags = dobj->flags;
+	dst->event32_ptr = (uintptr_t)dobj->anim_joint.event32;
 	{
 		u8 chain_total;
 
@@ -2142,23 +2196,100 @@ static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 		}
 		dst->aobj_count = count;
 		dst->aobj_chain_total = chain_total;
+#ifdef PORT
+		if (chain_total > SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX)
+		{
+			port_log(
+			    "SSB64 NetRbSnapshot: aobj_chain_overflow dobj=%p chain_total=%u cap=%u (truncating); "
+			    "anim/figh hash will diverge across rollback for this joint\n",
+			    (void *)dobj, (unsigned int)chain_total,
+			    (unsigned int)SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX);
+		}
+#endif
 	}
+}
+
+/*
+ * Drop every AObj on the live chain back into the global pool. Mirrors `gcRemoveAObjFromDObj` but
+ * inlined to avoid the `anim_wait = AOBJ_ANIM_NULL` side-effect — we restore anim cursor fields from
+ * the blob immediately after, so the intermediate NULL state is wasted work and would clobber the
+ * deterministic value we're about to write.
+ */
+static void syNetRbSnapDObjDrainAObjChain(DObj *dobj)
+{
+	AObj *current_aobj;
+	AObj *next_aobj;
+
+	if (dobj == NULL)
+	{
+		return;
+	}
+	current_aobj = dobj->aobj;
+	while (current_aobj != NULL)
+	{
+		next_aobj = current_aobj->next;
+		gcSetAObjPrevAlloc(current_aobj);
+		current_aobj = next_aobj;
+	}
+	dobj->aobj = NULL;
 }
 
 static void syNetRbSnapApplyDObjAnim(DObj *dobj, const SYNetRbSnapDObjAnimBlob *src)
 {
 	AObj *aobj;
 	u8 i;
+	u8 apply_count;
 
 	if (dobj == NULL)
 	{
 		return;
 	}
+
+	/* Per-DObj cursor + flags must be restored regardless of chain-rebuild policy. */
 	dobj->anim_wait = src->anim_wait;
 	dobj->anim_speed = src->anim_speed;
 	dobj->anim_frame = src->anim_frame;
+	dobj->is_anim_root = (src->is_anim_root != 0U) ? TRUE : FALSE;
+	dobj->flags = src->dobj_flags;
+	dobj->anim_joint.event32 = (AObjEvent32 *)src->event32_ptr;
+
+	apply_count = src->aobj_count;
+	if (apply_count > SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX)
+	{
+		apply_count = SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX;
+	}
+
+#ifdef PORT
+	if (syNetRbSnapAObjChainRebuildEnabled() != FALSE)
+	{
+		/*
+		 * Rebuild path: drop the live chain, then prepend snapshot entries tail→head so the rebuilt
+		 * chain order (head→tail) equals the captured order. `gcAddAObjForDObj` prepends to `dobj->aobj`,
+		 * so iterating snapshot[N-1..0] yields blob[0] at the head — bit-for-bit identical to capture.
+		 */
+		syNetRbSnapDObjDrainAObjChain(dobj);
+		if (apply_count > 0U)
+		{
+			s32 idx;
+
+			for (idx = (s32)apply_count - 1; idx >= 0; idx--)
+			{
+				AObj *node = gcAddAObjForDObj(dobj, src->aobj[idx].track);
+
+				if (node == NULL)
+				{
+					break;
+				}
+				syNetRbSnapApplyAObjNode(node, &src->aobj[idx]);
+			}
+		}
+		return;
+	}
+#endif
+
+	/* Legacy in-place patch path (broken; kept for A/B bisect under env flag = 0). */
 	aobj = dobj->aobj;
-	for (i = 0U; (aobj != NULL) && (i < src->aobj_count) && (i < SYNETROLLBACK_SNAPSHOT_AOBJ_CHAIN_MAX); i++)
+	for (i = 0U; (aobj != NULL) && (i < apply_count); i++)
 	{
 		syNetRbSnapApplyAObjNode(aobj, &src->aobj[i]);
 		aobj = aobj->next;
