@@ -12,10 +12,10 @@
 include(FetchContent)
 
 # curl-only FindMbedTLS.cmake (not on global CMAKE_MODULE_PATH — libzip has its own finder).
-set(SSB64_CURL_FIND_MBEDTLS "${CMAKE_CURRENT_LIST_DIR}/curl/FindMbedTLS.cmake" CACHE INTERNAL "")
+set(SSB64_CURL_FIND_MBEDTLS "${CMAKE_SOURCE_DIR}/cmake/curl/FindMbedTLS.cmake" CACHE INTERNAL "")
 
-function(ssb64_android_provide_curl)
-    if(TARGET CURL::libcurl)
+function(ssb64_android_fetch_mbedtls)
+    if(TARGET mbedtls AND TARGET mbedx509 AND TARGET mbedcrypto)
         return()
     endif()
 
@@ -27,11 +27,47 @@ function(ssb64_android_provide_curl)
         mbedtls
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
         GIT_TAG        v3.6.2
-        GIT_SUBMODULES "framework"
     )
+    FetchContent_GetProperties(mbedtls)
+    if(NOT mbedtls_POPULATED)
+        FetchContent_Populate(mbedtls)
+        if(NOT EXISTS "${mbedtls_SOURCE_DIR}/framework/CMakeLists.txt")
+            find_package(Git QUIET)
+            if(NOT Git_FOUND)
+                message(FATAL_ERROR
+                    "ssb64_android_provide_curl: Git is required to init mbedtls's framework submodule")
+            endif()
+            message(STATUS "SSB64 Android netmenu: initializing mbedtls framework submodule")
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} -C "${mbedtls_SOURCE_DIR}" submodule update --init --depth 1 framework
+                RESULT_VARIABLE _ssb64_mbedtls_fw_rv
+                ERROR_VARIABLE _ssb64_mbedtls_fw_err
+            )
+            if(_ssb64_mbedtls_fw_rv OR NOT EXISTS "${mbedtls_SOURCE_DIR}/framework/CMakeLists.txt")
+                message(FATAL_ERROR
+                    "mbedtls framework submodule init failed (exit ${_ssb64_mbedtls_fw_rv}): ${_ssb64_mbedtls_fw_err}")
+            endif()
+        endif()
+    endif()
     FetchContent_MakeAvailable(mbedtls)
 
-    # Visible to curl's find_package(MbedTLS) when curl is a FetchContent subdir.
+    if(NOT (TARGET mbedtls AND TARGET mbedx509 AND TARGET mbedcrypto))
+        message(FATAL_ERROR "ssb64_android_provide_curl: mbedtls FetchContent did not define mbedtls targets")
+    endif()
+endfunction()
+
+function(ssb64_android_provide_curl)
+    if(TARGET CURL::libcurl)
+        return()
+    endif()
+
+    if(NOT EXISTS "${SSB64_CURL_FIND_MBEDTLS}")
+        message(FATAL_ERROR "ssb64_android_provide_curl: missing ${SSB64_CURL_FIND_MBEDTLS}")
+    endif()
+
+    ssb64_android_fetch_mbedtls()
+
+    # Visible to curl's patched FindMbedTLS.cmake when curl is a FetchContent subdir.
     set(SSB64_MBEDTLS_SOURCE_DIR "${mbedtls_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
 
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
