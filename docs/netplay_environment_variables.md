@@ -228,6 +228,7 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_MATCHMAKING_PUBLIC_ENDPOINT`**, **`SSB64_MATCHMAKING_BIND`**, **`SSB64_MATCHMAKING_LAN_ENDPOINT`** — [`scautomatch.c`](decomp/src/netplay/sc/sccommon/scautomatch.c). After match, bootstrap always tries reflexive **`peer`** (WAN/STUN path) first. **`peer_lan`** is tried only if that fails **and** local STUN **`udp_endpoint`** and opponent **`peer`** share the same IPv4 (`mmHostportWanIpv4Equal`).
 - **`SSB64_MATCHMAKING_FORCE_PEER_LAN`** — Non-zero: dev override — try **`peer_lan`** before reflexive (ignores WAN comparison).
 - **`SSB64_MATCHMAKING_LAN_INTERFACE`** — [`mm_lan_detect.c`](port/net/matchmaking/mm_lan_detect.c)
+- **`SSB64_NETPLAY_AUTOMATCH_CONNECT_TIMEOUT_MS`** — Wall-clock budget for post-match P2P bootstrap on the automatch staging scene (default **60000**, clamp **5000–300000**). Expired or **B** during connect returns to character select (`nSCKindVSNetAutomatch`). Press **B** while searching/connecting on staging to cancel the queue ticket and return to CSS.
 - **`SSB64_NETPLAY_SERVER_BOOTSTRAP`** — [`mm_server_barrier.c`](port/net/bootstrap/mm_server_barrier.c) (Linux)
 
 ---

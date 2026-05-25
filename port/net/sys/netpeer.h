@@ -283,6 +283,9 @@ extern sb32 syNetPeerRunBootstrap(void);
  * Does not clear `syNetPeerConfigureUdpForAutomatch` session/bind settings.
  */
 extern void syNetPeerCancelAutomatchBootstrap(void);
+extern void syNetPeerClearAutomatchAbort(void);
+extern void syNetPeerRequestAutomatchAbort(void);
+extern sb32 syNetPeerAutomatchBootstrapWasAborted(void);
 /* Brief cooperative pause between LAN/reflexive bootstrap attempts (frame pump + audio). */
 extern void syNetPeerPauseBetweenBootstrapAttempts(void);
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */

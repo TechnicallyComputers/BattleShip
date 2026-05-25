@@ -19,11 +19,13 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <sys/random.h>
 #elif defined(__APPLE__)
 /* Native on macOS; avoid <bsd/stdlib.h> (not in the GHA SDK). */
 void arc4random_buf(void *buf, size_t nbytes);
+#elif defined(__ANDROID__)
+#include <fcntl.h>
 #endif
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -45,6 +47,23 @@ static const struct
 
 #define STUN_MAGIC 0x2112A442U
 
+#if defined(__ANDROID__)
+static sb32 mmStunTryDevUrandom(u8 *buf, size_t len)
+{
+	int fd;
+	ssize_t n;
+
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0)
+	{
+		return FALSE;
+	}
+	n = read(fd, buf, len);
+	(void)close(fd);
+	return (n == (ssize_t)len) ? TRUE : FALSE;
+}
+#endif
+
 static void mmStunFillTxId(u8 *pkt)
 {
 	s32 i;
@@ -56,14 +75,19 @@ static void mmStunFillTxId(u8 *pkt)
 		pkt[i] = (u8)((u32)GetTickCount() ^ (u32)GetCurrentProcessId() ^ ((u32)i * 7919U));
 	}
 #else
-#if defined(__linux__)
+#if defined(__APPLE__)
+	arc4random_buf(pkt, 12U);
+	return;
+#elif defined(__linux__) && !defined(__ANDROID__)
 	if (getrandom(pkt, 12U, 0) == 12)
 	{
 		return;
 	}
-#elif defined(__APPLE__)
-	arc4random_buf(pkt, 12U);
-	return;
+#elif defined(__ANDROID__)
+	if (mmStunTryDevUrandom(pkt, 12U))
+	{
+		return;
+	}
 #endif
 	for (i = 0; i < 12; i++)
 	{
