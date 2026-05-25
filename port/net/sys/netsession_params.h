@@ -29,6 +29,8 @@ typedef struct SYNetSessionParams
 extern sb32 syNetSessionParamsAutoNegotiationEnabled(void);
 /* TRUE when committed delay must not be replaced by RTT policy (`MATCH_INPUT_DELAY` or `SSB64_NETPLAY_DELAY`). */
 extern sb32 syNetSessionParamsManualDelayOverrideActive(void);
+/* TRUE only when `SSB64_NETPLAY_ADAPTIVE_DELAY` is non-zero (default off for release builds). */
+extern sb32 syNetSessionParamsAdaptiveDelayEnvEnabled(void);
 
 extern void syNetSessionParamsResetForNewMatch(void);
 /* RTT-tier frame-commit / NetSync validation cadence (ticks); both peers must match. */

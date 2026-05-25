@@ -140,6 +140,65 @@ sb32 syNetSessionParamsManualDelayOverrideActive(void)
 	return FALSE;
 }
 
+sb32 syNetSessionParamsAdaptiveDelayEnvEnabled(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_ADAPTIVE_DELAY");
+	return ((e != NULL) && (atoi(e) != 0)) ? TRUE : FALSE;
+}
+
+static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
+{
+	if (rtt_ms < 60U)
+	{
+		return 2U;
+	}
+	if (rtt_ms < 100U)
+	{
+		return 3U;
+	}
+	if (rtt_ms < 150U)
+	{
+		return 5U;
+	}
+	if (rtt_ms < 200U)
+	{
+		return 7U;
+	}
+	if (rtt_ms < 280U)
+	{
+		return 9U;
+	}
+	return 10U;
+}
+
+static u32 syNetSessionParamsComputeNegotiatedDelayCeil(u32 d_ticks, u32 headroom_field)
+{
+	u32 ceil_d;
+
+	if (syNetSessionParamsAdaptiveDelayEnvEnabled() != FALSE)
+	{
+		if (headroom_field > 0U)
+		{
+			ceil_d = d_ticks + headroom_field;
+		}
+		else
+		{
+			ceil_d = d_ticks + SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT;
+		}
+	}
+	else
+	{
+		ceil_d = d_ticks;
+	}
+	if (ceil_d > SYNETSESSION_PARAMS_DELAY_MAX)
+	{
+		ceil_d = SYNETSESSION_PARAMS_DELAY_MAX;
+	}
+	return ceil_d;
+}
+
 void syNetSessionParamsResetForNewMatch(void)
 {
 	sSYNetSessionParamsNegotiatedValid = FALSE;
@@ -205,8 +264,8 @@ static const char *syNetSessionParamsRttTierName(u32 rtt_ms)
 }
 
 /*
- * Delay vs prediction runway (phase_lock) by connection quality.
- * Delay-heavy: fewer rollbacks; prediction covers only remaining latency after D.
+ * Fixed committed delay tiers by RTT (rollback-first; D does not creep unless adaptive env is on).
+ * phase_lock stays RTT-derived for prediction / resim runway after D.
  */
 static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_ticks, u32 *out_d_ticks,
 							u32 *out_phase_lock)
@@ -214,83 +273,30 @@ static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_
 	u32 d_ticks;
 	u32 phase_lock;
 	u32 pred_cap;
+	u32 runway;
 
 	if ((out_d_ticks == NULL) || (out_phase_lock == NULL))
 	{
 		return;
 	}
-	d_ticks = one_way_ticks;
-	phase_lock = one_way_ticks;
-	if (rtt_ms < 80U)
+	d_ticks = syNetSessionParamsDelayFromRttMs(rtt_ms);
+	if (d_ticks < SYNETSESSION_PARAMS_ROLLBACK_D_MIN)
 	{
-		/* Excellent: D 3–4, prediction D..D+1 (cap 5) */
-		if (d_ticks < 3U)
-		{
-			d_ticks = 3U;
-		}
-		if (d_ticks > 4U)
-		{
-			d_ticks = 4U;
-		}
-		phase_lock = d_ticks + 1U;
-		if (phase_lock > 5U)
-		{
-			phase_lock = 5U;
-		}
-		if (phase_lock < 2U)
-		{
-			phase_lock = 2U;
-		}
+		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MIN;
 	}
-	else if (rtt_ms < 150U)
+	if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
 	{
-		/* Good (80–150ms): D 4–6, prediction 5–7 — 100ms RTT → D≈5, phase_lock≈6 */
-		d_ticks = one_way_ticks + 2U;
-		if (d_ticks < 4U)
-		{
-			d_ticks = 4U;
-		}
-		if (d_ticks > 6U)
-		{
-			d_ticks = 6U;
-		}
-		phase_lock = d_ticks + 2U;
-		if (phase_lock < 5U)
-		{
-			phase_lock = 5U;
-		}
-		if (phase_lock > 7U)
-		{
-			phase_lock = 7U;
-		}
+		d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
 	}
-	else if (rtt_ms < 230U)
+	runway = one_way_ticks + SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS;
+	if (runway < SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN)
 	{
-		/* Playable (150–230ms): D 5–7, prediction hard cap 6 */
-		d_ticks = one_way_ticks + 2U;
-		if (d_ticks < 5U)
-		{
-			d_ticks = 5U;
-		}
-		if (d_ticks > 7U)
-		{
-			d_ticks = 7U;
-		}
-		phase_lock = 6U;
+		runway = SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN;
 	}
-	else
+	phase_lock = d_ticks + 2U;
+	if (phase_lock < runway)
 	{
-		/* High (>230ms): D 7–10, prediction 6–7 */
-		d_ticks = one_way_ticks + 4U;
-		if (d_ticks < 7U)
-		{
-			d_ticks = 7U;
-		}
-		if (d_ticks > SYNETSESSION_PARAMS_ROLLBACK_D_MAX)
-		{
-			d_ticks = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
-		}
-		phase_lock = 7U;
+		phase_lock = runway;
 	}
 	pred_cap = d_ticks + (d_ticks / 2U);
 	if (phase_lock > pred_cap)
@@ -370,8 +376,7 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	half_rtt_ms = (rtt_ms + 1U) / 2U;
 	one_way_ticks = syNetSessionParamsCeilDiv(half_rtt_ms, frame_ms_num);
 	/*
-	 * Rollback-first: committed input delay (wire = sim + D) tracks RTT band; phase_lock is the prediction /
-	 * rollback runway (not extra input delay). See delay:prediction table in ComputeDelayAndPrediction.
+	 * Rollback-first: committed D from fixed RTT tiers (2..10); phase_lock is prediction / rollback runway.
 	 */
 	syNetSessionParamsComputeDelayAndPrediction(rtt_ms, one_way_ticks, &d_ticks, &phase_lock);
 	if (d_ticks < SYNETSESSION_PARAMS_DELAY_MIN)
@@ -429,12 +434,8 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	out_params->rollback_resim_ticks_per_frame = (u8)syNetSessionParamsComputeResimTicksFromRtt(rtt_ms);
 	out_params->strict_ring_fuzz_ticks = (u8)fuzz_ticks;
 	out_params->rollback_flags = rollback_flags;
-	ceil_d = d_ticks + (u32)out_params->delay_adaptive_headroom;
-	if (ceil_d > SYNETSESSION_PARAMS_DELAY_MAX)
-	{
-		ceil_d = SYNETSESSION_PARAMS_DELAY_MAX;
-	}
-	sSYNetSessionParamsEffectiveDelayCeil = ceil_d;
+	sSYNetSessionParamsEffectiveDelayCeil =
+	    syNetSessionParamsComputeNegotiatedDelayCeil(d_ticks, (u32)out_params->delay_adaptive_headroom);
 }
 
 sb32 syNetSessionParamsAreNegotiated(void)
@@ -474,18 +475,8 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	sSYNetSessionParamsNegotiatedValid = TRUE;
 	sSYNetSessionParamsFcValidationTicksCached =
 	    syNetSessionParamsComputeFrameCommitValidationTicks((u32)params->rtt_ms);
-	if (params->delay_adaptive_headroom > 0U)
-	{
-		ceil_d = (u32)params->input_delay + (u32)params->delay_adaptive_headroom;
-	}
-	else
-	{
-		ceil_d = (u32)params->input_delay + SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT;
-	}
-	if (ceil_d > SYNETSESSION_PARAMS_DELAY_MAX)
-	{
-		ceil_d = SYNETSESSION_PARAMS_DELAY_MAX;
-	}
+	ceil_d = syNetSessionParamsComputeNegotiatedDelayCeil((u32)params->input_delay,
+	                                                    (u32)params->delay_adaptive_headroom);
 	sSYNetSessionParamsEffectiveDelayCeil = ceil_d;
 	d = (u32)params->input_delay;
 	if (syNetSessionParamsManualDelayOverrideActive() == FALSE)

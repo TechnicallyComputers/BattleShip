@@ -60,7 +60,7 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 
 ## Auto session negotiation ([`port/net/sys/netsession_params.c`](port/net/sys/netsession_params.c))
 
-- **`SSB64_NETPLAY_AUTO_SESSION_PARAMS`** — **`1`** or unset (default): host measures RTT (`TIME_PING` during VS sync, or barrier clock sync when enabled), computes and negotiates rollback-first **`D`** (small commit delay, typically **2–4**), **`PHASE_LOCK_PREDICTION_TICKS`** (prediction runway ≈ one-way RTT in ticks + margin, up to **16**), transport knobs, snapshot/resim budgets, and symmetric rollback enablement, then sends **`SESSION_PARAMS`** (wire type **22**), guest **`SESSION_PARAMS_ACK`** (type **23**). Both peers apply the same contract before battle execution unlocks. **`0`**: legacy manual env only. **`SSB64_NETPLAY_DELAY`** / **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** still override committed **`D`** when set. **`SSB64_NETPLAY_ROLLBACK=0`** still disables rollback locally even if the host proposal includes it.
+- **`SSB64_NETPLAY_AUTO_SESSION_PARAMS`** — **`1`** or unset (default): host measures RTT (`TIME_PING` during VS sync, or barrier clock sync when enabled), computes and negotiates rollback-first **`D`** from a fixed RTT tier table (**2 / 3 / 5 / 7 / 9 / 10** frames for increasing RTT), **`PHASE_LOCK_PREDICTION_TICKS`** (prediction runway from one-way RTT + margin, capped), transport knobs, snapshot/resim budgets, and symmetric rollback enablement, then sends **`SESSION_PARAMS`** (wire type **22**), guest **`SESSION_PARAMS_ACK`** (type **23**). Both peers apply the same contract before battle execution unlocks. **`0`**: legacy manual env only. **`SSB64_NETPLAY_DELAY`** / **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** still override committed **`D`** when set. **`SSB64_NETPLAY_ROLLBACK=0`** still disables rollback locally even if the host proposal includes it. RTT→**`D`** tiers (ms): **&lt;60→2**, **60–99→3**, **100–149→5**, **150–199→7**, **200–279→9**, **≥280→10**.
 - Example / bisect: [`scripts/netplay-auto-session.env.example`](../scripts/netplay-auto-session.env.example).
 
 ---
@@ -128,8 +128,8 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 
 **Adaptive delay**
 
-- **`SSB64_NETPLAY_ADAPTIVE_DELAY`** — Enable adaptive delay ramp.
-- **`SSB64_NETPLAY_DELAY_MAX`** — Ceiling for adaptive / floor clamping (with automatch configure).
+- **`SSB64_NETPLAY_ADAPTIVE_DELAY`** — **Off by default** (unset or **`0`**). Non-zero: host may ramp committed **`D`** within the session delay ceiling (lab / soak only). Release builds should leave this unset; RTT tier **`D`** is fixed unless this env is set.
+- **`SSB64_NETPLAY_DELAY_MAX`** — Ceiling for adaptive ramp / floor clamping when adaptive is on (with automatch configure). When adaptive is off, negotiated **`ceil`** equals committed **`D`** (no headroom bump).
 
 **Automatch / Linux**
 
