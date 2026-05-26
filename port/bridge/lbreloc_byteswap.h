@@ -272,6 +272,27 @@ void portRelocFixupTextureAtRuntime(const void *addr, unsigned int num_bytes);
  */
 void portRelocTexFixupLog(const char *fmt, ...);
 
+/**
+ * Mark a synthetic (port-built) Sprite as already byte-order-correct so that
+ * portFixupSprite / portFixupBitmapArray / portFixupSpriteBitmapData become
+ * no-ops when the game passes it through lbCommonMakeSObjForGObj.
+ *
+ * Call this once per sprite — before the game code first sees the pointer —
+ * with:
+ *   sprite    — the Sprite struct (68 bytes, fields in native LE)
+ *   bitmaps   — the Bitmap array (nbitmaps * 16 bytes, fields in native LE)
+ *   nbitmaps  — number of entries in the array
+ *   buf_ptrs  — array of nbitmaps pixel buffer pointers (one per Bitmap)
+ *
+ * Internally inserts all relevant base pointers into sStructU16Fixups and
+ * sDeswizzle4cFixups so every idempotency check short-circuits.
+ *
+ * The pixel buffers must already be in the format Fast3D expects:
+ *   RGBA16 — big-endian u16 pixels, linear (no TMEM odd-row swizzle).
+ */
+void portMarkSyntheticSprite(void *sprite, void *bitmaps, unsigned int nbitmaps,
+                             void *const *buf_ptrs);
+
 #ifdef __cplusplus
 }
 #endif

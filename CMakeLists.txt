@@ -252,6 +252,83 @@ add_custom_command(
     VERBATIM
 )
 
+# ── CSS icon pipeline ─────────────────────────────────────────────────────
+# Stage-specific assets (background wallpapers + CSS thumbnails) are now
+# extracted from baserom.us.z64 at build time by tools/derive_stage_assets.py
+# and loaded at runtime as PNG files. No Nintendo-derived bytes are baked
+# into the binary.
+#
+# The arrow sprite remains baked (it is original port artwork).
+set(SSB64_CSS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+# Stage asset PNGs — extracted from baserom.us.z64 by derive_stage_assets.py.
+# Desktop-only: Android packaging of these assets is a follow-up task.
+# The add_custom_command that invokes derive_stage_assets.py is declared later
+# (after SSB64_BASEROM is resolved) in the "Asset extraction targets" section.
+# The output paths are set here so the POST_BUILD copy can reference them.
+set(SSB64_CSS_STAGE_ASSET_DIR ${CMAKE_CURRENT_BINARY_DIR}/assets/css_icons)
+set(SSB64_CSS_FD_BG_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_background.png)
+set(SSB64_CSS_FD_SMALL_PNG ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_small.png)
+set(SSB64_CSS_FD_NAME_PNG  ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_name.png)
+
+# Scroll arrow — generated procedurally with apex angle ~149°. Canvas width is
+# padded to a multiple of 4 px inside the script so RGBA16 row stride stays
+# 8-byte-aligned (W=6 visual → W=8 canvas, transparent padding centered).
+# Two variants: right-pointing (default) and left-pointing (--mirror) so the
+# second-page indicator doesn't depend on negative SObj scalex.
+set(SSB64_CSS_ARROW_PNG       ${CMAKE_CURRENT_SOURCE_DIR}/port/assets/css_icons/arrow.png)
+set(SSB64_CSS_ARROW_LEFT_PNG  ${CMAKE_CURRENT_SOURCE_DIR}/port/assets/css_icons/arrow_left.png)
+set(SSB64_CSS_ARROW_H         ${SSB64_CSS_GEN_DIR}/arrow_data.h)
+set(SSB64_CSS_ARROW_LEFT_H    ${SSB64_CSS_GEN_DIR}/arrow_left_data.h)
+add_custom_command(
+    OUTPUT ${SSB64_CSS_ARROW_PNG}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_arrow_svg.py
+            ${SSB64_CSS_ARROW_PNG}
+            6 44
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_arrow_svg.py
+    COMMENT "Generating CSS scroll-arrow PNG (visual 6x44, canvas 8x44 padded)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${SSB64_CSS_ARROW_LEFT_PNG}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_arrow_svg.py
+            ${SSB64_CSS_ARROW_LEFT_PNG}
+            6 44 --mirror
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_arrow_svg.py
+    COMMENT "Generating CSS scroll-arrow PNG (left-mirrored)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${SSB64_CSS_ARROW_H}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/png_to_c_array.py
+            ${SSB64_CSS_ARROW_PNG}
+            ${SSB64_CSS_ARROW_H}
+            arrow
+    DEPENDS
+        ${SSB64_CSS_ARROW_PNG}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/png_to_c_array.py
+    COMMENT "Baking scroll-arrow -> ${SSB64_CSS_ARROW_H}"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${SSB64_CSS_ARROW_LEFT_H}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/png_to_c_array.py
+            ${SSB64_CSS_ARROW_LEFT_PNG}
+            ${SSB64_CSS_ARROW_LEFT_H}
+            arrowLeft
+    DEPENDS
+        ${SSB64_CSS_ARROW_LEFT_PNG}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/png_to_c_array.py
+    COMMENT "Baking scroll-arrow (left) -> ${SSB64_CSS_ARROW_LEFT_H}"
+    VERBATIM
+)
+
 add_custom_target(ExtractAssetHeaders
     DEPENDS PrepareBuildInputs
     COMMENT "BattleShip asset/header generation is driven by PrepareBuildInputs"
@@ -308,6 +385,13 @@ endif()
 if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     list(APPEND SSB64_SRC_PORT ${SSB64_ICON_GEN})
 endif()
+# Arrow baked headers — added as sources so CMake schedules their generation
+# before any port TU compilation.  Stage background/icon PNGs are disk-loaded
+# at runtime; no baked headers for those.
+list(APPEND SSB64_SRC_PORT
+    ${SSB64_CSS_ARROW_H}
+    ${SSB64_CSS_ARROW_LEFT_H}
+)
 
 # Debug tools (GBI trace + Acmd trace systems)
 file(GLOB SSB64_DEBUG_TOOLS
@@ -619,6 +703,12 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
         ${SSB64_ICON_GEN_DIR}                         # Generated icon header (port_icon_data.h)
         ${discord_rpc_SOURCE_DIR}/include             # Discord Rich Presence
     )
+else()
+    # Android: include the generated dir for CSS icon baked headers.
+    # (SSB64_ICON_GEN_DIR is already the same dir; listed explicitly for clarity.)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${SSB64_CSS_GEN_DIR}                          # CSS icon baked headers
+    )
 endif()
 
 ################################################################################
@@ -709,6 +799,10 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${TORCH_EXECUTABLE}
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/${TORCH_SIDECAR_NAME}
+        # CSS stage asset PNGs (final_destination_background.png, etc.) are
+        # copied in a separate POST_BUILD step added by the DeriveStageAssets
+        # block further below, after SSB64_BASEROM is resolved.
+        # Arrow data is baked into the binary via arrow_data.h / arrow_left_data.h.
     )
 else()
     # Android: produce f3d.o2r in the source tree so Gradle's stageGameAssets
@@ -814,6 +908,57 @@ add_custom_target(GenerateBattleShipO2R
     DEPENDS ExtractAssets
     COMMENT "Generating BattleShip.o2r"
 )
+
+# ── CSS stage asset extraction ─────────────────────────────────────────────
+# derive_stage_assets.py extracts the FD background + icon PNGs from the ROM,
+# and synthesizes the FD nameplate PNG (96x10, PIL bitmap font, no ROM data).
+# These PNGs are then copied to the run directory so the game can load them
+# at runtime without any Nintendo-derived bytes baked into the binary.
+#
+# Desktop-only.  Android is a follow-up task (stage PNGs need to be packaged
+# into the APK assets/ and extracted to externalFilesDir on first launch).
+if(EXISTS "${SSB64_BASEROM}")
+    add_custom_command(
+        OUTPUT
+            ${SSB64_CSS_FD_BG_PNG}
+            ${SSB64_CSS_FD_SMALL_PNG}
+            ${SSB64_CSS_FD_NAME_PNG}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/derive_stage_assets.py
+                ${SSB64_BASEROM}
+                ${SSB64_CSS_STAGE_ASSET_DIR}
+        DEPENDS
+            ${SSB64_BASEROM}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/derive_stage_assets.py
+        COMMENT "Extracting CSS stage assets from ${SSB64_BASEROM}"
+        VERBATIM
+    )
+    add_custom_target(DeriveStageAssets
+        DEPENDS ${SSB64_CSS_FD_BG_PNG} ${SSB64_CSS_FD_SMALL_PNG} ${SSB64_CSS_FD_NAME_PNG}
+    )
+    add_dependencies(${PROJECT_NAME} DeriveStageAssets)
+    # Copy extracted PNGs into the run-directory asset subtree so the game
+    # can find them at  <run-dir>/assets/css_icons/<name>_*.png .
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_FD_BG_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_background.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_FD_SMALL_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_small.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_FD_NAME_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_name.png
+        COMMENT "Staging CSS stage asset PNGs next to ssb64 binary"
+    )
+else()
+    add_custom_target(DeriveStageAssets
+        COMMENT "DeriveStageAssets: skipped (baserom absent)"
+    )
+    message(STATUS "CSS stage assets: baserom absent — DeriveStageAssets stub installed")
+endif()
 
 # NOTE: there is intentionally no port-asset o2r target. `ssb64.o2r` was an
 # early-development artifact; the runtime loads only BattleShip.o2r
