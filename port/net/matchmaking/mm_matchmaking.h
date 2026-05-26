@@ -24,6 +24,11 @@ typedef struct MmMatchResult
 	char peer_lan_hostport[128];
 	/** Opponent coturn relay `ip:port` when they allocated TURN (CGNAT fallback). */
 	char peer_turn_hostport[128];
+#if defined(SSB64_NETPLAY_ICE)
+	char peer_ice_sdp[4096];
+	char pending_ice_candidate[280];
+	sb32 has_pending_ice_candidate;
+#endif
 	sb32 you_are_host;
 	char match_id[64];
 	char peer_player_id[64];
@@ -50,6 +55,14 @@ extern void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint
                                           const char *lan_endpoint_opt);
 extern void mmMatchmakingEnqueueJoinQueueEx(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                             const char *lan_endpoint_opt, const char *turn_endpoint_opt);
+#if defined(SSB64_NETPLAY_ICE)
+extern void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpoint, const char *ice_sdp,
+                                             u8 fighter_kind, sb32 has_fkind, const char *lan_endpoint_opt);
+extern void mmMatchmakingEnqueueIceSignal(sb32 verbose, const char *ticket_id, const char *candidate_sdp);
+extern sb32 mmMatchmakingFetchTurnCredentials(char *user_out, u32 user_cap, char *pass_out, u32 pass_cap,
+                                            char *realm_out, u32 realm_cap);
+extern sb32 mmMatchmakingPopIceCandidate(char *out, u32 out_cap);
+#endif
 extern void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
                                                        const char *lan_endpoint_opt);
