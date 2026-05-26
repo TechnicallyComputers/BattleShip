@@ -467,6 +467,8 @@ static u32 sSYNetPeerAdmissionBiasLastAdjustTick;
 static s32 sSYNetPeerAdmissionWireBiasTicks;
 
 static sb32 sSYNetPeerOptionalWallCalFromExecHoldStarted;
+static char sSYNetPeerBootstrapMatchId[72];
+static char sSYNetPeerBootstrapTicketId[72];
 static u32 sSYNetPeerDelaySyncDiagExecReadyMark = ~(u32)0;
 static int sSYNetPeerDelaySyncDiagEnvCache = -999;
 static u32 sSYNetPeerAutoRunwayConsec;
@@ -2162,7 +2164,11 @@ static void syNetPeerHostFinishClockSyncAndSendStart(void)
 	gran_ms = syNetPeerBarrierFrameGranularityMs();
 	start_ms = (sSYNetPeerBarrierViAlign != FALSE) ? syNetPeerQuantizeCeilUnixMs(start_ms_raw, gran_ms) : start_ms_raw;
 #ifdef PORT
-	(void)mmServerBarrierTryApplyHostSchedule(&start_ms_raw, &start_ms);
+	if (mmServerBarrierTryApplyHostSchedule(&start_ms_raw, &start_ms) != FALSE)
+	{
+		start_ms = (sSYNetPeerBarrierViAlign != FALSE) ? syNetPeerQuantizeCeilUnixMs(start_ms_raw, gran_ms)
+		                                               : start_ms_raw;
+	}
 #endif
 	sSYNetPeerBattleStartUnixMs = start_ms;
 	sSYNetPeerBattleStartOffsetMs = median_o;
@@ -5760,6 +5766,41 @@ static sb32 syNetPeerAutomatchBindMatches(const char *bind_hostport)
 	       (want.sin_port == sSYNetPeerBindAddress.sin_port) ? TRUE : FALSE;
 }
 
+void syNetPeerSetAutomatchBootstrapContext(const char *match_id, const char *ticket_id)
+{
+	sSYNetPeerBootstrapMatchId[0] = '\0';
+	sSYNetPeerBootstrapTicketId[0] = '\0';
+	if ((match_id != NULL) && (match_id[0] != '\0'))
+	{
+		snprintf(sSYNetPeerBootstrapMatchId, sizeof(sSYNetPeerBootstrapMatchId), "%s", match_id);
+	}
+	if ((ticket_id != NULL) && (ticket_id[0] != '\0'))
+	{
+		snprintf(sSYNetPeerBootstrapTicketId, sizeof(sSYNetPeerBootstrapTicketId), "%s", ticket_id);
+	}
+}
+
+void syNetPeerClearAutomatchBootstrapContext(void)
+{
+	sSYNetPeerBootstrapMatchId[0] = '\0';
+	sSYNetPeerBootstrapTicketId[0] = '\0';
+}
+
+sb32 syNetPeerGetAutomatchBootstrapContext(char *match_id_out, u32 match_cap, char *ticket_out, u32 ticket_cap)
+{
+	if ((match_id_out == NULL) || (match_cap < 8U) || (ticket_out == NULL) || (ticket_cap < 8U))
+	{
+		return FALSE;
+	}
+	if ((sSYNetPeerBootstrapMatchId[0] == '\0') || (sSYNetPeerBootstrapTicketId[0] == '\0'))
+	{
+		return FALSE;
+	}
+	snprintf(match_id_out, match_cap, "%s", sSYNetPeerBootstrapMatchId);
+	snprintf(ticket_out, ticket_cap, "%s", sSYNetPeerBootstrapTicketId);
+	return TRUE;
+}
+
 sb32 syNetPeerConfigureUdpForAutomatch(const char *bind_hostport, const char *peer_hostport, u32 session_id,
                                        sb32 you_are_host, u32 input_delay, sb32 reuse_existing_socket)
 {
@@ -6256,6 +6297,9 @@ void syNetPeerStartVSSession(void)
 		    sSYNetPeerLocalPlayer, hw_resolved, hw_from_env ? "SSB64_NETPLAY_LOCAL_HARDWARE" : "default(device_0)");
 	}
 
+#if defined(SSB64_NETMENU)
+	mmServerBarrierPostPing();
+#endif
 	port_log("SSB64 NetPeer: VS session start role=%s local=%d remote=%d delay=%u barrier=%d tick=%u recv_n=%d recv=%u,%u,%u,%u peer_snd_n=%d peer_snd=%u,%u,%u,%u extra_local=%d\n",
 	         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 	         sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer, sSYNetPeerInputDelay,
@@ -10631,6 +10675,7 @@ void syNetPeerStopVSSession(void)
 	syNetPeerCloseSocket();
 #if defined(SSB64_NETMENU)
 	syNetPeerResetAutomatchBootstrapAttemptState();
+	syNetPeerClearAutomatchBootstrapContext();
 #endif
 	sSYNetPeerBarrierWallClockStartMs = 0ULL;
 	sSYNetPeerBarrierEscapeApplied = FALSE;

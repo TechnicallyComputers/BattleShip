@@ -50,6 +50,13 @@ extern void mmMatchmakingShutdown(void);
  */
 extern sb32 mmMatchmakingLoadCredentials(sb32 verbose);
 
+/* Shared HTTPS + JSON helpers (matchmaking.cred auth headers). */
+extern long mmMatchmakingHttpsRequest(const char *method, const char *path_suffix, const char *json_body,
+                                      sb32 verbose, char **resp_body_out);
+extern sb32 mmMatchmakingJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap);
+extern sb32 mmMatchmakingJsonCopyU64Field(const char *body, const char *key_name, u64 *out_val);
+extern sb32 mmMatchmakingJsonCopyBoolField(const char *body, const char *key_name, sb32 *out_val);
+
 extern void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose);
 extern void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                           const char *lan_endpoint_opt);
@@ -80,6 +87,9 @@ extern void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char 
 extern void mmMatchmakingEnqueueHeartbeatWithEndpointsEx(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
                                                          const char *lan_endpoint_opt, const char *turn_endpoint_opt);
 extern void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id);
+#if defined(SSB64_NETPLAY_ICE)
+extern void mmMatchmakingEnqueuePollIceTrickle(sb32 verbose, const char *ticket_id);
+#endif
 extern void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id);
 
 extern sb32 mmMatchmakingDrainCompleted(MmMatchResult *out);

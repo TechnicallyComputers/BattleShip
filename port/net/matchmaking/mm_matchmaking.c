@@ -106,6 +106,7 @@ typedef struct MmJob
 	char ice_sdp[4096];
 	sb32 has_ice_sdp;
 	char ice_candidate[280];
+	sb32 poll_trickle_only;
 #endif
 } MmJob;
 
@@ -1714,22 +1715,36 @@ static void mmRunPoll(const MmJob *job)
 	}
 	else if (strstr(resp, "\"status\":\"matched\"") != NULL)
 	{
-		MmMatchResult r;
-
-		if ((mmParseMatchedBodyInto(resp, &r)))
-		{
-			if ((r.kind == MM_POLL_MATCHED))
-			{
 #if defined(SSB64_NETPLAY_ICE)
-				mmParseIceSignalsFromBody(resp);
-#endif
-				snprintf(r.ticket_id, sizeof(r.ticket_id), "%s", job->ticket_id);
-				mmPushDone(&r);
-			}
+		if (job->poll_trickle_only != FALSE)
+		{
+			MmMatchResult ok;
+
+			mmParseIceSignalsFromBody(resp);
+			memset(&ok, 0, sizeof(ok));
+			ok.kind = MM_POLL_HEARTBEAT_OK;
+			mmPushDone(&ok);
 		}
 		else
+#endif
 		{
-			mmPushDoneError(hc, "match poll JSON parse failed");
+			MmMatchResult r;
+
+			if ((mmParseMatchedBodyInto(resp, &r)))
+			{
+				if ((r.kind == MM_POLL_MATCHED))
+				{
+#if defined(SSB64_NETPLAY_ICE)
+					mmParseIceSignalsFromBody(resp);
+#endif
+					snprintf(r.ticket_id, sizeof(r.ticket_id), "%s", job->ticket_id);
+					mmPushDone(&r);
+				}
+			}
+			else
+			{
+				mmPushDoneError(hc, "match poll JSON parse failed");
+			}
 		}
 	}
 	else
@@ -2305,12 +2320,32 @@ void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id)
 	memset(&j, 0, sizeof(j));
 	j.kind = MM_JOB_POLL_MATCH;
 	j.verbose = verbose;
+#if defined(SSB64_NETPLAY_ICE)
+	j.poll_trickle_only = FALSE;
+#endif
 	if (ticket_id != NULL)
 	{
 		snprintf(j.ticket_id, sizeof(j.ticket_id), "%s", ticket_id);
 	}
 	mmEnqueueSubmit(&j);
 }
+
+#if defined(SSB64_NETPLAY_ICE)
+void mmMatchmakingEnqueuePollIceTrickle(sb32 verbose, const char *ticket_id)
+{
+	MmJob j;
+
+	memset(&j, 0, sizeof(j));
+	j.kind = MM_JOB_POLL_MATCH;
+	j.verbose = verbose;
+	j.poll_trickle_only = TRUE;
+	if (ticket_id != NULL)
+	{
+		snprintf(j.ticket_id, sizeof(j.ticket_id), "%s", ticket_id);
+	}
+	mmEnqueueSubmit(&j);
+}
+#endif
 
 void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id)
 {
@@ -2410,6 +2445,95 @@ u32 mmMatchmakingApproxPendingJobs(void)
 	n = sJobCount;
 	pthread_mutex_unlock(&sMutex);
 	return n;
+}
+
+static sb32 mmJsonCopyU64Field(const char *body, const char *key_name, u64 *out_val)
+{
+	char needle[80];
+	const char *p;
+	u64 v;
+
+	if ((body == NULL) || (key_name == NULL) || (out_val == NULL))
+	{
+		return FALSE;
+	}
+	snprintf(needle, sizeof(needle), "\"%s\":", key_name);
+	p = strstr(body, needle);
+	if (p == NULL)
+	{
+		return FALSE;
+	}
+	p += strlen(needle);
+	while ((*p == ' ') || (*p == '\t') || (*p == '\r') || (*p == '\n'))
+	{
+		p++;
+	}
+	if ((*p < '0') || (*p > '9'))
+	{
+		return FALSE;
+	}
+	v = 0U;
+	while ((*p >= '0') && (*p <= '9'))
+	{
+		v = (v * 10U) + (u64)(*p - '0');
+		p++;
+	}
+	*out_val = v;
+	return TRUE;
+}
+
+static sb32 mmJsonCopyBoolField(const char *body, const char *key_name, sb32 *out_val)
+{
+	char needle[80];
+	const char *p;
+
+	if ((body == NULL) || (key_name == NULL) || (out_val == NULL))
+	{
+		return FALSE;
+	}
+	snprintf(needle, sizeof(needle), "\"%s\":", key_name);
+	p = strstr(body, needle);
+	if (p == NULL)
+	{
+		return FALSE;
+	}
+	p += strlen(needle);
+	while ((*p == ' ') || (*p == '\t'))
+	{
+		p++;
+	}
+	if (strncmp(p, "true", 4) == 0)
+	{
+		*out_val = TRUE;
+		return TRUE;
+	}
+	if (strncmp(p, "false", 5) == 0)
+	{
+		*out_val = FALSE;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+long mmMatchmakingHttpsRequest(const char *method, const char *path_suffix, const char *json_body, sb32 verbose,
+                               char **resp_body_out)
+{
+	return mmHttpsRequest(method, path_suffix, json_body, verbose, resp_body_out);
+}
+
+sb32 mmMatchmakingJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap)
+{
+	return mmJsonCopyQuotedValue(body, key_name, out, cap);
+}
+
+sb32 mmMatchmakingJsonCopyU64Field(const char *body, const char *key_name, u64 *out_val)
+{
+	return mmJsonCopyU64Field(body, key_name, out_val);
+}
+
+sb32 mmMatchmakingJsonCopyBoolField(const char *body, const char *key_name, sb32 *out_val)
+{
+	return mmJsonCopyBoolField(body, key_name, out_val);
 }
 
 #endif /* PORT && SSB64_NETMENU */

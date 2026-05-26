@@ -63,6 +63,7 @@ static juice_turn_server_t sTurnServers[2];
 static int sTurnServerCount;
 static u16 sBindPortBegin;
 static u16 sBindPortEnd;
+static char sLastSrflxHostport[128];
 
 static MmIceState mmIceMapJuiceState(juice_state_t st)
 {
@@ -118,6 +119,42 @@ static void mmIceQueueCandidateLocked(const char *sdp)
 	sCandCount++;
 }
 
+static sb32 mmIceTryParseSrflxFromCandidate(const char *sdp, char *out, u32 out_cap)
+{
+	const char *p;
+	int foundation;
+	int comp_id;
+	char transport[16];
+	unsigned long priority;
+	char addr[64];
+	unsigned port;
+	char typ[16];
+
+	if ((sdp == NULL) || (out == NULL) || (out_cap < 8U))
+	{
+		return FALSE;
+	}
+	p = strstr(sdp, "candidate:");
+	if (p != NULL)
+	{
+		p += 10;
+	}
+	else
+	{
+		p = sdp;
+	}
+	if (sscanf(p, "%d %d %15s %lu %63s %u typ %15s", &foundation, &comp_id, transport, &priority, addr, &port, typ) < 7)
+	{
+		return FALSE;
+	}
+	if (strcmp(typ, "srflx") != 0)
+	{
+		return FALSE;
+	}
+	snprintf(out, out_cap, "%s:%u", addr, port);
+	return (out[0] != '\0') ? TRUE : FALSE;
+}
+
 static void mmIceOnStateChanged(juice_agent_t *agent, juice_state_t state, void *user_ptr)
 {
 	(void)agent;
@@ -132,9 +169,15 @@ static void mmIceOnStateChanged(juice_agent_t *agent, juice_state_t state, void 
 
 static void mmIceOnCandidate(juice_agent_t *agent, const char *sdp, void *user_ptr)
 {
+	char srflx[128];
+
 	(void)agent;
 	(void)user_ptr;
 	(void)pthread_mutex_lock(&sIceMutex);
+	if (mmIceTryParseSrflxFromCandidate(sdp, srflx, sizeof(srflx)) != FALSE)
+	{
+		snprintf(sLastSrflxHostport, sizeof(sLastSrflxHostport), "%s", srflx);
+	}
 	mmIceQueueCandidateLocked(sdp);
 	(void)pthread_mutex_unlock(&sIceMutex);
 }
@@ -318,10 +361,27 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	{
 		return FALSE;
 	}
+	{
+		char *tcp_env;
+
+		tcp_env = getenv("SSB64_MATCHMAKING_ICE_TCP");
+		if ((tcp_env != NULL) && (tcp_env[0] != '\0') && (atoi(tcp_env) != 0))
+		{
+			if (juice_set_ice_tcp_mode(sAgent, JUICE_ICE_TCP_MODE_ACTIVE) != 0)
+			{
+				port_log("SSB64 ICE: juice_set_ice_tcp_mode(ACTIVE) failed\n");
+			}
+			else
+			{
+				port_log("SSB64 ICE: ICE-TCP active mode enabled (experimental, not TURNS)\n");
+			}
+		}
+	}
 	sIceState = MM_ICE_STATE_GATHERING;
 	sGatheringDonePosted = FALSE;
 	sRecvHead = sRecvTail = sRecvCount = 0U;
 	sCandHead = sCandTail = sCandCount = 0U;
+	sLastSrflxHostport[0] = '\0';
 	return TRUE;
 }
 
@@ -480,6 +540,24 @@ sb32 mmIceGetSelectedPath(char *local, u32 local_cap, char *remote, u32 remote_c
 	                                                                                                        : FALSE;
 }
 
+sb32 mmIceGetSrflxHostport(char *out, u32 out_cap)
+{
+	if ((out == NULL) || (out_cap < 8U))
+	{
+		return FALSE;
+	}
+	(void)pthread_mutex_lock(&sIceMutex);
+	if (sLastSrflxHostport[0] == '\0')
+	{
+		out[0] = '\0';
+		(void)pthread_mutex_unlock(&sIceMutex);
+		return FALSE;
+	}
+	snprintf(out, out_cap, "%s", sLastSrflxHostport);
+	(void)pthread_mutex_unlock(&sIceMutex);
+	return TRUE;
+}
+
 sb32 mmIceGetReflexiveHostport(char *out, u32 out_cap)
 {
 	char local[JUICE_MAX_ADDRESS_STRING_LEN];
@@ -489,6 +567,10 @@ sb32 mmIceGetReflexiveHostport(char *out, u32 out_cap)
 	if ((out == NULL) || (out_cap < 8U))
 	{
 		return FALSE;
+	}
+	if (mmIceGetSrflxHostport(out, out_cap) != FALSE)
+	{
+		return TRUE;
 	}
 	if (mmIceGetSelectedPath(local, sizeof(local), remote, sizeof(remote)) == FALSE)
 	{

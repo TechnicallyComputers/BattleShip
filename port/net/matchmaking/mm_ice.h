@@ -48,7 +48,9 @@ extern sb32 mmIceIsCompleted(void);
 extern int mmIceSend(const u8 *buf, u32 len);
 extern sb32 mmIcePopReceived(u8 *out, u32 out_cap, u32 *out_len);
 extern sb32 mmIceGetSelectedPath(char *local, u32 local_cap, char *remote, u32 remote_cap);
-/* Best-effort srflx host:port for matchmaking metrics (udp_endpoint field). */
+/* Best-effort srflx host:port from gathered candidates (queue/heartbeat udp_endpoint). */
+extern sb32 mmIceGetSrflxHostport(char *out, u32 out_cap);
+/* Post-connect selected local address, else srflx fallback. */
 extern sb32 mmIceGetReflexiveHostport(char *out, u32 out_cap);
 extern sb32 mmIceFetchTurnCredentials(char *user_out, u32 user_cap, char *pass_out, u32 pass_cap);
 
@@ -73,6 +75,7 @@ typedef enum MmIceState
 #define mmIceSend(b, l) (-1)
 #define mmIcePopReceived(o, c, l) FALSE
 #define mmIceGetSelectedPath(l, lc, r, rc) FALSE
+#define mmIceGetSrflxHostport(o, n) FALSE
 #define mmIceGetReflexiveHostport(o, n) FALSE
 #define mmIceFetchTurnCredentials(u, uc, p, pc) FALSE
 

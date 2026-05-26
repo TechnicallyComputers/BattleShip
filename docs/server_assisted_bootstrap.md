@@ -51,11 +51,15 @@ sequenceDiagram
 
 1. **Module:** `port/net/bootstrap/mm_server_barrier.{c,h}` — gated by `PORT` + `SSB64_NETMENU` (all host OSes when netmenu is enabled, including Windows MSVC and Linux→MinGW cross). It uses the same HTTPS/curl patterns as `mm_matchmaking.c` when fully implemented.
 
-2. **Netpeer fork:** After local clock sync computes `start_ms_raw` and quantized `start_ms` in `syNetPeerHostFinishClockSyncAndSendStart`, **`mmServerBarrierTryApplyHostSchedule`** may replace those values when a server contract is present. Increment `sSYNetPeerBarrierEpoch` when adopting a server epoch so peers discard stale negotiations (see netpeer sources).
+2. **Netpeer fork:** After local clock sync computes `start_ms_raw` and quantized `start_ms` in `syNetPeerHostFinishClockSyncAndSendStart`, **`mmServerBarrierTryApplyHostSchedule`** may replace `start_ms_raw` with `barrier_deadline_unix_ms` when `contract_complete` is true; netpeer then re-applies VI ceil quantization if `SSB64_NETPLAY_BARRIER_VI_ALIGN` is on.
 
-3. **Fallback:** If HTTPS fails or the response is stale → **existing P2P-only path** (current behavior). Log `SSB64 NetPeer: server bootstrap …` with a reason when falling back.
+3. **Context:** `syNetPeerSetAutomatchBootstrapContext(match_id, ticket_id)` is set after automatch bootstrap (ICE and legacy paths) and cleared on automatch reset / VS session stop.
 
-4. **Security / abuse:** Session id + short-lived JWT or ticket from automatch (`ticket_id` in `MmMatchResult`) bound to bootstrap POST — noted for production hardening; out of scope for the first stub.
+4. **Guest ping:** `mmServerBarrierPostPing()` runs at `syNetPeerStartVSSession` so the server sees both peers before the host finishes clock sync (non-host does not override schedule).
+
+5. **Fallback:** If HTTPS fails, credentials are missing, or `contract_complete` is false → **existing P2P-only path**. Log `SSB64 NetPeer: server bootstrap …` once per session unless verbose.
+
+6. **Security / abuse:** Session id + short-lived JWT or ticket from automatch (`ticket_id` in `MmMatchResult`) bound to bootstrap POST — noted for production hardening; out of scope for the first stub.
 
 ---
 
@@ -63,7 +67,8 @@ sequenceDiagram
 
 | Variable | Meaning |
 |----------|---------|
-| `SSB64_NETPLAY_SERVER_BOOTSTRAP` | When set to `1`, enables the **attempt** to use server-assisted barrier scheduling (HTTPS). When unset or `0`, only the local lead path runs. **Stub implementation:** enabling this logs once that HTTPS is not wired yet and keeps **local** schedule (same timings as without the flag). |
+| `SSB64_NETPLAY_SERVER_BOOTSTRAP` | When set to `1`, enables HTTPS barrier coordination via `mm_server_barrier.c` (`POST /v1/sessions/{match_id}/bootstrap/ping`). When unset or `0`, only the local lead path runs. |
+| `SSB64_NETPLAY_SERVER_BOOTSTRAP_VERBOSE` | When set to `1`, logs each bootstrap POST and parsed contract fields. |
 
 Related existing knobs (unchanged): `SSB64_NETPLAY_BARRIER_EXTRA_LEAD_MS`, `SSB64_NETPLAY_BARRIER_MAX_CONTRACT_SKEW_MS`, clock sync sample env vars documented in [`docs/netplay_pacing.md`](netplay_pacing.md) where applicable.
 
