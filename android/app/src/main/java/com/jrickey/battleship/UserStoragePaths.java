@@ -11,27 +11,30 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
 /**
- * User-visible writable directory for saves and logs.
+ * App-private writable directory for saves, logs, and matchmaking credentials.
  *
- * <p>Primary location: {@code &lt;primary external storage&gt;/Documents/BattleShip/}
- * (file managers: Internal storage &gt; Documents &gt; BattleShip). Game archives
- * ({@code BattleShip.o2r}, {@code f3d.o2r}, etc.) stay in {@code externalFilesDir}
- * via {@link AssetExtractor}; only {@code ssb64_save.bin}, {@code ssb64.log}, and
- * other user-data files resolved through {@code ssb64_UserDataDirUtf8} use this tree.
- * Optional {@code debug.env} in this folder is for developer diagnostics only (not player settings).
+ * <p>Primary location: {@code externalFilesDir} ({@code Android/data/<package>/files/}),
+ * same tree as {@code BattleShip.o2r}. Optional {@code debug.env} here is for developer
+ * diagnostics only (not player settings).
  */
 public final class UserStoragePaths {
     private static final String TAG = "ssb64.storage";
 
-    /** Folder name under the public Documents directory on primary external storage. */
-    public static final String USER_DATA_FOLDER = "BattleShip";
+    /** Legacy subfolder name used by older builds (migration source only). */
+    public static final String LEGACY_USER_DATA_FOLDER = "BattleShip";
 
     /** Written under externalFilesDir for native JNI_OnLoad before Java calls JNI. */
-    private static final String NATIVE_PATH_SENTINEL = ".battleship_user_data_dir";
+    public static final String NATIVE_PATH_SENTINEL = ".battleship_user_data_dir";
+
+    /** One-shot debug session kind written before restart ({@code log_only} or {@code env}). */
+    public static final String DEBUG_SESSION_SENTINEL = ".battleship_debug_session";
 
     private static final String[] MIGRATE_FILES = {
         "ssb64_save.bin",
         "ssb64.log",
+        "ssb64-debug.log",
+        "matchmaking.cred",
+        "debug.env",
     };
 
     private static volatile String sCachedPathWithSlash;
@@ -39,7 +42,7 @@ public final class UserStoragePaths {
     private UserStoragePaths() { /* static */ }
 
     /**
-     * Creates the directory and migrates legacy files from {@code externalFilesDir}.
+     * Ensures the user-data directory exists and migrates legacy files from older locations.
      * Safe to call from {@link BootActivity} before native libraries are loaded.
      */
     public static void prepareUserDataDir(Context ctx) {
@@ -56,7 +59,8 @@ public final class UserStoragePaths {
             return;
         }
 
-        migrateFromLegacyAppDir(ctx, dir);
+        migrateFromLegacyDocumentsDir(dir);
+        migrateFromLegacyBattleShipSubdir(ctx, dir);
         migrateFromLegacyAndroidDir(dir);
 
         String path = dir.getAbsolutePath();
@@ -94,20 +98,44 @@ public final class UserStoragePaths {
         }
     }
 
-    /**
-     * {@code Environment.getExternalStoragePublicDirectory(DIRECTORY_DOCUMENTS)/BattleShip}.
-     * Falls back to {@code externalFilesDir/BattleShip} if public Documents is unavailable.
-     */
-    static File resolveUserDataDir(Context ctx) {
-        File docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
-        if (docs != null) {
-            return new File(docs, USER_DATA_FOLDER);
-        }
+    /** {@code externalFilesDir}, falling back to {@code filesDir}. */
+    public static File resolveUserDataDir(Context ctx) {
         File ext = ctx.getExternalFilesDir(null);
         if (ext != null) {
-            return new File(ext, USER_DATA_FOLDER);
+            return ext;
         }
-        return null;
+        return ctx.getFilesDir();
+    }
+
+    /** Path with trailing slash for native callers. */
+    public static String getCachedPathWithSlash(Context ctx) {
+        if (sCachedPathWithSlash == null) {
+            prepareUserDataDir(ctx);
+        }
+        return sCachedPathWithSlash;
+    }
+
+    /** Migration from public Documents/BattleShip (older builds). */
+    private static void migrateFromLegacyDocumentsDir(File dstDir) {
+        File docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+        if (docs == null) {
+            return;
+        }
+        File legacy = new File(docs, LEGACY_USER_DATA_FOLDER);
+        migrateFiles(legacy, dstDir, "Documents/BattleShip");
+    }
+
+    /** Migration from {@code externalFilesDir/BattleShip/} subfolder layout. */
+    private static void migrateFromLegacyBattleShipSubdir(Context ctx, File dstDir) {
+        File ext = ctx.getExternalFilesDir(null);
+        if (ext == null) {
+            return;
+        }
+        File legacy = new File(ext, LEGACY_USER_DATA_FOLDER);
+        if (legacy.getAbsolutePath().equals(dstDir.getAbsolutePath())) {
+            return;
+        }
+        migrateFiles(legacy, dstDir, "externalFilesDir/BattleShip");
     }
 
     /** One-time migration from the earlier {@code /Android/BattleShip} experiment. */
@@ -116,16 +144,8 @@ public final class UserStoragePaths {
         if (storage == null) {
             return;
         }
-        File legacy = new File(new File(storage, "Android"), USER_DATA_FOLDER);
+        File legacy = new File(new File(storage, "Android"), LEGACY_USER_DATA_FOLDER);
         migrateFiles(legacy, dstDir, "Android/BattleShip");
-    }
-
-    private static void migrateFromLegacyAppDir(Context ctx, File dstDir) {
-        File legacy = ctx.getExternalFilesDir(null);
-        if (legacy == null || !legacy.isDirectory()) {
-            return;
-        }
-        migrateFiles(legacy, dstDir, "externalFilesDir");
     }
 
     private static void migrateFiles(File legacyDir, File dstDir, String label) {

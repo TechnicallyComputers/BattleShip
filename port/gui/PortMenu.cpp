@@ -23,6 +23,10 @@
 
 #include <SDL2/SDL.h>
 #include <spdlog/fmt/fmt.h>
+
+#if defined(__ANDROID__)
+#include "../android_debug_session.h"
+#endif
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -1212,6 +1216,33 @@ void PortMenu::AddMenuSettings() {
         .WindowName("GfxDebuggerWindow")
         .HideInSearch(true)
         .Options(WindowButtonOptions().Tooltip("Toggles the graphics debugger window."));
+
+#if defined(__ANDROID__)
+    AddWidget(path, "Debug Functions", WIDGET_SEPARATOR_TEXT);
+
+    AddWidget(path, "Restart in Debug Mode", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_restart_in_debug_mode(); })
+        .Options(ButtonOptions().Tooltip(
+            "Restarts the app and writes port_log output to ssb64-debug.log only. "
+            "Does not load debug.env. Normal launches only update ssb64.log and leave "
+            "the debug log untouched."));
+
+    AddWidget(path, "Restart with debug.env", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_restart_with_debug_env(); })
+        .Options(ButtonOptions().Tooltip(
+            "Pick any text file (name does not matter). Its contents are saved as debug.env, "
+            "then the app restarts in a debug session. Use KEY=value lines with SSB64_* names "
+            "(see docs/netplay_environment_variables.md). Skipped lines are listed in ssb64-debug.log."));
+
+    AddWidget(path, "Export ssb64-debug.log", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_export_debug_log(); })
+        .Options(ButtonOptions().Tooltip(
+            "Save the last debug-session log (ssb64-debug.log) to a location you choose. "
+            "Requires a prior Restart in Debug Mode or Restart with debug.env."));
+#endif
 }
 
 void PortMenu::AddMenuAssets() {

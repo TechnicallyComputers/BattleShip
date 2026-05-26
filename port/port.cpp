@@ -28,6 +28,7 @@
 
 #include "app_paths.h"
 #include "debug_env.h"
+#include "debug_session.h"
 #include <ssb64_paths_capi.h>
 #include "bridge/audio_bridge.h"
 #include "bridge/framebuffer_capture.h"
@@ -796,6 +797,8 @@ int PortIsRunning(void) {
 } // extern "C"
 
 int main(int argc, char* argv[]) {
+	ssb64_debug_session_kind debug_session = SSB64_DEBUG_SESSION_NONE;
+
 	/* Use an absolute path for ssb64.log so it lands in a predictable
 	 * place regardless of how the binary was launched (Finder / open /
 	 * shell from any cwd). SDL_GetPrefPath returns the OS app-data dir
@@ -807,7 +810,15 @@ int main(int argc, char* argv[]) {
 #if defined(__ANDROID__)
 		char userDir[512];
 		if ((ssb64_UserDataDirUtf8(userDir, sizeof(userDir)) != 0) && (userDir[0] != '\0')) {
-			logPath = std::string(userDir) + "ssb64.log";
+			debug_session = ssb64_consume_debug_session(userDir);
+			if (debug_session != SSB64_DEBUG_SESSION_NONE) {
+				logPath = std::string(userDir) + "ssb64-debug.log";
+				port_log_init_debug(logPath.c_str());
+				port_log_set_active(PORT_LOG_SINK_DEBUG);
+			} else {
+				logPath = std::string(userDir) + "ssb64.log";
+				port_log_init_regular(logPath.c_str());
+			}
 		} else
 #endif
 		if (char* p = SDL_GetPrefPath(NULL, "BattleShip")) {
@@ -816,7 +827,13 @@ int main(int argc, char* argv[]) {
 		} else {
 			logPath = "ssb64.log";  // last-resort cwd fallback
 		}
-		port_log_init(logPath.c_str());
+#if !defined(__ANDROID__)
+		port_log_init_regular(logPath.c_str());
+#elif defined(__ANDROID__)
+		if (debug_session == SSB64_DEBUG_SESSION_NONE && !logPath.empty()) {
+			port_log_init_regular(logPath.c_str());
+		}
+#endif
 	}
 
 #ifdef _WIN32
@@ -854,7 +871,13 @@ int main(int argc, char* argv[]) {
 	}
 
 	/* After PortInit: Ship::Context exists (NON_PORTABLE GetAppDirectoryPath needs it). */
+#if defined(__ANDROID__)
+	if (debug_session == SSB64_DEBUG_SESSION_ENV) {
+		ssb64_load_debug_env_file();
+	}
+#else
 	ssb64_load_debug_env_file();
+#endif
 
 #if defined(__ANDROID__)
 	// === Android JNI cache warm-up ===

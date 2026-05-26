@@ -1,5 +1,6 @@
 package com.jrickey.battleship;
 
+import android.content.Intent;
 import android.os.Bundle;
 
 import org.libsdl.app.SDLActivity;
@@ -37,11 +38,21 @@ public class BattleShipActivity extends SDLActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        DebugSessionHelper.attach(this);
         // After SDLActivity loads libSDL2.so then libmain.so.
         UserStoragePaths.publishUserDataDirToNative(getApplicationContext());
         // Lay the touch overlay on top of SDL's GLES surface. Has to come
         // after super.onCreate so SDLActivity has already installed its
         // surface as the root content view.
         TouchOverlay.install(this);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        DebugSessionHelper helper = DebugSessionHelper.getInstance();
+        if (helper != null && helper.onActivityResult(requestCode, resultCode, data)) {
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 }

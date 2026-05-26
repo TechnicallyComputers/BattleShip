@@ -43,7 +43,8 @@ extern void mmMatchmakingShutdown(void);
 
 /*
  * Credentials: load/store as matchmaking.cred in the per-user app data dir (same tree as
- * ssb64.log). Legacy XDG_CONFIG_HOME/ssb64/ and %APPDATA%\\ssb64\\ paths are migrated on load.
+ * ssb64.log / ssb64_save.bin). Legacy XDG_CONFIG_HOME/ssb64/ and %APPDATA%\\ssb64\\ paths are migrated on load.
+ * On Android, externalFilesDir/ssb64/ is also tried when loading (migration from older builds).
  * If the server rejects cached creds (missing player row / bad token), the client backs up the
  * file to matchmaking.cred.bak and registers a fresh player via POST /v1/players.
  * Worker thread + libcurl; compiled for all SSB64_NETMENU builds (incl. MinGW).

@@ -731,7 +731,7 @@ static void mmCredJoinPath(char *out, size_t cap, const char *dir, const char *f
 	}
 }
 
-/* Same writable tree as ssb64.log (SDL pref path / Ship app directory). */
+/* Same writable tree as ssb64.log / ssb64_save.bin (UserDataDir / externalFilesDir on Android). */
 static void mmCredPath(char *out, size_t cap)
 {
 	char base[512];
@@ -1048,19 +1048,21 @@ sb32 mmMatchmakingLoadCredentials(sb32 verbose)
 	{
 		char legacy[512];
 
-		if (mmCredPathLegacy(legacy, sizeof(legacy)) == FALSE)
+		if (mmCredPathLegacy(legacy, sizeof(legacy)) != FALSE)
 		{
-			return FALSE;
+			fp = fopen(legacy, "r");
+			if (fp != NULL)
+			{
+				snprintf(loaded_from, sizeof(loaded_from), "%s", legacy);
+#ifdef PORT
+				port_log("SSB64 Matchmaking: loaded cred from legacy path (will migrate)\n");
+#endif
+			}
 		}
-		fp = fopen(legacy, "r");
 		if (fp == NULL)
 		{
 			return FALSE;
 		}
-		snprintf(loaded_from, sizeof(loaded_from), "%s", legacy);
-#ifdef PORT
-		port_log("SSB64 Matchmaking: loaded cred from legacy path (will migrate)\n");
-#endif
 	}
 	while (fgets(line, sizeof(line), fp) != NULL)
 	{
@@ -1093,6 +1095,17 @@ sb32 mmMatchmakingLoadCredentials(sb32 verbose)
 #endif
 	}
 	return TRUE;
+}
+
+/* In-memory tokens from mmRunEnsure/mmCredRepopulate must work even when cred file I/O fails. */
+static sb32 mmCredentialsEnsureReady(sb32 verbose)
+{
+	if ((sPlayerId[0] != '\0') && (sApiToken[0] != '\0'))
+	{
+		return TRUE;
+	}
+	(void)mmMatchmakingLoadCredentials(verbose);
+	return ((sPlayerId[0] != '\0') && (sApiToken[0] != '\0')) ? TRUE : FALSE;
 }
 
 static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap)
@@ -1318,7 +1331,7 @@ static void mmRunEnsure(sb32 verb)
 	char pid[96];
 	char tok[288];
 
-	mmMatchmakingLoadCredentials(FALSE);
+	(void)mmCredentialsEnsureReady(FALSE);
 	if ((sPlayerId[0] != '\0') && (sApiToken[0] != '\0'))
 	{
 		if (mmCredVerifyLoaded(verb) != FALSE)
@@ -1487,7 +1500,7 @@ static void mmRunJoin(const MmJob *job)
 	long hc;
 	char *resp;
 
-	if ((mmMatchmakingLoadCredentials(FALSE) == FALSE) || ((sApiToken[0] == '\0')))
+	if (mmCredentialsEnsureReady(FALSE) == FALSE)
 	{
 		mmPushDoneError(401, "no credentials — call ensure player first");
 		return;
@@ -1859,7 +1872,7 @@ static void mmRunIceSignal(const MmJob *job)
 	char *resp;
 	char url_path[288];
 
-	if ((mmMatchmakingLoadCredentials(FALSE) == FALSE) || (sApiToken[0] == '\0'))
+	if (mmCredentialsEnsureReady(FALSE) == FALSE)
 	{
 		return;
 	}
@@ -1917,7 +1930,7 @@ sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out)
 	out->turn_port = 3478U;
 	out->turns_port = 5349U;
 
-	if ((mmMatchmakingLoadCredentials(FALSE) == FALSE) || (sApiToken[0] == '\0'))
+	if (mmCredentialsEnsureReady(FALSE) == FALSE)
 	{
 		return FALSE;
 	}

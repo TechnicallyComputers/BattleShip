@@ -94,19 +94,19 @@ Torch, ~34 MB). `f3d.o2r` (open-source Fast3D shaders) and `ssb64.o2r`
 (port-local custom assets) are bundled in APK `assets/` and extracted
 to `getExternalFilesDir()` on first launch.
 
-### User-visible saves and logs
+### User saves, logs, and netplay credentials
 
-`ssb64_save.bin` and `ssb64.log` live under **Internal storage → Documents →
-BattleShip** (`/storage/emulated/0/Documents/BattleShip/` on typical devices).
-`UserStoragePaths` (Java) creates that folder during `BootActivity`, migrates
-any copies left in the old `externalFilesDir` tree, and `BattleShipActivity`
-publishes the path to native code before `SDL_main` runs. Archives and bundled
-assets stay in `Android/data/<package>/files/` (app-specific external storage).
+`ssb64_save.bin`, `ssb64.log`, `matchmaking.cred`, `debug.env`, and
+`ssb64-debug.log` live under **`Android/data/<package>/files/`**
+(`externalFilesDir` — same tree as `BattleShip.o2r`). `UserStoragePaths` (Java)
+migrates copies from legacy `Documents/BattleShip`, `files/BattleShip/`, and
+older paths during `BootActivity`, and `BattleShipActivity` publishes the path
+to native code before `SDL_main` runs.
 
-Optional **`debug.env`** in that same folder applies developer-only `SSB64_*`
-diagnostics at launch (see [`docs/netplay_environment_variables.md`](netplay_environment_variables.md)
-and [`scripts/debug.env.example`](../scripts/debug.env.example)); not a player
-settings file.
+**Debug sessions** (Port Menu → Settings → Tools → Debug Functions): explicit
+restart writes only `ssb64-debug.log`; normal launches only touch `ssb64.log`.
+Import any env-format file via **Restart with debug.env** — stored internally as
+`debug.env`. See [`docs/netplay_environment_variables.md`](netplay_environment_variables.md).
 
 ## Performance / known issues
 
