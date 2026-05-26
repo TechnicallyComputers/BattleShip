@@ -14,6 +14,8 @@
  *   final_destination_small.png       — 48x36  RGBA, 1-bitmap  RGBA16 sprite
  *   final_destination_name.png        — 96x10  RGBA, 1-bitmap  RGBA16 sprite
  *                                        (synthesized — matches ROM IA4 nameplate dims)
+ *   final_destination_emblem.png      — 64x48  RGBA, 1-bitmap  RGBA16 sprite
+ *                                        (upscaled from 25x25 IA4 MasterHand icon)
  *
  * If a PNG is absent (user hasn't run a ROM-extract build), the getter returns
  * NULL and the caller should fall back to the ROM-resident sprite.
@@ -38,8 +40,9 @@
  *   #ifdef PORT
  *   #include <port/css_icons/port_css_stage_assets.h>
  *   ...
- *   Sprite *bg   = portCSSGetStageBackgroundSprite(nGRKindLast);
- *   Sprite *icon = portCSSGetStageIconSprite(nGRKindLast);
+ *   Sprite *bg     = portCSSGetStageBackgroundSprite(nGRKindLast);
+ *   Sprite *icon   = portCSSGetStageIconSprite(nGRKindLast);
+ *   Sprite *emblem = portCSSGetStageEmblemSprite(nGRKindLast);
  *   #endif
  *
  * Both getters are thread-safe.  The first call loads + converts the PNG;
@@ -90,6 +93,21 @@ Sprite *portCSSGetStageIconSprite(int gkind);
  * Thread-safe. Returns NULL if the PNG is missing or allocation fails.
  */
 Sprite *portCSSGetStageNameSprite(int gkind);
+
+/**
+ * Return the 64x48 emblem Sprite for the given gkind.
+ *
+ * For port-introduced stages (e.g. nGRKindLast/Final Destination) where the
+ * ROM ships only a small source sprite, this returns a 64x48 LANCZOS-upscaled
+ * version derived at build time by tools/derive_stage_assets.py.
+ *
+ * The caller should set sprite colour modulation (red/green/blue) to match the
+ * franchise colour used by the other ROM emblems (0x5C, 0x22, 0x00).
+ *
+ * Thread-safe. Returns NULL if the PNG is missing or allocation fails; the
+ * caller should fall back to the ROM-resident small sprite in that case.
+ */
+Sprite *portCSSGetStageEmblemSprite(int gkind);
 
 #ifdef __cplusplus
 }

@@ -83,6 +83,13 @@ struct StageEntry {
     // Nameplate sprite: set to true when a synthesized <name>_name.png exists.
     // False for stages that ship a ROM-resident IA4 nameplate (the 9 starters).
     bool        has_name_png; // if false, portCSSGetStageNameSprite returns NULL
+
+    // Emblem sprite: set to true when a synthesized <name>_emblem.png exists.
+    // False for stages that use a ROM-resident 64x48 IA4 emblem (the 9 starters).
+    // The PNG is loaded as a silhouette mask (alpha channel) and packed to IA4
+    // single-bitmap at runtime — matches the ROM FT emblem format byte-for-byte
+    // so no multi-bitmap strip geometry is needed.
+    bool        has_emblem_png; // if false, portCSSGetStageEmblemSprite returns NULL
 };
 
 static constexpr StageEntry STAGE_TABLE[] = {
@@ -90,13 +97,15 @@ static constexpr StageEntry STAGE_TABLE[] = {
         /* nGRKindLast = 16 */
         16, "final_destination",
         300, 220,
-        44,  /* nbitmaps: 44 * 5 rendered rows = 220 total */
-        5,   /* bmheight: rows rendered per bitmap */
-        6,   /* bmHreal:  rows in the TMEM load     */
-        552, /* ndisplist from dStageLastBackground_0x26c88 */
+        44,  /* bg_nbitmaps: 44 * 5 rendered rows = 220 total */
+        5,   /* bg_bm_h:    rows rendered per bitmap */
+        6,   /* bg_bm_hreal: rows in the TMEM load   */
+        552, /* bg_ndisplist from dStageLastBackground_0x26c88 */
         true,/* has_name_png: synthesized 96x10 nameplate */
+        true,/* has_emblem_png: upscaled 64x48 emblem from MasterHand icon */
     },
-    // { next_gkind, "next_name", bg_w, bg_h, nbitmaps, bm_h, bm_hreal, ndisplist, has_name_png },
+    // { next_gkind, "next_name", bg_w, bg_h, bg_nbitmaps, bg_bm_h, bg_bm_hreal,
+    //   bg_ndisplist, has_name_png, has_emblem_png },
 };
 
 static constexpr int kStageCount = (int)(sizeof(STAGE_TABLE) / sizeof(STAGE_TABLE[0]));
@@ -105,13 +114,15 @@ static constexpr int kStageCount = (int)(sizeof(STAGE_TABLE) / sizeof(STAGE_TABL
 constexpr int      kIconW  = 48;
 constexpr int      kIconH  = 36;
 constexpr uint8_t  kFmtRGBA16 = 0; /* G_IM_FMT_RGBA */
+constexpr uint8_t  kFmtIA     = 4; /* G_IM_FMT_IA   — emblems, nameplates */
 constexpr uint8_t  kSiz16b    = 2; /* G_IM_SIZ_16b  */
+constexpr uint8_t  kSiz4b     = 0; /* G_IM_SIZ_4b   — IA4: 2 pixels/byte */
 
 // ---------------------------------------------------------------------------
 // Cache entries.
 // ---------------------------------------------------------------------------
 
-enum AssetKind { kBackground = 0, kIcon = 1, kName = 2, kAssetKindCount = 3 };
+enum AssetKind { kBackground = 0, kIcon = 1, kName = 2, kEmblem = 3, kAssetKindCount = 4 };
 
 struct CacheEntry {
     Sprite   *sprite     = nullptr;
@@ -152,6 +163,49 @@ static inline void put_f32(uint8_t *b, unsigned off, float v) {
 // (R5G5B5A1) with no TMEM odd-row swizzle (synthetic sprites bypass the
 // portFixupSpriteBitmapData swizzle via portMarkSyntheticSprite).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// RGBA8888 -> IA4 silhouette packer.
+//
+// IA4 is **3 bits of intensity + 1 bit of alpha** per pixel (NOT 4-bit
+// intensity — see libultraship/src/fast/interpreter.cpp ImportTextureIA4).
+// 2 pixels per byte; high nibble = even pixel, low nibble = odd pixel.
+//
+// For a silhouette emblem source (RGB ignored, alpha encodes the mask):
+//   Visible pixel (alpha >= 128): pack 0xF = intensity 7 + alpha 1.
+//     Intensity 7 = max, so SObj-side colour modulation (0x5C/0x22/0x00 brown)
+//     tints the visible pixels to their authored colour, exactly like every
+//     ROM FT emblem.
+//   Transparent pixel: pack 0x0 = intensity 0 + alpha 0.
+//
+// IA4's 1-bit alpha can't represent partial transparency — LANCZOS-upscaled
+// edges threshold to fully visible or fully invisible. That's the cost of
+// matching the ROM IA4 format exactly; if anti-aliased edges become important,
+// CI4 (4-bit indexed) is the next-format-up that fits TMEM at 64x48.
+// Width must be even (always true for the emblem dims we target).
+// ---------------------------------------------------------------------------
+
+static uint8_t *convertAlphaToIA4(const uint8_t *rgba8, int w, int h) {
+    if (w % 2 != 0) return nullptr; // IA4 packs 2 pixels per byte
+    const size_t out_bytes = (size_t)w * (size_t)h / 2;
+    uint8_t *out = static_cast<uint8_t *>(std::malloc(out_bytes));
+    if (!out) return nullptr;
+
+    const uint8_t *src = rgba8;
+    uint8_t *dst = out;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; x += 2) {
+            uint8_t a0 = src[(y * w + x + 0) * 4 + 3];
+            uint8_t a1 = src[(y * w + x + 1) * 4 + 3];
+            // Threshold each pixel to a 1-bit alpha mask; visible pixels get
+            // full intensity (nibble = 0xF = 0b1111 = I=7 + A=1).
+            uint8_t n0 = (a0 >= 128) ? 0xF : 0x0;
+            uint8_t n1 = (a1 >= 128) ? 0xF : 0x0;
+            *dst++ = (uint8_t)((n0 << 4) | n1);
+        }
+    }
+    return out;
+}
 
 static uint8_t *convertToRGBA16BE(const uint8_t *rgba8, int w, int h) {
     const int npixels = w * h;
@@ -392,6 +446,88 @@ static Sprite *buildNameSprite(uint8_t *rgba16_buf, CacheEntry *entry)
 }
 
 // ---------------------------------------------------------------------------
+// Build the FD-style emblem Sprite — IA4 single-bitmap, 64x48.
+//
+// Every ROM FT emblem in reloc file 20 (llFTEmblemSprites*) uses the same
+// fields, byte-for-byte:
+//   width=64 height=48 nbitmaps=1 ndisplist=36
+//   bmheight=48 bmHreal=48 bmfmt=4 (IA) bmsiz=0 (IA4)
+//   attr=0x0220 scalex=scaley=1.0
+//
+// IA4 = 4 bits intensity per pixel, 2 pixels per byte. 64*48/2 = 1536 bytes —
+// fits TMEM (4 KB) as a single bitmap, so no multi-strip layout needed. The
+// caller sets SObj red/green/blue to the franchise brown (0x5C/0x22/0x00) and
+// the combiner tints the intensity texels — identical to how the ROM emblems
+// render.
+//
+// This deliberately matches the ROM Sprite struct field-for-field. Don't
+// invent a new layout; if the 9 ROM emblems render correctly, ours does too.
+// ---------------------------------------------------------------------------
+
+static constexpr int kEmblemW  = 64;
+static constexpr int kEmblemH  = 48;
+
+static Sprite *buildEmblemSprite(uint8_t *ia4_buf, CacheEntry *entry)
+{
+    const int w         = kEmblemW;
+    const int h         = kEmblemH;
+    const int nbitmaps  = 1;
+    const int ndisplist = 36; // matches ROM FT emblems exactly
+
+    uint8_t *sp_raw = static_cast<uint8_t *>(std::malloc(68));
+    uint8_t *bm_raw = static_cast<uint8_t *>(std::malloc(16));
+    if (!sp_raw || !bm_raw) { std::free(sp_raw); std::free(bm_raw); return nullptr; }
+    std::memset(sp_raw, 0, 68);
+    std::memset(bm_raw, 0, 16);
+
+    // Bitmap struct (single bitmap covers the full sprite).
+    put_s16(bm_raw, 0x00, (int16_t)w);
+    put_s16(bm_raw, 0x02, (int16_t)w);
+    put_s16(bm_raw, 0x04, 0);
+    put_s16(bm_raw, 0x06, 0);
+    put_u32(bm_raw, 0x08, portRelocRegisterPointer(ia4_buf));
+    put_s16(bm_raw, 0x0C, (int16_t)h);
+    put_s16(bm_raw, 0x0E, 0);
+
+    Bitmap *bm = reinterpret_cast<Bitmap *>(bm_raw);
+
+    put_s16(sp_raw, 0x00, 0);
+    put_s16(sp_raw, 0x02, 0);
+    put_s16(sp_raw, 0x04, (int16_t)w);
+    put_s16(sp_raw, 0x06, (int16_t)h);
+    put_f32(sp_raw, 0x08, 1.0f);
+    put_f32(sp_raw, 0x0C, 1.0f);
+    put_s16(sp_raw, 0x10, 0); put_s16(sp_raw, 0x12, 0);
+    put_u16(sp_raw, 0x14, 0); put_s16(sp_raw, 0x16, 0);
+    sp_raw[0x18] = 0xFF; sp_raw[0x19] = 0xFF;
+    sp_raw[0x1A] = 0xFF; sp_raw[0x1B] = 0xFF;
+    put_s16(sp_raw, 0x1C, 0); put_s16(sp_raw, 0x1E, 0);
+    put_u32(sp_raw, 0x20, portRelocRegisterPointer(nullptr));
+    put_s16(sp_raw, 0x24, 0); put_s16(sp_raw, 0x26, 1);
+    put_s16(sp_raw, 0x28, (int16_t)nbitmaps);
+    put_s16(sp_raw, 0x2A, (int16_t)ndisplist);
+    put_s16(sp_raw, 0x2C, (int16_t)h);
+    put_s16(sp_raw, 0x2E, (int16_t)h);
+    sp_raw[0x30] = kFmtIA;     sp_raw[0x31] = kSiz4b;
+    sp_raw[0x32] = 0;          sp_raw[0x33] = 0;
+    put_u32(sp_raw, 0x34, portRelocRegisterPointer(bm));
+    put_u32(sp_raw, 0x38, portRelocRegisterPointer(nullptr));
+    put_u32(sp_raw, 0x3C, portRelocRegisterPointer(nullptr));
+    put_s16(sp_raw, 0x40, 0); put_s16(sp_raw, 0x42, 0);
+
+    Sprite *sp = reinterpret_cast<Sprite *>(sp_raw);
+
+    void *buf_ptrs[1] = { ia4_buf };
+    portMarkSyntheticSprite(sp, bm, (unsigned int)nbitmaps, buf_ptrs);
+
+    entry->sprite     = sp;
+    entry->bitmaps    = bm;
+    entry->rgba16_buf = ia4_buf;   // field name is historical; holds the IA4 packed buffer
+    entry->nbitmaps   = nbitmaps;
+    return sp;
+}
+
+// ---------------------------------------------------------------------------
 // Re-register fixup tracking on every call (scene-boundary safety).
 // portResetStructFixups() clears sStructU16Fixups / sDeswizzle4cFixups at
 // scene boundaries, so portMarkSyntheticSprite must be called again each time
@@ -446,6 +582,32 @@ static uint8_t *loadPNGAsRGBA16BE(const std::string &path, int expected_w, int e
     return rgba16;
 }
 
+// Loads a PNG and returns the alpha channel packed as IA4 (2 px/byte, w*h/2 bytes).
+// Used for emblem sprites where matching the ROM's IA4 single-bitmap format
+// avoids TMEM-overflow / multi-bitmap-strip rendering bugs entirely.
+static uint8_t *loadPNGAsIA4(const std::string &path, int expected_w, int expected_h) {
+    int w = 0, h = 0, channels = 0;
+    uint8_t *rgba8 = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    if (!rgba8) {
+        port_log("CSS stage assets: stbi_load failed: %s (%s)\n",
+                 path.c_str(),
+                 stbi_failure_reason() ? stbi_failure_reason() : "?");
+        return nullptr;
+    }
+    if (w != expected_w || h != expected_h) {
+        port_log("CSS stage assets: %s — expected %dx%d, got %dx%d; skipping.\n",
+                 path.c_str(), expected_w, expected_h, w, h);
+        stbi_image_free(rgba8);
+        return nullptr;
+    }
+    uint8_t *ia4 = convertAlphaToIA4(rgba8, w, h);
+    stbi_image_free(rgba8);
+    if (!ia4) {
+        port_log("CSS stage assets: convertAlphaToIA4 OOM for %s\n", path.c_str());
+    }
+    return ia4;
+}
+
 // ---------------------------------------------------------------------------
 // Core getter implementation.
 // ---------------------------------------------------------------------------
@@ -479,6 +641,11 @@ static Sprite *getSprite(int gkind, AssetKind asset_kind) {
         return nullptr;
     }
 
+    // For emblem sprites: return NULL immediately if this stage has no PNG.
+    if (asset_kind == kEmblem && !se.has_emblem_png) {
+        return nullptr;
+    }
+
     const char *suffix;
     int expected_w, expected_h;
     if (asset_kind == kBackground) {
@@ -489,6 +656,10 @@ static Sprite *getSprite(int gkind, AssetKind asset_kind) {
         suffix     = "_name.png";
         expected_w = kNameW;
         expected_h = kNameH;
+    } else if (asset_kind == kEmblem) {
+        suffix     = "_emblem.png";
+        expected_w = kEmblemW;
+        expected_h = kEmblemH;
     } else {
         suffix     = "_small.png";
         expected_w = kIconW;
@@ -498,23 +669,29 @@ static Sprite *getSprite(int gkind, AssetKind asset_kind) {
     std::string rel_path = std::string("assets/css_icons/") + se.name + suffix;
     std::string full_path = Ship::Context::GetPathRelativeToAppDirectory(rel_path.c_str());
 
-    uint8_t *rgba16 = loadPNGAsRGBA16BE(full_path, expected_w, expected_h);
-    if (!rgba16) {
+    // Emblems use the ROM's IA4 single-bitmap format (alpha-mask source); all
+    // other CSS sprites use RGBA16. Pick the converter accordingly.
+    uint8_t *pixels = (asset_kind == kEmblem)
+                          ? loadPNGAsIA4(full_path, expected_w, expected_h)
+                          : loadPNGAsRGBA16BE(full_path, expected_w, expected_h);
+    if (!pixels) {
         // File missing or wrong size — return NULL so caller falls back to ROM sprite.
         return nullptr;
     }
 
     Sprite *sp = nullptr;
     if (asset_kind == kBackground) {
-        sp = buildBackgroundSprite(se, rgba16, &entry);
+        sp = buildBackgroundSprite(se, pixels, &entry);
     } else if (asset_kind == kName) {
-        sp = buildNameSprite(rgba16, &entry);
+        sp = buildNameSprite(pixels, &entry);
+    } else if (asset_kind == kEmblem) {
+        sp = buildEmblemSprite(pixels, &entry);
     } else {
-        sp = buildIconSprite(rgba16, &entry);
+        sp = buildIconSprite(pixels, &entry);
     }
 
     if (!sp) {
-        std::free(rgba16);
+        std::free(pixels);
         port_log("CSS stage assets: sprite build failed for %s\n", full_path.c_str());
         return nullptr;
     }
@@ -540,6 +717,10 @@ extern "C" Sprite *portCSSGetStageIconSprite(int gkind) {
 
 extern "C" Sprite *portCSSGetStageNameSprite(int gkind) {
     return getSprite(gkind, kName);
+}
+
+extern "C" Sprite *portCSSGetStageEmblemSprite(int gkind) {
+    return getSprite(gkind, kEmblem);
 }
 
 #endif /* PORT */
