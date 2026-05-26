@@ -14,6 +14,62 @@ include(FetchContent)
 # curl-only FindMbedTLS.cmake (not on global CMAKE_MODULE_PATH — libzip has its own finder).
 set(SSB64_CURL_FIND_MBEDTLS "${CMAKE_SOURCE_DIR}/cmake/curl/FindMbedTLS.cmake" CACHE INTERNAL "")
 
+# Propagate NDK cross-compile isolation into FetchContent sub-builds (curl/mbedtls).
+set(_SSB64_ANDROID_FC_CMAKE_ARGS
+    -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+    -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+    -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+)
+
+function(ssb64_android_filter_host_compile_options out_var)
+    set(_filtered)
+    foreach(_opt IN LISTS ARGN)
+        if(_opt MATCHES "^-I/+usr/include")
+            continue()
+        endif()
+        if(_opt MATCHES "^-isystem/+usr/include")
+            continue()
+        endif()
+        list(APPEND _filtered "${_opt}")
+    endforeach()
+    set(${out_var} "${_filtered}" PARENT_SCOPE)
+endfunction()
+
+function(ssb64_android_harden_curl_target target)
+    if(NOT TARGET ${target})
+        return()
+    endif()
+
+    get_target_property(_opts ${target} COMPILE_OPTIONS)
+    if(_opts AND NOT _opts STREQUAL "_opts-NOTFOUND")
+        ssb64_android_filter_host_compile_options(_filtered ${_opts})
+        set_property(TARGET ${target} PROPERTY COMPILE_OPTIONS ${_filtered})
+    endif()
+
+    get_target_property(_iface ${target} INTERFACE_COMPILE_OPTIONS)
+    if(_iface AND NOT _iface STREQUAL "_iface-NOTFOUND")
+        ssb64_android_filter_host_compile_options(_filtered_iface ${_iface})
+        set_property(TARGET ${target} PROPERTY INTERFACE_COMPILE_OPTIONS ${_filtered_iface})
+    endif()
+
+    foreach(_prop IN ITEMS COMPILE_FLAGS STATIC_LIBRARY_FLAGS)
+        get_target_property(_flags ${target} ${_prop})
+        if(_flags AND NOT _flags STREQUAL "${_prop}-NOTFOUND")
+            string(REGEX REPLACE "(^| )-I/+usr/include( |$)" " " _flags "${_flags}")
+            string(REGEX REPLACE "(^| )-isystem/+usr/include( |$)" " " _flags "${_flags}")
+            string(STRIP "${_flags}" _flags)
+            set_property(TARGET ${target} PROPERTY ${_prop} "${_flags}")
+        endif()
+    endforeach()
+endfunction()
+
+function(ssb64_android_harden_curl_targets)
+    foreach(_t IN ITEMS libcurl_static libcurl_shared CURL::libcurl)
+        ssb64_android_harden_curl_target(${_t})
+    endforeach()
+endfunction()
+
 function(ssb64_android_fetch_mbedtls)
     if(TARGET mbedtls AND TARGET mbedx509 AND TARGET mbedcrypto)
         return()
@@ -31,6 +87,7 @@ function(ssb64_android_fetch_mbedtls)
         GIT_TAG        v3.5.2
         GIT_SHALLOW    TRUE
         CMAKE_ARGS
+            ${_SSB64_ANDROID_FC_CMAKE_ARGS}
             -DENABLE_TESTING=OFF
             -DENABLE_PROGRAMS=OFF
             -DMBEDTLS_FATAL_WARNINGS=OFF
@@ -82,20 +139,18 @@ function(ssb64_android_provide_curl)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
     set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
-    # Embedded FetchContent build: skip install/export (CMake 3.31 errors if mbedtls is not exported).
     set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
     set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_PKGCONFIG OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ARES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_THREADED_RESOLVER ON CACHE BOOL "" FORCE)
 
-    # curl prepends ${curl_SOURCE}/CMake to CMAKE_MODULE_PATH before find_package(MbedTLS),
-    # so a parent CMAKE_MODULE_PATH never wins. Replace curl's FindMbedTLS.cmake with ours
-    # (in-tree targets; stock module uses find_library and fails on Android NDK).
     FetchContent_Declare(
         curl
         GIT_REPOSITORY https://github.com/curl/curl.git
         GIT_TAG        curl-8_11_1
         GIT_SHALLOW    TRUE
-        # PATCH runs once per populated source; patches option defaults + disables export(TARGETS).
         PATCH_COMMAND
             ${CMAKE_COMMAND}
                 -DPATCH_CURL_SOURCE_DIR=<SOURCE_DIR>
@@ -103,6 +158,7 @@ function(ssb64_android_provide_curl)
                 -DPATCH_EMBED_FILE=${CMAKE_SOURCE_DIR}/cmake/curl/Ssb64CurlAndroidEmbed.cmake
                 -P ${CMAKE_SOURCE_DIR}/cmake/curl/patch_curl_android.cmake
         CMAKE_ARGS
+            ${_SSB64_ANDROID_FC_CMAKE_ARGS}
             -DBUILD_SHARED_LIBS=OFF
             -DBUILD_CURL_EXE=OFF
             -DCURL_USE_MBEDTLS=ON
@@ -111,6 +167,9 @@ function(ssb64_android_provide_curl)
             -DCURL_DISABLE_INSTALL=ON
             -DCURL_ENABLE_EXPORT_TARGET=OFF
             -DCURL_USE_LIBPSL=OFF
+            -DCURL_USE_PKGCONFIG=OFF
+            -DENABLE_ARES=OFF
+            -DENABLE_THREADED_RESOLVER=ON
     )
     FetchContent_MakeAvailable(curl)
     set(BUILD_SHARED_LIBS "${_ssb64_saved_build_shared_libs}")
@@ -120,6 +179,8 @@ function(ssb64_android_provide_curl)
         message(FATAL_ERROR "ssb64_android_provide_curl: FetchContent curl did not define CURL::libcurl")
     endif()
 
+    ssb64_android_harden_curl_targets()
+
     set(SSB64_CURL_SOURCE_DIR "${curl_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
-    message(STATUS "SSB64 Android netmenu: CURL::libcurl from FetchContent (mbedTLS 3.5.2 HTTPS)")
+    message(STATUS "SSB64 Android netmenu: CURL::libcurl (mbedTLS HTTPS, no pkg-config/c-ares)")
 endfunction()

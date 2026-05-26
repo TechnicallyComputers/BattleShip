@@ -23,7 +23,7 @@ public final class UserStoragePaths {
     /** Legacy subfolder name used by older builds (migration source only). */
     public static final String LEGACY_USER_DATA_FOLDER = "BattleShip";
 
-    /** Written under externalFilesDir for native JNI_OnLoad before Java calls JNI. */
+    /** Optional marker under externalFilesDir (debugging); native path comes from publishUserDataDirToNative. */
     public static final String NATIVE_PATH_SENTINEL = ".battleship_user_data_dir";
 
     /** One-shot debug session kind written before restart ({@code log_only} or {@code env}). */
@@ -87,7 +87,7 @@ public final class UserStoragePaths {
 
     /**
      * Publishes the prepared path to native code. Call from {@link BattleShipActivity}
-     * after {@code super.onCreate()} so {@code libSDL2.so} is loaded before {@code libmain.so}.
+     * immediately after {@code super.onCreate()} (loads libSDL2.so + libmain.so).
      */
     public static void publishUserDataDirToNative(Context ctx) {
         if (sCachedPathWithSlash == null) {

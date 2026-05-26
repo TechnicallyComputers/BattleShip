@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Builds BattleShip Android release APK via Gradle externalNativeBuild.
+# Builds BattleShip Android APK via Gradle externalNativeBuild.
 #
 # Usage:
-#   ./scripts/package-android.sh              # offline (SSB64_NETMENU=OFF)
-#   ./scripts/package-android.sh --netplay    # netplay (-Pssb64Netmenu=true)
+#   ./scripts/package-android.sh                    # offline release
+#   ./scripts/package-android.sh --netplay          # netplay release
+#   ./scripts/package-android.sh --debug            # offline debug (debuggable, run-as)
+#   ./scripts/package-android.sh --netplay --debug  # netplay debug
 #
-# Output:
-#   dist/BattleShip-android.apk
-#   dist/BattleShip-android-netplay.apk       (--netplay)
+# Output (under dist/):
+#   BattleShip-android.apk
+#   BattleShip-android-netplay.apk
+#   BattleShip-android-debug.apk
+#   BattleShip-android-netplay-debug.apk
+#
+# Debug package id: com.jrickey.battleship.debug (netplay debug uses the same id).
 #
 # Requires: JDK 17+, Android SDK/NDK (see scripts/android-env.sh), repo-root f3d.o2r.
 
@@ -19,16 +25,32 @@ ANDROID_DIR="$ROOT/android"
 GRADLE_PROPS=()
 APK_NAME="BattleShip-android.apk"
 NETPLAY=0
+DEBUG=0
+
+usage() {
+	cat <<EOF
+Usage: $0 [--netplay] [--debug]
+
+  (default)           offline release APK
+  --netplay           netplay release (-Pssb64Netmenu=true)
+  --debug             offline debug (assembleDebug, com.jrickey.battleship.debug)
+  --netplay --debug   netplay debug (SSB64_NETMENU=ON + debuggable)
+
+Outputs are copied to dist/ with variant-specific names.
+EOF
+}
 
 for a in "$@"; do
 	case "$a" in
 	--netplay) NETPLAY=1 ;;
+	--debug)   DEBUG=1 ;;
 	-h|--help)
-		echo "Usage: $0 [--netplay]"
+		usage
 		exit 0
 		;;
 	*)
 		echo "Unknown argument: $a" >&2
+		usage >&2
 		exit 1
 		;;
 	esac
@@ -37,6 +59,19 @@ done
 if [[ "$NETPLAY" -eq 1 ]]; then
 	GRADLE_PROPS+=("-Pssb64Netmenu=true")
 	APK_NAME="BattleShip-android-netplay.apk"
+fi
+if [[ "$DEBUG" -eq 1 ]]; then
+	APK_NAME="${APK_NAME%.apk}-debug.apk"
+fi
+
+if [[ "$DEBUG" -eq 1 ]]; then
+	GRADLE_TASK="assembleDebug"
+	APK_BUILD_TYPE="debug"
+	APK_GLOB="app-debug*.apk"
+else
+	GRADLE_TASK="assembleRelease"
+	APK_BUILD_TYPE="release"
+	APK_GLOB="app-release*.apk"
 fi
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -56,15 +91,19 @@ if [[ "$NETPLAY" -eq 1 ]]; then
 	[[ -f "$ROOT/port/net/cacert.pem" ]] || fail "Missing port/net/cacert.pem for netplay package"
 fi
 
-step "Gradle assembleRelease${NETPLAY:+ (ssb64Netmenu=true)}"
-( cd "$ANDROID_DIR" && ./gradlew --no-daemon assembleRelease "${GRADLE_PROPS[@]}" )
+variant_label="offline"
+[[ "$NETPLAY" -eq 1 ]] && variant_label="netplay"
+[[ "$DEBUG" -eq 1 ]] && variant_label+="-debug"
+
+step "Gradle $GRADLE_TASK ($variant_label${NETPLAY:+, ssb64Netmenu=true})"
+( cd "$ANDROID_DIR" && ./gradlew --no-daemon "$GRADLE_TASK" "${GRADLE_PROPS[@]}" )
 
 step "Staging $APK_NAME"
 mkdir -p "$DIST_DIR"
 shopt -s nullglob
-apk=( "$ANDROID_DIR"/app/build/outputs/apk/release/app-release*.apk )
+apk=( "$ANDROID_DIR"/app/build/outputs/apk/"$APK_BUILD_TYPE"/$APK_GLOB )
 if (( ${#apk[@]} == 0 )); then
-	fail "no APK under android/app/build/outputs/apk/release/"
+	fail "no APK under android/app/build/outputs/apk/$APK_BUILD_TYPE/"
 fi
 cp "${apk[0]}" "$DIST_DIR/$APK_NAME"
 ls -la "$DIST_DIR/$APK_NAME"
@@ -94,4 +133,9 @@ if [[ -n "$sdl" && -f "$sdl" ]]; then
 fi
 
 printf '\nDone: %s\n' "$DIST_DIR/$APK_NAME"
-printf 'Variant: %s\n' "$([[ "$NETPLAY" -eq 1 ]] && echo netplay || echo offline)"
+printf 'Variant: %s\n' "$variant_label"
+if [[ "$DEBUG" -eq 1 ]]; then
+	printf 'Package: com.jrickey.battleship.debug\n'
+	printf 'Install: adb install -r %s\n' "$DIST_DIR/$APK_NAME"
+	printf 'Logs:    adb shell run-as com.jrickey.battleship.debug cat files/ssb64.log\n'
+fi
