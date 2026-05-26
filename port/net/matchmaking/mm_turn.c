@@ -42,7 +42,7 @@ extern void port_log(const char *fmt, ...);
 #define MM_TURN_RECV_SLICE_US 500000
 /* Wall-clock budget per request/response exchange (coturn 401 + auth retry needs headroom). */
 #define MM_TURN_RECV_DEADLINE_US 3000000
-#define MM_TURN_ALLOCATE_ATTEMPTS 5
+#define MM_TURN_ALLOCATE_ATTEMPTS 2
 #define MM_TURN_CHANNEL 0x4000U
 #define MM_TURN_MAX_MSG 1600
 
@@ -680,6 +680,14 @@ static void mmTurnDrainSocket(s32 sock)
 #endif
 }
 
+void mmTurnDrainUdpSocket(s32 sock)
+{
+	if (sock >= 0)
+	{
+		mmTurnDrainSocket(sock);
+	}
+}
+
 static sb32 mmTurnIsAllocateResponse(const u8 *msg, mm_sock_len_t len, u16 *out_class_bits)
 {
 	u16 typ;
@@ -741,15 +749,14 @@ static sb32 mmTurnSendRecvAllocate(s32 sock, const u8 *req, u16 req_len, u8 *res
 	}
 #ifdef _WIN32
 	_ftime(&tb);
-	now.tv_sec = (long)tb.time;
-	now.tv_usec = (long)tb.millitm * 1000L;
-	if ((now.tv_sec > deadline.tv_sec) ||
-		(now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
+	deadline.tv_sec = (long)tb.time;
+	deadline.tv_usec = (long)tb.millitm * 1000L;
+	deadline.tv_usec += (long)MM_TURN_RECV_DEADLINE_US;
+	if (deadline.tv_usec >= 1000000L)
 	{
-		break;
+		deadline.tv_sec += deadline.tv_usec / 1000000L;
+		deadline.tv_usec %= 1000000L;
 	}
-	tv.tv_sec = 0;
-	tv.tv_usec = MM_TURN_RECV_SLICE_US;
 #else
 	gettimeofday(&deadline, NULL);
 	deadline.tv_usec += MM_TURN_RECV_DEADLINE_US;
@@ -764,9 +771,10 @@ static sb32 mmTurnSendRecvAllocate(s32 sock, const u8 *req, u16 req_len, u8 *res
 	{
 #ifdef _WIN32
 		_ftime(&tb);
-		now.time = tb.time;
-		now.millitm = tb.millitm;
-		if ((now.time > deadline.time) || (now.time == deadline.time && now.millitm >= deadline.millitm))
+		now.tv_sec = (long)tb.time;
+		now.tv_usec = (long)tb.millitm * 1000L;
+		if ((now.tv_sec > deadline.tv_sec) ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
 		{
 			break;
 		}
@@ -858,15 +866,14 @@ static sb32 mmTurnSendRecvForMethod(s32 sock, const u8 *req, u16 req_len, u8 *re
 	}
 #ifdef _WIN32
 	_ftime(&tb);
-	now.tv_sec = (long)tb.time;
-	now.tv_usec = (long)tb.millitm * 1000L;
-	if ((now.tv_sec > deadline.tv_sec) ||
-		(now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
+	deadline.tv_sec = (long)tb.time;
+	deadline.tv_usec = (long)tb.millitm * 1000L;
+	deadline.tv_usec += (long)MM_TURN_RECV_DEADLINE_US;
+	if (deadline.tv_usec >= 1000000L)
 	{
-		break;
+		deadline.tv_sec += deadline.tv_usec / 1000000L;
+		deadline.tv_usec %= 1000000L;
 	}
-	tv.tv_sec = 0;
-	tv.tv_usec = MM_TURN_RECV_SLICE_US;
 #else
 	gettimeofday(&deadline, NULL);
 	deadline.tv_usec += MM_TURN_RECV_DEADLINE_US;
@@ -880,9 +887,10 @@ static sb32 mmTurnSendRecvForMethod(s32 sock, const u8 *req, u16 req_len, u8 *re
 	{
 #ifdef _WIN32
 		_ftime(&tb);
-		now.time = tb.time;
-		now.millitm = tb.millitm;
-		if ((now.time > deadline.time) || (now.time == deadline.time && now.millitm >= deadline.millitm))
+		now.tv_sec = (long)tb.time;
+		now.tv_usec = (long)tb.millitm * 1000L;
+		if ((now.tv_sec > deadline.tv_sec) ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_usec >= deadline.tv_usec))
 		{
 			break;
 		}
