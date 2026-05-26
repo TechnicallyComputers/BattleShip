@@ -294,6 +294,10 @@ extern sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport
 #if defined(SSB64_NETPLAY_ICE)
 extern void syNetPeerSetIceTransport(sb32 enabled);
 #endif
+extern void syNetPeerSetAutomatchBootstrapContext(const char *match_id, const char *ticket_id);
+extern void syNetPeerClearAutomatchBootstrapContext(void);
+extern sb32 syNetPeerGetAutomatchBootstrapContext(char *match_id_out, u32 match_cap, char *ticket_out,
+                                                  u32 ticket_cap);
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
 extern sb32 syNetPeerBeginStageSceneRendezvous(void);
 extern sb32 syNetPeerUpdateStageSceneRendezvous(void);

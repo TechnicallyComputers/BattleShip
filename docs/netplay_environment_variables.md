@@ -248,7 +248,9 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_MATCHMAKING_FORCE_PEER_LAN`** — Non-zero: dev override — try **`peer_lan`** before reflexive (ignores WAN comparison).
 - **`SSB64_MATCHMAKING_LAN_INTERFACE`** — [`mm_lan_detect.c`](port/net/matchmaking/mm_lan_detect.c)
 - **`SSB64_NETPLAY_AUTOMATCH_CONNECT_TIMEOUT_MS`** — Wall-clock budget for post-match P2P bootstrap on the automatch staging scene (default **60000**, clamp **5000–300000**). Expired or **B** during connect returns to character select (`nSCKindVSNetAutomatch`). Press **B** while searching/connecting on staging to cancel the queue ticket and return to CSS.
-- **`SSB64_NETPLAY_SERVER_BOOTSTRAP`** — [`mm_server_barrier.c`](port/net/bootstrap/mm_server_barrier.c) (Linux)
+- **`SSB64_NETPLAY_SERVER_BOOTSTRAP`** — [`mm_server_barrier.c`](port/net/bootstrap/mm_server_barrier.c). Set to `1` after automatch: host may replace local barrier deadline with `barrier_deadline_unix_ms` from `POST /v1/sessions/{match_id}/bootstrap/ping` when `contract_complete` is true. Requires matchmaking credentials and `match_id`/`ticket_id` from automatch. Falls back to local `lead_ms` on failure.
+- **`SSB64_NETPLAY_SERVER_BOOTSTRAP_VERBOSE`** — Log each bootstrap HTTPS request/response when non-zero.
+- **`SSB64_MATCHMAKING_ICE_TCP`** — [`mm_ice.c`](port/net/matchmaking/mm_ice.c). Experimental: `juice_set_ice_tcp_mode(JUICE_ICE_TCP_MODE_ACTIVE)` after agent create. **ICE-TCP only** (not coturn TURNS/TLS on 5349). Soak on UDP-blocked networks before relying on it.
 
 ---
 

@@ -819,9 +819,6 @@ int main(int argc, char* argv[]) {
 		port_log_init(logPath.c_str());
 	}
 
-	/* Developer-only: <userDataDir>/debug.env (Documents/BattleShip on Android). */
-	ssb64_load_debug_env_file();
-
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(portWindowsCrashFilter);
 	AddVectoredExceptionHandler(1, portWindowsVectoredHandler);
@@ -855,6 +852,9 @@ int main(int argc, char* argv[]) {
 		PortShutdown();
 		port_exit_process(1);
 	}
+
+	/* After PortInit: Ship::Context exists (NON_PORTABLE GetAppDirectoryPath needs it). */
+	ssb64_load_debug_env_file();
 
 #if defined(__ANDROID__)
 	// === Android JNI cache warm-up ===

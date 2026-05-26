@@ -87,10 +87,13 @@ extern "C" int ssb64_UserDataDirUtf8(char *out, size_t cap)
     }
 #endif
 
-    try {
-        dir = Ship::Context::GetAppDirectoryPath();
-    } catch (...) {
-        dir.clear();
+    /* GetAppDirectoryPath() uses GetInstance()->mShortName when appName is empty; safe only after PortInit. */
+    if (Ship::Context::GetInstance() != nullptr) {
+        try {
+            dir = Ship::Context::GetAppDirectoryPath();
+        } catch (...) {
+            dir.clear();
+        }
     }
 
     if (dir.empty()) {
