@@ -26,7 +26,9 @@
 #include <sys/nettickgridlock.h>
 
 #ifdef SSB64_NETMENU
+#if defined(SSB64_NETMENU) && !defined(SSB64_NETPLAY_ICE)
 #include <mm_turn.h>
+#endif
 #include "bootstrap/mm_server_barrier.h"
 extern sb32 mnVSNetLevelPrefsMapsCheckLocked(s32 gkind);
 extern s32 mnVSNetLevelPrefsMapsGetGroundKind(s32 slot);
@@ -39,6 +41,10 @@ extern sb32 mnVSNetAutomatchAMPollAbortDuringBootstrap(void);
 #include "port_watchdog.h"
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(SSB64_NETPLAY_ICE)
+#include "mm_ice.h"
+static sb32 sSYNetPeerIceTransport;
+#endif
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -1428,7 +1434,41 @@ void syNetPeerCloseSocket(void)
 
 static sb32 syNetPeerDatagramSocketIsUsable(void)
 {
+#if defined(SSB64_NETPLAY_ICE)
+	if ((sSYNetPeerIceTransport != FALSE) && (mmIceIsConnected() != FALSE))
+	{
+		return (sSYNetPeerIsActive != FALSE) ? TRUE : FALSE;
+	}
+#endif
 	return ((sSYNetPeerIsActive != FALSE) && (syNetPeerOsSocketIsValid(sSYNetPeerSocket) != FALSE)) ? TRUE : FALSE;
+}
+
+#if defined(SSB64_NETPLAY_ICE)
+void syNetPeerSetIceTransport(sb32 enabled)
+{
+	sSYNetPeerIceTransport = (enabled != FALSE) ? TRUE : FALSE;
+}
+#endif
+
+static int syNetPeerSendGameDatagram(const u8 *buffer, u32 size)
+{
+	if ((buffer == NULL) || (size == 0U))
+	{
+		return -1;
+	}
+#if defined(SSB64_NETPLAY_ICE)
+	if ((sSYNetPeerIceTransport != FALSE) && (mmIceIsConnected() != FALSE))
+	{
+		return mmIceSend(buffer, size);
+	}
+#endif
+#if defined(SSB64_NETMENU) && !defined(SSB64_NETPLAY_ICE)
+	if ((sSYNetPeerTurnOutboundRelay != FALSE) && (mmTurnRelaySessionActive() != FALSE))
+	{
+		return mmTurnRelaySend((s32)sSYNetPeerSocket, buffer, size);
+	}
+#endif
+	return syNetPeerOsSendTo(sSYNetPeerSocket, buffer, (size_t)size, &sSYNetPeerPeerAddress);
 }
 
 static u32 syNetPeerGetUdpRecvBufBytes(void)
@@ -2645,9 +2685,9 @@ void syNetPeerSetTurnOutboundRelay(sb32 enabled)
 
 sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport)
 {
+#if defined(SSB64_NETMENU) && !defined(SSB64_NETPLAY_ICE)
 	s32 fd;
 
-#if defined(SSB64_NETMENU)
 	fd = syNetPeerGetUdpSocketFd();
 	if ((fd < 0) || (peer_permission_hostport == NULL) || (peer_permission_hostport[0] == '\0'))
 	{
@@ -2672,17 +2712,33 @@ static int syNetPeerRecvDatagramUnwrap(u8 *buffer, int cap, struct sockaddr_in *
 	u8 unwrapped[SYNETPEER_PACKET_RECV_MAX];
 	s32 ulen;
 #endif
+#if defined(SSB64_NETPLAY_ICE)
+	u32 ice_len;
+#endif
 
 	if (would_block_out != NULL)
 	{
 		*would_block_out = FALSE;
 	}
+#if defined(SSB64_NETPLAY_ICE)
+	if ((sSYNetPeerIceTransport != FALSE) && (mmIcePopReceived(buffer, (u32)cap, &ice_len) != FALSE))
+	{
+		if (from_out != NULL)
+		{
+			memset(from_out, 0, sizeof(*from_out));
+			from_out->sin_family = AF_INET;
+			memcpy(&from_out->sin_addr, &sSYNetPeerPeerAddress.sin_addr, sizeof(from_out->sin_addr));
+			from_out->sin_port = sSYNetPeerPeerAddress.sin_port;
+		}
+		return (int)ice_len;
+	}
+#endif
 	size = syNetPeerOsRecvFrom(sSYNetPeerSocket, buffer, (size_t)cap, would_block_out);
 	if (size <= 0)
 	{
 		return size;
 	}
-#if defined(SSB64_NETMENU)
+#if defined(SSB64_NETMENU) && !defined(SSB64_NETPLAY_ICE)
 	if ((from_out != NULL) && (mmTurnRelayUnwrap(buffer, size, from_out, unwrapped, (u32)sizeof(unwrapped), &ulen) != FALSE))
 	{
 		if (ulen > 0 && ulen <= cap)
@@ -2701,14 +2757,7 @@ void syNetPeerSendBytes(const u8 *buffer, u32 size)
 	{
 		return;
 	}
-#if defined(SSB64_NETMENU)
-	if ((sSYNetPeerTurnOutboundRelay != FALSE) && (mmTurnRelaySessionActive() != FALSE))
-	{
-		(void)mmTurnRelaySend((s32)sSYNetPeerSocket, buffer, size);
-		return;
-	}
-#endif
-	(void)syNetPeerOsSendTo(sSYNetPeerSocket, buffer, (size_t)size, &sSYNetPeerPeerAddress);
+	(void)syNetPeerSendGameDatagram(buffer, size);
 }
 #endif
 
@@ -5299,7 +5348,13 @@ void syNetPeerCancelAutomatchBootstrap(void)
 {
 #if defined(SSB64_NETMENU)
 	sSYNetPeerTurnOutboundRelay = FALSE;
+#if !defined(SSB64_NETPLAY_ICE)
 	mmTurnEndRelaySession();
+#endif
+#endif
+#if defined(SSB64_NETPLAY_ICE)
+	sSYNetPeerIceTransport = FALSE;
+	mmIceShutdown();
 #endif
 	syNetPeerCloseSocket();
 	syNetPeerResetAutomatchBootstrapAttemptState();
@@ -5359,19 +5414,29 @@ sb32 syNetPeerRunBootstrap(void)
 	syNetPeerClearAutomatchAbort();
 	syNetPeerResetAutomatchBootstrapTransportState();
 #endif
-	if (syNetPeerOpenSocket() == FALSE)
+#if defined(SSB64_NETPLAY_ICE)
+	if (sSYNetPeerIceTransport == FALSE)
+#endif
 	{
-		return FALSE;
+		if (syNetPeerOpenSocket() == FALSE)
+		{
+			return FALSE;
+		}
 	}
 #if defined(PORT)
 	sSYNetPeerBootstrapRunInProgress = TRUE;
 #endif
 	sSYNetPeerIsActive = TRUE;
 #if defined(PORT)
-	if (syNetPeerRunUdpLinkSync() == FALSE)
+#if defined(SSB64_NETPLAY_ICE)
+	if (sSYNetPeerIceTransport == FALSE)
+#endif
 	{
-		syNetPeerBootstrapFailTeardown();
-		return FALSE;
+		if (syNetPeerRunUdpLinkSync() == FALSE)
+		{
+			syNetPeerBootstrapFailTeardown();
+			return FALSE;
+		}
 	}
 #endif
 
@@ -7359,7 +7424,7 @@ void syNetPeerSendLocalInput(void)
 	{
 		return;
 	}
-	if (syNetPeerOsSendTo(sSYNetPeerSocket, buffer, (size_t)size, &sSYNetPeerPeerAddress) == (int)size)
+	if (syNetPeerSendGameDatagram(buffer, size) == (int)size)
 	{
 		syNetPeerLogInputSendDiag(buffer, size);
 		sSYNetPeerPacketsSent++;

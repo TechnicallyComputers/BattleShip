@@ -291,6 +291,9 @@ extern void syNetPeerPauseBetweenBootstrapAttempts(void);
 /* Coturn relay: outbound ChannelData to peer (permission hostport = peer reflexive or relay). */
 extern void syNetPeerSetTurnOutboundRelay(sb32 enabled);
 extern sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport);
+#if defined(SSB64_NETPLAY_ICE)
+extern void syNetPeerSetIceTransport(sb32 enabled);
+#endif
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
 extern sb32 syNetPeerBeginStageSceneRendezvous(void);
 extern sb32 syNetPeerUpdateStageSceneRendezvous(void);

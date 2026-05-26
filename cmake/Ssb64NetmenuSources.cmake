@@ -37,3 +37,7 @@ endforeach()
 list(APPEND SSB64_DECOMP_SOURCES ${_ssb64_netplay_c})
 
 set(SSB64_PORT_NETMENU_SOURCES ${_ssb64_port_net_c})
+if(SSB64_NETMENU AND SSB64_NETPLAY_ICE)
+    list(FILTER SSB64_PORT_NETMENU_SOURCES EXCLUDE REGEX ".*/mm_stun\\.c$")
+    list(FILTER SSB64_PORT_NETMENU_SOURCES EXCLUDE REGEX ".*/mm_turn\\.c$")
+endif()

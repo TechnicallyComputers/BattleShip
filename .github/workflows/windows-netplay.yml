@@ -1,0 +1,49 @@
+name: Windows Netplay
+
+# PR smoke: netplay Windows zip (SSB64_NETMENU=ON). Catches MSVC-only issues in
+# port/net/matchmaking (mm_turn.c timeval vs _timeb, etc.). Full release matrix
+# remains in release.yml on tags.
+
+on:
+  pull_request:
+    paths:
+      - 'port/net/**'
+      - 'decomp/src/netplay/**'
+      - 'cmake/Ssb64Netmenu*.cmake'
+      - 'cmake/curl/**'
+      - 'libultraship/cmake/dependencies/**'
+      - 'CMakeLists.txt'
+      - 'scripts/package-windows.ps1'
+      - '.github/workflows/windows-netplay.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-netplay:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build deps
+        run: choco install ninja -y
+        shell: pwsh
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+      - name: Build Windows netplay zip
+        env:
+          SSB64_VERSION: us
+        run: ./scripts/package-windows.ps1 -Netplay
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-windows-netplay-pr
+          path: dist/BattleShip-Netplay-windows.zip
+          if-no-files-found: error
+          retention-days: 7
