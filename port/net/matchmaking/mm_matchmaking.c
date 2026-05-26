@@ -1858,11 +1858,49 @@ static void mmRunIceSignal(const MmJob *job)
 	(void)hc;
 }
 
-sb32 mmMatchmakingFetchTurnCredentials(char *user_out, u32 user_cap, char *pass_out, u32 pass_cap, char *realm_out,
-                                       u32 realm_cap)
+static sb32 mmJsonCopyU32Field(const char *body, const char *key_name, u32 *out_val, u32 default_val)
+{
+	char needle[80];
+	const char *p;
+	long v;
+
+	snprintf(needle, sizeof(needle), "\"%s\":", key_name);
+	p = strstr(body, needle);
+	if (p == NULL)
+	{
+		*out_val = default_val;
+		return FALSE;
+	}
+	p += strlen(needle);
+	while ((*p == ' ') || (*p == '\t') || (*p == '\r') || (*p == '\n'))
+	{
+		p++;
+	}
+	errno = 0;
+	v = strtol(p, NULL, 10);
+	if ((errno != 0) || (v < 0L) || (v > 65535L))
+	{
+		*out_val = default_val;
+		return FALSE;
+	}
+	*out_val = (u32)v;
+	return TRUE;
+}
+
+sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out)
 {
 	long hc;
 	char *resp;
+	u32 port_tmp;
+
+	if (out == NULL)
+	{
+		return FALSE;
+	}
+	memset(out, 0, sizeof(*out));
+	out->stun_port = 3478U;
+	out->turn_port = 3478U;
+	out->turns_port = 5349U;
 
 	if ((mmMatchmakingLoadCredentials(FALSE) == FALSE) || (sApiToken[0] == '\0'))
 	{
@@ -1877,16 +1915,27 @@ sb32 mmMatchmakingFetchTurnCredentials(char *user_out, u32 user_cap, char *pass_
 		}
 		return FALSE;
 	}
-	if ((mmJsonCopyQuotedValue(resp, "username", user_out, user_cap) == FALSE) ||
-	    (mmJsonCopyQuotedValue(resp, "password", pass_out, pass_cap) == FALSE))
+	if ((mmJsonCopyQuotedValue(resp, "username", out->turn_user, sizeof(out->turn_user)) == FALSE) ||
+	    (mmJsonCopyQuotedValue(resp, "password", out->turn_pass, sizeof(out->turn_pass)) == FALSE))
 	{
 		free(resp);
 		return FALSE;
 	}
-	if (realm_out != NULL && realm_cap > 0U)
+	(void)mmJsonCopyQuotedValue(resp, "realm", out->realm, sizeof(out->realm));
+	if (mmJsonCopyQuotedValue(resp, "stun_host", out->stun_host, sizeof(out->stun_host)) == FALSE)
 	{
-		(void)mmJsonCopyQuotedValue(resp, "realm", realm_out, realm_cap);
+		(void)mmJsonCopyQuotedValue(resp, "turn_host", out->stun_host, sizeof(out->stun_host));
 	}
+	if (mmJsonCopyQuotedValue(resp, "turn_host", out->turn_host, sizeof(out->turn_host)) == FALSE)
+	{
+		snprintf(out->turn_host, sizeof(out->turn_host), "%s", out->stun_host);
+	}
+	(void)mmJsonCopyU32Field(resp, "stun_port", &port_tmp, 3478U);
+	out->stun_port = (u16)port_tmp;
+	(void)mmJsonCopyU32Field(resp, "turn_port", &port_tmp, 3478U);
+	out->turn_port = (u16)port_tmp;
+	(void)mmJsonCopyU32Field(resp, "turns_port", &port_tmp, 5349U);
+	out->turns_port = (u16)port_tmp;
 	free(resp);
 	return TRUE;
 }

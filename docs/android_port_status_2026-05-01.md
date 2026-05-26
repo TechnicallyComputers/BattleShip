@@ -94,6 +94,20 @@ Torch, ~34 MB). `f3d.o2r` (open-source Fast3D shaders) and `ssb64.o2r`
 (port-local custom assets) are bundled in APK `assets/` and extracted
 to `getExternalFilesDir()` on first launch.
 
+### User-visible saves and logs
+
+`ssb64_save.bin` and `ssb64.log` live under **Internal storage → Documents →
+BattleShip** (`/storage/emulated/0/Documents/BattleShip/` on typical devices).
+`UserStoragePaths` (Java) creates that folder during `BootActivity`, migrates
+any copies left in the old `externalFilesDir` tree, and `BattleShipActivity`
+publishes the path to native code before `SDL_main` runs. Archives and bundled
+assets stay in `Android/data/<package>/files/` (app-specific external storage).
+
+Optional **`debug.env`** in that same folder applies developer-only `SSB64_*`
+diagnostics at launch (see [`docs/netplay_environment_variables.md`](netplay_environment_variables.md)
+and [`scripts/debug.env.example`](../scripts/debug.env.example)); not a player
+settings file.
+
 ## Performance / known issues
 
 - **Audio**: works via OpenSL ES default. Could move to AAudio (Android

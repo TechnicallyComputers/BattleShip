@@ -14,7 +14,8 @@ extern "C" {
 int ssb64_RealAppBundlePathUtf8(char *out, size_t cap);
 
 /**
- * Writable per-user app data directory (same tree as ssb64.log / saves / BattleShip.cfg.json).
+ * Writable per-user app data directory (same tree as ssb64.log / ssb64_save.bin / debug.env).
+ * On Android this is Internal storage/Documents/BattleShip/ when Java has published the path.
  * May include a trailing path separator. Returns 1 on success, 0 if truncated/error.
  */
 int ssb64_UserDataDirUtf8(char *out, size_t cap);

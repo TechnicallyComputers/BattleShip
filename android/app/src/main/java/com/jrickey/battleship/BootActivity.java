@@ -51,6 +51,7 @@ public class BootActivity extends ComponentActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        UserStoragePaths.prepareUserDataDir(getApplicationContext());
         buildUi();
         startAssetExtraction();
     }
