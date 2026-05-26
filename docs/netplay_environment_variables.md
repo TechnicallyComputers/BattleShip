@@ -2,7 +2,38 @@
 
 Reference for debugging and for porting this netcode to other decomp projects. Values are read with `getenv` / `std::getenv` unless noted. Empty or unset usually means “default off” or “use compiled defaults”; check call sites for exact parsing (`atoi`, truthy, level numbers).
 
-**`debug.env` (developer file, not player settings):** At startup the port loads `<userDataDir>/debug.env` if present (`ssb64_UserDataDirUtf8()` — on Android **Internal storage → Documents → BattleShip**, same folder as `ssb64.log`). Only names prefixed with `SSB64_` plus `CURL_CA_BUNDLE` / `SSL_CERT_FILE` are accepted. Each entry is applied with `setenv(..., 0)` / Windows equivalent **only when that name is not already set** in the process environment, so desktop `export` / `source scripts/*.env` still wins. Example template: [`scripts/debug.env.example`](../scripts/debug.env.example). This is intentionally **not** named like a general config file.
+### `debug.env` (developer file, not player settings)
+
+Parser: [`port/debug_env.c`](../port/debug_env.c). Template: [`scripts/debug.env.example`](../scripts/debug.env.example).
+
+**Paths:** `<userDataDir>/debug.env` — on Android `externalFilesDir` (`Android/data/<package>/files/`), same tree as `BattleShip.o2r`. Desktop: SDL pref / app support dir (see `ssb64_UserDataDirUtf8()`).
+
+**When it loads:**
+
+| Platform | Load `debug.env`? | Log file |
+|----------|-------------------|----------|
+| Desktop | Every launch if file exists | `ssb64.log` |
+| Android normal launch | No | `ssb64.log` (truncated) |
+| Android **Restart in Debug Mode** (Port Menu) | No | `ssb64-debug.log` (truncated) |
+| Android **Restart with debug.env** (Port Menu) | Yes, after import | `ssb64-debug.log` (truncated) |
+
+Normal Android launches do **not** truncate `ssb64-debug.log`. Use **Export ssb64-debug.log** (SAF) to copy the last debug session elsewhere.
+
+**Import (Android):** Settings → Tools → **Restart with debug.env** opens a document picker (`*/*`). **Any filename** is accepted; contents are saved internally as `debug.env`. Format rules apply to **content**, not the picked name.
+
+**Accepted line syntax (UTF-8):**
+
+| Line | Rule |
+|------|------|
+| Blank | Ignored |
+| `#` comment | Ignored |
+| Assignment | `NAME=value` (optional leading `export ` stripped) |
+| Quotes | Optional `'` or `"` around value |
+| No `=` | Skipped (logged) |
+
+**Allowed names:** `SSB64_*`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE` only. Others are skipped (logged in the active log). Each allowed name uses `setenv(name, value, 0)` — **only if not already set** (shell `export` on desktop still wins). Max name 128 / value 512 chars. **Not supported:** shell substitution, `source`, multiline values.
+
+**adb (Android):** `adb push myflags.env /sdcard/Android/data/<package>/files/debug.env` then use **Restart with debug.env** once so the `env` debug session loads it (a normal relaunch does not load `debug.env` on Android).
 
 **Precedence (input delay):** When `SSB64_NETPLAY_MATCH_INPUT_DELAY` is set (0–99), it defines the **linked** wire delay contract (floor/ceiling in netpeer for committed **`D`**). It overrides **`SSB64_NETPLAY_DELAY`** for that purpose. When match delay is unset, **`SSB64_NETPLAY_DELAY`** overrides the automatch caller delay. **Online default:** unless **`SSB64_NETPLAY_MATCH_INPUT_DELAY=0`** (explicit lockstep-at-zero contract) or **`SSB64_NETPLAY_ALLOW_INPUT_DELAY_ZERO=1`** (lab override), committed **`D`** and **`delay_floor`** are raised to **at least 1** after automatch configure, debug `SSB64_NETPLAY` init, and delay-sync commits. **Strict extra slack** (`SSB64_NETPLAY_STRICT_SLACK_FRAMES` and legacy aliases) is **independent**: it always comes from those envs via `g_NetInputDelayFrames` (clamped 0–4), not from the match delay integer. **Automatch:** `syNetPeer` resolves delay as `MATCH_INPUT_DELAY` → `SSB64_NETPLAY_DELAY` → caller input delay, commits that value immediately for VS startup, and logs `committed_input_delay` with the source.
 

@@ -81,7 +81,7 @@ extern "C" int ssb64_UserDataDirUtf8(char *out, size_t cap)
     }
 
 #if defined(__ANDROID__)
-    /* Primary: Documents/BattleShip/ on shared storage (set from Java before SDL_main). */
+    /* Primary: externalFilesDir/ (set from Java before SDL_main). */
     if (ssb64_android_user_data_dir_utf8(out, cap) != 0) {
         return 1;
     }

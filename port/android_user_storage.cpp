@@ -1,15 +1,13 @@
-// android_user_storage.cpp — JNI bridge for Documents/BattleShip user-data path.
+// android_user_storage.cpp — JNI bridge for externalFilesDir user-data path.
 //
 // BootActivity / BattleShipActivity prepare the folder before SDL_main so
-// ssb64_UserDataDirUtf8() can resolve saves and ssb64.log.
+// ssb64_UserDataDirUtf8() can resolve saves, logs, and matchmaking.cred.
 
 #if defined(__ANDROID__)
 
 #include <SDL2/SDL.h>
 #include <android/log.h>
 #include <jni.h>
-
-#include <sys/stat.h>
 
 #include <cstdio>
 #include <cstring>
@@ -37,24 +35,9 @@ static void setUserDataDirFromBase(const char *base)
     }
 }
 
-/** BootActivity mkdirs this tree before BattleShipActivity loads libmain. */
+/** BootActivity writes the sentinel before BattleShipActivity loads libmain. */
 static void tryDiscoverUserDataDir()
 {
-    static const char *kCandidates[] = {
-        "/storage/emulated/0/Documents/BattleShip",
-        "/sdcard/Documents/BattleShip",
-    };
-
-    for (const char *base : kCandidates) {
-        struct stat st;
-        if (stat(base, &st) == 0 && S_ISDIR(st.st_mode)) {
-            setUserDataDirFromBase(base);
-            LOGI("discovered user-data dir: %s", gUserDataDir.c_str());
-            return;
-        }
-    }
-
-    /* Fallback: sentinel under externalFilesDir (written in BootActivity). */
     const char *ext = SDL_AndroidGetExternalStoragePath();
     if (ext == nullptr || ext[0] == '\0') {
         return;
@@ -94,6 +77,9 @@ extern "C" void ssb64_android_set_user_data_dir(const char *path)
     }
     std::lock_guard<std::mutex> lock(gDirMutex);
     gUserDataDir = path;
+    if (!gUserDataDir.empty() && gUserDataDir.back() != '/') {
+        gUserDataDir += '/';
+    }
 }
 
 extern "C" int ssb64_android_has_user_data_dir(void)
