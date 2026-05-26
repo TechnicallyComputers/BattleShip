@@ -8,6 +8,10 @@
 #include <filesystem>
 #include <system_error>
 
+#if defined(__ANDROID__)
+extern "C" int ssb64_android_user_data_dir_utf8(char *out, size_t cap);
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -75,6 +79,13 @@ extern "C" int ssb64_UserDataDirUtf8(char *out, size_t cap)
     if (out == nullptr || cap == 0) {
         return 0;
     }
+
+#if defined(__ANDROID__)
+    /* Primary: Documents/BattleShip/ on shared storage (set from Java before SDL_main). */
+    if (ssb64_android_user_data_dir_utf8(out, cap) != 0) {
+        return 1;
+    }
+#endif
 
     try {
         dir = Ship::Context::GetAppDirectoryPath();

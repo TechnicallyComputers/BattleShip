@@ -16,6 +16,10 @@ typedef enum MmIceState
 	MM_ICE_STATE_FAILED
 } MmIceState;
 
+#define MM_ICE_DEFAULT_COTURN_HOST "coturn.technicallycomputers.ca"
+#define MM_ICE_DEFAULT_STUN_PORT 3478U
+#define MM_ICE_DEFAULT_TURN_PORT 3478U
+
 typedef struct MmIceServerConfig
 {
 	const char *stun_host;

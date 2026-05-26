@@ -37,23 +37,18 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
                                       char *ice_sdp_out, u32 ice_sdp_cap)
 {
 	MmIceServerConfig cfg;
-	char turn_user[192];
-	char turn_pass[192];
-	char realm[96];
+	MmIceTurnBundle turn;
 	char sdp[4096];
 
 	memset(&cfg, 0, sizeof(cfg));
-	if (mmMatchmakingFetchTurnCredentials(turn_user, sizeof(turn_user), turn_pass, sizeof(turn_pass), realm,
-	                                      sizeof(realm)) != FALSE)
+	if (mmMatchmakingFetchTurnCredentials(&turn) != FALSE)
 	{
-		cfg.turn_host = getenv("SSB64_MATCHMAKING_TURN_HOST");
-		if ((cfg.turn_host == NULL) || (cfg.turn_host[0] == '\0'))
-		{
-			cfg.turn_host = "coturn.technicallycomputers.ca";
-		}
-		cfg.turn_port = 3478U;
-		cfg.turn_user = turn_user;
-		cfg.turn_pass = turn_pass;
+		cfg.stun_host = turn.stun_host;
+		cfg.stun_port = turn.stun_port;
+		cfg.turn_host = turn.turn_host;
+		cfg.turn_port = turn.turn_port;
+		cfg.turn_user = turn.turn_user;
+		cfg.turn_pass = turn.turn_pass;
 	}
 	snprintf(sIceBind, sizeof(sIceBind), "%s", bind_spec);
 	if (mmIceInit(bind_spec, &cfg) == FALSE)

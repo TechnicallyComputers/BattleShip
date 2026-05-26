@@ -13,9 +13,11 @@ BattleShip automatch uses [libjuice](https://github.com/paullouisageneau/libjuic
 
 | Variable | Purpose |
 |----------|---------|
-| `SSB64_MATCHMAKING_STUN_SERVERS` | Comma-separated STUN hosts (`host:port`, default Google) |
-| `SSB64_MATCHMAKING_TURN_HOST` / `TURN_USER` / `TURN_PASS` / `TURN_PORT` | TURN server (overridden by `/v1/turn-credentials` when available) |
+| `SSB64_MATCHMAKING_STUN_SERVERS` | Comma-separated STUN hosts (`host:port`); if unset, defaults to coturn host **3478** (same as server) |
+| `SSB64_MATCHMAKING_TURN_HOST` / `TURN_USER` / `TURN_PASS` / `TURN_PORT` | Dev fallback TURN when `/v1/turn-credentials` is unavailable (no static password fallback) |
 | `SSB64_MATCHMAKING_BIND` | Local bind for ICE UDP port (default `0.0.0.0:7778`) |
+
+Automatch calls **`GET /v1/turn-credentials`** and passes `stun_host`, `stun_port`, `turn_host`, `turn_port`, `username`, and `password` into libjuice. Coturn **TURNS** on port **5349** is listed as `turns_port` in the API but is not used by libjuice (UDP TURN/STUN on **3478** only).
 
 Legacy hand-rolled `mm_stun.c` / `mm_turn.c` are removed from ICE builds.
 

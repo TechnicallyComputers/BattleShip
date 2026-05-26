@@ -59,8 +59,19 @@ extern void mmMatchmakingEnqueueJoinQueueEx(sb32 verbose, const char *udp_endpoi
 extern void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpoint, const char *ice_sdp,
                                              u8 fighter_kind, sb32 has_fkind, const char *lan_endpoint_opt);
 extern void mmMatchmakingEnqueueIceSignal(sb32 verbose, const char *ticket_id, const char *candidate_sdp);
-extern sb32 mmMatchmakingFetchTurnCredentials(char *user_out, u32 user_cap, char *pass_out, u32 pass_cap,
-                                            char *realm_out, u32 realm_cap);
+typedef struct MmIceTurnBundle
+{
+	char stun_host[128];
+	u16 stun_port;
+	char turn_host[128];
+	u16 turn_port;
+	u16 turns_port;
+	char turn_user[192];
+	char turn_pass[192];
+	char realm[96];
+} MmIceTurnBundle;
+
+extern sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out);
 extern sb32 mmMatchmakingPopIceCandidate(char *out, u32 out_cap);
 #endif
 extern void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id);

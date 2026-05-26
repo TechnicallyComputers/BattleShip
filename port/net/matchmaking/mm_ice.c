@@ -190,8 +190,15 @@ static void mmIceLoadStunFromEnv(void)
 	e = getenv("SSB64_MATCHMAKING_STUN_SERVERS");
 	if ((e == NULL) || (e[0] == '\0'))
 	{
-		snprintf(sStunHost, sizeof(sStunHost), "%s", "stun.l.google.com");
-		sStunPort = 19302U;
+		const char *coturn;
+
+		coturn = getenv("SSB64_MATCHMAKING_TURN_HOST");
+		if ((coturn == NULL) || (coturn[0] == '\0'))
+		{
+			coturn = MM_ICE_DEFAULT_COTURN_HOST;
+		}
+		snprintf(sStunHost, sizeof(sStunHost), "%s", coturn);
+		sStunPort = MM_ICE_DEFAULT_STUN_PORT;
 		return;
 	}
 	while (*e == ' ')
@@ -233,17 +240,14 @@ static void mmIceLoadTurnFromEnv(void)
 	port_e = getenv("SSB64_MATCHMAKING_TURN_PORT");
 	if ((host == NULL) || (host[0] == '\0'))
 	{
-		host = "coturn.technicallycomputers.ca";
+		host = MM_ICE_DEFAULT_COTURN_HOST;
 	}
-	if ((user == NULL) || (user[0] == '\0'))
+	if ((user == NULL) || (user[0] == '\0') || (pass == NULL) || (pass[0] == '\0'))
 	{
-		user = "battleship";
+		sTurnServerCount = 0;
+		return;
 	}
-	if ((pass == NULL) || (pass[0] == '\0'))
-	{
-		pass = "battleship";
-	}
-	p = 3478UL;
+	p = (unsigned long)MM_ICE_DEFAULT_TURN_PORT;
 	if ((port_e != NULL) && (port_e[0] != '\0'))
 	{
 		p = (unsigned long)atoi(port_e);
@@ -278,17 +282,18 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	if (cfg != NULL && cfg->stun_host != NULL && cfg->stun_host[0] != '\0')
 	{
 		snprintf(sStunHost, sizeof(sStunHost), "%s", cfg->stun_host);
-		sStunPort = cfg->stun_port;
+		sStunPort = (cfg->stun_port != 0U) ? cfg->stun_port : MM_ICE_DEFAULT_STUN_PORT;
 	}
 	else
 	{
 		mmIceLoadStunFromEnv();
 	}
 	mmIceLoadTurnFromEnv();
-	if (cfg != NULL && cfg->turn_host != NULL && cfg->turn_host[0] != '\0')
+	if (cfg != NULL && cfg->turn_host != NULL && cfg->turn_host[0] != '\0' && cfg->turn_user != NULL &&
+	    cfg->turn_user[0] != '\0' && cfg->turn_pass != NULL && cfg->turn_pass[0] != '\0')
 	{
 		sTurnServers[0].host = cfg->turn_host;
-		sTurnServers[0].port = cfg->turn_port;
+		sTurnServers[0].port = (cfg->turn_port != 0U) ? cfg->turn_port : MM_ICE_DEFAULT_TURN_PORT;
 		sTurnServers[0].username = cfg->turn_user;
 		sTurnServers[0].password = cfg->turn_pass;
 		sTurnServerCount = 1;

@@ -27,6 +27,8 @@
 #include <ship/resource/ResourceType.h>
 
 #include "app_paths.h"
+#include "debug_env.h"
+#include <ssb64_paths_capi.h>
 #include "bridge/audio_bridge.h"
 #include "bridge/framebuffer_capture.h"
 #include "enhancements/enhancements.h"
@@ -802,6 +804,12 @@ int main(int argc, char* argv[]) {
 	 * Ship::Context will later use for the user's saves and o2r. */
 	{
 		std::string logPath;
+#if defined(__ANDROID__)
+		char userDir[512];
+		if ((ssb64_UserDataDirUtf8(userDir, sizeof(userDir)) != 0) && (userDir[0] != '\0')) {
+			logPath = std::string(userDir) + "ssb64.log";
+		} else
+#endif
 		if (char* p = SDL_GetPrefPath(NULL, "BattleShip")) {
 			logPath = std::string(p) + "ssb64.log";
 			SDL_free(p);
@@ -810,6 +818,9 @@ int main(int argc, char* argv[]) {
 		}
 		port_log_init(logPath.c_str());
 	}
+
+	/* Developer-only: <userDataDir>/debug.env (Documents/BattleShip on Android). */
+	ssb64_load_debug_env_file();
 
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(portWindowsCrashFilter);

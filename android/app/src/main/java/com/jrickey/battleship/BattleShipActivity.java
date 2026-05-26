@@ -37,6 +37,8 @@ public class BattleShipActivity extends SDLActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // After SDLActivity loads libSDL2.so then libmain.so.
+        UserStoragePaths.publishUserDataDirToNative(getApplicationContext());
         // Lay the touch overlay on top of SDL's GLES surface. Has to come
         // after super.onCreate so SDLActivity has already installed its
         // surface as the root content view.
