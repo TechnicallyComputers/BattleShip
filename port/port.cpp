@@ -677,24 +677,35 @@ static int PortInitImpl(int argc, char* argv[]) {
 	if (!sContext->InitFileDropMgr()) { port_log("SSB64: InitFileDropMgr failed\n"); return 1; }
 	port_log("SSB64: FileDropMgr OK\n");
 
-	/* First-run flow:
-	 *   1. Silent extraction: if a ROM sits at app-data / bundle / cwd we
-	 *      just extract without bothering the user.
-	 *   2. If still missing, drive an ImGui wizard modal in a pre-gameloop
-	 *      render loop until the user provides a ROM and extraction
-	 *      succeeds — or quits the window. */
+	/* First-run flow (desktop): silent Torch extract, then ImGui wizard.
+	 * Android: BootActivity + libtorch_runner.so already produced
+	 * BattleShip.o2r before BattleShipActivity starts. The desktop wizard
+	 * exits immediately when the SDL window isn't "running" yet, which
+	 * looked like an instant close after ROM extract on device. */
 	{
 		const std::string targetO2r =
 			Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME);
+		std::error_code ec;
+		const bool haveO2r =
+		    std::filesystem::exists(targetO2r, ec) ||
+		    std::filesystem::exists(PortLocateFile(SSB64_O2R_NAME), ec);
+
+#if defined(__ANDROID__)
+		port_log("SSB64: Android first-run check -> %s (found=%d)\n",
+		         targetO2r.c_str(), haveO2r ? 1 : 0);
+		if (!haveO2r) {
+			port_log("SSB64: %s missing — use the launcher to pick your ROM "
+			         "(BootActivity / libtorch_runner), then try again\n",
+			         SSB64_O2R_NAME);
+			PortShutdown();
+			return 1;
+		}
+#else
 		// silent=true: any failure during this auto-attempt should land in
 		// the wizard's status text, not a native popup that races the
 		// ImGui modal.
 		ssb64::ExtractAssetsIfNeeded(targetO2r, /*silent=*/true);
-		std::error_code ec;
-		// noexcept exists / PortLocateFile rather than the throwing LUS
-		// form — issue #58.
-		if (!std::filesystem::exists(targetO2r, ec) &&
-		    !std::filesystem::exists(PortLocateFile(SSB64_O2R_NAME), ec)) {
+		if (!haveO2r) {
 			if (!ssb64::RunFirstRunWizard(targetO2r)) {
 				port_log("SSB64: first-run wizard cancelled — exiting\n");
 				// PortShutdown drops audio bridge refs + resets sContext
@@ -707,6 +718,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 				return 1;
 			}
 		}
+#endif
 	}
 
 	{
