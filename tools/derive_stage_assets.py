@@ -71,6 +71,10 @@ STAGES = [
         "reloc_file": 96,                    # file 96 = StageLastFile1
         "sprite_off": 0x26c88,              # dStageLastBackground_0x26c88
         "name_text":  "FINAL DESTINATION",  # synthetic nameplate (no ROM sprite)
+        "emblem_src": {
+            "reloc_file": 345,              # llMasterHandIconFileID = 0x159
+            "sprite_off": 0x2b8,            # llMasterHandIconFTEmblemSprite = 0x2b8
+        },
     },
 ]
 
@@ -88,6 +92,11 @@ NAME_H = 10
 # CSS thumbnail dimensions — same for all stage icons (matches N64 CSS format).
 ICON_W = 48
 ICON_H = 36
+
+# FT emblem target dimensions — matches every llFTEmblemSprites* sprite in file 20
+# (width=64, height=48, bmfmt=4/IA, bmsiz=0/IA4, verified empirically).
+EMBLEM_W = 64
+EMBLEM_H = 48
 
 # ---------------------------------------------------------------------------
 # Sprite struct / Bitmap struct sizes (bytes).
@@ -305,6 +314,67 @@ def rgba16_to_rgba8888(raw: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# IA4 -> RGBA8888 pixel decoder.
+#
+# N64 IA4 layout: 4 bits per pixel, packed two-per-byte (big-endian nibble order):
+#   high nibble of byte i -> pixel 2*i    (3-bit intensity, 1-bit alpha)
+#   low  nibble of byte i -> pixel 2*i+1
+#   bits 3..1 = I3, bit 0 = A1
+#
+# Alpha: 0 -> fully transparent, 1 -> fully opaque.
+# Intensity: expanded 3-bit -> 8-bit: I8 = (I3 << 5) | (I3 << 2) | (I3 >> 1)
+#   equivalent to round(I3 / 7.0 * 255).
+#
+# On the N64 the IA4 alpha channel equals the intensity when rendered with a
+# combine mode that pipes intensity to alpha.  For CSS emblem use we emit
+# (I, I, I, A) per pixel — the caller (mnmaps.c SObj path) overrides RGB
+# channels to the franchise colour, leaving only alpha from the texture.
+# ---------------------------------------------------------------------------
+
+
+def ia4_to_rgba8888(raw: bytes, width: int, height: int) -> bytes:
+    """
+    Convert an N64 IA4 buffer to 8-bit RGBA.
+
+    Each byte encodes two pixels (high nibble = left pixel, low nibble = right).
+    The source stride in the ROM is padded to 32-bit alignment for LOAD_BLOCK
+    (naturalWidth = round_up(width, 8) in nibbles, i.e. round_up(width, 8)//2
+    bytes per row).  We read exactly (width+1)//2 * height bytes (the actual
+    pixel data without alignment padding) unless the caller provides the padded
+    stride — since parse_bitmap returns bitmap.width_img (the DMA-padded
+    naturalWidth), we use that to compute the row stride.
+
+    Args:
+        raw:    Raw IA4 bytes (may include right-edge padding nibbles per row).
+        width:  Rendered pixel width (the sprite's width field).
+        height: Rendered pixel height.
+    Returns:
+        bytes of length width * height * 4 (RGBA8888).
+    """
+    # IA4 packs 2 pixels per byte.  Row stride in bytes uses width (already
+    # padded to an even-nibble boundary by the sprite's width_img field which
+    # resolve_bitmap_offsets reads as bm["width"]).  For safety, derive stride
+    # from the actual rendered width (round up to next even number of pixels).
+    row_stride = (width + 1) // 2  # bytes per row (2 pixels per byte)
+    out = bytearray(width * height * 4)
+    for row in range(height):
+        for col in range(width):
+            byte_idx = row * row_stride + col // 2
+            nibble = (raw[byte_idx] >> 4) if (col % 2 == 0) else (raw[byte_idx] & 0x0F)
+            i3 = (nibble >> 1) & 0x07
+            a1 = nibble & 0x01
+            # Expand 3-bit intensity to 8-bit: replicate MSBs into lower bits.
+            i8 = (i3 << 5) | (i3 << 2) | (i3 >> 1)
+            a8 = 255 if a1 else 0
+            px = (row * width + col) * 4
+            out[px + 0] = i8
+            out[px + 1] = i8
+            out[px + 2] = i8
+            out[px + 3] = a8
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------------
 # Nameplate PNG renderer.
 #
 # Renders <text> as a black-on-transparent 96x10 PNG.  Uses PIL's built-in
@@ -352,6 +422,103 @@ def render_name_png(text: str, output_path: Path) -> None:
     filesize = output_path.stat().st_size
     print(
         f"[{text}] Saved nameplate: {output_path} ({NAME_W}x{NAME_H}, {filesize} bytes)",
+        file=sys.stderr,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Emblem PNG extractor.
+#
+# Reads the source IA4 sprite from the reloc file specified in emblem_src,
+# upscales it to EMBLEM_W x EMBLEM_H via LANCZOS, and saves an RGBA PNG.
+#
+# Target dimensions (EMBLEM_W=64, EMBLEM_H=48) are hard-coded because every
+# llFTEmblemSprites* sprite in reloc file 20 is 64x48 IA4 (verified).
+# ---------------------------------------------------------------------------
+
+
+def extract_emblem(stage: dict, rom: bytes, output_dir: Path) -> None:
+    """
+    Extract and upscale the stage emblem sprite to EMBLEM_W x EMBLEM_H RGBA PNG.
+
+    stage["emblem_src"] must contain:
+        reloc_file: int  — reloc file index containing the source sprite
+        sprite_off: int  — byte offset of the Sprite struct within that file
+    """
+    name = stage["name"]
+    src  = stage["emblem_src"]
+    reloc_file = src["reloc_file"]
+    sprite_off = src["sprite_off"]
+
+    print(
+        f"[{name}] Extracting emblem from reloc file {reloc_file} "
+        f"offset 0x{sprite_off:X}...",
+        file=sys.stderr,
+    )
+    file_data = extract_file(rom, reloc_file)
+    print(f"[{name}] Emblem file decompressed to {len(file_data)} bytes.", file=sys.stderr)
+
+    sp = parse_sprite(file_data, sprite_off)
+    src_w     = sp["width"]
+    src_h     = sp["height"]
+    nbitmaps  = sp["nbitmaps"]
+    bmfmt     = sp["bmfmt"]
+    bmsiz     = sp["bmsiz"]
+
+    print(
+        f"[{name}] Emblem source sprite: {src_w}x{src_h}, {nbitmaps} bitmap(s), "
+        f"bmfmt={bmfmt} (4=IA), bmsiz={bmsiz} (0=IA4)",
+        file=sys.stderr,
+    )
+
+    if bmfmt != 4 or bmsiz != 0:
+        print(
+            f"[{name}] WARNING: emblem sprite bmfmt={bmfmt}/bmsiz={bmsiz}, "
+            f"expected IA4 (fmt=4, siz=0).  Decode may be wrong.",
+            file=sys.stderr,
+        )
+
+    # Resolve bitmap array and get the single bitmap's buf.
+    bitmaps = resolve_bitmap_offsets(file_data, sp)
+    if not bitmaps:
+        raise ValueError(f"[{name}] Emblem sprite has no bitmaps.")
+
+    bm      = bitmaps[0]
+    buf_off = bm["buf_off"]
+    # IA4: (width_img) bytes per row (* height rows), width_img = round_up(width, 8)
+    # bm["width"] is the DMA-padded row width (width_img field).
+    row_stride = (bm["width"] + 1) // 2
+    raw_bytes  = row_stride * src_h
+
+    if buf_off < 0 or buf_off + raw_bytes > len(file_data):
+        raise ValueError(
+            f"[{name}] Emblem bitmap buf_off=0x{buf_off:X} out of range "
+            f"(file_data={len(file_data):#X}, raw_bytes={raw_bytes})"
+        )
+
+    raw_strip = file_data[buf_off:buf_off + raw_bytes]
+
+    # Decode IA4 -> RGBA8888.
+    rgba8 = ia4_to_rgba8888(raw_strip, src_w, src_h)
+
+    # Build PIL image and upscale to EMBLEM_W x EMBLEM_H via LANCZOS.
+    src_img = Image.frombytes("RGBA", (src_w, src_h), rgba8)
+    emblem_img = src_img.resize((EMBLEM_W, EMBLEM_H), Image.LANCZOS)
+
+    # The runtime packs this emblem to IA4 using the alpha channel as a
+    # silhouette mask, matching the ROM FT emblem format exactly. SObj-side
+    # colour modulation (0x5C/0x22/0x00 franchise brown) does the tinting at
+    # draw time, just like the 9 ROM stage emblems — so no per-channel bake
+    # here.
+
+    emblem_path = output_dir / f"{name}_emblem.png"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    emblem_img.save(emblem_path)
+
+    filesize = emblem_path.stat().st_size
+    print(
+        f"[{name}] Saved emblem:    {emblem_path} "
+        f"({src_w}x{src_h} -> {EMBLEM_W}x{EMBLEM_H}, {filesize} bytes)",
         file=sys.stderr,
     )
 
@@ -479,6 +646,11 @@ def extract_stage(stage: dict, rom: bytes, output_dir: Path) -> None:
     if name_text:
         name_path = output_dir / f"{name}_name.png"
         render_name_png(name_text, name_path)
+
+    # Extract and upscale emblem PNG if the stage has an emblem_src key.
+    emblem_src = stage.get("emblem_src")
+    if emblem_src:
+        extract_emblem(stage, rom, output_dir)
 
 
 # ---------------------------------------------------------------------------

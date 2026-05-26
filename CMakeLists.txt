@@ -267,9 +267,10 @@ set(SSB64_CSS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 # (after SSB64_BASEROM is resolved) in the "Asset extraction targets" section.
 # The output paths are set here so the POST_BUILD copy can reference them.
 set(SSB64_CSS_STAGE_ASSET_DIR ${CMAKE_CURRENT_BINARY_DIR}/assets/css_icons)
-set(SSB64_CSS_FD_BG_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_background.png)
-set(SSB64_CSS_FD_SMALL_PNG ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_small.png)
-set(SSB64_CSS_FD_NAME_PNG  ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_name.png)
+set(SSB64_CSS_FD_BG_PNG      ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_background.png)
+set(SSB64_CSS_FD_SMALL_PNG   ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_small.png)
+set(SSB64_CSS_FD_NAME_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_name.png)
+set(SSB64_CSS_FD_EMBLEM_PNG  ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_emblem.png)
 
 # Scroll arrow — generated procedurally with apex angle ~149°. Canvas width is
 # padded to a multiple of 4 px inside the script so RGBA16 row stride stays
@@ -923,6 +924,7 @@ if(EXISTS "${SSB64_BASEROM}")
             ${SSB64_CSS_FD_BG_PNG}
             ${SSB64_CSS_FD_SMALL_PNG}
             ${SSB64_CSS_FD_NAME_PNG}
+            ${SSB64_CSS_FD_EMBLEM_PNG}
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/derive_stage_assets.py
                 ${SSB64_BASEROM}
@@ -934,7 +936,11 @@ if(EXISTS "${SSB64_BASEROM}")
         VERBATIM
     )
     add_custom_target(DeriveStageAssets
-        DEPENDS ${SSB64_CSS_FD_BG_PNG} ${SSB64_CSS_FD_SMALL_PNG} ${SSB64_CSS_FD_NAME_PNG}
+        DEPENDS
+            ${SSB64_CSS_FD_BG_PNG}
+            ${SSB64_CSS_FD_SMALL_PNG}
+            ${SSB64_CSS_FD_NAME_PNG}
+            ${SSB64_CSS_FD_EMBLEM_PNG}
     )
     add_dependencies(${PROJECT_NAME} DeriveStageAssets)
     # Copy extracted PNGs into the run-directory asset subtree so the game
@@ -951,6 +957,9 @@ if(EXISTS "${SSB64_BASEROM}")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${SSB64_CSS_FD_NAME_PNG}
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_name.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_FD_EMBLEM_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_emblem.png
         COMMENT "Staging CSS stage asset PNGs next to ssb64 binary"
     )
 else()
