@@ -37,9 +37,11 @@ public class BattleShipActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // BootActivity already prepared storage; ensure cache/sentinel before native load.
+        UserStoragePaths.prepareUserDataDir(getApplicationContext());
         super.onCreate(savedInstanceState);
         DebugSessionHelper.attach(this);
-        // After SDLActivity loads libSDL2.so then libmain.so.
+        // After libmain.so loads — must not use SDL from JNI_OnLoad (see android_user_storage.cpp).
         UserStoragePaths.publishUserDataDirToNative(getApplicationContext());
         // Lay the touch overlay on top of SDL's GLES surface. Has to come
         // after super.onCreate so SDLActivity has already installed its

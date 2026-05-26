@@ -179,8 +179,9 @@ Two release artifacts (separate CI jobs in [`.github/workflows/release.yml`](../
 Local build:
 
 ```bash
-./scripts/package-android.sh              # offline
-./scripts/package-android.sh --netplay  # netplay
+./scripts/package-android.sh                    # offline release
+./scripts/package-android.sh --netplay          # netplay release
+./scripts/package-android.sh --netplay --debug  # netplay debug (run-as / adb logs)
 ```
 
 **Native:** `-DSSB64_NETMENU=ON` pulls in rollback/automatch (`port/net/`, `decomp/src/netplay/`) and builds static libcurl via `cmake/Ssb64CurlAndroid.cmake` (patches `cmake/curl/FindMbedTLS.cmake` into curl; FetchContent mbedtls **v3.5.2** — no framework submodule; first NDK configure can take several minutes). HID/Raphnet USB uses a **hidapi stub** on Android (`libultraship/cmake/dependencies/hidapi_android/`); controllers are via SDL only.
@@ -195,6 +196,8 @@ Local build:
 **Manifest:** `INTERNET`, `ACCESS_NETWORK_STATE` (required for automatch; present in all APK builds).
 
 **PR CI:** [`.github/workflows/android-netplay.yml`](../.github/workflows/android-netplay.yml) — netplay APK only.
+
+**Local netplay build (Linux):** Use **JDK 17** (`JAVA_HOME=/usr/lib/jvm/java-17-openjdk`). Avoid exporting `CPATH`, `C_INCLUDE_PATH`, or `CPLUS_INCLUDE_PATH` — they inject host `/usr/include` into NDK cross-builds and break FetchContent curl (glibc `pthread.h` / `__float128` errors in `asyn-ares.c`). `cmake/Ssb64CurlAndroid.cmake` forces `CURL_USE_PKGCONFIG=OFF`, `ENABLE_ARES=OFF`, and threaded resolver so curl does not pick up host **c-ares** via pkg-config. If a prior failed configure cached bad flags, `rm -rf android/app/.cxx` before rebuilding.
 
 **Soak (manual):** Wi‑Fi, two devices, automatch queue → 2P VS; keep app foreground (Android may throttle UDP in background).
 

@@ -1,17 +1,16 @@
 // android_user_storage.cpp — JNI bridge for externalFilesDir user-data path.
 //
-// BootActivity / BattleShipActivity prepare the folder before SDL_main so
-// ssb64_UserDataDirUtf8() can resolve saves, logs, and matchmaking.cred.
+// BootActivity prepares the folder; BattleShipActivity publishes it to native
+// after SDLActivity loads libSDL2.so + libmain.so (see publishUserDataDirToNative).
+// Do not call SDL from JNI_OnLoad — SDL_AndroidGetExternalStoragePath needs the
+// activity bridge, which is not ready during System.loadLibrary("main").
 
 #if defined(__ANDROID__)
 
-#include <SDL2/SDL.h>
 #include <android/log.h>
 #include <jni.h>
 
-#include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -24,51 +23,7 @@ namespace {
 std::mutex gDirMutex;
 std::string gUserDataDir;
 
-static void setUserDataDirFromBase(const char *base)
-{
-    if (base == nullptr || base[0] == '\0') {
-        return;
-    }
-    gUserDataDir = base;
-    if (gUserDataDir.back() != '/') {
-        gUserDataDir += '/';
-    }
-}
-
-/** BootActivity writes the sentinel before BattleShipActivity loads libmain. */
-static void tryDiscoverUserDataDir()
-{
-    const char *ext = SDL_AndroidGetExternalStoragePath();
-    if (ext == nullptr || ext[0] == '\0') {
-        return;
-    }
-
-    std::string sentinel = std::string(ext) + ".battleship_user_data_dir";
-    std::ifstream in(sentinel);
-    if (!in.is_open()) {
-        return;
-    }
-
-    std::string path;
-    std::getline(in, path);
-    while (!path.empty() && (path.back() == '\r' || path.back() == '\n')) {
-        path.pop_back();
-    }
-    if (!path.empty()) {
-        setUserDataDirFromBase(path.c_str());
-        LOGI("loaded user-data dir from sentinel: %s", gUserDataDir.c_str());
-    }
-}
-
 } // namespace
-
-extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
-{
-    (void)vm;
-    (void)reserved;
-    tryDiscoverUserDataDir();
-    return JNI_VERSION_1_6;
-}
 
 extern "C" void ssb64_android_set_user_data_dir(const char *path)
 {
