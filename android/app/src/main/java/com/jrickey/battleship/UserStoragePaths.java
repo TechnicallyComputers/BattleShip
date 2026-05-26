@@ -6,6 +6,7 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
@@ -74,7 +75,7 @@ public final class UserStoragePaths {
         }
         File sentinel = new File(ext, NATIVE_PATH_SENTINEL);
         try {
-            Files.writeString(sentinel.toPath(), pathWithSlash);
+            Files.write(sentinel.toPath(), pathWithSlash.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             Log.w(TAG, "Could not write native path sentinel: " + e.getMessage());
         }
