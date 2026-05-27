@@ -10,7 +10,7 @@ constexpr const char* kStageHazardsDisabledCVar = "gEnhancements.StageHazardsDis
 constexpr unsigned char kSceneVSBattle = 22;
 constexpr unsigned char kScene1PGame = 52;
 constexpr unsigned char kScene1PTrainingMode = 54;
-constexpr unsigned char kStageYoshi = 5; // Verify this ID! Yoshi's Island/Story is typically 5.
+constexpr unsigned char kStageYoshi = 5;
 
 constexpr unsigned char kBattleStageEnd = 8;
 constexpr unsigned char kStageSector = 1;
