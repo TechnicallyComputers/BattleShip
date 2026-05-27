@@ -57,10 +57,16 @@ jobs:
         # Local dev workflows inherit these from existing brew installs;
         # CI hosts need them explicit. spdlog has a FetchContent fallback
         # in mac.cmake but the others don't.
+        #
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+        # (CSS scroll-arrow PNG generation + bake-to-C-header) import PIL.
+        # The arrow rules are unconditional in CMakeLists.txt and fire on
+        # every build, so Pillow has to be present on every runner.
         run: |
           brew install cmake ninja \
             sdl2 glew libzip nlohmann-json tinyxml2 spdlog \
             zip create-dmg dylibbundler
+          python3 -m pip install --break-system-packages Pillow
       - name: Package macOS .app + .dmg
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -127,7 +133,9 @@ jobs:
             nlohmann-json3-dev libtinyxml2-dev libspdlog-dev \
             libgl1-mesa-dev libegl1-mesa-dev \
             libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-            python3 imagemagick file
+            python3 python3-pil imagemagick file
+          # python3-pil: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+          # import PIL.  The arrow rules in CMakeLists.txt are unconditional.
           sudo touch /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
           sudo chmod +x /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
       - name: Use clang as the C/C++ compiler
@@ -182,6 +190,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        # Gradle's externalNativeBuild invokes the same CMake rules as the
+        # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
+        # + png_to_c_array.py) needs PIL here too.
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
       - name: Install Android SDK + NDK r29
         uses: android-actions/setup-android@v3
         with:
@@ -283,8 +296,14 @@ jobs:
         # Windows runner ships with cmake / Visual Studio Build Tools
         # already. SDL2 comes from vcpkg, which is integrated by
         # libultraship/CMakeLists's vcpkg bootstrap.
+        #
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+        # (CSS scroll-arrow PNG generation + bake-to-C-header) import PIL.
+        # The arrow rules in CMakeLists.txt are unconditional.
         run: |
           choco install ninja -y
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
         shell: pwsh
       - name: Package Windows zip
         env:
