@@ -76,6 +76,28 @@ STAGES = [
             "sprite_off": 0x2b8,            # llMasterHandIconFTEmblemSprite = 0x2b8
         },
     },
+    {
+        # nGRKindMetal — Meta Crystal (Metal Mario boss stage). The stage data
+        # file 0x62 ships a full 300x220 CSS wallpaper at the same 0x26c88
+        # offset every Stage*FileID uses; the matching map file (0x10d) carries
+        # collision data, not visuals.
+        "name":       "metal_cavern",
+        "gkind":      13,                    # nGRKindMetal
+        "reloc_file": 0x62,                  # ll_98_FileID — Meta Crystal stage data
+        "sprite_off": 0x26c88,
+        "name_text":  "METAL CAVERN",        # no ROM nameplate exists; synthesize
+        # No emblem_src — the FD emblem path is still stubbed off in
+        # mnMapsMakeEmblem pending IA4 debug; new stages take the same skip.
+    },
+    {
+        # nGRKindZako — Duel Zone (Polygon Fighters arena). Same wallpaper-in-
+        # stage-data-file pattern as Metal Cavern; stage data file is 0x61.
+        "name":       "battlefield",
+        "gkind":      14,                    # nGRKindZako
+        "reloc_file": 0x61,                  # ll_97_FileID — Duel Zone stage data
+        "sprite_off": 0x26c88,
+        "name_text":  "BATTLEFIELD",
+    },
 ]
 
 # ---------------------------------------------------------------------------

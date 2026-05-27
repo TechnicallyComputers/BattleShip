@@ -104,6 +104,26 @@ static constexpr StageEntry STAGE_TABLE[] = {
         true,/* has_name_png: synthesized 96x10 nameplate */
         true,/* has_emblem_png: upscaled 64x48 emblem from MasterHand icon */
     },
+    {
+        /* nGRKindMetal = 13 — Meta Crystal (Metal Cavern in the port CSS).
+         * Stage data file 0x62 ships the same 300x220/44-bitmap RGBA16
+         * wallpaper format as FD at offset 0x26c88 — geometry matches FD
+         * byte-for-byte so the same buildBackgroundSprite parameters work. */
+        13, "metal_cavern",
+        300, 220,
+        44, 5, 6, 552,
+        true,  /* synthesized "METAL CAVERN" nameplate */
+        false, /* no emblem — same skip path as FD until IA4 render is fixed */
+    },
+    {
+        /* nGRKindZako = 14 — Duel Zone (Battlefield in the port CSS).
+         * Same wallpaper geometry as FD/Metal. */
+        14, "battlefield",
+        300, 220,
+        44, 5, 6, 552,
+        true,  /* synthesized "BATTLEFIELD" nameplate */
+        false, /* no emblem */
+    },
     // { next_gkind, "next_name", bg_w, bg_h, bg_nbitmaps, bg_bm_h, bg_bm_hreal,
     //   bg_ndisplist, has_name_png, has_emblem_png },
 };

@@ -271,6 +271,15 @@ set(SSB64_CSS_FD_BG_PNG      ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_back
 set(SSB64_CSS_FD_SMALL_PNG   ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_small.png)
 set(SSB64_CSS_FD_NAME_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_name.png)
 set(SSB64_CSS_FD_EMBLEM_PNG  ${SSB64_CSS_STAGE_ASSET_DIR}/final_destination_emblem.png)
+# Metal Cavern (nGRKindMetal) — no emblem PNG (mnMapsMakeEmblem skips port
+# stages until the IA4 render path is debugged; matches FD).
+set(SSB64_CSS_MC_BG_PNG      ${SSB64_CSS_STAGE_ASSET_DIR}/metal_cavern_background.png)
+set(SSB64_CSS_MC_SMALL_PNG   ${SSB64_CSS_STAGE_ASSET_DIR}/metal_cavern_small.png)
+set(SSB64_CSS_MC_NAME_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/metal_cavern_name.png)
+# Battlefield (nGRKindZako) — same shape as Metal Cavern.
+set(SSB64_CSS_BF_BG_PNG      ${SSB64_CSS_STAGE_ASSET_DIR}/battlefield_background.png)
+set(SSB64_CSS_BF_SMALL_PNG   ${SSB64_CSS_STAGE_ASSET_DIR}/battlefield_small.png)
+set(SSB64_CSS_BF_NAME_PNG    ${SSB64_CSS_STAGE_ASSET_DIR}/battlefield_name.png)
 
 # Scroll arrow — generated procedurally with apex angle ~149°. Canvas width is
 # padded to a multiple of 4 px inside the script so RGBA16 row stride stays
@@ -925,6 +934,12 @@ if(EXISTS "${SSB64_BASEROM}")
             ${SSB64_CSS_FD_SMALL_PNG}
             ${SSB64_CSS_FD_NAME_PNG}
             ${SSB64_CSS_FD_EMBLEM_PNG}
+            ${SSB64_CSS_MC_BG_PNG}
+            ${SSB64_CSS_MC_SMALL_PNG}
+            ${SSB64_CSS_MC_NAME_PNG}
+            ${SSB64_CSS_BF_BG_PNG}
+            ${SSB64_CSS_BF_SMALL_PNG}
+            ${SSB64_CSS_BF_NAME_PNG}
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/derive_stage_assets.py
                 ${SSB64_BASEROM}
@@ -941,6 +956,12 @@ if(EXISTS "${SSB64_BASEROM}")
             ${SSB64_CSS_FD_SMALL_PNG}
             ${SSB64_CSS_FD_NAME_PNG}
             ${SSB64_CSS_FD_EMBLEM_PNG}
+            ${SSB64_CSS_MC_BG_PNG}
+            ${SSB64_CSS_MC_SMALL_PNG}
+            ${SSB64_CSS_MC_NAME_PNG}
+            ${SSB64_CSS_BF_BG_PNG}
+            ${SSB64_CSS_BF_SMALL_PNG}
+            ${SSB64_CSS_BF_NAME_PNG}
     )
     add_dependencies(${PROJECT_NAME} DeriveStageAssets)
     # Copy extracted PNGs into the run-directory asset subtree so the game
@@ -960,6 +981,24 @@ if(EXISTS "${SSB64_BASEROM}")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${SSB64_CSS_FD_EMBLEM_PNG}
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/final_destination_emblem.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_MC_BG_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/metal_cavern_background.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_MC_SMALL_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/metal_cavern_small.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_MC_NAME_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/metal_cavern_name.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_BF_BG_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/battlefield_background.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_BF_SMALL_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/battlefield_small.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${SSB64_CSS_BF_NAME_PNG}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/css_icons/battlefield_name.png
         COMMENT "Staging CSS stage asset PNGs next to ssb64 binary"
     )
 else()
