@@ -171,10 +171,12 @@ adb shell am start -n com.jrickey.battleship.debug/com.jrickey.battleship.BootAc
 
 Two release artifacts (separate CI jobs in [`.github/workflows/release.yml`](../.github/workflows/release.yml), same pattern as desktop offline vs netplay):
 
-| APK | Gradle | `applicationId` (release) | CI job |
-|-----|--------|---------------------------|--------|
+| APK | Gradle | `applicationId` | CI job |
+|-----|--------|-----------------|--------|
 | `BattleShip-android.apk` | default (`SSB64_NETMENU=OFF`) | `com.jrickey.battleship` | `build-android` |
+| `BattleShip-android-debug.apk` | `--debug` | `com.jrickey.battleship.debug` | — |
 | `BattleShip-android-netplay.apk` | `-Pssb64Netmenu=true` | `com.jrickey.battleship.netplay` | `build-android-netplay` |
+| `BattleShip-android-netplay-debug.apk` | `-Pssb64Netmenu=true` + `--debug` | `com.jrickey.battleship.netplay.debug` | — |
 
 Local build:
 

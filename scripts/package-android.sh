@@ -13,7 +13,7 @@
 #   BattleShip-android-debug.apk
 #   BattleShip-android-netplay-debug.apk
 #
-# Debug package id: com.jrickey.battleship.debug (netplay debug uses the same id).
+# Debug package ids: .debug (offline) / .netplay.debug (netplay + --debug).
 #
 # Requires: JDK 17+, Android SDK/NDK (see scripts/android-env.sh), repo-root f3d.o2r.
 
@@ -34,7 +34,7 @@ Usage: $0 [--netplay] [--debug]
   (default)           offline release APK
   --netplay           netplay release (-Pssb64Netmenu=true)
   --debug             offline debug (assembleDebug, com.jrickey.battleship.debug)
-  --netplay --debug   netplay debug (SSB64_NETMENU=ON + debuggable)
+  --netplay --debug   netplay debug (com.jrickey.battleship.netplay.debug)
 
 Outputs are copied to dist/ with variant-specific names.
 EOF
@@ -135,7 +135,12 @@ fi
 printf '\nDone: %s\n' "$DIST_DIR/$APK_NAME"
 printf 'Variant: %s\n' "$variant_label"
 if [[ "$DEBUG" -eq 1 ]]; then
-	printf 'Package: com.jrickey.battleship.debug\n'
+	if [[ "$NETPLAY" -eq 1 ]]; then
+		pkg="com.jrickey.battleship.netplay.debug"
+	else
+		pkg="com.jrickey.battleship.debug"
+	fi
+	printf 'Package: %s\n' "$pkg"
 	printf 'Install: adb install -r %s\n' "$DIST_DIR/$APK_NAME"
-	printf 'Logs:    adb shell run-as com.jrickey.battleship.debug cat files/ssb64.log\n'
+	printf 'Logs:    adb shell run-as %s cat files/ssb64.log\n' "$pkg"
 fi

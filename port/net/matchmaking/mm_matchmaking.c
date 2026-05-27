@@ -64,7 +64,14 @@ static int mm_clock_gettime(int clk_id, struct timespec *ts)
 #endif
 
 #ifdef PORT
-extern void port_log(const char *fmt, ...);
+#include "port_log.h"
+
+static sb32 mmLogVerbose(void)
+{
+	return port_log_debug_active() ? TRUE : FALSE;
+}
+
+#define MM_VERBOSE(job_verb) (((job_verb) != FALSE) || (mmLogVerbose() != FALSE))
 #endif
 
 #ifndef MM_DEFAULT_BASE_URL
@@ -75,6 +82,8 @@ extern void port_log(const char *fmt, ...);
 /* Completed events: may burst after slow requests; larger than job queue; never drop MATCHED/ERROR lightly. */
 #define MM_DONE_QUEUE_DEPTH 128
 #define MM_CRED_FILENAME "matchmaking.cred"
+/* ICE local SDP in POST /v1/queue; 448-byte buffer silently dropped ice_sdp before 2026-05-25. */
+#define MM_JOIN_JSON_CAP 9216
 
 typedef enum MmJobKind
 {
@@ -1210,6 +1219,21 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		port_log("SSB64 Automatch: match JSON peer_lan=%s\n", r->peer_lan_hostport);
 	}
+#if defined(SSB64_NETPLAY_ICE)
+	if (r->peer_ice_sdp[0] == '\0')
+	{
+		port_log("SSB64 Automatch: match JSON peer_ice_sdp empty (peer may have queued without ice_sdp)\n");
+	}
+	else
+	{
+		size_t ice_len = strlen(r->peer_ice_sdp);
+		char ice_prefix[68];
+
+		memset(ice_prefix, 0, sizeof(ice_prefix));
+		snprintf(ice_prefix, sizeof(ice_prefix), "%.64s", r->peer_ice_sdp);
+		port_log("SSB64 Automatch: match JSON peer_ice_sdp len=%zu prefix=%s\n", ice_len, ice_prefix);
+	}
+#endif
 #endif
 	if (strstr(body, "\"you_are_host\":true") != NULL)
 	{
@@ -1426,7 +1450,7 @@ static void mmJsonEscapeString(const char *in, char *out, size_t out_cap)
 	out[o] = '\0';
 }
 
-static void mmJsonInsertStringField(char *jbuf, size_t cap, const char *key, const char *val)
+static sb32 mmJsonInsertStringField(char *jbuf, size_t cap, const char *key, const char *val)
 {
 	char *end;
 	char esc[4096];
@@ -1435,19 +1459,19 @@ static void mmJsonInsertStringField(char *jbuf, size_t cap, const char *key, con
 
 	if ((jbuf == NULL) || (key == NULL) || (val == NULL) || (val[0] == '\0'))
 	{
-		return;
+		return FALSE;
 	}
 	mmJsonEscapeString(val, esc, sizeof(esc));
 	end = strrchr(jbuf, '}');
 	if (end == NULL)
 	{
-		return;
+		return FALSE;
 	}
 	snprintf(frag, sizeof(frag), ",\"%s\":\"%s\"", key, esc);
 	flen = strlen(frag);
 	if ((size_t)(end - jbuf) + flen + strlen(end) + 1U >= cap)
 	{
-		return;
+		return FALSE;
 	}
 	{
 		size_t tail = strlen(end) + 1U;
@@ -1459,6 +1483,7 @@ static void mmJsonInsertStringField(char *jbuf, size_t cap, const char *key, con
 		}
 	}
 	memcpy(end, frag, flen);
+	return TRUE;
 }
 
 static void mmJsonInsertTurnEndpoint(char *jbuf, size_t cap, const char *turn_ep)
@@ -1496,7 +1521,7 @@ static void mmJsonInsertTurnEndpoint(char *jbuf, size_t cap, const char *turn_ep
 
 static void mmRunJoin(const MmJob *job)
 {
-	char jbuf[448];
+	char jbuf[MM_JOIN_JSON_CAP];
 	long hc;
 	char *resp;
 
@@ -1551,24 +1576,36 @@ static void mmRunJoin(const MmJob *job)
 #if defined(SSB64_NETPLAY_ICE)
 	if (job->has_ice_sdp != FALSE)
 	{
-		mmJsonInsertStringField(jbuf, sizeof(jbuf), "ice_sdp", job->ice_sdp);
+		if (mmJsonInsertStringField(jbuf, sizeof(jbuf), "ice_sdp", job->ice_sdp) == FALSE)
+		{
+#ifdef PORT
+			port_log("SSB64 Automatch: POST /v1/queue ice_sdp insert FAILED len=%zu cap=%u\n",
+			         strlen(job->ice_sdp), (unsigned int)sizeof(jbuf));
+#endif
+		}
 	}
 #endif
 #ifdef PORT
-	port_log("SSB64 Automatch: POST /v1/queue udp=%s lan=%s turn=%s\n", job->udp_endpoint,
+	port_log("SSB64 Automatch: POST /v1/queue udp=%s lan=%s turn=%s ice=%s\n", job->udp_endpoint,
 	         (job->has_lan_endpoint != FALSE) ? job->lan_endpoint : "(none)",
-	         (job->has_turn_endpoint != FALSE) ? job->turn_endpoint : "(none)");
+	         (job->has_turn_endpoint != FALSE) ? job->turn_endpoint : "(none)",
+	         (job->has_ice_sdp != FALSE) ? "yes" : "no");
+	if (job->has_ice_sdp != FALSE)
+	{
+		port_log("SSB64 Automatch: POST /v1/queue ice_sdp len=%zu in_json=%d\n", strlen(job->ice_sdp),
+		         (strstr(jbuf, "\"ice_sdp\"") != NULL) ? 1 : 0);
+	}
 #endif
-	hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
+	hc = mmHttpsRequest("POST", "/v1/queue", jbuf, MM_VERBOSE(job->verbose), &resp);
 	if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, TRUE) != FALSE) &&
-	    (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	    (mmCredRepopulate(MM_VERBOSE(job->verbose)) != FALSE))
 	{
 		if (resp != NULL)
 		{
 			free(resp);
 			resp = NULL;
 		}
-		hc = mmHttpsRequest("POST", "/v1/queue", jbuf, job->verbose != FALSE, &resp);
+		hc = mmHttpsRequest("POST", "/v1/queue", jbuf, MM_VERBOSE(job->verbose), &resp);
 	}
 	if ((hc != 200) || (resp == NULL))
 	{
@@ -1630,14 +1667,14 @@ static void mmRunHeartbeat(const MmJob *job)
 	{
 		mmJsonInsertTurnEndpoint(jbuf, sizeof(jbuf), job->turn_endpoint);
 	}
-	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, job->verbose != FALSE, &resp);
+	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, MM_VERBOSE(job->verbose), &resp);
 	if (hc == 404)
 	{
 		/* Ticket may already be matched; queue heartbeat is no longer valid. */
 		MmMatchResult ok;
 
 #ifdef PORT
-		if (job->verbose != FALSE)
+		if (MM_VERBOSE(job->verbose))
 		{
 			port_log("SSB64 Matchmaking: heartbeat 404 (ignored, likely matched)\n");
 		}
@@ -1647,14 +1684,14 @@ static void mmRunHeartbeat(const MmJob *job)
 		mmPushDone(&ok);
 	}
 	else if (((hc != 200) || (resp == NULL)) && (mmCredShouldRepopulate(hc, resp, FALSE) != FALSE) &&
-	         (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	         (mmCredRepopulate(MM_VERBOSE(job->verbose)) != FALSE))
 	{
 		if (resp != NULL)
 		{
 			free(resp);
 			resp = NULL;
 		}
-		hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, job->verbose != FALSE, &resp);
+		hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, MM_VERBOSE(job->verbose), &resp);
 		if (hc == 404)
 		{
 			MmMatchResult ok;
@@ -1685,7 +1722,7 @@ static void mmRunHeartbeat(const MmJob *job)
 		MmMatchResult ok;
 
 #ifdef PORT
-		if (job->verbose != FALSE)
+		if (MM_VERBOSE(job->verbose))
 		{
 			port_log("SSB64 Matchmaking: heartbeat OK\n");
 		}
@@ -1702,6 +1739,7 @@ static void mmRunHeartbeat(const MmJob *job)
 
 #if defined(SSB64_NETPLAY_ICE)
 static void mmParseIceSignalsFromBody(const char *body);
+static u32 mmIceSignalQueuedCount(void);
 #endif
 
 static void mmRunPoll(const MmJob *job)
@@ -1711,7 +1749,7 @@ static void mmRunPoll(const MmJob *job)
 	char *resp;
 
 	snprintf(url_path, sizeof(url_path), "/v1/match/%s", job->ticket_id);
-	hc = mmHttpsRequest("GET", url_path, NULL, job->verbose != FALSE, &resp);
+	hc = mmHttpsRequest("GET", url_path, NULL, MM_VERBOSE(job->verbose), &resp);
 
 	if (((hc != 200) && (hc != 304)) || (resp == NULL))
 	{
@@ -1720,7 +1758,7 @@ static void mmRunPoll(const MmJob *job)
 	else if (strstr(resp, "\"status\":\"queued\"") != NULL)
 	{
 #ifdef PORT
-		if (job->verbose != FALSE)
+		if (MM_VERBOSE(job->verbose))
 		{
 			port_log("SSB64 Matchmaking: still queued\n");
 		}
@@ -1732,8 +1770,26 @@ static void mmRunPoll(const MmJob *job)
 		if (job->poll_trickle_only != FALSE)
 		{
 			MmMatchResult ok;
+			static u32 sTricklePollSeq;
+			static u32 sTricklePollLastSignalCount;
+			u32 prev_signal_count;
 
+			prev_signal_count = mmIceSignalQueuedCount();
+			sTricklePollSeq++;
 			mmParseIceSignalsFromBody(resp);
+#ifdef PORT
+			if (mmLogVerbose() &&
+			    (((sTricklePollSeq % 8U) == 1U) ||
+			     (mmIceSignalQueuedCount() != sTricklePollLastSignalCount)))
+			{
+				u32 signal_count = mmIceSignalQueuedCount();
+
+				port_log("SSB64 Matchmaking: ICE trickle poll #%u http=%ld signals=%u (+%u)\n",
+				         sTricklePollSeq, hc, signal_count,
+				         (signal_count > prev_signal_count) ? (signal_count - prev_signal_count) : 0U);
+			}
+			sTricklePollLastSignalCount = mmIceSignalQueuedCount();
+#endif
 			memset(&ok, 0, sizeof(ok));
 			ok.kind = MM_POLL_HEARTBEAT_OK;
 			mmPushDone(&ok);
@@ -1776,6 +1832,11 @@ static void mmRunPoll(const MmJob *job)
 static char sMmIceSignalQ[MM_ICE_SIGNAL_QUEUE][280];
 static u32 sMmIceSignalHead;
 static u32 sMmIceSignalCount;
+
+static u32 mmIceSignalQueuedCount(void)
+{
+	return sMmIceSignalCount;
+}
 
 static void mmIceSignalQueueClear(void)
 {
@@ -1878,7 +1939,7 @@ static void mmRunIceSignal(const MmJob *job)
 	}
 	snprintf(url_path, sizeof(url_path), "/v1/match/%s/ice", job->ticket_id);
 	snprintf(jbuf, sizeof(jbuf), "{\"candidate\":\"%s\"}", job->ice_candidate);
-	hc = mmHttpsRequest("POST", url_path, jbuf, job->verbose != FALSE, &resp);
+	hc = mmHttpsRequest("POST", url_path, jbuf, MM_VERBOSE(job->verbose), &resp);
 	if (resp != NULL)
 	{
 		free(resp);
@@ -1930,13 +1991,26 @@ sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out)
 	out->turn_port = 3478U;
 	out->turns_port = 5349U;
 
-	if (mmCredentialsEnsureReady(FALSE) == FALSE)
+	if (mmCredentialsEnsureReady(mmLogVerbose()) == FALSE)
 	{
+#ifdef PORT
+		if (mmLogVerbose())
+		{
+			port_log("SSB64 Matchmaking: GET /v1/turn-credentials skipped (credentials not ready)\n");
+		}
+#endif
 		return FALSE;
 	}
-	hc = mmHttpsRequest("GET", "/v1/turn-credentials", NULL, FALSE, &resp);
+	hc = mmHttpsRequest("GET", "/v1/turn-credentials", NULL, mmLogVerbose(), &resp);
 	if ((hc != 200) || (resp == NULL))
 	{
+#ifdef PORT
+		if (mmLogVerbose())
+		{
+			port_log("SSB64 Matchmaking: GET /v1/turn-credentials failed http=%ld%s\n", hc,
+			         (resp == NULL) ? " (no body)" : "");
+		}
+#endif
 		if (resp != NULL)
 		{
 			free(resp);
@@ -1946,6 +2020,12 @@ sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out)
 	if ((mmJsonCopyQuotedValue(resp, "username", out->turn_user, sizeof(out->turn_user)) == FALSE) ||
 	    (mmJsonCopyQuotedValue(resp, "password", out->turn_pass, sizeof(out->turn_pass)) == FALSE))
 	{
+#ifdef PORT
+		if (mmLogVerbose())
+		{
+			port_log("SSB64 Matchmaking: GET /v1/turn-credentials JSON parse failed (username/password)\n");
+		}
+#endif
 		free(resp);
 		return FALSE;
 	}
@@ -1976,7 +2056,7 @@ static void mmRunCancel(const MmJob *job)
 	char *resp;
 
 	snprintf(jbuf, sizeof(jbuf), "{\"ticket_id\":\"%s\"}", job->ticket_id);
-	hc = mmHttpsRequest("POST", "/v1/queue/cancel", jbuf, job->verbose != FALSE, &resp);
+	hc = mmHttpsRequest("POST", "/v1/queue/cancel", jbuf, MM_VERBOSE(job->verbose), &resp);
 
 	if ((((hc >= 200) && (hc <= 299)) || (hc == 404)))
 	{
@@ -1987,14 +2067,14 @@ static void mmRunCancel(const MmJob *job)
 		mmPushDone(&ok);
 	}
 	else if ((mmCredShouldRepopulate(hc, resp, FALSE) != FALSE) &&
-	         (mmCredRepopulate(job->verbose != FALSE) != FALSE))
+	         (mmCredRepopulate(MM_VERBOSE(job->verbose)) != FALSE))
 	{
 		if (resp != NULL)
 		{
 			free(resp);
 			resp = NULL;
 		}
-		hc = mmHttpsRequest("POST", "/v1/queue/cancel", jbuf, job->verbose != FALSE, &resp);
+		hc = mmHttpsRequest("POST", "/v1/queue/cancel", jbuf, MM_VERBOSE(job->verbose), &resp);
 		if ((((hc >= 200) && (hc <= 299)) || (hc == 404)))
 		{
 			MmMatchResult ok;
@@ -2121,7 +2201,7 @@ static void mmJobWorkerLoop(void *unused_arg)
 		switch (cur.kind)
 		{
 		case MM_JOB_ENSURE_PLAYER:
-			mmRunEnsure(cur.verbose);
+			mmRunEnsure(MM_VERBOSE(cur.verbose));
 			break;
 		case MM_JOB_JOIN_QUEUE:
 			mmRunJoin(&cur);

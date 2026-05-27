@@ -10,7 +10,7 @@
 #include <string.h>
 #include <sys/netpeer.h>
 
-extern void port_log(const char *fmt, ...);
+#include "port_log.h"
 
 #define ICE_PRETICKET_CAND_QUEUE 16
 
@@ -139,6 +139,10 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 	}
 	if (mmIceGetLocalDescription(sdp, sizeof(sdp)) == FALSE)
 	{
+		if (port_log_debug_active())
+		{
+			port_log("SSB64 ICE: mmIceGetLocalDescription failed after gathering (player ready)\n");
+		}
 		mmIceShutdown();
 		return FALSE;
 	}
@@ -172,6 +176,10 @@ sb32 mnVSNetAutomatchAMIceBindTick(char *ice_sdp_out, u32 ice_sdp_cap)
 	}
 	if (mmIceGetLocalDescription(sdp, sizeof(sdp)) == FALSE)
 	{
+		if (port_log_debug_active())
+		{
+			port_log("SSB64 ICE: mmIceGetLocalDescription failed (bind tick)\n");
+		}
 		return FALSE;
 	}
 	if (ice_sdp_out != NULL && ice_sdp_cap > 0U)
@@ -192,6 +200,15 @@ void mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	mnVSNetAutomatchAMIceFlushPreTicketCandidates();
 	if ((mr != NULL) && (mr->peer_ice_sdp[0] != '\0'))
 	{
+		if (port_log_debug_active())
+		{
+			size_t peer_len = strlen(mr->peer_ice_sdp);
+			char peer_prefix[68];
+
+			memset(peer_prefix, 0, sizeof(peer_prefix));
+			snprintf(peer_prefix, sizeof(peer_prefix), "%.64s", mr->peer_ice_sdp);
+			port_log("SSB64 ICE: peer_ice_sdp len=%zu prefix=%s\n", peer_len, peer_prefix);
+		}
 		(void)mmIceApplyRemoteDescription(mr->peer_ice_sdp);
 		sIceRemoteDescApplied = TRUE;
 	}
@@ -256,10 +273,19 @@ sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bin
 	}
 	if (syNetPeerConfigureUdpForAutomatch(bind, remote, mr->session_id, mr->you_are_host, 2U, TRUE) == FALSE)
 	{
+		if (port_log_debug_active())
+		{
+			port_log("SSB64 ICE: bootstrap configure failed bind=%s remote=%s session=%u host=%d\n", bind, remote,
+			         (unsigned int)mr->session_id, (int)mr->you_are_host);
+		}
 		return FALSE;
 	}
 	if (syNetPeerRunBootstrap() == FALSE)
 	{
+		if (port_log_debug_active())
+		{
+			port_log("SSB64 ICE: bootstrap run failed bind=%s remote=%s\n", bind, remote);
+		}
 		return FALSE;
 	}
 	return TRUE;

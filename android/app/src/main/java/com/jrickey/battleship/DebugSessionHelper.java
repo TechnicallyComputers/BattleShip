@@ -128,7 +128,6 @@ public final class DebugSessionHelper {
             toast("Saved debug.env but could not start debug session");
             return;
         }
-        toast("Saved as debug.env — restarting");
         restartGame();
     }
 
@@ -170,11 +169,24 @@ public final class DebugSessionHelper {
         }
     }
 
+    /**
+     * Relaunch through {@link BootActivity} after cooperative {@code SDL_main} shutdown.
+     * Native code requests {@code Window::Close()} before calling here; we join the SDL
+     * thread (and {@code nativeQuit}) so only one {@code SDL_main} exists when the game
+     * activity starts again.
+     */
     private void restartGame() {
-        Intent intent = new Intent(mActivity, BattleShipActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        mActivity.finish();
-        mActivity.startActivity(intent);
+        if (!(mActivity instanceof BattleShipActivity)) {
+            Log.e(TAG, "debug restart: expected BattleShipActivity");
+            return;
+        }
+        Log.i(TAG, "debug restart: finish → onDestroy join → BootActivity");
+        BattleShipActivity.cooperativeShutdownForRestart(() -> {
+            Intent intent = new Intent(mActivity.getApplicationContext(), BootActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            intent.putExtra(BootActivity.EXTRA_DEBUG_RESTART, true);
+            mActivity.getApplicationContext().startActivity(intent);
+        });
     }
 
     private static void copyUriToFile(ContentResolver resolver, Uri src, File dest)

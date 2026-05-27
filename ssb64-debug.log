@@ -1,0 +1,1233 @@
+SSB64: debug session start mode=log_only
+SSB64: build SSB64_NETMENU=1 SSB64_NETPLAY_ICE=1
+SSB64: userDataDir=/storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/
+SSB64: debug log=/storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/ssb64-debug.log
+SSB64: port_log active_sink=debug
+SSB64: port_log debug file /storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/ssb64-debug.log (open)
+SSB64: port_log regular file /storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/ssb64.log (open)
+SSB64: port_log mirroring connectivity lines to ssb64.log (append)
+SSB64: PortInit entered
+SSB64: Context instance created
+SSB64: Logging OK
+SSB64: Config + CVars OK
+SSB64: CrashHandler + Console OK
+SSB64: ControlDeck OK
+SSB64: locating f3d.o2r ...
+SSB64: bootstrap archive (shaders) -> /storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/f3d.o2r
+SSB64: calling InitResourceManager (bootstrap) ...
+SSB64: bootstrap ResourceManager OK
+SSB64: constructing Fast3dWindow ...
+SSB64: Fast3dWindow constructed, calling InitWindow ...
+SSB64: Window OK
+SSB64: attaching Port menu ...
+SSB64: Port menu object attached (init deferred)
+SSB64: setting force-render-to-fb ...
+SSB64: force-render-to-fb OK
+SSB64: FileDropMgr OK
+SSB64: Android first-run check -> /storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/BattleShip.o2r (found=1)
+SSB64: adding game archive -> /storage/emulated/0/Android/data/com.jrickey.battleship.netplay.debug/files/BattleShip.o2r
+SSB64: game archive registered
+SSB64: Audio initialized at 32000 Hz
+SSB64: All subsystems initialized
+SSB64: Resource factories registered — init complete
+SSB64: PortInit complete
+SSB64: initializing Port menu (deferred) ...
+SSB64: Port menu initialized
+SSB64: debug session ready
+SSB64: PortGameInit — initializing coroutine system
+SSB64: Starting game coroutine (boot sequence)
+SSB64: Game coroutine started — entering syMainLoop
+SSB64: osCreateThread id=1 entry=0x72eac02300 (registered=1 total)
+SSB64: osCreateThread id=8 entry=0x72eabfed8c (registered=2 total)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6820 (valid=0 cap=1) — yielding
+SSB64: osCreateThread id=5 entry=0x72eac020c0 (registered=3 total)
+SSB64: Thread5 — start
+SSB64: Thread5 — DMA queue created, reading ROM
+SSB64: Thread5 — creating scheduler thread
+SSB64: osCreateThread id=3 entry=0x72eac24250 (registered=4 total)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+SSB64: Thread5 — scheduler started, waiting for ready
+SSB64: Thread5 — scheduler ready, creating audio
+SSB64: osCreateThread id=4 entry=0x72eabf9e00 (registered=5 total)
+SSB64 Audio: thread entering synthesis loop (freq=552)
+SSB64 Audio: port pacing target=32000 high=552 low=368
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+SSB64: Thread5 — audio started, waiting for ready
+SSB64: Thread5 — audio ready, creating controller
+SSB64: osCreateThread id=6 entry=0x72eabfc7e4 (registered=6 total)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+SSB64: Thread5 — controller started, waiting for ready
+SSB64: Thread5 — all threads ready, loading overlays
+SSB64: Thread5 — entering scManagerRunLoop
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7cc8 (valid=0 cap=1) — yielding
+SSB64: syMainLoop returned — boot chain complete
+SSB64: Boot sequence yielded — entering frame loop
+SSB64: watchdog started (hang threshold=3000ms)
+SSB64: port_resume_service_threads: 6 threads registered
+  Thread 1: state=1 coroutine=0xb4000074b0dfd610 finished=1
+  Thread 8: state=8 coroutine=0xb4000074b0e02f50 finished=0
+  Thread 5: state=8 coroutine=0xb4000074b0dfcb90 finished=0
+  Thread 3: state=8 coroutine=0xb4000074b0e07fd0 finished=0
+  Thread 4: state=8 coroutine=0xb4000074b0e0bed0 finished=0
+  Thread 6: state=8 coroutine=0xb4000074b0dfba10 finished=0
+SSB64: GAME_THREAD_CAP_RESUMES=0 (0=disabled)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64 Audio: first n_alAudioFrame (tic=1 samples=552)
+SSB64 Audio: first synth frame submitted (sampleCount=552 bytes=2208)
+SSB64 Audio: output low-pass enabled (set SSB64_AUDIO_OUTPUT_FILTER=0 to disable)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=2)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7cc8 — woke up (valid=1)
+SSB64: osCreateThread id=8 entry=0x72eabfef98 (registered=7 total)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+SSB64: scManagerRunLoop — past audio/FB setup
+SSB64 NetRbSnapshot: ring_frames=64 (env SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES)
+SSB64: scManagerRunLoop — controllers=4 scene=27
+SSB64: scManagerRunLoop — entering scene 27
+SSB64: mnStartupStartScene — entered
+SSB64: mnStartupStartScene — past syAudioStopBGMAll
+SSB64: mnStartupStartScene — past syVideoInit
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=4) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc861000 end=0xb4000072bd861000)
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanMalloc(size=432 align=8) = 0xb4000072bc861000 (heap ptr=0xb4000072bc8611b0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=144 align=8) = 0xb4000072bc8611b0 (heap ptr=0xb4000072bc861240 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=160 align=8) = 0xb4000072bc861240 (heap ptr=0xb4000072bc8612e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0xb4000072bc8612e0 (heap ptr=0xb4000072bc8662e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0xb4000072bc8662e0 (heap ptr=0xb4000072bc86b2e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc86b2e0 (heap ptr=0xb4000072bc86b2e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc86b2e0 (heap ptr=0xb4000072bc86b2e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0xb4000072bc86b2e0 (heap ptr=0xb4000072bc8702e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=20480 align=8) = 0xb4000072bc8702e0 (heap ptr=0xb4000072bc8752e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc8752e0 (heap ptr=0xb4000072bc8752e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=0 align=8) = 0xb4000072bc8752e0 (heap ptr=0xb4000072bc8752e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=10240 align=8) = 0xb4000072bc8752e0 (heap ptr=0xb4000072bc877ae0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=10240 align=8) = 0xb4000072bc877ae0 (heap ptr=0xb4000072bc87a2e0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=49152 align=16) = 0xb4000072bc87a2e0 (heap ptr=0xb4000072bc8862e0 end=0xb4000072bd861000)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a98 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a98 — woke up (valid=1)
+SSB64: syTaskmanLoadScene — about to call func_start=0x72eab6a618
+SSB64: syTaskmanMalloc(size=232 align=8) = 0xb4000072bc8862e0 (heap ptr=0xb4000072bc8863c8 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0xb4000072bc8863c8 (heap ptr=0xb4000072bc8864b0 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=200 align=8) = 0xb4000072bc8864b0 (heap ptr=0xb4000072bc886578 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0xb4000072bc886578 (heap ptr=0xb4000072bc886660 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=200 align=8) = 0xb4000072bc886660 (heap ptr=0xb4000072bc886728 end=0xb4000072bd861000)
+SSB64: syTaskmanMalloc(size=232 align=8) = 0xb4000072bc886728 (heap ptr=0xb4000072bc886810 end=0xb4000072bd861000)
+SSB64: osCreateThread id=10000000 entry=0x72eab6a860 (registered=7 total)
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 1 complete (t=0.00s)
+SSB64: port_resume_service_threads: 7 threads registered
+  Thread 1: state=1 coroutine=0xb4000074b0dfd610 finished=1
+  Thread 8: state=8 coroutine=0xb4000074b0e02f50 finished=0
+  Thread 5: state=8 coroutine=0xb4000074b0dfcb90 finished=0
+  Thread 3: state=8 coroutine=0xb4000074b0e07fd0 finished=0
+  Thread 4: state=8 coroutine=0xb4000074b0e0bed0 finished=0
+  Thread 6: state=8 coroutine=0xb4000074b0dfba10 finished=0
+  Thread 8: state=8 coroutine=0xb4000074b0dfc490 finished=0
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=2)
+SSB64: osSpTaskStartGo #1 type=1 data_ptr=0xb4000072bc861b50
+SSB64: RCP cost model — budget=400000 cycles/VI, force_n=0 (0=cost-model, >=1=fixed), rect_gate=200000
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 2 complete (t=0.14s)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=2)
+SSB64: osSpTaskStartGo #2 type=1 data_ptr=0xb4000072bc861b50
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 3 complete (t=0.15s)
+  round 0: resumed thread 8 (finished=0)
+  round 0: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 0: resumed thread 3 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+  round 0: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 0: resumed thread 6 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+  round 0: resumed thread 8 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 (valid=0 cap=1) — yielding
+  round 1: resumed thread 5 (finished=0)
+  round 1: resumed thread 3 (finished=0)
+  round 1: resumed thread 4 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+  round 1: resumed thread 6 (finished=0)
+  round 1: resumed thread 8 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 (valid=0 cap=4) — yielding
+  round 2: resumed thread 5 (finished=0)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=2)
+SSB64: osSpTaskStartGo #3 type=1 data_ptr=0xb4000072bc861b50
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+  round 2: resumed thread 3 (finished=0)
+  round 2: resumed thread 4 (finished=0)
+  round 2: resumed thread 6 (finished=0)
+  round 2: resumed thread 8 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 3: resumed thread 5 (finished=0)
+  round 3: resumed thread 3 (finished=0)
+  round 3: resumed thread 4 (finished=0)
+  round 3: resumed thread 6 (finished=0)
+  round 3: resumed thread 8 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 4: resumed thread 5 (finished=0)
+  round 4: resumed thread 3 (finished=0)
+  round 4: resumed thread 4 (finished=0)
+  round 4: resumed thread 6 (finished=0)
+  round 4: resumed thread 8 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 5: resumed thread 5 (finished=0)
+  round 5: resumed thread 3 (finished=0)
+  round 5: resumed thread 4 (finished=0)
+  round 5: resumed thread 6 (finished=0)
+  round 5: resumed thread 8 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 6: resumed thread 5 (finished=0)
+  round 6: resumed thread 3 (finished=0)
+  round 6: resumed thread 4 (finished=0)
+  round 6: resumed thread 6 (finished=0)
+  round 6: resumed thread 8 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+  round 7: resumed thread 5 (finished=0)
+  round 7: resumed thread 3 (finished=0)
+  round 7: resumed thread 4 (finished=0)
+  round 7: resumed thread 6 (finished=0)
+  round 7: resumed thread 8 (finished=0)
+SSB64: Frame 4 complete (t=0.17s)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 (valid=0 cap=4) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=2)
+SSB64: osSpTaskStartGo #4 type=1 data_ptr=0xb4000072bc861b50
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+SSB64: Frame 5 complete (t=0.18s)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 — woke up (valid=3)
+SSB64: osRecvMesg BLOCK on mq=0x72eb61ab98 (valid=0 cap=8) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a5f50 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a7228 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb6442c8 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0xb4000076c85b7a38 (valid=0 cap=1) — yielding
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 — woke up (valid=1)
+SSB64: osRecvMesg BLOCK on mq=0x72eb5a6798 (valid=0 cap=7) — yielding
+SSB64: osSpTaskStartGo #5 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 6 complete (t=0.20s)
+SSB64: osSpTaskStartGo #6 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 7 complete (t=0.22s)
+SSB64: osSpTaskStartGo #7 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 8 complete (t=0.24s)
+SSB64: osSpTaskStartGo #8 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 9 complete (t=0.25s)
+SSB64: osSpTaskStartGo #9 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 10 complete (t=0.27s)
+SSB64: osSpTaskStartGo #10 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 11 complete (t=0.29s)
+SSB64: osSpTaskStartGo #11 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 12 complete (t=0.30s)
+SSB64: osSpTaskStartGo #12 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 13 complete (t=0.32s)
+SSB64: osSpTaskStartGo #13 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 14 complete (t=0.34s)
+SSB64: osSpTaskStartGo #14 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 15 complete (t=0.35s)
+SSB64: osSpTaskStartGo #15 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 16 complete (t=0.37s)
+SSB64: osSpTaskStartGo #16 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 17 complete (t=0.39s)
+SSB64: osSpTaskStartGo #17 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 18 complete (t=0.40s)
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc88e508 id=1021 kind=0 link_id=13 dl_link_id=64 gpr_head=0xb4000072bc88e5f0 obj=0x0 link_next=0x0 link_prev=0xb4000072bc886728
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc88e508
+SSB64: osSpTaskStartGo #18 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 19 complete (t=0.42s)
+SSB64: osSpTaskStartGo #19 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 20 complete (t=0.44s)
+SSB64: osSpTaskStartGo #20 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 21 complete (t=0.45s)
+SSB64: osSpTaskStartGo #21 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 22 complete (t=0.47s)
+SSB64: osSpTaskStartGo #22 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 23 complete (t=0.49s)
+SSB64: osSpTaskStartGo #23 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 24 complete (t=0.50s)
+SSB64: osSpTaskStartGo #24 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 25 complete (t=0.52s)
+SSB64: osSpTaskStartGo #25 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 26 complete (t=0.54s)
+SSB64: osSpTaskStartGo #26 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 27 complete (t=0.55s)
+SSB64: osSpTaskStartGo #27 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 28 complete (t=0.57s)
+SSB64: osSpTaskStartGo #28 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 29 complete (t=0.59s)
+SSB64: osSpTaskStartGo #29 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 30 complete (t=0.60s)
+SSB64: osSpTaskStartGo #30 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 31 complete (t=0.62s)
+SSB64: osSpTaskStartGo #31 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 32 complete (t=0.64s)
+SSB64: osSpTaskStartGo #32 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 33 complete (t=0.65s)
+SSB64: osSpTaskStartGo #33 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 34 complete (t=0.67s)
+SSB64: osSpTaskStartGo #34 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 35 complete (t=0.69s)
+SSB64: osSpTaskStartGo #35 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 36 complete (t=0.70s)
+SSB64: osSpTaskStartGo #36 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 37 complete (t=0.72s)
+SSB64: osSpTaskStartGo #37 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 38 complete (t=0.74s)
+SSB64: osSpTaskStartGo #38 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 39 complete (t=0.75s)
+SSB64: osSpTaskStartGo #39 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 40 complete (t=0.77s)
+SSB64: osSpTaskStartGo #40 type=1 data_ptr=0xb4000072bc861ae0
+SSB64: Frame 41 complete (t=0.79s)
+SSB64: osSpTaskStartGo #41 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 42 complete (t=0.80s)
+SSB64: osSpTaskStartGo #42 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 43 complete (t=0.82s)
+SSB64: osSpTaskStartGo #43 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 44 complete (t=0.84s)
+SSB64: osSpTaskStartGo #44 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 45 complete (t=0.85s)
+SSB64: osSpTaskStartGo #45 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 46 complete (t=0.87s)
+SSB64: osSpTaskStartGo #46 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 47 complete (t=0.89s)
+SSB64: osSpTaskStartGo #47 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 48 complete (t=0.90s)
+SSB64: osSpTaskStartGo #48 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 49 complete (t=0.92s)
+SSB64: osSpTaskStartGo #49 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 50 complete (t=0.94s)
+SSB64: osSpTaskStartGo #50 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 51 complete (t=0.95s)
+SSB64: osSpTaskStartGo #51 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 52 complete (t=0.97s)
+SSB64: osSpTaskStartGo #52 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 53 complete (t=0.99s)
+SSB64: osSpTaskStartGo #53 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 54 complete (t=1.00s)
+SSB64: osSpTaskStartGo #54 type=1 data_ptr=0xb4000072bc861b50
+SSB64: Frame 55 complete (t=1.02s)
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc8862e0 id=0 kind=0 link_id=0 dl_link_id=65 gpr_head=0x0 obj=0x0 link_next=0xb4000072bc8863c8 link_prev=0x0
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc8862e0
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc8863c8 id=4294967295 kind=3 link_id=0 dl_link_id=64 gpr_head=0x0 obj=0xb4000072bc8864b0 link_next=0x0 link_prev=0x0
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc8863c8
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc886578 id=1003 kind=3 link_id=9 dl_link_id=64 gpr_head=0x0 obj=0xb4000072bc886660 link_next=0x0 link_prev=0x0
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc886578
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc886728 id=1008 kind=2 link_id=13 dl_link_id=0 gpr_head=0xb4000072bc886810 obj=0xb4000072bc88e480 link_next=0xb4000072bc88e508 link_prev=0x0
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc886728
+SSB64: gcEjectGObj ENTER gobj=0xb4000072bc88e508 id=1021 kind=0 link_id=13 dl_link_id=64 gpr_head=0xb4000072bc88e5f0 obj=0x0 link_next=0x0 link_prev=0x0
+SSB64: gcEjectGObj EXIT gobj=0xb4000072bc88e508
+SSB64: mnStartupStartScene — past syTaskmanStartTask (should not reach here)
+SSB64: scManagerRunLoop — entering scene 28
+SSB64: syTaskmanStartTask — heap init done
+SSB64: syTaskmanStartTask — gcSetupObjman done, entering syTaskmanLoadScene
+SSB64: syTaskmanLoadScene — about to call func_start=0x72eabd01ac
+SSB64: mvOpeningRoomFuncStart - init reloc setup
+SSB64: mvOpeningRoomFuncStart - reloc files loaded
+SSB64: gobj_alloc gobj=0xb4000072bc8e6468 id=1011 link=6 caller=0x72eaab22bc frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8e6550 id=1011 link=6 caller=0x72eaab22f4 frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8e6638 id=1011 link=6 caller=0x72eaab2344 frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8e6720 id=1011 link=6 caller=0x72eaab237c frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8fda00 id=1011 link=6 caller=0x72eaab27e0 frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8fdae8 id=1011 link=6 caller=0x72eaab282c frame=0
+SSB64: gobj_alloc gobj=0xb4000072bc8fdcb8 id=1011 link=6 caller=0x72eaab28a8 frame=0
+particle_bank[EFCommon]: bank_id=0 scripts=119 (10928 bytes) textures=47 (315056 bytes)
+SSB64: mvOpeningRoomFuncStart - scene managers initialized
+SSB64: mvOpeningRoomFuncStart - fighter alloc done pulled=5 dropped=0 boss=12
+SSB64: mvOpeningRoomFuncStart - pulled fighter files ready
+SSB64: mvOpeningRoomFuncStart - dropped fighter files ready
+SSB64: mvOpeningRoomFuncStart - boss fighter files ready
+SSB64: mvOpeningRoomFuncStart - figatree heaps allocated size=0x3630
+SSB64: mvOpeningRoomFuncStart - cameras created
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[0]=0xb4000072bc93cfe8 dl=0x0 mobj=0x0 child=0xb4000072bc93d170 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[1]=0xb4000072bc93d170 dl=0x0 mobj=0x0 child=0xb4000072bc93d2f8 sib=0xb4000072bc93ddb0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[2]=0xb4000072bc93d2f8 dl=0xb4000072bc894aa8 mobj=0x0 child=0x0 sib=0xb4000072bc93d480
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[3]=0xb4000072bc93d480 dl=0xb4000072bc894ab8 mobj=0x0 child=0x0 sib=0xb4000072bc93d608
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[4]=0xb4000072bc93d608 dl=0xb4000072bc894ac8 mobj=0x0 child=0x0 sib=0xb4000072bc93d790
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[5]=0xb4000072bc93d790 dl=0xb4000072bc894ad8 mobj=0x0 child=0x0 sib=0xb4000072bc93d918
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[6]=0xb4000072bc93d918 dl=0xb4000072bc894ae8 mobj=0x0 child=0x0 sib=0xb4000072bc93daa0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[7]=0xb4000072bc93daa0 dl=0xb4000072bc894af8 mobj=0x0 child=0x0 sib=0xb4000072bc93dc28
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[8]=0xb4000072bc93dc28 dl=0xb4000072bc894b08 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[9]=0xb4000072bc93ddb0 dl=0x0 mobj=0x0 child=0xb4000072bc93df38 sib=0xb4000072bc93e6e0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[10]=0xb4000072bc93df38 dl=0x0 mobj=0x0 child=0xb4000072bc93e0c0 sib=0xb4000072bc93e248
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[11]=0xb4000072bc93e0c0 dl=0xb4000072bc894b18 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[12]=0xb4000072bc93e248 dl=0xb4000072bc894b28 mobj=0x0 child=0x0 sib=0xb4000072bc93e3d0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[13]=0xb4000072bc93e3d0 dl=0xb4000072bc894b38 mobj=0x0 child=0xb4000072bc93e558 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[14]=0xb4000072bc93e558 dl=0xb4000072bc894b48 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[15]=0xb4000072bc93e6e0 dl=0x0 mobj=0x0 child=0xb4000072bc93e868 sib=0xb4000072bc93e9f0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[16]=0xb4000072bc93e868 dl=0xb4000072bc894b58 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[17]=0xb4000072bc93e9f0 dl=0xb4000072bc894b68 mobj=0x0 child=0x0 sib=0xb4000072bc93eb78
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[18]=0xb4000072bc93eb78 dl=0x0 mobj=0x0 child=0xb4000072bc93ed00 sib=0xb4000072bc93ff60
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[19]=0xb4000072bc93ed00 dl=0xb4000072bc894b78 mobj=0xb4000072bc941e00 child=0x0 sib=0xb4000072bc93ee88
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[20]=0xb4000072bc93ee88 dl=0xb4000072bc894b88 mobj=0xb4000072bc941ec0 child=0x0 sib=0xb4000072bc93f010
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[21]=0xb4000072bc93f010 dl=0xb4000072bc894ba0 mobj=0xb4000072bc941f80 child=0x0 sib=0xb4000072bc93f198
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[22]=0xb4000072bc93f198 dl=0x0 mobj=0x0 child=0xb4000072bc93f320 sib=0xb4000072bc93f7b8
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[23]=0xb4000072bc93f320 dl=0xb4000072bc894bb0 mobj=0x0 child=0x0 sib=0xb4000072bc93f4a8
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[24]=0xb4000072bc93f4a8 dl=0xb4000072bc894bc0 mobj=0x0 child=0x0 sib=0xb4000072bc93f630
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[25]=0xb4000072bc93f630 dl=0xb4000072bc894bd0 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[26]=0xb4000072bc93f7b8 dl=0xb4000072bc894be0 mobj=0x0 child=0x0 sib=0xb4000072bc93f940
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[27]=0xb4000072bc93f940 dl=0xb4000072bc894bf0 mobj=0x0 child=0x0 sib=0xb4000072bc93fac8
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[28]=0xb4000072bc93fac8 dl=0xb4000072bc894c00 mobj=0x0 child=0x0 sib=0xb4000072bc93fc50
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[29]=0xb4000072bc93fc50 dl=0x0 mobj=0x0 child=0xb4000072bc93fdd8 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[30]=0xb4000072bc93fdd8 dl=0xb4000072bc894c10 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[31]=0xb4000072bc93ff60 dl=0x0 mobj=0x0 child=0xb4000072bc9400e8 sib=0xb4000072bc940ba0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[32]=0xb4000072bc9400e8 dl=0x0 mobj=0x0 child=0xb4000072bc940270 sib=0xb4000072bc940580
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[33]=0xb4000072bc940270 dl=0xb4000072bc894c20 mobj=0x0 child=0x0 sib=0xb4000072bc9403f8
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[34]=0xb4000072bc9403f8 dl=0xb4000072bc894c30 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[35]=0xb4000072bc940580 dl=0x0 mobj=0x0 child=0xb4000072bc940708 sib=0xb4000072bc940890
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[36]=0xb4000072bc940708 dl=0xb4000072bc894c40 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[37]=0xb4000072bc940890 dl=0xb4000072bc894c50 mobj=0x0 child=0x0 sib=0xb4000072bc940a18
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[38]=0xb4000072bc940a18 dl=0xb4000072bc894c68 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[39]=0xb4000072bc940ba0 dl=0x0 mobj=0x0 child=0xb4000072bc940d28 sib=0xb4000072bc941c78
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[40]=0xb4000072bc940d28 dl=0x0 mobj=0x0 child=0xb4000072bc940eb0 sib=0xb4000072bc9411c0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[41]=0xb4000072bc940eb0 dl=0xb4000072bc894c78 mobj=0xb4000072bc942040 child=0x0 sib=0xb4000072bc941038
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[42]=0xb4000072bc941038 dl=0xb4000072bc894c88 mobj=0xb4000072bc942100 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[43]=0xb4000072bc9411c0 dl=0x0 mobj=0x0 child=0xb4000072bc941348 sib=0xb4000072bc941658
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[44]=0xb4000072bc941348 dl=0xb4000072bc894c98 mobj=0xb4000072bc9421c0 child=0x0 sib=0xb4000072bc9414d0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[45]=0xb4000072bc9414d0 dl=0xb4000072bc894ca8 mobj=0xb4000072bc942280 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[46]=0xb4000072bc941658 dl=0xb4000072bc894cb8 mobj=0x0 child=0x0 sib=0xb4000072bc9417e0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[47]=0xb4000072bc9417e0 dl=0xb4000072bc894cc8 mobj=0x0 child=0x0 sib=0xb4000072bc941968
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[48]=0xb4000072bc941968 dl=0xb4000072bc894cd8 mobj=0x0 child=0x0 sib=0xb4000072bc941af0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[49]=0xb4000072bc941af0 dl=0xb4000072bc894ce8 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom background gobj=0xb4000072bc93cf00 dobj[50]=0xb4000072bc941c78 dl=0x0 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoomFuncStart - early room objects created
+SSB64: mvOpeningRoom logo gobj=0xb4000072bc942bd0 dobj[0]=0xb4000072bc942cb8 dl=0xb4000072bc8a92e8 mobj=0xb4000072bc942fc8 child=0xb4000072bc942e40 sib=0x0
+SSB64: mvOpeningRoom logo gobj=0xb4000072bc942bd0 dobj[1]=0xb4000072bc942e40 dl=0xb4000072bc8a92f8 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoomFuncStart - desk/logo objects created
+SSB64: mvOpeningRoomFuncStart - animated prop objects created
+SSB64: ATTR fkind=12 sizeof=840 fog_off=0xFC
+  raw[0x3E..0x43]: 00FFFFFF 00000059 FFFC0C00 00000014 00000001 00000001
+SSB64: ftManagerMakeFighter - begin fkind=12
+SSB64: ftManagerMakeFighter - before parts setup fkind=12 commonparts=0xb4000072bc92dfb8 setup_parts=0xb4000072bc92df0c
+SSB64: ftManagerMakeFighter - after parts setup fkind=12
+SSB64: ftManagerMakeFighter - parts metadata initialized fkind=12
+SSB64: ftManagerMakeFighter - fighter init complete fkind=12 pkind=3
+SSB64: scSubsysFighterSetStatus - begin status=0x10000 gobj=0xb4000072bc9443c0
+SSB64: ftMainSetStatus - status=0x10000 motion=0 figatree=0xb4000072bc931d20 anim_flags=0x80000000
+SSB64: ftMainUpdateHiddenPartID OK fkind=12 hpid=0 joint=2 parent=0 kind=3
+SSB64: ftMainSetStatus - before figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - after figatree attach status=0x10000 motion=0
+SSB64: ftMainSetStatus - before play all events status=0x10000 motion=0
+SSB64: ftMainSetStatus - after play all events status=0x10000 motion=0
+SSB64: scSubsysFighterSetStatus - end status=0x10000 gobj=0xb4000072bc9443c0
+SSB64: ftManagerMakeFighter - return fkind=12
+SSB64: scSubsysFighterSetStatus - begin status=0x1000f gobj=0xb4000072bc9443c0
+SSB64: ftMainSetStatus - status=0x1000f motion=15 figatree=0xb4000072bc931d20 anim_flags=0x80000000
+SSB64: ftMainSetStatus - before figatree attach status=0x1000f motion=15
+SSB64: ftMainSetStatus - after figatree attach status=0x1000f motion=15
+SSB64: ftMainSetStatus - before play all events status=0x1000f motion=15
+SSB64: ftMainSetStatus - after play all events status=0x1000f motion=15
+SSB64: scSubsysFighterSetStatus - end status=0x1000f gobj=0xb4000072bc9443c0
+SSB64: mvOpeningRoomFuncStart - boss created
+SSB64: mvOpeningRoomFuncStart - boss shadow created
+SSB64 Audio: first syAudioPlayBGM sngplayer=0 bgm=33 seqCount=47
+SSB64: mvOpeningRoomFuncStart - final scene init complete
+SSB64: syTaskmanLoadScene — func_start returned, entering syTaskmanRunTask
+SSB64: Frame 56 complete (t=1.21s)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: mvOpeningRoom logo display-begin gobj=0xb4000072bc942bd0 dobj=0xb4000072bc942cb8
+SSB64: mvOpeningRoom logo display-end gobj=0xb4000072bc942bd0 dobj=0xb4000072bc942cb8
+SSB64: osSpTaskStartGo #55 type=1 data_ptr=0xb4000072bc862b30
+SSB64: runtimeTexFix addr=0xb4000072bc8afdd8 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x22f78 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d420 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fce8 req=0x58 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e88 num=0x58 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d048 req=0x1c8 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1e8 num=0x1c8 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e848 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19e8 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d218 req=0x1b0 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x3b8 num=0x1b0 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88f050 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x21f0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d3f8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x598 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fc60 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e00 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e530 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x16d0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfd0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x170 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e328 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x14c8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfa8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x148 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e2a0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1440 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf08 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xa8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df40 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x10e0 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf30 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df88 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1128 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf58 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e090 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1230 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf80 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x120 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e198 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1338 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cee0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x80 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88deb8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1058 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895768 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8908 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895790 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8930 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896778 req=0x10 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9918 num=0x10 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8969c0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9b60 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc898858 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xb9f8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899168 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc308 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991e0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc380 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899190 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc330 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899268 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc408 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991b8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc358 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8992b0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc450 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b05e0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x23780 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895ce8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8e88 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895d10 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8eb0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ceb8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x58 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88de30 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xfd0 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b1088 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x24228 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899b98 req=0x500 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xcd38 num=0x500 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x2c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x2c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x3a00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x3a00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x4800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x4800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x5600 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x5600 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x6400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x6400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x7200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x7200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x9c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x9c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0xaa00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0xaa00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a4aa8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x17c48 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a5ab0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18c50 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a6ab8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19c58 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a7ac0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1ac60 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: Frame 57 complete (t=1.29s)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: osSpTaskStartGo #56 type=1 data_ptr=0xb4000072bc862b30
+SSB64: runtimeTexFix addr=0xb4000072bc8afdd8 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x22f78 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d420 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fce8 req=0x58 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e88 num=0x58 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d048 req=0x1c8 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1e8 num=0x1c8 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e848 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19e8 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d218 req=0x1b0 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x3b8 num=0x1b0 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88f050 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x21f0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d3f8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x598 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fc60 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e00 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e530 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x16d0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfd0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x170 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e328 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x14c8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfa8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x148 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e2a0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1440 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf08 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xa8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df40 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x10e0 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf30 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df88 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1128 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf58 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e090 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1230 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf80 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x120 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e198 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1338 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cee0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x80 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88deb8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1058 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895768 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8908 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895790 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8930 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896778 req=0x10 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9918 num=0x10 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8969c0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9b60 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc898858 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xb9f8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899168 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc308 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991e0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc380 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899190 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc330 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899268 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc408 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991b8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc358 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8992b0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc450 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b05e0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x23780 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895ce8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8e88 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895d10 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8eb0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ceb8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x58 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88de30 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xfd0 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b1088 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x24228 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899b98 req=0x500 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xcd38 num=0x500 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x2c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x2c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x3a00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x3a00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x4800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x4800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x5600 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x5600 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x6400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x6400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x7200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x7200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x9c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x9c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0xaa00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0xaa00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a4aa8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x17c48 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a5ab0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18c50 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a6ab8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19c58 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a7ac0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1ac60 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: Frame 58 complete (t=1.31s)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: osSpTaskStartGo #57 type=1 data_ptr=0xb4000072bc862b30
+SSB64: runtimeTexFix addr=0xb4000072bc8afdd8 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x22f78 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d420 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fce8 req=0x58 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e88 num=0x58 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d048 req=0x1c8 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1e8 num=0x1c8 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e848 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19e8 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d218 req=0x1b0 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x3b8 num=0x1b0 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88f050 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x21f0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d3f8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x598 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fc60 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e00 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e530 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x16d0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfd0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x170 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e328 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x14c8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfa8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x148 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e2a0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1440 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf08 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xa8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df40 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x10e0 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf30 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df88 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1128 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf58 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e090 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1230 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf80 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x120 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e198 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1338 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cee0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x80 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88deb8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1058 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895768 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8908 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895790 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8930 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896778 req=0x10 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9918 num=0x10 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8969c0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9b60 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc898858 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xb9f8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899168 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc308 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991e0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc380 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899190 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc330 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899268 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc408 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991b8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc358 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8992b0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc450 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b05e0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x23780 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895ce8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8e88 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895d10 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8eb0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ceb8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x58 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88de30 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xfd0 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b1088 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x24228 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899b98 req=0x500 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xcd38 num=0x500 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x2c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x2c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x3a00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x3a00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x4800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x4800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x5600 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x5600 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x6400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x6400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x7200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x7200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x9c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x9c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0xaa00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0xaa00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a4aa8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x17c48 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a5ab0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18c50 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a6ab8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19c58 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a7ac0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1ac60 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: Frame 59 complete (t=1.33s)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: osSpTaskStartGo #58 type=1 data_ptr=0xb4000072bc862b30
+SSB64: runtimeTexFix addr=0xb4000072bc8afdd8 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x22f78 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d420 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fce8 req=0x58 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e88 num=0x58 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d048 req=0x1c8 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1e8 num=0x1c8 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e848 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19e8 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d218 req=0x1b0 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x3b8 num=0x1b0 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88f050 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x21f0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d3f8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x598 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fc60 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e00 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e530 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x16d0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfd0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x170 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e328 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x14c8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfa8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x148 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e2a0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1440 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf08 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xa8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df40 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x10e0 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf30 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df88 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1128 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf58 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e090 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1230 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf80 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x120 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e198 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1338 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cee0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x80 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88deb8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1058 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce90 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88dda8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf48 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895768 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8908 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895790 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8930 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896778 req=0x10 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9918 num=0x10 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8969c0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9b60 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896790 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9930 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896ac8 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9c68 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8967b8 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9958 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc896bd0 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x9d70 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc898858 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xb9f8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899168 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc308 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991e0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc380 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899190 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc330 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899268 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc408 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8991b8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc358 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8992b0 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xc450 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b05e0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x23780 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895ce8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8e88 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc895d10 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8eb0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ceb8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x58 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88de30 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xfd0 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d5a0 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x740 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ce68 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d498 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x638 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8b1088 req=0x400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x24228 num=0x400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc899b98 req=0x500 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xcd38 num=0x500 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x1e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x1e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x2c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x2c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x3a00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x3a00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x4800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x4800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x5600 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x5600 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x6400 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x6400 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x7200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x7200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x8e00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x8e00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0x9c00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0x9c00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc89a0a0 req=0xaa00 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd240 num=0xaa00 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a4aa8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x17c48 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a5ab0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18c50 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a6ab8 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19c58 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc8a7ac0 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1ac60 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: Frame 60 complete (t=1.34s)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: osSpTaskStartGo #59 type=1 data_ptr=0xb4000072bc862b30
+SSB64: runtimeTexFix addr=0xb4000072bc8afdd8 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x22f78 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc890158 req=0x1000 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x32f8 num=0x1000 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d470 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x610 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88ff50 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x30f0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d448 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5e8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fd48 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2ee8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d420 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x5c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fce8 req=0x58 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e88 num=0x58 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d048 req=0x1c8 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1e8 num=0x1c8 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e848 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x19e8 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d218 req=0x1b0 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x3b8 num=0x1b0 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88f050 req=0x800 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x21f0 num=0x800 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d3f8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x598 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88fc60 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x2e00 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cff8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x198 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e738 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x18d8 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e530 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x16d0 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfd0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x170 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e328 req=0x200 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x14c8 num=0x200 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88d020 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1c0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e7c0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1960 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cfa8 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x148 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e2a0 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1440 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf08 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xa8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df40 req=0x40 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x10e0 num=0x40 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf30 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xd0 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88df88 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1128 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf58 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0xf8 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e090 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1230 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cf80 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x120 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88e198 req=0x100 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1338 num=0x100 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88cee0 req=0x20 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x80 num=0x20 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: runtimeTexFix addr=0xb4000072bc88deb8 req=0x80 fileBase=0xb4000072bc88ce60 fileSize=0x24720 off=0x1058 num=0x80 desc=1 file=52 descBase=0xb4000072bc88ce60 descSize=0x24720 path=reloc_movies/MVCommon
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: osSpTaskStartGo #60 type=1 data_ptr=0xb4000072bc862b30
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64 Audio: first non-zero sample detected (idx=384 v=-1)
+SSB64 Audio: WAV dump open failed (errno preserved by fopen)
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002bd resolved_dl=0xb4000072bc8b0ef0 draw_dl_raw=0x1002bd dl_link=0xb4000072bc8b1060 list_id=0 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link-copy dobj=0xb4000072bc93cba8 dobj_dl=0xb4000072bc8b1060 draw_dl=0x1002be resolved_dl=0xb4000072bc8b0f90 draw_dl_raw=0x1002be dl_link=0xb4000072bc8b1068 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc93cdc8 dobj_dl=0xb4000072bc896758 draw_dl=0x1001c9 resolved_dl=0xb4000072bc896610 draw_dl_raw=0x1001c9 dl_link=0xb4000072bc896758 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: gcDrawDObj - suspicious-dl issue=dl-link dobj=0xb4000072bc9425b8 dobj_dl=0xb4000072bc8b1568 draw_dl=0x1002c1 resolved_dl=0xb4000072bc8b14c8 draw_dl_raw=0x1002c1 dl_link=0xb4000072bc8b1568 list_id=1 flags=0x0000 mobj=0x0 child=0x0 sib=0x0
+SSB64: Frame 120 complete (t=2.35s)
+SSB64: osSpTaskStartGo #120 type=1 data_ptr=0xb4000072bc862b30
+SSB64: debug restart — Window::Close() requested (in-process)
+SSB64: main loop exited cleanly at frame=125 (WindowIsRunning=0)
+SSB64: Game coroutine destroyed
+SSB64: PortGameShutdown returned
+SSB64: clean shutdown — skipping static C++ destructors

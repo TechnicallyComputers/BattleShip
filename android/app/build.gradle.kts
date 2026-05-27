@@ -196,8 +196,8 @@ android {
             // Pure-native crashes need the unstripped .so to symbolicate;
             // packagingOptions below keeps debug symbols around in debug APKs.
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            applicationIdSuffix = if (ssb64Netmenu) ".netplay.debug" else ".debug"
+            versionNameSuffix = if (ssb64Netmenu) "-netplay-debug" else "-debug"
         }
         getByName("release") {
             isMinifyEnabled = false   // No Java code worth shrinking yet

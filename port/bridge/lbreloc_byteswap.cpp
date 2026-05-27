@@ -2150,3 +2150,46 @@ extern "C" void portFixupFTAttributes(void *attr)
 	fixup_bswap32(&w[0x3E]);   // shade_color[2] rgba
 	fixup_bswap32(&w[0x3F]);   // fog_color rgba
 }
+
+/* =========================================================================
+ * portMarkSyntheticSprite — pre-register a port-built Sprite so that all
+ * byteswap/fixup passes become no-ops when the game calls
+ * lbCommonMakeSObjForGObj → portFixupSprite / portFixupBitmapArray /
+ * portFixupSpriteBitmapData on it.
+ *
+ * The caller must have already set all struct fields in native LE order and
+ * stored pixel buffers in Big-endian RGBA16 linear (no TMEM odd-row swizzle).
+ * ========================================================================= */
+extern "C" void portMarkSyntheticSprite(void *sprite, void *bitmaps,
+                                         unsigned int nbitmaps,
+                                         void *const *buf_ptrs)
+{
+	if (sprite)
+		sStructU16Fixups.insert(reinterpret_cast<uintptr_t>(sprite));
+
+	if (bitmaps)
+	{
+		// Register each Bitmap's base address so portFixupBitmapArray's
+		// per-entry portFixupBitmap calls are no-ops.
+		// portFixupBitmapArray's portRegisterProtectedStructRange call will
+		// still execute — it adds the bitmap array to the BSWAP-protection
+		// list, which is harmless for synthetic sprites.
+		uint8_t *bm = static_cast<uint8_t *>(bitmaps);
+		for (unsigned int i = 0; i < nbitmaps; i++)
+			sStructU16Fixups.insert(reinterpret_cast<uintptr_t>(bm + i * 16));
+	}
+
+	// Register each pixel buffer in both tracking sets so:
+	//   sStructU16Fixups → portFixupSpriteBitmapData skips BSWAP32 pass
+	//   sDeswizzle4cFixups → portFixupSpriteBitmapData skips deswizzle pass
+	if (buf_ptrs)
+	{
+		for (unsigned int i = 0; i < nbitmaps; i++)
+		{
+			if (buf_ptrs[i] == nullptr) continue;
+			uintptr_t key = reinterpret_cast<uintptr_t>(buf_ptrs[i]);
+			sStructU16Fixups.insert(key);
+			sDeswizzle4cFixups.insert(key);
+		}
+	}
+}

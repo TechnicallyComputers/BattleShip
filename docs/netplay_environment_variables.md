@@ -19,6 +19,28 @@ Parser: [`port/debug_env.c`](../port/debug_env.c). Template: [`scripts/debug.env
 
 Normal Android launches do **not** truncate `ssb64-debug.log`. Use **Export ssb64-debug.log** (SAF) to copy the last debug session elsewhere.
 
+### Debug Mode defaults (Android)
+
+**Restart in Debug Mode** (`log_only` session) enables extra connectivity tracing in **`ssb64-debug.log`** without loading **`debug.env`**:
+
+- Session banner (build flags, `userDataDir`, log path), **`PortInit complete`**, **`debug session ready`**
+- Matchmaking HTTPS request/response summaries (ensure player, queue, poll, heartbeat, turn-credentials failures)
+- Automatch FSM transitions (`SSB64 Automatch: state …`) and error reasons before returning to character select
+- ICE milestones (TURN credentials, `peer_ice_sdp` length/prefix, connection failed, bootstrap configure/run failures)
+- Throttled ICE trickle polls while in queue
+
+The same lines are mirrored to **logcat** tag **`ssb64`** during the debug session (`adb logcat -s ssb64`). Normal launches do not mirror to logcat.
+
+During a debug session, every `port_log` line is also **appended to `ssb64.log`** in the same directory (export still targets `ssb64-debug.log`). If automatch lines are missing from the exported debug file, check `ssb64.log` on device or use logcat.
+
+**Still requires Restart with debug.env** for: any `SSB64_*` / `CURL_CA_BUNDLE` / `SSL_CERT_FILE` overrides from a file, delay-sync lab presets, packet dumps, and other knobs that only exist as environment variables.
+
+**Restart in Debug Mode** relaunches via **BootActivity** after cooperative **SDL_main** exit: `finish()` → `onDestroy` (no main-thread SDL join) → Boot posted ~150 ms later (not blocked on background `join`). Brief “Debug session — launching…” screen, then the game. Stay in that run for automatch; do not tap the launcher icon afterward (sentinel is one-shot).
+
+**Export** should be from the same debug relaunch run that reached automatch (not a later launcher start).
+
+Legacy UDP reachability lines (`reachability candidate=lan`) are omitted in **ICE** builds (`SSB64_NETPLAY_ICE`); use automatch FSM + `SSB64 ICE: state=` lines instead.
+
 **Import (Android):** Settings → Tools → **Restart with debug.env** opens a document picker (`*/*`). **Any filename** is accepted; contents are saved internally as `debug.env`. Format rules apply to **content**, not the picked name.
 
 **Accepted line syntax (UTF-8):**

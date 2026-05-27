@@ -2,8 +2,13 @@ package com.jrickey.battleship;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 
 import org.libsdl.app.SDLActivity;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * BattleShipActivity — entry point for the SSB64 PC port on Android.
@@ -24,29 +29,144 @@ import org.libsdl.app.SDLActivity;
  * plumbing is handled by SDLActivity itself.
  */
 public class BattleShipActivity extends SDLActivity {
+    private static final String TAG = "ssb64.debug";
 
-    @Override
-    protected String[] getLibraries() {
-        // Order matters: SDL2 first (so its symbols are visible when libmain
-        // resolves DT_NEEDED), then libmain (the one with SDL_main).
-        return new String[] {
-            "SDL2",
-            "main",
-        };
+    /** AMS teardown cushion before BootActivity (debug restart). */
+    private static final long BOOT_LAUNCH_DELAY_MS = 150L;
+
+    /** Fire-and-forget join telemetry only — never gates Boot. */
+    private static final long BACKGROUND_SDL_JOIN_MS = 2_000L;
+
+    private static final Handler sMainHandler = new Handler(Looper.getMainLooper());
+
+    /** Starts BootActivity after cooperative restart teardown. */
+    private static volatile Runnable sPendingBootLaunch;
+
+    /** Set when cooperative SDL_main returns (JNI or SDLMain hook). */
+    private static final AtomicBoolean sCooperativeMainExited = new AtomicBoolean(false);
+
+    private static native void nativeBeginInProcessRestart();
+
+    public static void onNativeMainReturnedForDebugRestart() {
+        sCooperativeMainExited.set(true);
+        Log.i(TAG, "cooperative shutdown: SDL_main returned (JNI)");
+    }
+
+    public static void onSdlMainNativeRunMainReturned() {
+        if (sCooperativeMainExited.compareAndSet(false, true)) {
+            Log.i(TAG, "cooperative shutdown: SDL_main returned (SDLMain)");
+        }
+    }
+
+    public static void cooperativeShutdownForRestart(Runnable onComplete) {
+        if (mSingleton == null) {
+            Log.e(TAG, "cooperative shutdown: no activity");
+            return;
+        }
+        sCooperativeMainExited.set(false);
+        sPendingBootLaunch = onComplete;
+        mSingleton.runOnUiThread(() -> {
+            if (mBrokenLibraries) {
+                launchBootAfterDestroy(onComplete);
+                return;
+            }
+            nativeBeginInProcessRestart();
+            if (!mSingleton.isFinishing()) {
+                Log.i(TAG, "cooperative shutdown: finishing activity");
+                mSingleton.finish();
+            } else {
+                Log.w(TAG, "cooperative shutdown: activity already finishing");
+            }
+        });
+    }
+
+    private static void launchBootAfterDestroy(Runnable launchBoot) {
+        if (launchBoot == null) {
+            return;
+        }
+        Log.i(TAG, "debug restart: launching BootActivity after destroy");
+        launchBoot.run();
+    }
+
+    private static void postBootLaunch(final Runnable launchBoot, long delayMs) {
+        if (launchBoot == null) {
+            return;
+        }
+        if (delayMs <= 0) {
+            sMainHandler.post(() -> launchBootAfterDestroy(launchBoot));
+        } else {
+            sMainHandler.postDelayed(() -> launchBootAfterDestroy(launchBoot), delayMs);
+        }
+    }
+
+    /** Best-effort join for logs only; does not block relaunch. */
+    private static void logBackgroundJoinAsync(final Thread sdlThread) {
+        if (sdlThread == null) {
+            return;
+        }
+        new Thread(() -> {
+            if (!sdlThread.isAlive()) {
+                Log.i(TAG, "background join: SDLThread already stopped");
+                return;
+            }
+            Log.i(TAG, "background join: waiting up to " + BACKGROUND_SDL_JOIN_MS + "ms (telemetry)");
+            try {
+                sdlThread.join(BACKGROUND_SDL_JOIN_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Log.e(TAG, "background join: interrupted: " + e.getMessage());
+            }
+            if (sdlThread.isAlive()) {
+                Log.w(TAG, "background join: SDLThread still alive after "
+                        + BACKGROUND_SDL_JOIN_MS + "ms");
+            } else {
+                Log.i(TAG, "background join: SDLThread joined");
+            }
+        }, "ssb64-restart-join-log").start();
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // BootActivity already prepared storage; ensure cache/sentinel before native load.
+        sPendingBootLaunch = null;
+        sCooperativeMainExited.set(false);
         UserStoragePaths.prepareUserDataDir(getApplicationContext());
         super.onCreate(savedInstanceState);
         DebugSessionHelper.attach(this);
-        // After libmain.so loads — must not use SDL from JNI_OnLoad (see android_user_storage.cpp).
         UserStoragePaths.publishUserDataDirToNative(getApplicationContext());
-        // Lay the touch overlay on top of SDL's GLES surface. Has to come
-        // after super.onCreate so SDLActivity has already installed its
-        // surface as the root content view.
         TouchOverlay.install(this);
+    }
+
+    @Override
+    protected void onDestroy() {
+        final Runnable launchBoot = sPendingBootLaunch;
+        sPendingBootLaunch = null;
+        final boolean restartAttempt = launchBoot != null;
+        final boolean cooperativeExited = sCooperativeMainExited.get();
+
+        Log.i(TAG, "onDestroy begin (restartAttempt=" + restartAttempt
+                + " cooperativeExited=" + cooperativeExited + ")");
+
+        if (restartAttempt) {
+            final Thread sdlThread = mSDLThread;
+            mSDLThread = null;
+            super.onDestroy();
+            logBackgroundJoinAsync(sdlThread);
+            Log.i(TAG, "debug restart: posting Boot in " + BOOT_LAUNCH_DELAY_MS + "ms"
+                    + " (not gated on join)");
+            postBootLaunch(launchBoot, BOOT_LAUNCH_DELAY_MS);
+        } else {
+            super.onDestroy();
+        }
+
+        Log.i(TAG, "onDestroy end");
+    }
+
+    @Override
+    protected String[] getLibraries() {
+        return new String[] {
+            "SDL2",
+            "main",
+        };
     }
 
     @Override
