@@ -1224,9 +1224,9 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Callback([](WidgetInfo&) { ssb64_android_restart_in_debug_mode(); })
         .Options(ButtonOptions().Tooltip(
-            "Restarts the app and writes port_log output to ssb64-debug.log only. "
-            "Does not load debug.env. Normal launches only update ssb64.log and leave "
-            "the debug log untouched."));
+            "Relaunches via BootActivity after a brief \"launching…\" screen (do not use the launcher afterward). "
+            "Writes port_log to ssb64-debug.log (logcat tag ssb64). Enables matchmaking HTTPS, "
+            "automatch FSM/ICE milestones, and turn-credential errors without debug.env."));
 
     AddWidget(path, "Restart with debug.env", WIDGET_BUTTON)
         .RaceDisable(false)
@@ -1241,7 +1241,8 @@ void PortMenu::AddMenuSettings() {
         .Callback([](WidgetInfo&) { ssb64_android_export_debug_log(); })
         .Options(ButtonOptions().Tooltip(
             "Save the last debug-session log (ssb64-debug.log) to a location you choose. "
-            "Requires a prior Restart in Debug Mode or Restart with debug.env."));
+            "Use after Restart in Debug Mode or Restart with debug.env in the same session "
+            "(before cold-starting from the launcher)."));
 #endif
 }
 

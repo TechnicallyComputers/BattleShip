@@ -301,15 +301,21 @@ void CrashSignalHandler(int sig, siginfo_t *info, void *ucontext) {
 
     DumpBacktraceFromContext(ucontext);
 
+#if !defined(__ANDROID__)
     /* Dump the GFX stale-DL diag ring buffer (recent DL pushes + segment
      * writes, all classified by source memory range via the registered
      * Fast::AddressClassifier — see port_dl_ranges.cpp). This identifies
      * the upstream holder behind variant-5-style "walker ran past
      * registered DL range" crashes in gfx_step. NOT async-signal-safe
      * (uses spdlog) — accepts the deadlock risk because we're already
-     * crashing and the diag is more valuable than perfect signal safety. */
+     * crashing and the diag is more valuable than perfect signal safety.
+     *
+     * Skipped on Android: spdlog + allocator re-entry from a SIGSEGV handler
+     * produced follow-on faults (pc≈lr, empty FP backtrace) and masked the
+     * original crash site in exported ssb64-debug.log. */
     Fast::DumpDLDiag(info ? info->si_addr : nullptr,
                      "port_watchdog::CrashSignalHandler");
+#endif
 
     /* Restore default handler and re-raise so the OS still produces the
      * normal termination behavior (core file, exit status). */

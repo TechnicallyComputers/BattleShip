@@ -65,9 +65,8 @@ function(ssb64_android_harden_curl_target target)
 endfunction()
 
 function(ssb64_android_harden_curl_targets)
-    foreach(_t IN ITEMS libcurl_static libcurl_shared CURL::libcurl)
-        ssb64_android_harden_curl_target(${_t})
-    endforeach()
+    # CURL::libcurl is an ALIAS; set_property is illegal on aliases.
+    ssb64_android_harden_curl_target(libcurl_static)
 endfunction()
 
 function(ssb64_android_fetch_mbedtls)

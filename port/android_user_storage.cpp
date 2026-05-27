@@ -59,6 +59,15 @@ extern "C" int ssb64_android_user_data_dir_utf8(char *out, size_t cap)
     return 1;
 }
 
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    (void)vm;
+    (void)reserved;
+    // Path is published from Java after SDLActivity loads native libs (see
+    // UserStoragePaths.publishUserDataDirToNative). Do not call SDL here.
+    return JNI_VERSION_1_6;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_jrickey_battleship_UserStoragePaths_nativeSetUserDataDir(JNIEnv *env, jclass,
                                                                   jstring jpath)

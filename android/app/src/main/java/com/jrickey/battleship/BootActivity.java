@@ -53,6 +53,18 @@ public class BootActivity extends ComponentActivity {
         super.onCreate(savedInstanceState);
         UserStoragePaths.prepareUserDataDir(getApplicationContext());
         buildUi();
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_DEBUG_RESTART, false)) {
+            Log.i(TAG, "debug session restart");
+            if (AssetExtractor.haveExtractedRom(this)) {
+                mStatus.setText("Debug session — launching…");
+                /* Defer so BattleShipActivity/SDL get a GLES surface before
+                 * SDL_main runs PortInit (Fast3dWindow / SDL_CreateWindow). */
+                startGameAfterDebugRestartDelay();
+                return;
+            }
+            mStatus.setText("Debug session — preparing assets…");
+            Log.w(TAG, "BattleShip.o2r missing on debug restart — full boot flow");
+        }
         startAssetExtraction();
     }
 
@@ -80,6 +92,14 @@ public class BootActivity extends ComponentActivity {
      * (defined in res/xml/shortcuts.xml).
      */
     private static final String EXTRA_REPICK = "ssb64.repick";
+
+    /**
+     * Set by {@link DebugSessionHelper} when restarting for a debug log session.
+     * Uses the same BootActivity → BattleShipActivity handoff as the launcher
+     * (startActivity before finish), which is more reliable than finishing
+     * {@link BattleShipActivity} first while it is singleInstance.
+     */
+    public static final String EXTRA_DEBUG_RESTART = "ssb64.debug_restart";
 
     private void buildUi() {
         mStatus = new TextView(this);
@@ -238,6 +258,21 @@ public class BootActivity extends ComponentActivity {
     /* ===================================================================== */
     /*  Stage 3: hand off to the SDL game Activity                           */
     /* ===================================================================== */
+
+    /** Delay before launching game after debug restart (ms). */
+    private static final int DEBUG_RESTART_LAUNCH_DELAY_MS = 100;
+
+    /**
+     * Debug restart calls startGame() from onCreate immediately after CLEAR_TASK;
+     * native PortInit can run before SDL's surface exists. Post a short delay so
+     * BootActivity finishes layout and the next activity can create its surface.
+     */
+    private void startGameAfterDebugRestartDelay() {
+        Log.i(TAG, "debug restart: scheduling BattleShipActivity in "
+                + DEBUG_RESTART_LAUNCH_DELAY_MS + "ms");
+        new Handler(Looper.getMainLooper()).postDelayed(this::startGame,
+                DEBUG_RESTART_LAUNCH_DELAY_MS);
+    }
 
     private void startGame() {
         Log.i(TAG, "Assets ready, launching BattleShipActivity");
