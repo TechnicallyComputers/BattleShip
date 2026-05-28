@@ -23,6 +23,31 @@ extern sb32 mmLanPeerSharesLocalLanSubnet(const char *peer_hostport, const char 
  */
 extern sb32 mmHostportWanIpv4Equal(const char *local_wan_hostport, const char *peer_wan_hostport);
 
+/* TRUE when ipv4_host parses as RFC1918 (10/8, 172.16/12, 192.168/16). */
+extern sb32 mmLanIpv4StringIsRfc1918(const char *ipv4_host);
+
+/* TRUE when any local non-virtual RFC1918 IPv4 interface exists (ignores port). */
+extern sb32 mmLanDetectHasLocalRfc1918(void);
+
+/*
+ * Pick best host:port from candidate list for queue lan_endpoint.
+ * Prefers RFC1918; optional prefer_bind_ip (from BIND/LAN_ENDPOINT) breaks ties.
+ */
+extern sb32 mmLanPickBestHostportFromCandidates(const char *const *hostports, u32 count, char *out, u32 out_cap,
+                                                const char *prefer_bind_ip);
+
+/*
+ * Kernel route source IPv4 for reaching peer (UDP connect + getsockname). Empty on failure.
+ */
+extern sb32 mmLanRouteSourceIpv4ForPeer(const char *peer_hostport, char *out, u32 out_cap);
+
+/*
+ * Peer-directed host:port pick among ICE/local candidates.
+ * Scores route source IP, shared subnet with peer, then RFC1918 / prefer_bind_ip.
+ */
+extern sb32 mmLanPickHostportForPeer(const char *peer_hostport, const char *const *hostports, u32 count, char *out,
+                                     u32 out_cap, const char *prefer_bind_ip);
+
 #endif
 
 #endif /* MM_LAN_DETECT_H */

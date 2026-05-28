@@ -832,6 +832,25 @@ if (NOT MSVC)
     endif()
 endif()
 
+# Cross-ISA / cross-OS netplay: disable FMA contraction on sim-critical decomp/net TUs.
+if (SSB64_NETMENU)
+    if (MSVC)
+        # /fp:precise: no FMA contraction (VS2022+ default); pragma in netplay_fp_contract.h for older MSVC.
+        set(_ssb64_fp_contract_off "/fp:precise")
+    else()
+        set(_ssb64_fp_contract_off "-ffp-contract=off")
+    endif()
+    foreach(_src IN LISTS SSB64_DECOMP_SOURCES)
+        if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
+            _src MATCHES "/decomp/src/gm/gmcamera\\.c$" OR _src MATCHES "/decomp/src/mp/mpcollision\\.c$")
+            set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+        endif()
+    endforeach()
+    foreach(_src IN LISTS SSB64_PORT_NETMENU_SOURCES)
+        set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+    endforeach()
+endif()
+
 ################################################################################
 # Fetch Discord RPC (desktop only — Android drops Discord Rich Presence
 # along with the rest of the network-dependent features).

@@ -20,6 +20,7 @@
 
 #ifdef PORT
 #include <ef/effect.h>
+#include <ef/efmanager.h>
 #include <mp/map.h>
 #endif
 
@@ -28,6 +29,7 @@
 #ifdef PORT
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netplay_sim_quantize.h>
 #include <sys/netrollback.h>
 
 #include <stdlib.h>
@@ -64,7 +66,11 @@ static u32 syNetSyncHashF32(f32 value)
 
 	} reinterpret;
 
+#if defined(SSB64_NETMENU)
+	reinterpret.fv = syNetplayQuantizeF32(value);
+#else
 	reinterpret.fv = value;
+#endif
 
 	return reinterpret.uv;
 }
@@ -2234,6 +2240,11 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
 		fold =
 		    syNetSyncFnvAccumulateU32(fold, syNetSyncPointerFingerprintLow32((const void *)ep->proc_update));
+		if (ep->proc_update == efManagerFoxReflectorProcUpdate)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.index);
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.status);
+		}
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
 		dobj = DObjGetStruct(gobj);
 		if (dobj != NULL)

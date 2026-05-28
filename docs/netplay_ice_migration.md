@@ -15,8 +15,14 @@ BattleShip automatch uses [libjuice](https://github.com/paullouisageneau/libjuic
 |----------|---------|
 | `SSB64_MATCHMAKING_STUN_SERVERS` | Comma-separated STUN hosts (`host:port`); if unset, defaults to coturn host **3478** (same as server) |
 | `SSB64_MATCHMAKING_TURN_HOST` / `TURN_USER` / `TURN_PASS` / `TURN_PORT` | Dev fallback TURN when `/v1/turn-credentials` is unavailable (no static password fallback) |
-| `SSB64_MATCHMAKING_BIND` | Local bind for ICE UDP port (default `0.0.0.0:7778`) |
+| `SSB64_MATCHMAKING_BIND` | Local bind `host:port` (default **`0.0.0.0:0`** = OS ephemeral). **`host:0`** = ephemeral on that NIC. **`host:min-max`** or **`SSB64_MATCHMAKING_PORT_RANGE`** for a scan range. Legacy fixed port: `0.0.0.0:7778`. Host IP sets libjuice `bind_address`. |
+| `SSB64_MATCHMAKING_LAN_ENDPOINT` | Registered `lan_endpoint` for queue/heartbeats; also used as bind IP fallback when bind is `0.0.0.0` |
+| `SSB64_MATCHMAKING_LAN_INTERFACE` | Restrict auto LAN detect to one interface name (`eth1`, etc.) |
+| `SSB64_MATCHMAKING_ICE_LAN_DIRECT` | When `1`: skip STUN/TURN at queue gather (dev LAN soak). **Automatch default is full STUN/TURN** at queue join so LTE+LAN cross-NAT still gets TURN; shared-LAN uses signaling/path policy only (no second gather). |
 | `SSB64_MATCHMAKING_ICE_TCP` | Experimental ICE-TCP active mode after `juice_create` (not TURNS) |
+| `SSB64_MATCHMAKING_ICE_SIGNAL_HOST` | Always trickle local host candidates (default: omit when no local LAN) |
+| `SSB64_MATCHMAKING_ICE_VERBOSE` | Log ICE candidate filter / policy |
+| `SSB64_MATCHMAKING_ICE_REQUIRE_TURN` | Force TURN before gather; default on when no local LAN |
 
 Automatch calls **`GET /v1/turn-credentials`** and passes `stun_host`, `stun_port`, `turn_host`, `turn_port`, `username`, and `password` into libjuice. Coturn **TURNS** on port **5349** is listed as `turns_port` in the API but is not used by libjuice (UDP TURN/STUN on **3478** only). See [`docs/bugs/libjuice_turns_audit_2026-05-25.md`](bugs/libjuice_turns_audit_2026-05-25.md).
 
@@ -48,9 +54,19 @@ See `BattleShip-Server/docs/MATCHMAKING.md` for API details.
 
 ## Flow
 
-1. Player ready → `mmIceInit` + gather → wait in `MN_AM_BIND` until gathering done → enqueue with `ice_sdp` + srflx `udp_endpoint` (`mmIceGetSrflxHostport`).
+1. Player ready → `mmIceInit` + gather (default bind `0.0.0.0:0` ephemeral) → wait in `MN_AM_BIND` until gathering done → refresh `local_lan` + candidate policy → enqueue with full `ice_sdp` (ufrag + host when LAN-direct) and srflx or RFC1918 `udp_endpoint` / `lan_endpoint`.
 2. Queue poll (`MN_AM_POLL`) until matched.
-3. `MN_AM_ICE_CONNECT` → apply `peer_ice_sdp`, **continue** `GET /v1/match/{ticket}` via trickle poll (`EnqueuePollIceTrickle`), drain `ice_signals`, `mmIcePoll` until completed.
+3. `MN_AM_ICE_CONNECT` → host: `POST /v1/match/{ticket}/ice/role-ready` then apply `peer_ice_sdp`; guest: defer peer SDP until poll `ice_connect.edges[].peer_controlling_ready` (trickle polls refresh). **Continue** `GET /v1/match/{ticket}` via trickle poll, drain `ice_signals`, `mmIcePoll` until completed. Requires server `ice_connect` in match JSON ([`netplay_ice_session_coordination.md`](netplay_ice_session_coordination.md)).
+
+### Shared-LAN (single gather + policy)
+
+Automatch uses **one** ICE agent/gather per attempt (see [`docs/bugs/ice_cross_nat_automatch_gather_2026-05-27.md`](bugs/ice_cross_nat_automatch_gather_2026-05-27.md)). After `match_found` on a shared subnet, `mnVSNetAutomatchAMIceBeginConnect` applies candidate policy only — **no** agent teardown or second gather ([`docs/bugs/ice_lan_single_gather_policy_2026-05-27.md`](bugs/ice_lan_single_gather_policy_2026-05-27.md)):
+
+- Strip peer `typ=relay` from SDP when `allow_peer_host`; suppress local relay signaling on LAN.
+- Path validation + relay settle before aborting a bad nomination.
+- `turn_endpoint` omitted on queue when `ICE_LAN_DIRECT=1`, or when `local_lan` is known and relay would be unused (`mnVSNetAutomatchAMIceShouldQueueTurnEndpoint`).
+- **CreatePermission 403** during initial TURN gather on a LAN-only match is **benign ops noise**; connectivity should still complete host↔host. To avoid TURN entirely on LAN dev soaks, set `SSB64_MATCHMAKING_ICE_LAN_DIRECT=1` + `BIND`/`LAN_ENDPOINT` ([`docs/bugs/ice_lan_dual_nic_and_thread_safety_2026-05-26.md`](bugs/ice_lan_dual_nic_and_thread_safety_2026-05-26.md)).
+
 4. `syNetPeerRunBootstrap` over ICE (no UDP link-sync probes).
 5. Staging rendezvous (`STAGE_SCENE_READY/GO`) unchanged; `SSB64_NETPLAY_AUTOMATCH_CONNECT_TIMEOUT_MS` covers ICE + staging wait.
 

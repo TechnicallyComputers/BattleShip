@@ -1,11 +1,7 @@
-// android_debug_session.cpp — Port Menu hooks for debug restart / SAF export.
+// android_debug_session.cpp — Port Menu hooks for debug session arming / SAF export.
 
 #if defined(__ANDROID__)
 
-#include "android_debug_restart.h"
-#include "port_log.h"
-
-#include <libultraship/libultraship.h>
 #include <SDL2/SDL.h>
 #include <android/log.h>
 #include <jni.h>
@@ -53,69 +49,20 @@ static void callDebugHelperStatic(const char *method, const char *sig)
     /* activity is owned by SDL — do not DeleteLocalRef */
 }
 
-static void requestCooperativeMainLoopExit(void)
-{
-    ssb64_android_begin_in_process_restart();
-    auto ctx = Ship::Context::GetInstance();
-    if (ctx != nullptr) {
-        if (auto win = ctx->GetWindow()) {
-            win->Close();
-        }
-    }
-    port_log("SSB64: debug restart — Window::Close() requested (in-process)\n");
-}
-
 extern "C" void ssb64_android_restart_in_debug_mode(void)
 {
-    /* Port menu runs on the SDL_main thread — safe to close the LUS window here. */
-    requestCooperativeMainLoopExit();
+    /* Arms .battleship_debug_session; user relaunches from launcher (no in-process restart). */
     callDebugHelperStatic("restartInDebugMode", "(Landroid/app/Activity;)V");
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_jrickey_battleship_BattleShipActivity_nativeBeginInProcessRestart(JNIEnv *env, jclass clazz)
-{
-    (void)env;
-    (void)clazz;
-    ssb64_android_begin_in_process_restart();
 }
 
 extern "C" void ssb64_android_restart_with_debug_env(void)
 {
-    /* SAF picker runs on UI thread; no SDL_main yet if called before game — skip Close. */
     callDebugHelperStatic("restartWithDebugEnv", "(Landroid/app/Activity;)V");
 }
 
 extern "C" void ssb64_android_export_debug_log(void)
 {
     callDebugHelperStatic("exportDebugLog", "(Landroid/app/Activity;)V");
-}
-
-extern "C" void ssb64_android_notify_main_returned_for_restart(void)
-{
-    JNIEnv *env = static_cast<JNIEnv *>(SDL_AndroidGetJNIEnv());
-    if (env == nullptr) {
-        LOGE("notify_main_returned: JNIEnv unavailable");
-        return;
-    }
-
-    jclass activity = env->FindClass("com/jrickey/battleship/BattleShipActivity");
-    if (activity == nullptr) {
-        jniLogPendingException(env, "FindClass BattleShipActivity");
-        LOGE("BattleShipActivity class not found");
-        return;
-    }
-
-    jmethodID mid = env->GetStaticMethodID(activity, "onNativeMainReturnedForDebugRestart", "()V");
-    if (mid == nullptr) {
-        jniLogPendingException(env, "onNativeMainReturnedForDebugRestart");
-        env->DeleteLocalRef(activity);
-        return;
-    }
-
-    env->CallStaticVoidMethod(activity, mid);
-    jniLogPendingException(env, "onNativeMainReturnedForDebugRestart");
-    env->DeleteLocalRef(activity);
 }
 
 #endif /* __ANDROID__ */

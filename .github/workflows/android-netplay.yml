@@ -2,6 +2,10 @@ name: Android Netplay
 
 # PR smoke: netplay APK only (SSB64_NETMENU=ON). Offline Android is covered by
 # release.yml build-android on tags. One job, one APK — never combined with offline.
+# Cross-ISA soak (Linux x86_64 host vs arm64-v8a guest) is manual; see
+# docs/bugs/netplay_cross_isa_determinism_2026-05-27.md and scripts/netplay-cross-isa-soak.env.example.
+# Cross-OS pacing (e.g. Windows MinGW x64 vs Linux x64) is manual; see
+# docs/bugs/netplay_cross_os_pacing_symmetry_2026-05-27.md and scripts/netplay-cross-os-soak.env.example.
 
 on:
   pull_request:

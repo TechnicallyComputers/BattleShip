@@ -9,6 +9,7 @@
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetInputEarliestIncorrectSimTick[MAXCONTROLLERS];
+static u32 sSYNetInputLastRemoteConfirmedSimTick[MAXCONTROLLERS];
 
 static sb32 syNetInputTimelineIsRemoteHumanSlot(s32 player)
 {
@@ -85,6 +86,7 @@ static void syNetInputTimelineRefreshPlayerEarliest(s32 player, u32 frontier_tic
 void syNetInputTimelineReset(void)
 {
 	memset(sSYNetInputEarliestIncorrectSimTick, 0, sizeof(sSYNetInputEarliestIncorrectSimTick));
+	memset(sSYNetInputLastRemoteConfirmedSimTick, 0, sizeof(sSYNetInputLastRemoteConfirmedSimTick));
 }
 
 void syNetInputTimelineClearIncorrectFrom(u32 from_sim_tick)
@@ -97,6 +99,11 @@ void syNetInputTimelineClearIncorrectFrom(u32 from_sim_tick)
 		    (sSYNetInputEarliestIncorrectSimTick[player] >= from_sim_tick))
 		{
 			sSYNetInputEarliestIncorrectSimTick[player] = 0U;
+		}
+		if ((sSYNetInputLastRemoteConfirmedSimTick[player] != 0U) &&
+		    (sSYNetInputLastRemoteConfirmedSimTick[player] >= from_sim_tick))
+		{
+			sSYNetInputLastRemoteConfirmedSimTick[player] = 0U;
 		}
 	}
 }
@@ -188,6 +195,29 @@ u32 syNetInputTimelineFindEarliestValidatedMismatch(u32 frontier_tick, s32 *out_
 	return best;
 }
 
+u32 syNetInputTimelineFindGlobalEarliestIncorrect(u32 frontier_tick, s32 *out_player)
+{
+	return syNetInputTimelineFindEarliestValidatedMismatch(frontier_tick, out_player);
+}
+
+u32 syNetInputTimelineGetEarliestIncorrectForPlayer(s32 player)
+{
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return 0U;
+	}
+	return sSYNetInputEarliestIncorrectSimTick[player];
+}
+
+u32 syNetInputTimelineGetLastRemoteConfirmedSimTick(s32 player)
+{
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return 0U;
+	}
+	return sSYNetInputLastRemoteConfirmedSimTick[player];
+}
+
 u32 syNetInputTimelineGetEarliestIncorrect(void)
 {
 	u32 best;
@@ -256,6 +286,11 @@ void syNetInputTimelineOnRemoteConfirmedWire(s32 player, u32 wire_tick, const SY
 	if (sim_tick == 0U)
 	{
 		return;
+	}
+	if ((sSYNetInputLastRemoteConfirmedSimTick[player] == 0U) ||
+	    (sim_tick > sSYNetInputLastRemoteConfirmedSimTick[player]))
+	{
+		sSYNetInputLastRemoteConfirmedSimTick[player] = sim_tick;
 	}
 	if (syNetInputGetHistoryFrame(player, sim_tick, &published) == FALSE)
 	{

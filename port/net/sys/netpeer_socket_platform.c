@@ -9,6 +9,8 @@
 #include <windows.h>
 
 static int s_wsa_started;
+static LARGE_INTEGER s_win_monotonic_freq;
+static int s_win_monotonic_freq_init;
 
 void syNetPeerSocketOsStartup(void)
 {
@@ -63,6 +65,7 @@ int syNetPeerOsSetsockoptRecvBuf(syNetPeerOsSocket s, int bytes)
 
 void syNetPeerOsSleepMicros(unsigned usec)
 {
+	/* Windows Sleep() is ~1 ms granularity; sub-ms polls round up to 1 ms. */
 	if (usec == 0U)
 	{
 		return;
@@ -131,6 +134,29 @@ u64 syNetPeerOsWallClockUnixMs(void)
 	uli.HighPart = ft.dwHighDateTime;
 	/* 100-ns intervals since 1601-01-01 UTC → Unix ms */
 	return (u64)((uli.QuadPart - 116444736000000000ULL) / 10000ULL);
+}
+
+u64 syNetPeerOsMonotonicMs(void)
+{
+	LARGE_INTEGER counter;
+
+	if (s_win_monotonic_freq_init == 0)
+	{
+		if (QueryPerformanceFrequency(&s_win_monotonic_freq) == 0)
+		{
+			s_win_monotonic_freq.QuadPart = 0;
+		}
+		s_win_monotonic_freq_init = 1;
+	}
+	if (s_win_monotonic_freq.QuadPart == 0)
+	{
+		return (u64)GetTickCount64();
+	}
+	if (QueryPerformanceCounter(&counter) == 0)
+	{
+		return (u64)GetTickCount64();
+	}
+	return (u64)((counter.QuadPart * 1000ULL) / (u64)s_win_monotonic_freq.QuadPart);
 }
 
 int syNetPeerOsSocketLastError(void)
@@ -237,6 +263,17 @@ u64 syNetPeerOsWallClockUnixMs(void)
 	struct timespec ts;
 
 	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+	{
+		return 0ULL;
+	}
+	return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000L);
+}
+
+u64 syNetPeerOsMonotonicMs(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
 	{
 		return 0ULL;
 	}

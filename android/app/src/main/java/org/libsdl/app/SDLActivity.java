@@ -1886,8 +1886,6 @@ class SDLMain implements Runnable {
 
         SDLActivity.nativeRunMain(library, function, arguments);
 
-        com.jrickey.battleship.BattleShipActivity.onSdlMainNativeRunMainReturned();
-
         Log.v("SDL", "Finished main function");
 
         if (SDLActivity.mSingleton != null && !SDLActivity.mSingleton.isFinishing()) {
