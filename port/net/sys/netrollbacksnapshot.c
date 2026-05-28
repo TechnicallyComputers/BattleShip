@@ -1,6 +1,9 @@
 #include <sys/netrollbacksnapshot.h>
 
 #include <sys/netsync.h>
+#if defined(SSB64_NETMENU)
+#include <sys/netplay_sim_quantize.h>
+#endif
 #include <sys/objdef.h>
 #include <sys/objanim.h>
 #include <sys/objhelper.h>
@@ -58,6 +61,7 @@
 #ifdef PORT
 #include <sys/netrollback.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <it/itmain.h>
@@ -2313,6 +2317,11 @@ static void syNetRbSnapCaptureDObjAnim(SYNetRbSnapDObjAnimBlob *dst, DObj *dobj)
 	dst->anim_wait = dobj->anim_wait;
 	dst->anim_speed = dobj->anim_speed;
 	dst->anim_frame = dobj->anim_frame;
+#if defined(SSB64_NETMENU)
+	dst->anim_wait = syNetplayQuantizeF32(dst->anim_wait);
+	dst->anim_speed = syNetplayQuantizeF32(dst->anim_speed);
+	dst->anim_frame = syNetplayQuantizeF32(dst->anim_frame);
+#endif
 	dst->is_anim_root = (u8)(dobj->is_anim_root != FALSE);
 	dst->dobj_flags = dobj->flags;
 	dst->event32_ptr = (uintptr_t)dobj->anim_joint.event32;
@@ -2385,6 +2394,15 @@ static void syNetRbSnapApplyDObjAnim(DObj *dobj, const SYNetRbSnapDObjAnimBlob *
 	dobj->anim_wait = src->anim_wait;
 	dobj->anim_speed = src->anim_speed;
 	dobj->anim_frame = src->anim_frame;
+#if defined(SSB64_NETMENU)
+	dobj->anim_wait = syNetplayQuantizeF32(dobj->anim_wait);
+	dobj->anim_speed = syNetplayQuantizeF32(dobj->anim_speed);
+	dobj->anim_frame = syNetplayQuantizeF32(dobj->anim_frame);
+	if (dobj->parent_gobj != NULL)
+	{
+		dobj->parent_gobj->anim_frame = dobj->anim_frame;
+	}
+#endif
 	dobj->is_anim_root = (src->is_anim_root != 0U) ? TRUE : FALSE;
 	dobj->flags = src->dobj_flags;
 	dobj->anim_joint.event32 = (AObjEvent32 *)src->event32_ptr;
@@ -2622,6 +2640,9 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 		if (fp->joints[ji] != NULL)
 		{
 			blob->joint_translate[ji] = fp->joints[ji]->translate.vec.f;
+#if defined(SSB64_NETMENU)
+			syNetplayQuantizeVec3f(&blob->joint_translate[ji]);
+#endif
 			syNetRbSnapCaptureDObjAnim(&blob->joint_anim[ji], fp->joints[ji]);
 			blob->joint_dobj_flags[ji] = fp->joints[ji]->flags;
 			blob->joint_anim_joint_event32[ji] =
@@ -2630,7 +2651,11 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	}
 	if (fighter_gobj != NULL)
 	{
+#if defined(SSB64_NETMENU)
+		blob->gobj_anim_frame = syNetplayQuantizeF32(fighter_gobj->anim_frame);
+#else
 		blob->gobj_anim_frame = fighter_gobj->anim_frame;
+#endif
 	}
 }
 
@@ -2757,6 +2782,9 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 		if (fp->joints[ji] != NULL)
 		{
 			fp->joints[ji]->translate.vec.f = blob->joint_translate[ji];
+#if defined(SSB64_NETMENU)
+			syNetplayQuantizeVec3f(&fp->joints[ji]->translate.vec.f);
+#endif
 			syNetRbSnapApplyDObjAnim(fp->joints[ji], &blob->joint_anim[ji]);
 			if (blob->joint_anim_joint_event32[ji] != 0U)
 			{
@@ -2771,7 +2799,11 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	}
 	if (fighter_gobj != NULL)
 	{
+#if defined(SSB64_NETMENU)
+		fighter_gobj->anim_frame = syNetplayQuantizeF32(blob->gobj_anim_frame);
+#else
 		fighter_gobj->anim_frame = blob->gobj_anim_frame;
+#endif
 	}
 }
 
@@ -2922,6 +2954,20 @@ static sb32 syNetRbSnapFighterFieldDiffEnabled(void)
 	return (s_env_cache != 0) ? TRUE : FALSE;
 }
 
+static sb32 syNetRbSnapRingSaveDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_SNAPSHOT_RING_SAVE_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
 static void syNetRbSnapLogFieldDiffScalar(const char *tag, u32 tick, s32 player, const char *field, u32 live_bits,
                                           u32 blob_bits)
 {
@@ -3023,6 +3069,39 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "coll_pos_prev_y",
 		                              syNetRbSnapF32DiagBits(fp->coll_data.pos_prev.y),
 		                              syNetRbSnapF32DiagBits(blob->coll.pos_prev.y));
+		if (fp->fkind == nFTKindFox)
+		{
+			u32 live_fox_eff_id;
+			u32 blob_fox_eff_id;
+
+			live_fox_eff_id = syNetRbSnapGobjId(fp->status_vars.fox.speciallw.effect_gobj);
+			blob_fox_eff_id = blob->fox_speciallw_effect_gobj_id;
+			syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "fox_speciallw_effect_gobj_id",
+			                              live_fox_eff_id, blob_fox_eff_id);
+		}
+		for (ji = 0; ji < 4; ji++)
+		{
+			if (fp->joints[ji] != NULL)
+			{
+				char field_name[24];
+
+				snprintf(field_name, sizeof(field_name), "joint%u_tx", (unsigned int)ji);
+				syNetRbSnapLogFieldDiffScalar(
+				    reason, tick, slot_index, field_name,
+				    syNetRbSnapF32DiagBits(fp->joints[ji]->translate.vec.f.x),
+				    syNetRbSnapF32DiagBits(blob->joint_translate[ji].x));
+				snprintf(field_name, sizeof(field_name), "joint%u_ty", (unsigned int)ji);
+				syNetRbSnapLogFieldDiffScalar(
+				    reason, tick, slot_index, field_name,
+				    syNetRbSnapF32DiagBits(fp->joints[ji]->translate.vec.f.y),
+				    syNetRbSnapF32DiagBits(blob->joint_translate[ji].y));
+				snprintf(field_name, sizeof(field_name), "joint%u_tz", (unsigned int)ji);
+				syNetRbSnapLogFieldDiffScalar(
+				    reason, tick, slot_index, field_name,
+				    syNetRbSnapF32DiagBits(fp->joints[ji]->translate.vec.f.z),
+				    syNetRbSnapF32DiagBits(blob->joint_translate[ji].z));
+			}
+		}
 		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
 		{
 			dobj = fp->joints[ji];
@@ -5222,7 +5301,27 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapEffectBlob *bl
 	case SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR:
 		if (fighter_gobj != NULL)
 		{
-			return efManagerFoxReflectorMakeEffect(fighter_gobj);
+			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: effect_respawn kind=FOX_REFLECTOR blob_gobj_id=%u fighter_gobj_id=%u\n",
+				    blob->gobj_id, blob->fighter_gobj_id);
+			}
+			effect_gobj = efManagerFoxReflectorMakeEffect(fighter_gobj);
+			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+			{
+				port_log("SSB64 NetRbSnapshot: effect_respawn kind=FOX_REFLECTOR result=%s new_gobj_id=%u\n",
+				         (effect_gobj != NULL) ? "ok" : "fail",
+				         (effect_gobj != NULL) ? syNetRbSnapGobjId(effect_gobj) : 0U);
+			}
+			return effect_gobj;
+		}
+		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetRbSnapshot: effect_respawn kind=FOX_REFLECTOR result=fail reason=no_fighter blob_gobj_id=%u "
+			    "fighter_gobj_id=%u\n",
+			    blob->gobj_id, blob->fighter_gobj_id);
 		}
 		break;
 	case SYNETRB_EFFECT_RESPAWN_NESS_PK_WAVE:
@@ -5375,6 +5474,118 @@ static sb32 syNetRbSnapLiveEffectListedInSnapshot(const SYNetRbSnapshotSlot *slo
 		}
 	}
 	return FALSE;
+}
+
+static sb32 syNetRbSnapFighterInFoxReflectorScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindFox))
+	{
+		return FALSE;
+	}
+	if (((fp->status_id >= nFTFoxStatusSpecialLwScopeStart) && (fp->status_id <= nFTFoxStatusSpecialLwScopeEnd)) ||
+	    ((fp->status_id >= nFTFoxStatusSpecialAirLwStart) && (fp->status_id <= nFTFoxStatusSpecialAirLwTurn)))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapLiveHasFoxReflectorScope(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if (syNetRbSnapFighterInFoxReflectorScope(fp) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static const SYNetRbSnapEffectBlob *syNetRbSnapFindEffectBlobByGobjId(const SYNetRbSnapshotSlot *slot, u32 gobj_id)
+{
+	s32 ei;
+
+	if ((slot == NULL) || (gobj_id == 0U))
+	{
+		return NULL;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob = &slot->effects[ei];
+
+		if ((blob->is_valid != FALSE) && (blob->gobj_id == gobj_id))
+		{
+			return blob;
+		}
+	}
+	return NULL;
+}
+
+static void syNetRbSnapEnsureFoxReflectorEffectsFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		const SYNetRbSnapFighterBlob *fb;
+		u32 eff_id;
+		GObj *eg;
+		const SYNetRbSnapEffectBlob *eb;
+		SYNetRbSnapEffectBlob synth;
+		s32 pi;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (syNetRbSnapFighterInFoxReflectorScope(fp) == FALSE)
+		{
+			continue;
+		}
+		pi = fp->player;
+		if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		fb = &slot->fighters[pi];
+		if (fb->is_valid == FALSE)
+		{
+			continue;
+		}
+		eff_id = fb->fox_speciallw_effect_gobj_id;
+		if (eff_id == 0U)
+		{
+			continue;
+		}
+		eg = gcFindGObjByID(eff_id);
+		if ((eg != NULL) && (efGetStruct(eg) != NULL))
+		{
+			continue;
+		}
+		eb = syNetRbSnapFindEffectBlobByGobjId(slot, eff_id);
+		if (eb != NULL)
+		{
+			(void)syNetRbSnapTryRespawnEffectFromBlob(eb);
+		}
+		else
+		{
+			memset(&synth, 0, sizeof(synth));
+			synth.is_valid = TRUE;
+			synth.gobj_id = eff_id;
+			synth.fighter_gobj_id = (u32)fighter_gobj->id;
+			synth.respawn_kind = SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR;
+			(void)syNetRbSnapTryRespawnEffectFromBlob(&synth);
+		}
+	}
 }
 
 /*
@@ -6239,6 +6450,19 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	slot->hash_animation = syNetSyncHashFighterAnimationStateForRollback();
 #ifdef PORT
 	slot->hash_effect = syNetSyncHashActiveEffectsForRollback();
+	if (syNetRbSnapRingSaveDiagEnabled() != FALSE)
+	{
+		u32 live_figh_full;
+		u32 live_figh_light;
+
+		live_figh_full = syNetSyncHashBattleFightersFull();
+		live_figh_light = syNetSyncHashBattleFighters();
+		port_log(
+		    "SSB64 NetRbSnapshot: ring_save_diag tick=%u ring_figh=0x%08X live_figh_full=0x%08X live_figh_light=0x%08X "
+		    "ring_anim=0x%08X ring_eff=0x%08X\n",
+		    completed_sim_tick, slot->hash_fighter, live_figh_full, live_figh_light, slot->hash_animation,
+		    slot->hash_effect);
+	}
 #endif
 
 	return TRUE;
@@ -6281,6 +6505,7 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapApplyWorld(&slot->world, slot->tick);
 #ifdef PORT
 	syNetRbSnapResetParticlesForRollback();
+	syNetRbSnapEnsureFoxReflectorEffectsFromSlot(slot);
 	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
 	{
 		GObj *fighter_gobj_re;
@@ -6586,6 +6811,28 @@ static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot,
 	if (sync_presentation != FALSE)
 	{
 		syNetRbSnapshotSyncFighterPresentation();
+		if (syNetRbSnapLiveHasFoxReflectorScope() != FALSE)
+		{
+			GObj *fighter_gobj_fx;
+
+			for (fighter_gobj_fx = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj_fx != NULL;
+			     fighter_gobj_fx = fighter_gobj_fx->link_next)
+			{
+				FTStruct *fp_fx;
+				s32 pidx_fx;
+
+				fp_fx = ftGetStruct(fighter_gobj_fx);
+				if (fp_fx == NULL)
+				{
+					continue;
+				}
+				pidx_fx = fp_fx->player;
+				if ((pidx_fx >= 0) && (pidx_fx < GMCOMMON_PLAYERS_MAX))
+				{
+					syNetRbSnapRebindFighterEffectGobjs(&slot->fighters[pidx_fx], fp_fx);
+				}
+			}
+		}
 		syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
 		syNetRbSnapshotRefreshGrabCouplingGeometry();
 	}

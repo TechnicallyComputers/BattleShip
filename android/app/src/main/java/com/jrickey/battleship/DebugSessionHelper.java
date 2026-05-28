@@ -15,10 +15,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
- * Debug session restarts and SAF import/export for {@code ssb64-debug.log} / {@code debug.env}.
+ * Debug session arming and SAF import/export for {@code ssb64-debug.log} / {@code debug.env}.
+ *
+ * <p>On Android, debug mode is armed by writing {@link UserStoragePaths#DEBUG_SESSION_SENTINEL};
+ * the next launch from the launcher consumes it and opens {@code ssb64-debug.log}. There is no
+ * in-process relaunch.
  */
 public final class DebugSessionHelper {
     private static final String TAG = "ssb64.debug";
+
+    private static final String TOAST_MANUAL_RELAUNCH =
+        "Debug session armed. Close the app, then open it again from the launcher.";
 
     private static final int REQ_IMPORT_ENV = 9101;
     private static final int REQ_EXPORT_DEBUG_LOG = 9102;
@@ -45,7 +52,7 @@ public final class DebugSessionHelper {
             Log.e(TAG, "DebugSessionHelper not attached");
             return;
         }
-        activity.runOnUiThread(helper::beginRestartLogOnly);
+        activity.runOnUiThread(helper::armLogOnlySession);
     }
 
     public static void restartWithDebugEnv(Activity activity) {
@@ -99,12 +106,13 @@ public final class DebugSessionHelper {
         mActivity.startActivityForResult(intent, REQ_EXPORT_DEBUG_LOG);
     }
 
-    private void beginRestartLogOnly() {
+    private void armLogOnlySession() {
         if (!writeDebugSession("log_only")) {
-            toast("Could not start debug session");
+            toast("Could not arm debug session");
             return;
         }
-        restartGame();
+        Log.i(TAG, "debug session armed (log_only); manual relaunch required");
+        toast(TOAST_MANUAL_RELAUNCH);
     }
 
     private void onEnvFilePicked(Uri uri) {
@@ -125,10 +133,11 @@ public final class DebugSessionHelper {
             return;
         }
         if (!writeDebugSession("env")) {
-            toast("Saved debug.env but could not start debug session");
+            toast("Saved debug.env but could not arm debug session");
             return;
         }
-        restartGame();
+        Log.i(TAG, "debug session armed (env); manual relaunch required");
+        toast(TOAST_MANUAL_RELAUNCH);
     }
 
     private void onDebugLogExportDestination(Uri destUri) {
@@ -142,7 +151,7 @@ public final class DebugSessionHelper {
         }
         File src = new File(userDir, "ssb64-debug.log");
         if (!src.isFile()) {
-            toast("No ssb64-debug.log yet — use Restart in Debug Mode first");
+            toast("No ssb64-debug.log yet — arm Debug Mode, relaunch from launcher, then export");
             return;
         }
         try {
@@ -167,26 +176,6 @@ public final class DebugSessionHelper {
             Log.e(TAG, "writeDebugSession: " + e.getMessage());
             return false;
         }
-    }
-
-    /**
-     * Relaunch through {@link BootActivity} after cooperative {@code SDL_main} shutdown.
-     * Native code requests {@code Window::Close()} before calling here; we join the SDL
-     * thread (and {@code nativeQuit}) so only one {@code SDL_main} exists when the game
-     * activity starts again.
-     */
-    private void restartGame() {
-        if (!(mActivity instanceof BattleShipActivity)) {
-            Log.e(TAG, "debug restart: expected BattleShipActivity");
-            return;
-        }
-        Log.i(TAG, "debug restart: finish → onDestroy join → BootActivity");
-        BattleShipActivity.cooperativeShutdownForRestart(() -> {
-            Intent intent = new Intent(mActivity.getApplicationContext(), BootActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            intent.putExtra(BootActivity.EXTRA_DEBUG_RESTART, true);
-            mActivity.getApplicationContext().startActivity(intent);
-        });
     }
 
     private static void copyUriToFile(ContentResolver resolver, Uri src, File dest)

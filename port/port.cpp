@@ -27,7 +27,9 @@
 #include <ship/resource/ResourceType.h>
 
 #include "app_paths.h"
+#if defined(__ANDROID__)
 #include "debug_env.h"
+#endif
 #include "debug_session.h"
 #include <ssb64_paths_capi.h>
 #include "bridge/audio_bridge.h"
@@ -45,7 +47,8 @@
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 #if defined(__ANDROID__)
-#include "android_debug_restart.h"
+#include <android/log.h>
+#define SSB64_ANDROID_LOG_TAG "ssb64"
 #endif
 
 #include <filesystem>
@@ -338,16 +341,11 @@ static std::shared_ptr<Ship::Context> sContext;
  * Ship::IResource holders, and other TU globals can call std::terminate() on
  * macOS (SIGABRT with exit/cxa_finalize in the crash log) even though the game
  * already shut down cleanly — e.g. Port menu Quit after ESC. Skip that phase on
- * POSIX the same way lbreloc_bridge uses _exit for stale-o2r (see
- * docs/bugs/macos_shutdown_sigabrt_2026-05-24.md). */
+ * POSIX/Android the same way lbreloc_bridge uses _exit for stale-o2r (see
+ * docs/bugs/macos_shutdown_sigabrt_2026-05-24.md). Debug relaunch on Android is
+ * manual launcher restart only (docs/bugs/android_debug_restart_port_menu_segv_2026-05-25.md).
+ */
 static void port_exit_process(int code) {
-#if defined(__ANDROID__)
-	if (ssb64_android_consume_in_process_restart() != 0) {
-		/* Return from SDL_main; Java must not join SDL on the main thread (see BattleShipActivity). */
-		ssb64_android_notify_main_returned_for_restart();
-		return;
-	}
-#endif
 #if defined(__unix__) || defined(__APPLE__)
 	_exit(code);
 #else
@@ -914,6 +912,7 @@ int main(int argc, char* argv[]) {
 	std::string logPath;
 #if defined(__ANDROID__)
 	char userDir[512] = {};
+	__android_log_print(ANDROID_LOG_INFO, SSB64_ANDROID_LOG_TAG, "SSB64: main() entered (android)");
 #endif
 
 	/* Use an absolute path for ssb64.log so it lands in a predictable
@@ -1010,8 +1009,6 @@ int main(int argc, char* argv[]) {
 	if (debug_session == SSB64_DEBUG_SESSION_ENV) {
 		ssb64_load_debug_env_file();
 	}
-#else
-	ssb64_load_debug_env_file();
 #endif
 
 #if defined(__ANDROID__)

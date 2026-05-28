@@ -1224,7 +1224,7 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Callback([](WidgetInfo&) { ssb64_android_restart_in_debug_mode(); })
         .Options(ButtonOptions().Tooltip(
-            "Relaunches via BootActivity after a brief \"launching…\" screen (do not use the launcher afterward). "
+            "Arms debug logging for the next launch: close the app, then open it again from the launcher. "
             "Writes port_log to ssb64-debug.log (logcat tag ssb64). Enables matchmaking HTTPS, "
             "automatch FSM/ICE milestones, and turn-credential errors without debug.env."));
 
@@ -1232,17 +1232,17 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Callback([](WidgetInfo&) { ssb64_android_restart_with_debug_env(); })
         .Options(ButtonOptions().Tooltip(
-            "Pick any text file (name does not matter). Its contents are saved as debug.env, "
-            "then the app restarts in a debug session. Use KEY=value lines with SSB64_* names "
-            "(see docs/netplay_environment_variables.md). Skipped lines are listed in ssb64-debug.log."));
+            "Pick any text file (name does not matter). Its contents are saved as debug.env and a debug "
+            "session is armed; close the app and open it again from the launcher. Use KEY=value lines "
+            "with SSB64_* names (see docs/netplay_environment_variables.md). Skipped lines are listed "
+            "in ssb64-debug.log."));
 
     AddWidget(path, "Export ssb64-debug.log", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([](WidgetInfo&) { ssb64_android_export_debug_log(); })
         .Options(ButtonOptions().Tooltip(
-            "Save the last debug-session log (ssb64-debug.log) to a location you choose. "
-            "Use after Restart in Debug Mode or Restart with debug.env in the same session "
-            "(before cold-starting from the launcher)."));
+            "Save ssb64-debug.log to a location you choose. Use after arming Debug Mode (or debug.env) "
+            "and completing one launcher relaunch."));
 #endif
 }
 

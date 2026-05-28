@@ -22,6 +22,7 @@
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 #ifdef PORT
@@ -714,6 +715,21 @@ sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_sp
 			return FALSE;
 		}
 	}
+	/* Ephemeral bind: discover LAN IP only; real port comes from ICE gather. */
+	if (port == 0U)
+	{
+		if (mmLanDetectBestRfc1918(0U, want_if, best_ip, sizeof(best_ip)) == FALSE)
+		{
+#ifdef PORT
+			port_log("SSB64 Automatch LAN detect: no RFC1918 IPv4 candidate (override with SSB64_MATCHMAKING_LAN_ENDPOINT)\n");
+#endif
+			return FALSE;
+		}
+#ifdef PORT
+		port_log("SSB64 Automatch LAN detect: RFC1918 %s (port pending gather)\n", best_ip);
+#endif
+		return FALSE;
+	}
 
 	if (mmLanDetectBestRfc1918(port, want_if, best_ip, sizeof(best_ip)) == FALSE)
 	{
@@ -735,6 +751,273 @@ sb32 mmLanDetectEndpoint(char *buf, u32 bufsize, s32 udp_fd, const char *bind_sp
 	port_log("SSB64 Automatch LAN detect: using %s\n", buf);
 #endif
 	return TRUE;
+}
+
+sb32 mmLanIpv4StringIsRfc1918(const char *ipv4_host)
+{
+	struct in_addr addr;
+
+	if ((ipv4_host == NULL) || (ipv4_host[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (inet_pton(AF_INET, ipv4_host, &addr) != 1)
+	{
+		return FALSE;
+	}
+	return addr_is_rfc1918(&addr);
+}
+
+sb32 mmLanDetectHasLocalRfc1918(void)
+{
+	char best_ip[INET_ADDRSTRLEN];
+	const char *want_if;
+
+	want_if = getenv("SSB64_MATCHMAKING_LAN_INTERFACE");
+	return mmLanDetectBestRfc1918(0U, want_if, best_ip, sizeof(best_ip));
+}
+
+static int mmLanScoreHostIpv4(const char *ipv4_host, const char *prefer_bind_ip)
+{
+	struct in_addr addr;
+	struct in_addr pref;
+	int score;
+
+	score = 0;
+	if (inet_pton(AF_INET, ipv4_host, &addr) != 1)
+	{
+		return -1000;
+	}
+	if (addr_is_rfc1918(&addr) != FALSE)
+	{
+		score += 100;
+	}
+	else
+	{
+		score -= 50;
+	}
+	if ((prefer_bind_ip != NULL) && (prefer_bind_ip[0] != '\0') && (inet_pton(AF_INET, prefer_bind_ip, &pref) == 1) &&
+	    addr.s_addr == pref.s_addr)
+	{
+		score += 50;
+	}
+	return score;
+}
+
+sb32 mmLanPickBestHostportFromCandidates(const char *const *hostports, u32 count, char *out, u32 out_cap,
+                                         const char *prefer_bind_ip)
+{
+	u32 i;
+	int best_score;
+	sb32 ok;
+
+	if ((hostports == NULL) || (out == NULL) || (out_cap < 8U) || (count == 0U))
+	{
+		return FALSE;
+	}
+	out[0] = '\0';
+	best_score = -10000;
+	ok = FALSE;
+	for (i = 0U; i < count; i++)
+	{
+		const char *hp;
+		char host[INET_ADDRSTRLEN];
+		int sc;
+
+		hp = hostports[i];
+		{
+			const char *colon;
+
+			if ((hp == NULL) || (hp[0] == '\0'))
+			{
+				continue;
+			}
+			colon = strrchr(hp, ':');
+			if (colon == NULL || colon == hp)
+			{
+				continue;
+			}
+			snprintf(host, sizeof(host), "%.*s", (int)(colon - hp), hp);
+		}
+		sc = mmLanScoreHostIpv4(host, prefer_bind_ip);
+		if ((sc > best_score) || ((sc == best_score) && (ok == FALSE)))
+		{
+			best_score = sc;
+			snprintf(out, out_cap, "%s", hp);
+			ok = TRUE;
+		}
+	}
+	return ok;
+}
+
+static sb32 parse_hostport_ipv4_port(const char *hostport, u16 *out_port)
+{
+	const char *colon;
+
+	if ((hostport == NULL) || (out_port == NULL))
+	{
+		return FALSE;
+	}
+	colon = strrchr(hostport, ':');
+	if ((colon == NULL) || (colon == hostport) || (colon[1] == '\0'))
+	{
+		return FALSE;
+	}
+	if (sscanf(colon + 1, "%hu", out_port) != 1)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+sb32 mmLanRouteSourceIpv4ForPeer(const char *peer_hostport, char *out, u32 out_cap)
+{
+	struct in_addr peer_addr;
+	struct sockaddr_in peer_sin;
+#ifdef _WIN32
+	SOCKET fd;
+#else
+	int fd;
+#endif
+	struct sockaddr_in local_sin;
+	socklen_t local_len;
+	u16 peer_port;
+
+	if ((peer_hostport == NULL) || (peer_hostport[0] == '\0') || (out == NULL) || (out_cap < 8U))
+	{
+		return FALSE;
+	}
+	out[0] = '\0';
+	if ((parse_hostport_ipv4(peer_hostport, &peer_addr) == FALSE) ||
+	    (parse_hostport_ipv4_port(peer_hostport, &peer_port) == FALSE))
+	{
+		return FALSE;
+	}
+#ifdef _WIN32
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd == INVALID_SOCKET)
+	{
+		return FALSE;
+	}
+#else
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0)
+	{
+		return FALSE;
+	}
+#endif
+	memset(&peer_sin, 0, sizeof(peer_sin));
+	peer_sin.sin_family = AF_INET;
+	peer_sin.sin_addr = peer_addr;
+	peer_sin.sin_port = htons(peer_port);
+	if (connect(fd, (struct sockaddr *)&peer_sin, sizeof(peer_sin)) != 0)
+	{
+#ifdef _WIN32
+		closesocket(fd);
+#else
+		close(fd);
+#endif
+		return FALSE;
+	}
+	memset(&local_sin, 0, sizeof(local_sin));
+	local_len = (socklen_t)sizeof(local_sin);
+	if (getsockname(fd, (struct sockaddr *)&local_sin, &local_len) != 0)
+	{
+#ifdef _WIN32
+		closesocket(fd);
+#else
+		close(fd);
+#endif
+		return FALSE;
+	}
+#ifdef _WIN32
+	closesocket(fd);
+#else
+	close(fd);
+#endif
+	if (inet_ntop(AF_INET, &local_sin.sin_addr, out, (socklen_t)out_cap) == NULL)
+	{
+		out[0] = '\0';
+		return FALSE;
+	}
+	return (out[0] != '\0') ? TRUE : FALSE;
+}
+
+static int mmLanScoreHostportForPeer(const char *hostport, const char *peer_hostport, const char *route_src_ip,
+                                     const char *prefer_bind_ip)
+{
+	char host[INET_ADDRSTRLEN];
+	const char *colon;
+	int score;
+
+	if ((hostport == NULL) || (hostport[0] == '\0'))
+	{
+		return -10000;
+	}
+	colon = strrchr(hostport, ':');
+	if (colon == NULL || colon == hostport)
+	{
+		return -10000;
+	}
+	snprintf(host, sizeof(host), "%.*s", (int)(colon - hostport), hostport);
+	score = mmLanScoreHostIpv4(host, prefer_bind_ip);
+	if ((peer_hostport != NULL) && (peer_hostport[0] != '\0') &&
+	    (mmLanPeerSharesLocalLanSubnet(peer_hostport, hostport) != FALSE))
+	{
+		score += 150;
+	}
+	if ((route_src_ip != NULL) && (route_src_ip[0] != '\0') && (strcmp(host, route_src_ip) == 0))
+	{
+		score += 200;
+	}
+	return score;
+}
+
+sb32 mmLanPickHostportForPeer(const char *peer_hostport, const char *const *hostports, u32 count, char *out,
+                               u32 out_cap, const char *prefer_bind_ip)
+{
+	char route_src[INET_ADDRSTRLEN];
+	u32 i;
+	int best_score;
+	sb32 ok;
+
+	if ((hostports == NULL) || (out == NULL) || (out_cap < 8U) || (count == 0U))
+	{
+		return FALSE;
+	}
+	out[0] = '\0';
+	route_src[0] = '\0';
+	if ((peer_hostport != NULL) && (peer_hostport[0] != '\0'))
+	{
+		(void)mmLanRouteSourceIpv4ForPeer(peer_hostport, route_src, sizeof(route_src));
+#ifdef PORT
+		if (route_src[0] != '\0')
+		{
+			port_log("SSB64 Automatch LAN detect: route source for peer %s is %s\n", peer_hostport, route_src);
+		}
+#endif
+	}
+	best_score = -10000;
+	ok = FALSE;
+	for (i = 0U; i < count; i++)
+	{
+		const char *hp;
+		int sc;
+
+		hp = hostports[i];
+		if ((hp == NULL) || (hp[0] == '\0'))
+		{
+			continue;
+		}
+		sc = mmLanScoreHostportForPeer(hp, peer_hostport, route_src, prefer_bind_ip);
+		if ((sc > best_score) || ((sc == best_score) && (ok == FALSE)))
+		{
+			best_score = sc;
+			snprintf(out, out_cap, "%s", hp);
+			ok = TRUE;
+		}
+	}
+	return ok;
 }
 
 #endif /* PORT && SSB64_NETMENU */

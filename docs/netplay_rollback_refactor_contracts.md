@@ -77,6 +77,12 @@ stateDiagram-v2
 - **Local and input-driven** (GekkoNet `GetMinIncorrectFrame` style): rollback when confirmed input proves a prior prediction wrong.
 - **Peer symmetric rollback notices** — **authoritative episode contract** (2026-05-19): initiator locks `(epoch, load, mismatch, target)` in `ROLLBACK_SYNC` (type 24); follower executes that tuple verbatim (`SSB64_NETPLAY_ROLLBACK_EPISODE_AUTHORITY=0` restores legacy re-derivation). `RESIM_POST_MATCH` releases peer epoch. Not a substitute for independent per-peer mismatch detection until that path is proven to pick the same span without notify.
 
+**Implemented (2026-05-27) — minimum correction tuple + 4p hooks:**
+
+- **`syNetRollbackComputeInputCorrectionTuple`** — unified `(player, mismatch, load_hint, target)` for wire, episode FSM, and post-resim followup; `hint_player=-1` uses global earliest incorrect across all remote-human slots.
+- **Per-slot `PendingEpisodeBySlot[MAXCONTROLLERS]`** — `ROLLBACK_SYNC` notify merge per slot; one resim still loads whole sim from global-min mismatch when initiating locally.
+- **4-player lab contract** — `SSB64_NETPLAY_REMOTE_SLOTS=1,2,3` on host stub; future bootstrap `netplay_sim_slot_local_hw[4]` (not wired). See [`bugs/netrollback_minimum_correction_tuple_2026-05-27.md`](bugs/netrollback_minimum_correction_tuple_2026-05-27.md).
+
 ## Resimulation (target)
 
 - **Pure sim step**: publish historical inputs + `scVSBattleFuncUpdate` battle sim only.

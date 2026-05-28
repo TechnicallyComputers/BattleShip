@@ -39,6 +39,8 @@
 extern void syNetPeerInitDebugEnv(void);
 /* Enables socket + resets transport counters/barrier after MATCH_CONFIG handshake (debug + automatch). */
 extern void syNetPeerStartVSSession(void);
+/* Re-wire local/remote sim slot sources after syNetInputStartVSSession reset (automatch ICE re-entry). */
+extern void syNetPeerReapplySimSlotInputSources(void);
 /* FALSE while VS gameplay must remain frozen waiting on barrier handshake or rollback warmup gate inside peer. */
 extern sb32 syNetPeerCheckBattleExecutionReady(void);
 /* When SSB64_NETPLAY_BOOTSTRAP_INGRESS_SYMMETRY is set (Linux UDP), require outbound INPUT + inbound hr before first sim publish (see docs/netplay_timebase_authority.md). */
@@ -288,6 +290,9 @@ extern void syNetPeerRequestAutomatchAbort(void);
 extern sb32 syNetPeerAutomatchBootstrapWasAborted(void);
 /* Brief cooperative pause between LAN/reflexive bootstrap attempts (frame pump + audio). */
 extern void syNetPeerPauseBetweenBootstrapAttempts(void);
+/** Best-effort UDP notify when ICE/connect fails before bootstrap completes (unblocks peer fast-fail). */
+extern void syNetPeerNotifyAutomatchBootstrapPeerAbort(const char *bind_hostport, const char *peer_hostport,
+                                                       u32 session_id, sb32 you_are_host);
 /* Coturn relay: outbound ChannelData to peer (permission hostport = peer reflexive or relay). */
 extern void syNetPeerSetTurnOutboundRelay(sb32 enabled);
 extern sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport);

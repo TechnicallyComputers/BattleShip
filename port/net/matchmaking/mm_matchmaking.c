@@ -65,6 +65,9 @@ static int mm_clock_gettime(int clk_id, struct timespec *ts)
 
 #ifdef PORT
 #include "port_log.h"
+#if defined(SSB64_NETPLAY_ICE)
+#include "mm_ice.h"
+#endif
 
 static sb32 mmLogVerbose(void)
 {
@@ -95,6 +98,7 @@ typedef enum MmJobKind
 	MM_JOB_CANCEL,
 #if defined(SSB64_NETPLAY_ICE)
 	MM_JOB_ICE_SIGNAL,
+	MM_JOB_ICE_ROLE_READY,
 #endif
 } MmJobKind;
 
@@ -115,6 +119,8 @@ typedef struct MmJob
 	char ice_sdp[4096];
 	sb32 has_ice_sdp;
 	char ice_candidate[280];
+	char ice_edge_id[16];
+	u32 ice_connect_epoch;
 	sb32 poll_trickle_only;
 #endif
 } MmJob;
@@ -1117,11 +1123,118 @@ static sb32 mmCredentialsEnsureReady(sb32 verbose)
 	return ((sPlayerId[0] != '\0') && (sApiToken[0] != '\0')) ? TRUE : FALSE;
 }
 
+/* Decode JSON string contents (in points past opening "). Stops at unescaped closing quote. */
+static size_t mmJsonDecodeQuotedString(const char *in, char *out, size_t cap)
+{
+	size_t o = 0U;
+
+	if ((in == NULL) || (out == NULL) || (cap < 1U))
+	{
+		return 0U;
+	}
+	for (; in[0] != '\0'; in++)
+	{
+		unsigned char c;
+
+		if (in[0] == '"')
+		{
+			break;
+		}
+		if (in[0] != '\\' || in[1] == '\0')
+		{
+			if (o + 1U >= cap)
+			{
+				return 0U;
+			}
+			out[o++] = in[0];
+			continue;
+		}
+		in++;
+		c = (unsigned char)in[0];
+		if (c == (unsigned char)'n')
+		{
+			c = (unsigned char)'\n';
+		}
+		else if (c == (unsigned char)'r')
+		{
+			c = (unsigned char)'\r';
+		}
+		else if (c == (unsigned char)'t')
+		{
+			c = (unsigned char)'\t';
+		}
+		else if (c == (unsigned char)'u' && in[1] != '\0' && in[2] != '\0' && in[3] != '\0' && in[4] != '\0')
+		{
+			/* Minimal \uXXXX: keep ASCII when hex is 00xx. */
+			unsigned int hex = 0U;
+			int i;
+
+			for (i = 1; i <= 4; i++)
+			{
+				unsigned char h = (unsigned char)in[i];
+
+				hex <<= 4U;
+				if (h >= (unsigned char)'0' && h <= (unsigned char)'9')
+				{
+					hex |= (unsigned int)(h - (unsigned char)'0');
+				}
+				else if (h >= (unsigned char)'a' && h <= (unsigned char)'f')
+				{
+					hex |= (unsigned int)(h - (unsigned char)'a' + 10U);
+				}
+				else if (h >= (unsigned char)'A' && h <= (unsigned char)'F')
+				{
+					hex |= (unsigned int)(h - (unsigned char)'A' + 10U);
+				}
+				else
+				{
+					hex = 0U;
+					break;
+				}
+			}
+			in += 4;
+			c = (hex <= 0xFFU) ? (unsigned char)hex : (unsigned char)'?';
+		}
+		if (o + 1U >= cap)
+		{
+			return 0U;
+		}
+		out[o++] = (char)c;
+	}
+	out[o] = '\0';
+	return o;
+}
+
+/* Advance past JSON string body (in past opening "); returns pointer after closing quote. */
+static const char *mmJsonSkipPastQuotedString(const char *in)
+{
+	if (in == NULL)
+	{
+		return NULL;
+	}
+	for (; in[0] != '\0'; in++)
+	{
+		if (in[0] == '"')
+		{
+			return in + 1;
+		}
+		if (in[0] == '\\' && in[1] != '\0')
+		{
+			in++;
+			if (in[0] == (char)'u' && in[1] != '\0' && in[2] != '\0' && in[3] != '\0' && in[4] != '\0')
+			{
+				in += 4U;
+			}
+		}
+	}
+	return in;
+}
+
 static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *out, size_t cap)
 {
 	char needle[80];
 	const char *p;
-	size_t wi;
+	size_t n;
 
 	/* Require exact JSON key token (avoids matching "peer" inside "peer_player_id"). */
 	snprintf(needle, sizeof(needle), "\"%s\":", key_name);
@@ -1140,14 +1253,8 @@ static sb32 mmJsonCopyQuotedValue(const char *body, const char *key_name, char *
 		return FALSE;
 	}
 	p++;
-	wi = 0;
-	while ((p[wi] != '\0') && (p[wi] != '"') && (wi + 1 < cap))
-	{
-		out[wi] = p[wi];
-		wi++;
-	}
-	out[wi] = '\0';
-	return wi > 0U;
+	n = mmJsonDecodeQuotedString(p, out, cap);
+	return n > 0U ? TRUE : FALSE;
 }
 
 static sb32 mmScanSessionIdDigits(const char *body, u32 *out_sid)
@@ -1179,6 +1286,11 @@ static sb32 mmScanSessionIdDigits(const char *body, u32 *out_sid)
 	return TRUE;
 }
 
+static sb32 mmJsonCopyBoolField(const char *body, const char *key_name, sb32 *out_val);
+#if defined(SSB64_NETPLAY_ICE)
+static void mmParseIceConnectFromBody(const char *body, MmMatchResult *r);
+#endif
+
 static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 {
 	memset(r, 0, sizeof(*r));
@@ -1196,6 +1308,8 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		r->peer_lan_hostport[0] = '\0';
 	}
+	r->peer_reports_lan = (r->peer_lan_hostport[0] != '\0') ? TRUE : FALSE;
+	(void)mmJsonCopyBoolField(body, "peer_reports_lan", &r->peer_reports_lan);
 	r->peer_turn_hostport[0] = '\0';
 	if (mmJsonCopyQuotedValue(body, "peer_turn", r->peer_turn_hostport, sizeof(r->peer_turn_hostport)) == FALSE)
 	{
@@ -1211,13 +1325,17 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		port_log("SSB64 Automatch: match JSON peer_turn=%s\n", r->peer_turn_hostport);
 	}
-	if (r->peer_lan_hostport[0] == '\0')
+	if (r->peer_reports_lan == FALSE)
 	{
-		port_log("SSB64 Automatch: match JSON has no peer_lan (opponent did not report lan_endpoint)\n");
+		port_log("SSB64 Automatch: match JSON peer_reports_lan=false (opponent did not report lan_endpoint)\n");
+	}
+	else if (r->peer_lan_hostport[0] == '\0')
+	{
+		port_log("SSB64 Automatch: match JSON peer_reports_lan=true but peer_lan empty\n");
 	}
 	else
 	{
-		port_log("SSB64 Automatch: match JSON peer_lan=%s\n", r->peer_lan_hostport);
+		port_log("SSB64 Automatch: match JSON peer_lan=%s peer_reports_lan=true\n", r->peer_lan_hostport);
 	}
 #if defined(SSB64_NETPLAY_ICE)
 	if (r->peer_ice_sdp[0] == '\0')
@@ -1231,7 +1349,12 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 
 		memset(ice_prefix, 0, sizeof(ice_prefix));
 		snprintf(ice_prefix, sizeof(ice_prefix), "%.64s", r->peer_ice_sdp);
-		port_log("SSB64 Automatch: match JSON peer_ice_sdp len=%zu prefix=%s\n", ice_len, ice_prefix);
+		port_log("SSB64 Automatch: match JSON peer_ice_sdp len=%zu prefix=%s has_ufrag=%d\n", ice_len, ice_prefix,
+		         (int)mmIceSdpHasIceUfrag(r->peer_ice_sdp));
+		if (mmIceSdpHasIceUfrag(r->peer_ice_sdp) == FALSE)
+		{
+			port_log("SSB64 Automatch: WARNING peer_ice_sdp missing a=ice-ufrag (opponent may have queued too early)\n");
+		}
 	}
 #endif
 #endif
@@ -1247,6 +1370,9 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 	{
 		return FALSE;
 	}
+#if defined(SSB64_NETPLAY_ICE)
+	mmParseIceConnectFromBody(body, r);
+#endif
 	(void)mmJsonCopyQuotedValue(body, "match_id", r->match_id, sizeof(r->match_id));
 	(void)mmJsonCopyQuotedValue(body, "peer_player_id", r->peer_player_id, sizeof(r->peer_player_id));
 	r->kind = MM_POLL_MATCHED;
@@ -1740,6 +1866,68 @@ static void mmRunHeartbeat(const MmJob *job)
 #if defined(SSB64_NETPLAY_ICE)
 static void mmParseIceSignalsFromBody(const char *body);
 static u32 mmIceSignalQueuedCount(void);
+static void mmRunIceRoleReady(const MmJob *job);
+static sb32 sMmIceConnectPresent;
+static sb32 sMmIcePeerControllingReady;
+static char sMmIceLocalRole[16];
+
+static void mmParseIceConnectFromBody(const char *body, MmMatchResult *r)
+{
+	sb32 present;
+	sb32 peer_ready;
+	char local_role[16];
+
+	present = FALSE;
+	peer_ready = FALSE;
+	local_role[0] = '\0';
+	if ((body != NULL) && (strstr(body, "\"ice_connect\"") != NULL))
+	{
+		present = TRUE;
+		(void)mmJsonCopyBoolField(body, "peer_controlling_ready", &peer_ready);
+		if (strstr(body, "\"local_role\":\"controlling\"") != NULL)
+		{
+			snprintf(local_role, sizeof(local_role), "controlling");
+		}
+		else if (strstr(body, "\"local_role\":\"controlled\"") != NULL)
+		{
+			snprintf(local_role, sizeof(local_role), "controlled");
+		}
+	}
+	sMmIceConnectPresent = present;
+	sMmIcePeerControllingReady = peer_ready;
+	if (local_role[0] != '\0')
+	{
+		snprintf(sMmIceLocalRole, sizeof(sMmIceLocalRole), "%s", local_role);
+	}
+	if (r != NULL)
+	{
+		r->ice_connect_present = present;
+		r->ice_peer_controlling_ready = peer_ready;
+		r->ice_local_role[0] = '\0';
+		if (local_role[0] != '\0')
+		{
+			snprintf(r->ice_local_role, sizeof(r->ice_local_role), "%s", local_role);
+		}
+		snprintf(r->ice_edge_id, sizeof(r->ice_edge_id), "pair");
+	}
+}
+
+void mmMatchmakingIceConnectCacheReset(void)
+{
+	sMmIceConnectPresent = FALSE;
+	sMmIcePeerControllingReady = FALSE;
+	sMmIceLocalRole[0] = '\0';
+}
+
+sb32 mmMatchmakingIceConnectPresent(void)
+{
+	return sMmIceConnectPresent;
+}
+
+sb32 mmMatchmakingIcePeerControllingReady(void)
+{
+	return sMmIcePeerControllingReady;
+}
 #endif
 
 static void mmRunPoll(const MmJob *job)
@@ -1777,6 +1965,7 @@ static void mmRunPoll(const MmJob *job)
 			prev_signal_count = mmIceSignalQueuedCount();
 			sTricklePollSeq++;
 			mmParseIceSignalsFromBody(resp);
+			mmParseIceConnectFromBody(resp, NULL);
 #ifdef PORT
 			if (mmLogVerbose() &&
 			    (((sTricklePollSeq % 8U) == 1U) ||
@@ -1832,16 +2021,25 @@ static void mmRunPoll(const MmJob *job)
 static char sMmIceSignalQ[MM_ICE_SIGNAL_QUEUE][280];
 static u32 sMmIceSignalHead;
 static u32 sMmIceSignalCount;
+/* Worker thread pushes from GET /v1/match trickle parse; game thread pops in ICE connect tick. */
+static pthread_mutex_t sIceSignalMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static u32 mmIceSignalQueuedCount(void)
 {
-	return sMmIceSignalCount;
+	u32 count;
+
+	(void)pthread_mutex_lock(&sIceSignalMutex);
+	count = sMmIceSignalCount;
+	(void)pthread_mutex_unlock(&sIceSignalMutex);
+	return count;
 }
 
 static void mmIceSignalQueueClear(void)
 {
+	(void)pthread_mutex_lock(&sIceSignalMutex);
 	sMmIceSignalHead = 0U;
 	sMmIceSignalCount = 0U;
+	(void)pthread_mutex_unlock(&sIceSignalMutex);
 }
 
 static void mmIceSignalQueuePush(const char *candidate)
@@ -1852,6 +2050,7 @@ static void mmIceSignalQueuePush(const char *candidate)
 	{
 		return;
 	}
+	(void)pthread_mutex_lock(&sIceSignalMutex);
 	if (sMmIceSignalCount >= MM_ICE_SIGNAL_QUEUE)
 	{
 		sMmIceSignalHead = (sMmIceSignalHead + 1U) % MM_ICE_SIGNAL_QUEUE;
@@ -1860,6 +2059,7 @@ static void mmIceSignalQueuePush(const char *candidate)
 	tail = (sMmIceSignalHead + sMmIceSignalCount) % MM_ICE_SIGNAL_QUEUE;
 	snprintf(sMmIceSignalQ[tail], sizeof(sMmIceSignalQ[tail]), "%s", candidate);
 	sMmIceSignalCount++;
+	(void)pthread_mutex_unlock(&sIceSignalMutex);
 }
 
 static void mmParseIceSignalsFromBody(const char *body)
@@ -1893,42 +2093,63 @@ static void mmParseIceSignalsFromBody(const char *body)
 			break;
 		}
 		p++;
-		end = strchr(p, '"');
-		if (end == NULL)
-		{
-			break;
-		}
 		{
 			char tmp[280];
-			size_t n = (size_t)(end - p);
+			const char *next;
+			size_t n;
 
-			if (n >= sizeof(tmp))
+			n = mmJsonDecodeQuotedString(p, tmp, sizeof(tmp));
+			if (n == 0U)
 			{
-				n = sizeof(tmp) - 1U;
+				break;
 			}
-			memcpy(tmp, p, n);
-			tmp[n] = '\0';
 			mmIceSignalQueuePush(tmp);
+			next = mmJsonSkipPastQuotedString(p);
+			if (next == NULL || next == p)
+			{
+				break;
+			}
+			p = next;
 		}
-		p = end + 1;
 	}
 }
 
 sb32 mmMatchmakingPopIceCandidate(char *out, u32 out_cap)
 {
-	if ((out == NULL) || (out_cap < 8U) || (sMmIceSignalCount == 0U))
+	sb32 ok;
+
+	if (out == NULL || out_cap < 8U)
 	{
+		return FALSE;
+	}
+	(void)pthread_mutex_lock(&sIceSignalMutex);
+	if (sMmIceSignalCount == 0U)
+	{
+		(void)pthread_mutex_unlock(&sIceSignalMutex);
 		return FALSE;
 	}
 	snprintf(out, out_cap, "%s", sMmIceSignalQ[sMmIceSignalHead]);
 	sMmIceSignalHead = (sMmIceSignalHead + 1U) % MM_ICE_SIGNAL_QUEUE;
 	sMmIceSignalCount--;
-	return TRUE;
+	ok = TRUE;
+	(void)pthread_mutex_unlock(&sIceSignalMutex);
+	return ok;
+}
+
+u32 mmMatchmakingIceSignalsQueuedCount(void)
+{
+	return mmIceSignalQueuedCount();
+}
+
+void mmMatchmakingIceSignalsClear(void)
+{
+	mmIceSignalQueueClear();
 }
 
 static void mmRunIceSignal(const MmJob *job)
 {
-	char jbuf[512];
+	char jbuf[640];
+	char esc[320];
 	long hc;
 	char *resp;
 	char url_path[288];
@@ -1938,12 +2159,45 @@ static void mmRunIceSignal(const MmJob *job)
 		return;
 	}
 	snprintf(url_path, sizeof(url_path), "/v1/match/%s/ice", job->ticket_id);
-	snprintf(jbuf, sizeof(jbuf), "{\"candidate\":\"%s\"}", job->ice_candidate);
+	mmJsonEscapeString(job->ice_candidate, esc, sizeof(esc));
+	snprintf(jbuf, sizeof(jbuf), "{\"candidate\":\"%s\"}", esc);
 	hc = mmHttpsRequest("POST", url_path, jbuf, MM_VERBOSE(job->verbose), &resp);
 	if (resp != NULL)
 	{
 		free(resp);
 	}
+	(void)hc;
+}
+
+static void mmRunIceRoleReady(const MmJob *job)
+{
+	char jbuf[128];
+	char esc_edge[32];
+	long hc;
+	char *resp;
+	char url_path[320];
+	const char *edge;
+
+	if (mmCredentialsEnsureReady(FALSE) == FALSE)
+	{
+		return;
+	}
+	edge = (job->ice_edge_id[0] != '\0') ? job->ice_edge_id : "pair";
+	snprintf(url_path, sizeof(url_path), "/v1/match/%s/ice/role-ready", job->ticket_id);
+	mmJsonEscapeString(edge, esc_edge, sizeof(esc_edge));
+	snprintf(jbuf, sizeof(jbuf), "{\"edge_id\":\"%s\",\"connect_epoch\":%u}", esc_edge,
+	         (unsigned int)job->ice_connect_epoch);
+	hc = mmHttpsRequest("POST", url_path, jbuf, MM_VERBOSE(job->verbose), &resp);
+	if (resp != NULL)
+	{
+		free(resp);
+	}
+#ifdef PORT
+	if ((hc < 200) || (hc >= 300))
+	{
+		port_log("SSB64 Matchmaking: POST ice/role-ready http=%ld ticket=%.36s edge=%s\n", hc, job->ticket_id, edge);
+	}
+#endif
 	(void)hc;
 }
 
@@ -2219,6 +2473,9 @@ static void mmJobWorkerLoop(void *unused_arg)
 		case MM_JOB_ICE_SIGNAL:
 			mmRunIceSignal(&cur);
 			break;
+		case MM_JOB_ICE_ROLE_READY:
+			mmRunIceRoleReady(&cur);
+			break;
 #endif
 		default:
 			break;
@@ -2456,7 +2713,7 @@ void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id)
 
 #if defined(SSB64_NETPLAY_ICE)
 void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpoint, const char *ice_sdp, u8 fighter_kind,
-                                      sb32 has_fkind, const char *lan_endpoint_opt)
+                                      sb32 has_fkind, const char *lan_endpoint_opt, const char *turn_endpoint_opt)
 {
 	MmJob j;
 
@@ -2474,6 +2731,11 @@ void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpoint, co
 	{
 		snprintf(j.lan_endpoint, sizeof(j.lan_endpoint), "%s", lan_endpoint_opt);
 		j.has_lan_endpoint = TRUE;
+	}
+	if ((turn_endpoint_opt != NULL) && (turn_endpoint_opt[0] != '\0'))
+	{
+		snprintf(j.turn_endpoint, sizeof(j.turn_endpoint), "%s", turn_endpoint_opt);
+		j.has_turn_endpoint = TRUE;
 	}
 	if ((ice_sdp != NULL) && (ice_sdp[0] != '\0'))
 	{
@@ -2497,6 +2759,29 @@ void mmMatchmakingEnqueueIceSignal(sb32 verbose, const char *ticket_id, const ch
 	if ((candidate_sdp != NULL) && (candidate_sdp[0] != '\0'))
 	{
 		snprintf(j.ice_candidate, sizeof(j.ice_candidate), "%s", candidate_sdp);
+	}
+	mmEnqueueSubmit(&j);
+}
+
+void mmMatchmakingEnqueueIceRoleReady(sb32 verbose, const char *ticket_id, const char *edge_id, u32 connect_epoch)
+{
+	MmJob j;
+
+	memset(&j, 0, sizeof(j));
+	j.kind = MM_JOB_ICE_ROLE_READY;
+	j.verbose = verbose;
+	j.ice_connect_epoch = (connect_epoch != 0U) ? connect_epoch : 1U;
+	if (ticket_id != NULL)
+	{
+		snprintf(j.ticket_id, sizeof(j.ticket_id), "%s", ticket_id);
+	}
+	if ((edge_id != NULL) && (edge_id[0] != '\0'))
+	{
+		snprintf(j.ice_edge_id, sizeof(j.ice_edge_id), "%s", edge_id);
+	}
+	else
+	{
+		snprintf(j.ice_edge_id, sizeof(j.ice_edge_id), "pair");
 	}
 	mmEnqueueSubmit(&j);
 }

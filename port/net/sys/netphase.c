@@ -6,15 +6,7 @@
 
 #include <stdlib.h>
 
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <wchar.h>
-#include <windows.h>
-#else
-#include <time.h>
-#endif
+#include <sys/netpeer_socket_platform.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -33,17 +25,7 @@ static u32 s_cal_budget_ms;
 
 static u64 syNetPhaseNowUnixMs(void)
 {
-#if defined(_WIN32)
-	return (u64)GetTickCount64();
-#else
-	struct timespec ts;
-
-	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
-	{
-		return 0ULL;
-	}
-	return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000L);
-#endif
+	return syNetPeerOsMonotonicMs();
 }
 
 void syNetPhaseReset(void)

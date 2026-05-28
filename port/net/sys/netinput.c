@@ -26,6 +26,8 @@
 #endif
 
 #ifdef PORT
+#include <sc/scmanager.h>
+#include <sc/sctypes.h>
 #include <string.h>
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -166,7 +168,51 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	{
 		return TRUE;
 	}
+#ifdef PORT
+	/* Startup: do not advance sim until remote wire frontier covers sim+D (reduces strict-R abort at tick 1–4). */
+	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
+	{
+		u32 wire_need;
+		u32 lead_b;
+
+		wire_need = syNetPeerGetBaseRequiredWireTick(next_sim_tick);
+		lead_b = syNetInputGetStrictRemoteLeadBufferTicks();
+		if (wire_need > lead_b)
+		{
+			wire_need -= lead_b;
+		}
+		else
+		{
+			wire_need = 0U;
+		}
+		hr = syNetPeerGetHighestRemoteTick();
+		if (hr < wire_need)
+		{
+			return FALSE;
+		}
+	}
+#endif
 	hr = syNetPeerGetHighestRemoteTick();
+#if defined(PORT)
+	/* Intro wait: do not run host-ahead sim without peer wire; cap to remote sim frontier. */
+	if ((gSCManagerBattleState != NULL) &&
+	    (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+	{
+		if (hr == 0U)
+		{
+			return FALSE;
+		}
+		{
+			u32 remote_sim_frontier;
+
+			remote_sim_frontier = syNetPeerDelaySimTickFromWire(hr);
+			if (next_sim_tick > remote_sim_frontier)
+			{
+				return FALSE;
+			}
+		}
+	}
+#endif
 	if (hr == 0U)
 	{
 		return TRUE;
@@ -2891,6 +2937,37 @@ void syNetInputSetSavedInput(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 s
 	}
 }
 
+#ifdef PORT
+static void syNetInputMaybeLogLocalInputFrame(s32 player, s32 hw_player, u32 tick, const SYNetInputFrame *frame,
+                                              const char *path_tag)
+{
+	const char *log_env;
+
+	if ((frame == NULL) || (path_tag == NULL))
+	{
+		return;
+	}
+	log_env = getenv("SSB64_NETPLAY_LOG_LOCAL_INPUT");
+	if ((log_env == NULL) || (log_env[0] == '\0') || (atoi(log_env) == 0) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	if ((player != syNetPeerGetLocalSimSlot()) || (syNetPeerGetLocalSimSlot() == 0))
+	{
+		return;
+	}
+	if ((tick % 128U) != 0U)
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetInput (net guest): %s sim=%d sampled_hw=%d tick=%u -> frame buttons=0x%04x stick=(%d,%d) "
+	    "(published to gSYControllerDevices[sim])\n",
+	    path_tag, (int)player, (int)hw_player, (unsigned)tick, (unsigned int)frame->buttons, (int)frame->stick_x,
+	    (int)frame->stick_y);
+}
+#endif
+
 void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 {
 	s32 hw_player = player;
@@ -2929,13 +3006,16 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 	}
 	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (syNetInputIsLocalDelaySlot(player) != FALSE))
 	{
+		hw_player = syNetPeerResolveLocalHardwareDevice(player);
 		if (syNetInputGetLocalDelayedFrame(player, tick, out_frame) != FALSE)
 		{
 			out_frame->source = nSYNetInputSourceLocal;
 			out_frame->is_predicted = FALSE;
+			syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "delay_slot");
 			return;
 		}
 		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
+		syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "delay_slot_empty");
 		return;
 	}
 	hw_player = syNetPeerResolveLocalHardwareDevice(player);
@@ -2954,31 +3034,13 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 		syNetInputMakeFrame(out_frame, tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
 		                   nSYNetInputSourceLocal, FALSE);
 	}
+	syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "hardware_latch");
 #else
 	{
 		SYController *controller = &gSYControllerDevices[player];
 
 		syNetInputMakeFrame(out_frame, tick, syNetInputButtonsFromController(controller), controller->stick_range.x,
 		                   controller->stick_range.y, nSYNetInputSourceLocal, FALSE);
-	}
-#endif
-#ifdef PORT
-	{
-		const char *log_env;
-
-		log_env = getenv("SSB64_NETPLAY_LOG_LOCAL_INPUT");
-		if ((log_env != NULL) && (log_env[0] != '\0') && (atoi(log_env) != 0) && (syNetPeerIsVSSessionActive() != FALSE) &&
-		    (player == syNetPeerGetLocalSimSlot()) && (syNetPeerGetLocalSimSlot() != 0))
-		{
-			if ((tick % 128U) == 0U)
-			{
-				port_log(
-				    "SSB64 NetInput (net guest): after_local_hw_map sim=%d sampled_hw=%d tick=%u -> frame "
-				    "buttons=0x%04x stick=(%d,%d) (syNetInputPublishFrame writes this to gSYControllerDevices[sim])\n",
-				    (int)player, (int)hw_player, (unsigned)tick, (unsigned int)out_frame->buttons,
-				    (int)out_frame->stick_x, (int)out_frame->stick_y);
-			}
-		}
 	}
 #endif
 }
@@ -4590,7 +4652,7 @@ u32 syNetInputGetStrictRemoteLeadBufferTicks(void)
 	e = getenv("SSB64_NETPLAY_STRICT_REMOTE_LEAD_BUFFER_TICKS");
 	if ((e == NULL) || (e[0] == '\0'))
 	{
-		v = 0;
+		v = 2;
 	}
 	else
 	{

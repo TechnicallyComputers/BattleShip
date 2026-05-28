@@ -60,6 +60,9 @@ int syNetPeerOsSendTo(syNetPeerOsSocket s, const void *buf, size_t len, const st
 /* Wall ms since Unix epoch (UTC). Used for barrier / clock sync. */
 u64 syNetPeerOsWallClockUnixMs(void);
 
+/* Monotonic ms since an arbitrary origin (not comparable across processes). */
+u64 syNetPeerOsMonotonicMs(void);
+
 /* Sleep roughly `usec` microseconds (best-effort). */
 void syNetPeerOsSleepMicros(unsigned usec);
 

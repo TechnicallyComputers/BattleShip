@@ -48,6 +48,7 @@ std::atomic<uint64_t> sFrameCount{0};
 std::atomic<int>      sResumeActiveThreadId{-1};
 std::atomic<uint64_t> sResumeStartMs{0};
 std::atomic<bool>     sShutdown{false};
+std::atomic<int>      sConnectPhasePause{0};
 std::atomic<bool>     sStarted{false};
 std::thread           sWatchdogThread;
 
@@ -331,6 +332,11 @@ void CrashSignalHandler(int sig, siginfo_t *info, void *ucontext) {
 constexpr uint64_t kHangThresholdMs = 3000;
 constexpr uint64_t kRepeatLogMs     = 2000;
 
+extern "C" void port_watchdog_set_connect_phase_pause(int paused)
+{
+    sConnectPhasePause.store(paused != 0 ? 1 : 0, std::memory_order_release);
+}
+
 uint64_t NowMs() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
@@ -371,6 +377,11 @@ void WatchdogLoop() {
         /* Grace period — don't fire alarms during early boot before the
          * first frame has been pumped. */
         if (fc == 0) continue;
+
+        if (sConnectPhasePause.load(std::memory_order_acquire) != 0)
+        {
+            continue;
+        }
 
         uint64_t since_yield_ms = now - last_yield_change_ms;
         uint64_t since_frame_ms = now - last_frame_change_ms;

@@ -22,6 +22,8 @@ typedef struct MmMatchResult
 	u32 session_id;
 	char peer_hostport[128];
 	char peer_lan_hostport[128];
+	/** Server hint: opponent reported lan_endpoint at enqueue (ICE host-candidate policy). */
+	sb32 peer_reports_lan;
 	/** Opponent coturn relay `ip:port` when they allocated TURN (CGNAT fallback). */
 	char peer_turn_hostport[128];
 #if defined(SSB64_NETPLAY_ICE)
@@ -30,6 +32,14 @@ typedef struct MmMatchResult
 	sb32 has_pending_ice_candidate;
 #endif
 	sb32 you_are_host;
+#if defined(SSB64_NETPLAY_ICE)
+	/** Set when match poll JSON includes `ice_connect` (required on current server). */
+	sb32 ice_connect_present;
+	/** From viewer edge: controlling peer posted role-ready. */
+	sb32 ice_peer_controlling_ready;
+	char ice_local_role[16];
+	char ice_edge_id[16];
+#endif
 	char match_id[64];
 	char peer_player_id[64];
 	char ticket_id[64];
@@ -65,8 +75,13 @@ extern void mmMatchmakingEnqueueJoinQueueEx(sb32 verbose, const char *udp_endpoi
                                             const char *lan_endpoint_opt, const char *turn_endpoint_opt);
 #if defined(SSB64_NETPLAY_ICE)
 extern void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpoint, const char *ice_sdp,
-                                             u8 fighter_kind, sb32 has_fkind, const char *lan_endpoint_opt);
+                                             u8 fighter_kind, sb32 has_fkind, const char *lan_endpoint_opt,
+                                             const char *turn_endpoint_opt);
 extern void mmMatchmakingEnqueueIceSignal(sb32 verbose, const char *ticket_id, const char *candidate_sdp);
+extern void mmMatchmakingEnqueueIceRoleReady(sb32 verbose, const char *ticket_id, const char *edge_id, u32 connect_epoch);
+extern sb32 mmMatchmakingIceConnectPresent(void);
+extern sb32 mmMatchmakingIcePeerControllingReady(void);
+extern void mmMatchmakingIceConnectCacheReset(void);
 typedef struct MmIceTurnBundle
 {
 	char stun_host[128];
@@ -81,6 +96,8 @@ typedef struct MmIceTurnBundle
 
 extern sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out);
 extern sb32 mmMatchmakingPopIceCandidate(char *out, u32 out_cap);
+extern u32 mmMatchmakingIceSignalsQueuedCount(void);
+extern void mmMatchmakingIceSignalsClear(void);
 #endif
 extern void mmMatchmakingEnqueueHeartbeat(sb32 verbose, const char *ticket_id);
 extern void mmMatchmakingEnqueueHeartbeatWithEndpoints(sb32 verbose, const char *ticket_id, const char *udp_endpoint,
@@ -120,6 +137,11 @@ typedef struct MmMatchResult
 #define mmMatchmakingEnqueueCancel(v, t)
 #define mmMatchmakingDrainCompleted(out) FALSE
 #define mmMatchmakingApproxPendingJobs() ((u32)0)
+#define mmMatchmakingIceSignalsClear() ((void)0)
+#define mmMatchmakingEnqueueIceRoleReady(v, t, e, n) ((void)0)
+#define mmMatchmakingIceConnectPresent() FALSE
+#define mmMatchmakingIcePeerControllingReady() FALSE
+#define mmMatchmakingIceConnectCacheReset() ((void)0)
 
 #endif
 
