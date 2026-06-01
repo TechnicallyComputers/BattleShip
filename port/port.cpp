@@ -455,6 +455,15 @@ static int PortInitImpl(int argc, char* argv[]) {
 		cv->SetFloat("gAdvancedResolution.AspectRatioX", 4.0f);
 		cv->SetFloat("gAdvancedResolution.AspectRatioY", 3.0f);
 
+#if defined(__ANDROID__)
+		/* Android has no useful exclusive-display-mode fullscreen for this
+		 * port. Use SDL_WINDOW_FULLSCREEN_DESKTOP so SDL keeps the native
+		 * surface size reported by the OS instead of asking for a fixed
+		 * fullscreen mode that can collapse ultrawide devices back to a
+		 * compatibility aspect on relaunch. */
+		cv->SetInteger("gSdlWindowedFullscreen", 1);
+#endif
+
 		/* Latch the Low Resolution Mode menu choice at boot. libultraship's
 		 * Gui::CalculateGameViewport / Gui::DrawGame read gLowResMode and the
 		 * gAdvancedResolution.* cvars every frame and rewrite mCurDimensions,

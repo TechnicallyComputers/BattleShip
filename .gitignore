@@ -19,6 +19,7 @@ out/
 # Agents
 AGENTS.md
 .claude/
+.cache/
 
 # Controller
 BattleShip.cfg.json
