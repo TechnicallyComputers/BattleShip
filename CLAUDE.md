@@ -22,6 +22,26 @@ When you fix a new significant bug, add an entry under `docs/bugs/` using the sl
 
 ---
 
+## GitHub Issue Access
+
+When asked to inspect GitHub issues, prefer the GitHub connector. If issue tools
+are not visible yet, first run tool discovery for "GitHub issue fetch/view" so
+the connector exposes `_fetch_issue` and `_fetch_issue_comments`, then fetch with
+`repository_full_name: "JRickey/BattleShip"`.
+
+The local GitHub CLI is also authenticated as `JRickey` and has admin access to
+`JRickey/BattleShip`. If the human-formatted `gh issue view` output is blank or
+unreliable, use the JSON/template path instead:
+
+```bash
+gh issue view <number> -R JRickey/BattleShip --json number,title,state,author,body,url,comments,labels
+```
+
+Known-good check from 2026-06-01: issue #209 and its comments were accessible
+through both the connector and `gh --json`; #209 had no comments at that time.
+
+---
+
 ## Parallel Sessions — Worktree Workflow
 
 Multiple Claude windows working in the same checkout will clobber each other's source edits and build outputs. **Every parallel session works in its own git worktree.**

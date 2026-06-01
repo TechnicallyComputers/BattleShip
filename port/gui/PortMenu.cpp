@@ -945,6 +945,7 @@ void PortMenu::AddMenuSettings() {
         .Options(CheckboxOptions().Tooltip("Removes tearing, but can cap the game to the display refresh rate.")
                      .DefaultValue(true));
 
+#if !defined(__ANDROID__)
     AddWidget(path, "Windowed Fullscreen", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SDL_WINDOWED_FULLSCREEN)
         .RaceDisable(false)
@@ -952,6 +953,7 @@ void PortMenu::AddMenuSettings() {
             info.isHidden = disabledMap.at(DISABLE_FOR_NO_WINDOWED_FULLSCREEN).active;
         })
         .Options(CheckboxOptions().Tooltip("Enables borderless windowed fullscreen mode."));
+#endif
 
     AddWidget(path, "Allow multi-windows", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENABLE_MULTI_VIEWPORTS)
