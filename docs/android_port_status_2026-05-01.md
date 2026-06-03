@@ -66,14 +66,15 @@ Companion mitigations that are still required (live in
 - `MouseStateManager::CursorVisibilityTimeoutTick` short-circuits on
   `__ANDROID__` — touch devices don't have cursors and the JNI path
   used to fire from the GFX fiber.
-- Pre-init `SDL_INIT_GAMECONTROLLER` from `port.cpp` main on Android
-  before any coroutine spawns. The HID init's JNI handshake happens
-  on a real thread; the `osContInit` redo from the controller fiber
-  is then a refcount no-op.
+- Pre-init `SDL_INIT_GAMECONTROLLER` + joystick hints from
+  `portAndroidJniWarmupLate()` on SDL_main before any coroutine spawns.
+  `osContInit` on the controller coroutine **must not** call
+  `SDL_SetHint` / `SDL_Init` — both invoke `SDL_getenv` → manifest JNI
+  and CheckJNI aborts on Android 14+ (see `libultraship/.../os.cpp`
+  `__ANDROID__` early-out after `PreInitRaphnet`).
 - `SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080")` and
-  `SDL_getenv` warmup at the same place — populate SDL2's per-program
-  hint store and `bHasEnvironmentVariables` cache on the real thread
-  so subsequent `SDL_GetHint` reads short-circuit.
+  `SDL_getenv` warmup in `portAndroidJniWarmupEarly()` — populate SDL2's
+  hint/env cache on the real thread so subsequent reads short-circuit.
 
 ### Touch input → SDL virtual gamepad
 

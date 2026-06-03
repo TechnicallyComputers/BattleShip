@@ -67,6 +67,57 @@ extern "C" bool port_drain_pending_menu_toggle(void);
 
 #include "port_log.h"
 #include "renderdoc_trigger.h"
+#include "android_network.h"
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+extern "C" void mmMatchmakingShutdown(void);
+#if defined(SSB64_NETPLAY_ICE)
+extern "C" void mmIceShutdown(void);
+extern "C" {
+int syNetReconnectHoldActive(void);
+int syNetReconnectOverlayEnabled(void);
+unsigned int syNetReconnectGraceFramesRemaining(void);
+}
+#endif
+#endif
+
+#if defined(PORT) && defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+static void portNetReconnectDrawOverlay(void)
+{
+	if ((syNetReconnectOverlayEnabled() == 0) || (syNetReconnectHoldActive() == 0))
+	{
+		return;
+	}
+	auto ctx = Ship::Context::GetInstance();
+	if (!ctx)
+	{
+		return;
+	}
+	auto window = ctx->GetWindow();
+	if (!window || !window->GetGui())
+	{
+		return;
+	}
+	auto overlay = window->GetGui()->GetGameOverlay();
+	if (!overlay)
+	{
+		return;
+	}
+	const u32 grace = syNetReconnectGraceFramesRemaining();
+	const ImVec2 display = ImGui::GetIO().DisplaySize;
+	const float cx = display.x * 0.5f;
+	const float cy = display.y * 0.5f;
+	if (grace > 0U)
+	{
+		const u32 secs = (grace + 59U) / 60U;
+		overlay->TextDraw(cx, cy, true, ImVec4(1.f, 1.f, 1.f, 1.f), "Reconnecting... (%us)", (unsigned int)secs);
+	}
+	else
+	{
+		overlay->TextDraw(cx, cy, true, ImVec4(1.f, 1.f, 1.f, 1.f), "Reconnecting...");
+	}
+}
+#endif
 
 /* Backbuffer screenshot capture — implemented in libultraship's DX11 backend.
  * Returns 1 on success, 0 on failure (silent). Never throws. */
@@ -769,6 +820,12 @@ void PortPushFrame(void)
 	 * order relative to vblank rotation. */
 	port_drain_pending_display_list();
 
+#if defined(PORT) && defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+	portNetReconnectDrawOverlay();
+#endif
+	/* ConnectivityManager JNI must run on SDL_main (not the game coroutine fiber). */
+	port_android_network_drain();
+
 	sFrameCount++;
 	sNetplayPushSimAdvances++;
 
@@ -916,6 +973,12 @@ void PortPushFrame(void)
 void PortGameShutdown(void)
 {
 	syNetPeerEndVSSessionLocally();
+#if defined(PORT) && defined(SSB64_NETMENU)
+	mmMatchmakingShutdown();
+#if defined(SSB64_NETPLAY_ICE)
+	mmIceShutdown();
+#endif
+#endif
 	port_watchdog_shutdown();
 	if (sGameCoroutine != NULL) {
 		port_coroutine_destroy(sGameCoroutine);

@@ -14,6 +14,7 @@
 #include <sys/objdef.h>
 #include <sys/objman.h>
 #include <sys/objman_gcport.h>
+#include <sys/objanim.h>
 #include <sys/utils.h>
 #include <wp/weapon.h>
 #include <wp/wpdef.h>
@@ -21,7 +22,15 @@
 #ifdef PORT
 #include <ef/effect.h>
 #include <ef/efmanager.h>
+#include <gr/grdef.h>
+#include <gr/grvars.h>
+#include <gr/ground.h>
+#include <gr/grcommon/gryoster.h>
+#include <gr/grcommon/grsector.h>
 #include <mp/map.h>
+#include <mp/mpcollision.h>
+#include <it/itfighter/itlinkbomb.h>
+#include <sys/objtypes.h>
 #endif
 
 #include <it/itmanager.h>
@@ -32,13 +41,20 @@
 #include <sys/netplay_sim_quantize.h>
 #include <sys/netrollback.h>
 
+#include <if/ifcommon.h>
+#include <macros.h>
+#include <sc/scdef.h>
+
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
 static sb32 sSYNetSyncItemHashTruncationLogged = FALSE;
+static sb32 sSYNetSyncTimeUpTriggered = FALSE;
+static sb32 sSYNetSyncBattleGoPending = FALSE;
 
 #endif
 
@@ -189,6 +205,51 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.x));
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.y));
 	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->anim_vel.z));
+	if (fp->status_id == nFTCommonStatusTwister)
+	{
+		GObj *tornado_gobj = ftStatusVarsTwister(fp)->tornado_gobj;
+		DObj *tornado_dobj;
+
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTwister(fp)->release_wait);
+		h = syNetSyncFnvAccumulateU32(h, (tornado_gobj != NULL) ? (u32)tornado_gobj->id : 0U);
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.x));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.y));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->physics.vel_air.z));
+		tornado_dobj = (tornado_gobj != NULL) ? DObjGetStruct(tornado_gobj) : NULL;
+		if (tornado_dobj != NULL)
+		{
+			h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(tornado_dobj->translate.vec.f.x));
+			h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(tornado_dobj->translate.vec.f.y));
+			h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(tornado_dobj->translate.vec.f.z));
+		}
+	}
+	if ((fp->status_id == nFTCommonStatusCaptureYoshi) || (fp->status_id == nFTCommonStatusYoshiEgg))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)fp->breakout_wait);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(u8)fp->breakout_lr);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(u8)fp->breakout_ud);
+		h = syNetSyncFnvAccumulateU32(h, (u32)fp->motion_vars.flags.flag0);
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsCaptureYoshi(fp)->stage);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(u16)ftStatusVarsCaptureYoshi(fp)->breakout_wait);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(u8)ftStatusVarsCaptureYoshi(fp)->lr);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsCaptureYoshi(fp)->is_damagefloor != FALSE));
+#ifdef PORT
+		h = syNetSyncFnvAccumulateU32(h, syNetRbSnapHashCaptureYoshiEffectGobjId(fp));
+#else
+		h = syNetSyncFnvAccumulateU32(h, 0U);
+#endif
+	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->gkind == nGRKindSector) &&
+	    (gGRCommonStruct.sector.is_arwing_line_active != FALSE) &&
+	    (gGRCommonStruct.sector.is_arwing_z_near != FALSE) && (fp->coll_data.floor_line_id == 1))
+	{
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.vel_speed.x));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.vel_speed.y));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->coll_data.vel_speed.z));
+		h = syNetSyncFnvAccumulateU32(h, (u32)fp->coll_data.floor_flags);
+	}
+#endif
 	return h;
 }
 
@@ -217,6 +278,15 @@ static u32 syNetSyncFoldFighterSlotFullContribution(const FTStruct *fp)
 			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.y));
 			contribution =
 			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.z));
+			/* Fold joint rotate so the oracle catches facing desyncs (joints[TopN]->rotate.y == fp->lr*90deg
+			   facing). Rotate is quantized in-sim every frame by gcPlayDObjAnimJoint's
+			   syNetplayQuantizeDObjAnimPose hook (and again here), so this is cross-ISA safe like translate. */
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.x));
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.y));
+			contribution =
+			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.z));
 		}
 	}
 	return contribution;
@@ -467,6 +537,11 @@ u32 syNetSyncHashGcRunAllTraversalFingerprint(void)
 	return gcPortHashGcRunAllTraversalFingerprint();
 }
 
+#ifdef PORT
+static sb32 syNetSyncHashGobjTranslateEnabled(void);
+static u32 syNetSyncHashFighterGobjTranslate(const GObj *fighter_gobj);
+#endif
+
 u32 syNetSyncHashBattleFightersFull(void)
 {
 	GObj *fighter_gobj;
@@ -491,6 +566,10 @@ u32 syNetSyncHashBattleFightersFull(void)
 			continue;
 		}
 		contribution = syNetSyncFoldFighterSlotFullContribution(fp);
+		if (syNetSyncHashGobjTranslateEnabled() != FALSE)
+		{
+			contribution = syNetSyncFnvAccumulateU32(contribution, syNetSyncHashFighterGobjTranslate(fighter_gobj));
+		}
 		slot = fp->player;
 		if ((slot >= 0) && (slot < GMCOMMON_PLAYERS_MAX))
 		{
@@ -510,9 +589,20 @@ u32 syNetSyncHashBattleFightersFull(void)
 }
 
 #ifdef PORT
+u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void)
+{
+	if (gSCManagerBattleState == NULL)
+	{
+		return 0U;
+	}
+	return (u32)gSCManagerBattleState->time_limit;
+}
+
 void syNetSyncResetNetplayBattleClock(void)
 {
 	sSYNetSyncBattleGoSimTick = ~(u32)0;
+	sSYNetSyncTimeUpTriggered = FALSE;
+	sSYNetSyncBattleGoPending = FALSE;
 	syNetSyncResetJointTranslateTraceSession();
 	syNetSyncResetFhashLightMismatchTriggerSession();
 }
@@ -523,17 +613,20 @@ void syNetSyncOnNetplayBattleGo(void)
 	{
 		return;
 	}
-	if (sSYNetSyncBattleGoSimTick != ~(u32)0)
-	{
-		return;
-	}
-	sSYNetSyncBattleGoSimTick = syNetInputGetTick();
+	/*
+	 * Defer anchor to reconcile-time so we bind GO to the first accepted live sim step
+	 * (never to a pre-GO / load / staging tick).
+	 */
+	sSYNetSyncBattleGoPending = TRUE;
 	sSYNetSyncItemHashTruncationLogged = FALSE;
+	sSYNetSyncTimeUpTriggered = FALSE;
 }
 
-void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
+static void syNetSyncReconcileBattleTimePassedCore(u32 sim_tick)
 {
 	u32 derived;
+	u32 limit_min;
+	u32 limit_tics;
 
 	if ((gSCManagerBattleState == NULL) || (syNetPeerIsVSSessionActive() == FALSE))
 	{
@@ -543,17 +636,177 @@ void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
 	{
 		return;
 	}
-	if (sSYNetSyncBattleGoSimTick == ~(u32)0)
+	/* Countdown starts only after GO (ifCommonAnnounceGoSetStatus → syNetSyncOnNetplayBattleGo). */
+	if ((sSYNetSyncBattleGoPending != FALSE) ||
+	    ((sSYNetSyncBattleGoSimTick == ~(u32)0) && (syNetRollbackIsResimulating() == FALSE)))
 	{
 		sSYNetSyncBattleGoSimTick = sim_tick;
+		sSYNetSyncBattleGoPending = FALSE;
+	}
+	if (sSYNetSyncBattleGoSimTick == ~(u32)0)
+	{
+		return;
 	}
 	derived = (sim_tick > sSYNetSyncBattleGoSimTick) ? (sim_tick - sSYNetSyncBattleGoSimTick) : 0U;
 	gSCManagerBattleState->time_passed = derived;
+
+	if (ifCommonBattleUsesTimedStockLimit() == FALSE)
+	{
+		return;
+	}
+	limit_min = syNetSyncNetplayEffectiveTimeLimitMinutes();
+	if ((limit_min == 0U) || (limit_min == (u32)SCBATTLE_TIMELIMIT_INFINITE))
+	{
+		return;
+	}
+	limit_tics = (u32)I_MIN_TO_TICS((s32)limit_min);
+	if (limit_tics == 0U)
+	{
+		return;
+	}
+	if (derived >= limit_tics)
+	{
+		gSCManagerBattleState->time_remain = 0U;
+		if ((gSCManagerBattleState->game_status == nSCBattleGameStatusGo) && (sSYNetSyncTimeUpTriggered == FALSE))
+		{
+			sSYNetSyncTimeUpTriggered = TRUE;
+			ifCommonAnnounceTimeUpInitInterface();
+		}
+	}
+	else
+	{
+		gSCManagerBattleState->time_remain = limit_tics - derived;
+		sSYNetSyncTimeUpTriggered = FALSE;
+	}
+}
+
+void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
+{
+	/* Live forward step only — not rollback load/resim replay of historical ticks. */
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	if (sim_tick != syNetInputGetTick())
+	{
+		return;
+	}
+	syNetSyncReconcileBattleTimePassedCore(sim_tick);
+}
+
+void syNetSyncReconcileBattleTimePassedForSnapshotSave(u32 completed_sim_tick)
+{
+	/* Persist clock fields for the tick being snapshotted; still skip during active resim. */
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	syNetSyncReconcileBattleTimePassedCore(completed_sim_tick);
 }
 
 void syNetSyncReconcileBattleTimePassedFromSimTick(void)
 {
 	syNetSyncReconcileBattleTimePassedForSimTick(syNetInputGetTick());
+}
+#endif
+
+#ifdef PORT
+static u32 syNetSyncFoldHyruleTwisterRollbackWorld(void)
+{
+	const GRCommonGroundVarsHyrule *hy;
+	u32 hash;
+	u32 gobj_id;
+
+	if ((gSCManagerBattleState == NULL) || (gSCManagerBattleState->gkind != nGRKindHyrule))
+	{
+		return 2166136261U;
+	}
+	hy = &gGRCommonStruct.hyrule;
+	hash = 2166136261U;
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)hy->twister_status);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)hy->twister_wait);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)hy->twister_speed_wait);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)hy->twister_turn_wait);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)hy->twister_line_id);
+	gobj_id = (hy->twister_gobj != NULL) ? (u32)hy->twister_gobj->id : 0U;
+	hash = syNetSyncFnvAccumulateU32(hash, gobj_id);
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(hy->twister_vel));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(hy->twister_leftedge_x));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(hy->twister_rightedge_x));
+	if (hy->twister_gobj != NULL)
+	{
+		DObj *twister_dobj = DObjGetStruct(hy->twister_gobj);
+
+		if (twister_dobj != NULL)
+		{
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(twister_dobj->translate.vec.f.x));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(twister_dobj->translate.vec.f.y));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(twister_dobj->translate.vec.f.z));
+		}
+	}
+	return hash;
+}
+
+/*
+ * Yamabuki (Saffron) tower gate spawn timer + door collision were never folded into the cross-peer
+ * world hash (unlike Hyrule). A divergent `monster_wait` (RNG drawn around the unsynced intro window)
+ * then spawns the rooftop Pokemon at different ticks per peer and is only noticed once the item/eff
+ * partitions drift. Fold the gate scalars so the first post-intro synctest catches the drift and
+ * rolls back to re-converge the spawn schedule.
+ */
+static u32 syNetSyncFoldYamabukiGateRollbackWorld(void)
+{
+	const GRCommonGroundVarsYamabuki *ya;
+	u32 hash;
+	u32 gobj_id;
+	f32 gate_anim_frame;
+	f32 gate_anim_wait;
+
+	if ((gSCManagerBattleState == NULL) || (gSCManagerBattleState->gkind != nGRKindYamabuki))
+	{
+		return 2166136261U;
+	}
+	ya = &gGRCommonStruct.yamabuki;
+	gate_anim_frame = 0.0F;
+	gate_anim_wait = 0.0F;
+	if (ya->gate_gobj != NULL)
+	{
+		DObj *gate_dobj = DObjGetStruct(ya->gate_gobj);
+
+		if (gate_dobj != NULL)
+		{
+			DObj *child = gate_dobj->child;
+
+			if (child != NULL)
+			{
+				gate_anim_frame = child->anim_frame;
+				gate_anim_wait = child->anim_wait;
+			}
+			else
+			{
+				gate_anim_frame = gate_dobj->anim_frame;
+				gate_anim_wait = gate_dobj->anim_wait;
+			}
+		}
+	}
+#if defined(SSB64_NETMENU)
+	gate_anim_frame = syNetplayQuantizeAnimScalar(gate_anim_frame);
+	gate_anim_wait = syNetplayQuantizeAnimScalar(gate_anim_wait);
+#endif
+	hash = 2166136261U;
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->gate_status);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->gate_noentry);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->monster_wait);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->gate_wait);
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->monster_id_prev);
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(ya->gate_pos.x));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(ya->gate_pos.y));
+	hash = syNetSyncFnvAccumulateU32(hash, (u32)ya->gate_anim_phase);
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gate_anim_frame));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gate_anim_wait));
+	gobj_id = (ya->monster_gobj != NULL) ? (u32)ya->monster_gobj->id : 0U;
+	hash = syNetSyncFnvAccumulateU32(hash, gobj_id);
+	return hash;
 }
 #endif
 
@@ -608,6 +861,15 @@ u32 syNetSyncHashRollbackWorld(void)
 			hash = syNetSyncFnvAccumulateU32(hash, (u32)gITManagerRandomWeights.blocks[i]);
 		}
 	}
+#ifdef PORT
+	{
+		u32 hyrule_twister_hash = syNetSyncFoldHyruleTwisterRollbackWorld();
+		u32 yamabuki_gate_hash = syNetSyncFoldYamabukiGateRollbackWorld();
+
+		hash = syNetSyncFnvAccumulateU32(hash ^ hyrule_twister_hash, 0x48595255U);
+		hash = syNetSyncFnvAccumulateU32(hash ^ yamabuki_gate_hash, 0x59414D42U);
+	}
+#endif
 	return hash;
 }
 
@@ -642,6 +904,34 @@ static int syNetSyncEnvParseInt(const char *e, int default_val)
 	}
 	v = strtol(e, NULL, 10);
 	return (int)v;
+}
+
+static sb32 syNetSyncHashGobjTranslateEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_HASH_GOBJ_TRANSLATE");
+	s_env_cache = (syNetSyncEnvParseInt(e, 0) != 0) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static u32 syNetSyncHashFighterGobjTranslate(const GObj *fighter_gobj)
+{
+	const Vec3f *translate;
+
+	if (fighter_gobj == NULL)
+	{
+		return 2166136261U;
+	}
+	translate = &DObjGetStruct(fighter_gobj)->translate.vec.f;
+	return syNetSyncFnvAccumulateU32(
+	    syNetSyncFnvAccumulateU32(syNetSyncHashF32(translate->x), syNetSyncHashF32(translate->y)),
+	    syNetSyncHashF32(translate->z));
 }
 
 static void syNetSyncRefreshJointTranslateTraceEnv(void)
@@ -1822,11 +2112,131 @@ static u32 syNetSyncFoldActiveItemGobj(GObj *gobj)
  *
  * Included: kind, type, lifetime, percent_damage, lr, player, team, owner/damage/reflect gobj ids,
  *           hold/thrown/damage-all flags, attack_state, attack_records[], DObj translate x/y/z.
+ *           Link bomb: multi, event_id, ga, physics vel_air, linkbomb item_vars, status nibble.
+ *           Ground monsters: DObj anim_frame/wait, mobj texture_id; Hitokage flags/flame_spawn_wait/offset.
  *
  * Omitted: gobj->id — snapshot apply may eject/respawn via itManagerMakeItemSetupCommon and allocate
  * fresh GObj ids; folding the item's own id caused false LOAD_HASH_DRIFT after respawn. Apply still
  * matches blobs by gobj_id when ids are preserved (see docs/bugs/netrollback_item_weapon_gobj_id_verify).
  */
+#ifdef PORT
+static u8 syNetSyncLinkBombStatusFromLive(const ITStruct *ip)
+{
+	if (ip == NULL)
+	{
+		return 0xFFU;
+	}
+	if (ip->proc_update == itLinkBombExplodeProcUpdate)
+	{
+		return (u8)nITLinkBombStatusExplode;
+	}
+	if (ip->proc_update == itLinkBombHoldProcUpdate)
+	{
+		return (u8)nITLinkBombStatusHold;
+	}
+	if (ip->proc_update == itLinkBombDroppedProcUpdate)
+	{
+		return (u8)nITLinkBombStatusDropped;
+	}
+	if ((ip->proc_update == itLinkBombFallProcUpdate) && (ip->proc_map == itLinkBombThrownProcMap) &&
+	    (ip->proc_hit == itLinkBombThrownProcHit))
+	{
+		return (u8)nITLinkBombStatusThrown;
+	}
+	if (ip->proc_update == itLinkBombWaitProcUpdate)
+	{
+		return (u8)nITLinkBombStatusWait;
+	}
+	if (ip->proc_update == itLinkBombFallProcUpdate)
+	{
+		return (u8)nITLinkBombStatusFall;
+	}
+	return 0xFFU;
+}
+
+static u32 syNetSyncFoldLinkBombItemExtras(const ITStruct *ip, u32 fold)
+{
+	u8 link_status;
+
+	if (ip == NULL)
+	{
+		return fold;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->multi);
+	fold = syNetSyncFnvAccumulateU32(fold, ip->event_id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->ga);
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->physics.vel_air.x));
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->physics.vel_air.y));
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->physics.vel_air.z));
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.linkbomb.unk_0x0);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.linkbomb.drop_update_wait);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.linkbomb.scale_id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.linkbomb.scale_int);
+	link_status = syNetSyncLinkBombStatusFromLive(ip);
+	if (link_status <= (u8)nITLinkBombStatusExplode)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)link_status);
+	}
+	else
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, 0xFFU);
+	}
+	return fold;
+}
+
+static u32 syNetSyncFoldGroundMonsterItemExtras(GObj *gobj, const ITStruct *ip, u32 fold)
+{
+	DObj *dobj;
+
+	if ((gobj == NULL) || (ip == NULL))
+	{
+		return fold;
+	}
+	dobj = DObjGetStruct(gobj);
+	if (dobj != NULL)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->anim_frame));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->anim_wait));
+		if (dobj->mobj != NULL)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)dobj->mobj->texture_id_curr);
+		}
+	}
+	if (ip->kind == nITKindHitokage)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.hitokage.flags);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.hitokage.flame_spawn_wait);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->item_vars.hitokage.offset.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->item_vars.hitokage.offset.y));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ip->item_vars.hitokage.offset.z));
+	}
+	return fold;
+}
+
+static u32 syNetSyncFoldGBumperItemExtras(GObj *gobj, const ITStruct *ip, u32 fold)
+{
+	DObj *dobj;
+
+	if ((gobj == NULL) || (ip == NULL))
+	{
+		return fold;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->multi);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.bumper.hit_anim_length);
+	dobj = DObjGetStruct(gobj);
+	if (dobj != NULL)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->scale.vec.f.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->scale.vec.f.y));
+		if (dobj->mobj != NULL)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->mobj->palette_id));
+		}
+	}
+	return fold;
+}
+#endif
+
 static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
 {
 	DObj *dobj;
@@ -1864,6 +2274,20 @@ static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
 	}
+#ifdef PORT
+	if (ip->kind == nITKindLinkBomb)
+	{
+		fold = syNetSyncFoldLinkBombItemExtras(ip, fold);
+	}
+	else if (ip->kind == nITKindGBumper)
+	{
+		fold = syNetSyncFoldGBumperItemExtras(gobj, ip, fold);
+	}
+	else if ((ip->kind >= nITKindGroundMonsterStart) && (ip->kind <= nITKindGroundMonsterEnd))
+	{
+		fold = syNetSyncFoldGroundMonsterItemExtras(gobj, ip, fold);
+	}
+#endif
 	return fold;
 }
 
@@ -1947,7 +2371,26 @@ static u32 syNetSyncPointerFingerprintLow32(const void *p)
 	return (u32)u;
 }
 
-void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
+/*
+ * Raw IEEE-754 bits of an f32 with NO quantization — exposes the pre-quantize, sub-ULP
+ * cross-ISA divergence that the %.5f decimal print and the quantized fold both hide.
+ * Pair with syNetSyncHashF32 (post-quantize bits = what actually folds) to tell whether a
+ * field diverges before quantization (and quantize fails to collapse it) or only in the print.
+ */
+static u32 syNetSyncF32RawBits(f32 value)
+{
+	union SYNetSyncF32RawReinterpret
+	{
+		f32 fv;
+		u32 uv;
+
+	} reinterpret;
+
+	reinterpret.fv = value;
+	return reinterpret.uv;
+}
+
+static void syNetSyncLogItemHashWalkBody(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason)
 {
 	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
 	GObj *gobj;
@@ -1957,19 +2400,19 @@ void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 	s32 i;
 	sb32 truncated;
 
-	if (syNetSyncItemHashTraceEnabled() == FALSE)
-	{
-		return;
-	}
 	truncated = FALSE;
 	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
 	hash = 2166136261U;
 	idx = 0U;
-	port_log("SSB64 NetSync: item_hash_walk begin sim_tick=%u live_sim=%u cap=%d truncated=%d\n",
-	         sim_tick,
-	         (unsigned int)syNetInputGetTick(),
-	         SYNET_SYNC_ITEM_HASH_SORT_MAX,
-	         (int)truncated);
+	port_log(
+	    "SSB64 NetSync: item_hash_walk begin sim_tick=%u live_sim=%u cap=%d truncated=%d reason=%s slot_item=0x%08X live_item=0x%08X\n",
+	    sim_tick,
+	    (unsigned int)syNetInputGetTick(),
+	    SYNET_SYNC_ITEM_HASH_SORT_MAX,
+	    (int)truncated,
+	    (reason != NULL) ? reason : "trace",
+	    slot_item,
+	    live_item);
 	for (i = 0; i < count; i++)
 	{
 		ITStruct *ip;
@@ -2035,7 +2478,567 @@ void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
 		}
 		idx++;
 	}
-	port_log("SSB64 NetSync: item_hash_walk end sim_tick=%u count=%u hash=0x%08X\n", sim_tick, idx, hash);
+	port_log("SSB64 NetSync: item_hash_walk end sim_tick=%u count=%u hash=0x%08X slot_item=0x%08X live_item=0x%08X\n",
+	         sim_tick,
+	         idx,
+	         hash,
+	         slot_item,
+	         live_item);
+}
+
+void syNetSyncLogItemHashWalkTrace(u32 sim_tick)
+{
+	if (syNetSyncItemHashTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	syNetSyncLogItemHashWalkBody(sim_tick, 0U, 0U, "env_trace");
+}
+
+void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason)
+{
+	syNetSyncLogItemHashWalkBody(sim_tick, slot_item, live_item, reason);
+}
+
+static sb32 syNetSyncItemHashFieldDiffEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason)
+{
+	GObj *sorted[SYNET_SYNC_ITEM_HASH_SORT_MAX];
+	s32 count;
+	u32 idx;
+	s32 i;
+	sb32 truncated;
+
+	if (syNetSyncItemHashFieldDiffEnabled() == FALSE)
+	{
+		return;
+	}
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
+	port_log(
+	    "SSB64 NetSync: item_field_diff begin sim_tick=%u live_sim=%u reason=%s slot_item=0x%08X live_item=0x%08X count=%d truncated=%d\n",
+	    sim_tick,
+	    (unsigned int)syNetInputGetTick(),
+	    (reason != NULL) ? reason : "trace",
+	    slot_item,
+	    live_item,
+	    (int)count,
+	    (int)truncated);
+	idx = 0U;
+	for (i = 0; i < count; i++)
+	{
+		ITStruct *ip;
+		DObj *dobj;
+		u32 fold;
+		u8 link_status;
+
+		ip = itGetStruct(sorted[i]);
+		if (ip == NULL)
+		{
+			continue;
+		}
+		dobj = DObjGetStruct(sorted[i]);
+		fold = syNetSyncFoldActiveItemGobjForRollback(sorted[i]);
+		link_status = 0xFFU;
+		if (ip->kind == nITKindLinkBomb)
+		{
+			link_status = syNetSyncLinkBombStatusFromLive(ip);
+		}
+		port_log(
+		    "SSB64 NetSync: item_field_diff step=%u gobj_id=%u kind=%d type=%d player=%d multi=%u event_id=%u "
+		    "lifetime=%d atk_state=%d hold=%u pos=(%.5f,%.5f,%.5f) vel=(%.5f,%.5f,%.5f) link_status=%u "
+		    "lb_drop_wait=%d fold=0x%08X\n",
+		    idx,
+		    (unsigned int)sorted[i]->id,
+		    (int)ip->kind,
+		    (int)ip->type,
+		    (int)ip->player,
+		    (unsigned int)ip->multi,
+		    (unsigned int)ip->event_id,
+		    (int)ip->lifetime,
+		    (int)ip->attack_coll.attack_state,
+		    (unsigned int)(ip->is_hold ? 1U : 0U),
+		    (dobj != NULL) ? (f64)syNetplayQuantizeF32(dobj->translate.vec.f.x) : 0.0,
+		    (dobj != NULL) ? (f64)syNetplayQuantizeF32(dobj->translate.vec.f.y) : 0.0,
+		    (dobj != NULL) ? (f64)syNetplayQuantizeF32(dobj->translate.vec.f.z) : 0.0,
+		    (f64)syNetplayQuantizeF32(ip->physics.vel_air.x),
+		    (f64)syNetplayQuantizeF32(ip->physics.vel_air.y),
+		    (f64)syNetplayQuantizeF32(ip->physics.vel_air.z),
+		    (unsigned int)link_status,
+		    (ip->kind == nITKindLinkBomb) ? (int)ip->item_vars.linkbomb.drop_update_wait : -1,
+		    fold);
+		if (ip->kind == nITKindLinkBomb)
+		{
+			f32 px;
+			f32 py;
+			f32 pz;
+
+			px = (dobj != NULL) ? dobj->translate.vec.f.x : 0.0F;
+			py = (dobj != NULL) ? dobj->translate.vec.f.y : 0.0F;
+			pz = (dobj != NULL) ? dobj->translate.vec.f.z : 0.0F;
+
+			/*
+			 * Raw vs quantized bit patterns for exactly the floats syNetSyncFoldLinkBombItemExtras
+			 * folds (pos via base fold, vel_air via extras). Diff host vs guest line-by-line in a
+			 * cross-ISA soak: the first *_q mismatch is the field whose hashed bits diverge; a *_raw
+			 * mismatch with matching *_q means quantization absorbed it (not the desync source).
+			 */
+			port_log(
+			    "SSB64 NetSync: item_fold_floats step=%u gobj_id=%u "
+			    "px_raw=0x%08X py_raw=0x%08X pz_raw=0x%08X px_q=0x%08X py_q=0x%08X pz_q=0x%08X "
+			    "vx_raw=0x%08X vy_raw=0x%08X vz_raw=0x%08X vx_q=0x%08X vy_q=0x%08X vz_q=0x%08X "
+			    "multi=%u event_id=%u ga=%d drop_wait=%u scale_id=%u scale_int=%u unk0=%u link_status=%u\n",
+			    idx,
+			    (unsigned int)sorted[i]->id,
+			    syNetSyncF32RawBits(px),
+			    syNetSyncF32RawBits(py),
+			    syNetSyncF32RawBits(pz),
+			    syNetSyncHashF32(px),
+			    syNetSyncHashF32(py),
+			    syNetSyncHashF32(pz),
+			    syNetSyncF32RawBits(ip->physics.vel_air.x),
+			    syNetSyncF32RawBits(ip->physics.vel_air.y),
+			    syNetSyncF32RawBits(ip->physics.vel_air.z),
+			    syNetSyncHashF32(ip->physics.vel_air.x),
+			    syNetSyncHashF32(ip->physics.vel_air.y),
+			    syNetSyncHashF32(ip->physics.vel_air.z),
+			    (unsigned int)ip->multi,
+			    (unsigned int)ip->event_id,
+			    (int)ip->ga,
+			    (unsigned int)ip->item_vars.linkbomb.drop_update_wait,
+			    (unsigned int)ip->item_vars.linkbomb.scale_id,
+			    (unsigned int)ip->item_vars.linkbomb.scale_int,
+			    (unsigned int)ip->item_vars.linkbomb.unk_0x0,
+			    (unsigned int)link_status);
+		}
+		idx++;
+	}
+	port_log("SSB64 NetSync: item_field_diff end sim_tick=%u count=%u\n", sim_tick, idx);
+}
+
+static sb32 syNetSyncItemThrowWindowDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+#if defined(SSB64_NETMENU)
+	e = getenv("SSB64_NETPLAY_ITEM_THROW_WINDOW_DIAG");
+	if (e == NULL)
+	{
+		s_env_cache = (syNetPeerIsVSSessionActive() != FALSE) ? 1 : 0;
+	}
+	else
+	{
+		s_env_cache = ((e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+#else
+	s_env_cache = 0;
+#endif
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+void syNetSyncLogItemThrowWindowDiag(u32 sim_tick, const char *skip_reason)
+{
+	GObj *fighter_gobj;
+	GObj *item_gobj;
+	s32 item_count;
+	u32 item_hash;
+
+	if (syNetSyncItemThrowWindowDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((skip_reason == NULL) ||
+	    ((strcmp(skip_reason, "fighter_throw") != 0) && (strcmp(skip_reason, "item_throw") != 0)))
+	{
+		return;
+	}
+
+	item_count = 0;
+	for (item_gobj = gGCCommonLinks[nGCCommonLinkIDItem]; item_gobj != NULL; item_gobj = item_gobj->link_next)
+	{
+		if (itGetStruct(item_gobj) != NULL)
+		{
+			item_count++;
+		}
+	}
+	item_hash = syNetSyncHashActiveItemsForRollback();
+
+	port_log(
+	    "SSB64 NetSync: item_throw_window tick=%u reason=%s live_sim=%u item=0x%08X item_count=%d\n",
+	    sim_tick,
+	    skip_reason,
+	    (unsigned int)syNetInputGetTick(),
+	    item_hash,
+	    (int)item_count);
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		ITStruct *hip;
+		u32 held_id;
+		s32 joint_id;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		held_id = 0U;
+		hip = NULL;
+		joint_id = -1;
+		if (fp->item_gobj != NULL)
+		{
+			held_id = fp->item_gobj->id;
+			hip = itGetStruct(fp->item_gobj);
+			joint_id = (hip != NULL && hip->weight == nITWeightHeavy) ? fp->attr->joint_itemheavy_id
+			                                                          : fp->attr->joint_itemlight_id;
+		}
+		port_log(
+		    "SSB64 NetSync: item_hold_coupling tick=%u player=%d fkind=%d status=%d motion=%d "
+		    "item_gobj=%u joint_id=%d is_throw_item=%d throw_flag0=%u throw_vel_pct=%u throw_angle=%d "
+		    "held_kind=%d held_hold=%u held_thrwn=%u\n",
+		    sim_tick,
+		    (int)fp->player,
+		    (int)fp->fkind,
+		    (int)fp->status_id,
+		    (int)fp->motion_id,
+		    (unsigned int)held_id,
+		    (int)joint_id,
+		    (int)fp->motion_vars.item_throw.is_throw_item,
+		    (unsigned int)fp->motion_vars.flags.flag0,
+		    (unsigned int)ftStatusVarsItemThrow(fp)->throw_vel,
+		    (int)ftStatusVarsItemThrow(fp)->throw_angle,
+		    (hip != NULL) ? (int)hip->kind : -1,
+		    (hip != NULL) ? (unsigned int)(hip->is_hold ? 1U : 0U) : 0U,
+		    (hip != NULL) ? (unsigned int)(hip->is_thrown ? 1U : 0U) : 0U);
+	}
+
+	if (syNetSyncItemHashFieldDiffEnabled() != FALSE)
+	{
+		syNetSyncLogItemFieldDiffDiag(sim_tick, item_hash, item_hash, "synctest_throw_window");
+	}
+	if (syNetSyncItemHashTraceEnabled() != FALSE)
+	{
+		syNetSyncLogItemHashDriftDiag(sim_tick, item_hash, item_hash, "synctest_throw_window");
+	}
+}
+
+static sb32 syNetSyncYosterCloudDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+#if defined(SSB64_NETMENU)
+	e = getenv("SSB64_NETPLAY_YOSTER_CLOUD_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+#else
+	s_env_cache = 0;
+#endif
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncYosterCloudDiagVerbose(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_YOSTER_CLOUD_DIAG_VERBOSE");
+	return ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? TRUE : FALSE;
+}
+
+static sb32 syNetSyncYosterCloudDiagFighters(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_NETPLAY_YOSTER_CLOUD_DIAG_FIGHTERS");
+	if (e == NULL)
+	{
+		return TRUE;
+	}
+	return ((e[0] != '\0') && (atoi(e) != 0)) ? TRUE : FALSE;
+}
+
+static u32 syNetSyncYosterCloudDiagTickBound(const char *name, u32 default_value)
+{
+	const char *e;
+	int v;
+
+	e = getenv(name);
+	if ((e == NULL) || (e[0] == '\0'))
+	{
+		return default_value;
+	}
+	v = atoi(e);
+	if (v < 0)
+	{
+		return default_value;
+	}
+	return (u32)v;
+}
+
+static u32 syNetSyncF32Bits(f32 value)
+{
+	u32 bits;
+
+	memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
+
+static sb32 syNetSyncYosterCloudAnimIdle(const GRYosterCloud *cloud)
+{
+	if ((cloud == NULL) || (cloud->dobj[0] == NULL))
+	{
+		return FALSE;
+	}
+	return grYosterCloudMatAnimIsIdle(cloud->dobj[0]->mobj);
+}
+
+static sb32 syNetSyncYosterCloudPressureGateOpen(const GRYosterCloud *cloud)
+{
+	MObj *mobj;
+
+	if (cloud == NULL)
+	{
+		return FALSE;
+	}
+	mobj = ((cloud->dobj[0] != NULL) ? cloud->dobj[0]->mobj : NULL);
+	return grYosterCloudPressureGateOpen(cloud, mobj);
+}
+
+static sb32 syNetSyncYosterCloudShouldLogSummary(const GRYosterCloud *cloud, sb32 stand, s32 cloud_id)
+{
+	if (syNetSyncYosterCloudDiagVerbose() != FALSE)
+	{
+		return TRUE;
+	}
+	if (grYosterCloudReestablishedThisTick(cloud_id) != FALSE)
+	{
+		return TRUE;
+	}
+	if (stand != FALSE)
+	{
+		return TRUE;
+	}
+	if (cloud->status != 0U)
+	{
+		return TRUE;
+	}
+	if (cloud->pressure > 0.0F)
+	{
+		return TRUE;
+	}
+	if (cloud->pressure_timer >= 0)
+	{
+		return TRUE;
+	}
+	if (cloud->evaporate_wait != 0U)
+	{
+		return TRUE;
+	}
+	if (syNetSyncYosterCloudPressureGateOpen(cloud) == FALSE)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+void syNetSyncLogYosterCloudDiag(s32 cloud_id)
+{
+	const GRYosterCloud *cloud;
+	u32 sim_tick;
+	s32 exp_line;
+	s32 stand;
+	f32 translate_y;
+	u32 anim_wait_bits;
+	u32 map_head_bits;
+	u32 matanim_bits;
+	u32 anim_speed_bits;
+	u32 gobj_bits;
+	sb32 anim_idle;
+	sb32 gate_open;
+	sb32 dobj0_ok;
+	sb32 mobj_ok;
+	sb32 root_ok;
+	sb32 root_child_ok;
+	sb32 reest_this_tick;
+	f32 root_x;
+	f32 root_z;
+	Vec3f spawn_translate;
+
+	if (syNetSyncYosterCloudDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((gSCManagerBattleState == NULL) || (gSCManagerBattleState->gkind != nGRKindYoster))
+	{
+		return;
+	}
+	if ((cloud_id < 0) || (cloud_id >= (s32)ARRAY_COUNT(gGRCommonStruct.yoster.clouds)))
+	{
+		return;
+	}
+	sim_tick = syNetInputGetTick();
+	if ((sim_tick < syNetSyncYosterCloudDiagTickBound("SSB64_NETPLAY_YOSTER_CLOUD_DIAG_TICK_MIN", 0U)) ||
+	    (sim_tick > syNetSyncYosterCloudDiagTickBound("SSB64_NETPLAY_YOSTER_CLOUD_DIAG_TICK_MAX", 60000U)))
+	{
+		return;
+	}
+
+	cloud = &gGRCommonStruct.yoster.clouds[cloud_id];
+	exp_line = (s32)dGRYosterCloudLineIDs[cloud_id];
+	stand = grYosterCheckFighterCloudStand(cloud_id);
+	anim_idle = syNetSyncYosterCloudAnimIdle(cloud);
+	gate_open = syNetSyncYosterCloudPressureGateOpen(cloud);
+	dobj0_ok = (cloud->dobj[0] != NULL) ? TRUE : FALSE;
+	mobj_ok = ((cloud->dobj[0] != NULL) && (cloud->dobj[0]->mobj != NULL)) ? TRUE : FALSE;
+	root_ok = FALSE;
+	root_child_ok = FALSE;
+	reest_this_tick = grYosterCloudReestablishedThisTick(cloud_id);
+	root_x = 0.0F;
+	root_z = 0.0F;
+	spawn_translate.x = 0.0F;
+	spawn_translate.y = 0.0F;
+	spawn_translate.z = 0.0F;
+	grYosterGetCloudSpawnTranslate(cloud_id, &spawn_translate);
+	translate_y = 0.0F;
+	anim_wait_bits = 0U;
+	map_head_bits = 0U;
+	matanim_bits = 0U;
+	anim_speed_bits = 0U;
+	if ((cloud->dobj[0] != NULL) && (cloud->dobj[0]->mobj != NULL))
+	{
+		MObj *mobj = cloud->dobj[0]->mobj;
+
+		anim_wait_bits = syNetSyncF32Bits(mobj->anim_wait);
+		anim_speed_bits = syNetSyncF32Bits(mobj->anim_speed);
+		matanim_bits = (u32)(uintptr_t)mobj->matanim_joint.event32;
+	}
+	map_head_bits = (u32)(uintptr_t)gGRCommonStruct.yoster.map_head;
+	gobj_bits = (u32)(uintptr_t)cloud->gobj;
+	if (cloud->gobj != NULL)
+	{
+		DObj *root = DObjGetStruct(cloud->gobj);
+
+		if (root != NULL)
+		{
+			root_ok = TRUE;
+			if (root->child != NULL)
+			{
+				root_child_ok = TRUE;
+			}
+			root_x = root->translate.vec.f.x;
+			translate_y = root->translate.vec.f.y;
+			root_z = root->translate.vec.f.z;
+		}
+	}
+
+	if (syNetSyncYosterCloudShouldLogSummary(cloud, stand, cloud_id) != FALSE)
+	{
+		port_log(
+		    "SSB64 NetSync: yoster_cloud tick=%u cloud=%d status=%u anim_id=%d altitude=%.2f pressure=%.4f ptimer=%d evap=%u "
+		    "line_act=%u stand=%d anim_idle=%d gate=%d root=%d root_child=%d reest=%d dobj0=%d mobj=%d gobj=0x%08X anim_wait=0x%08X anim_speed=0x%08X matanim=0x%08X map_head=0x%08X "
+		    "root_x=%.2f translate_y=%.2f root_z=%.2f spawn_x=%.2f spawn_y=%.2f spawn_z=%.2f rb_resim=%d rb_applied=%u\n",
+		    sim_tick,
+		    (int)cloud_id,
+		    (unsigned int)cloud->status,
+		    (int)cloud->anim_id,
+		    cloud->altitude,
+		    cloud->pressure,
+		    (int)cloud->pressure_timer,
+		    (unsigned int)cloud->evaporate_wait,
+		    (unsigned int)cloud->is_cloud_line_active,
+		    (int)(stand != FALSE),
+		    (int)(anim_idle != FALSE),
+		    (int)(gate_open != FALSE),
+		    (int)(root_ok != FALSE),
+		    (int)(root_child_ok != FALSE),
+		    (int)(reest_this_tick != FALSE),
+		    (int)(dobj0_ok != FALSE),
+		    (int)(mobj_ok != FALSE),
+		    gobj_bits,
+		    anim_wait_bits,
+		    anim_speed_bits,
+		    matanim_bits,
+		    map_head_bits,
+		    root_x,
+		    translate_y,
+		    root_z,
+		    spawn_translate.x,
+		    spawn_translate.y,
+		    spawn_translate.z,
+		    (int)(syNetRollbackIsResimulating() != FALSE),
+		    (unsigned int)syNetRollbackGetAppliedResimCount());
+	}
+
+	if (syNetSyncYosterCloudDiagFighters() == FALSE)
+	{
+		return;
+	}
+	{
+		GObj *fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter];
+
+		while (fighter_gobj != NULL)
+		{
+			FTStruct *fp = ftGetStruct(fighter_gobj);
+
+			if ((fp != NULL) && (fp->ga == nMPKineticsGround))
+			{
+				s32 floor_line = fp->coll_data.floor_line_id;
+				s32 map_line = -1;
+				sb32 match;
+
+				if (floor_line != -2)
+				{
+					map_line = mpCollisionSetDObjNoID(floor_line);
+				}
+					match = ((floor_line != -2) && (map_line == exp_line)) ? TRUE : FALSE;
+				if ((stand == FALSE) || (match == FALSE) || (syNetSyncYosterCloudDiagVerbose() != FALSE))
+				{
+					u32 top_y_bits = 0U;
+
+					if ((fp->joints[nFTPartsJointTopN] != NULL))
+					{
+						top_y_bits = syNetSyncF32Bits(fp->joints[nFTPartsJointTopN]->translate.vec.f.y);
+					}
+					port_log(
+					    "SSB64 NetSync: yoster_cloud_fighter tick=%u cloud=%d player=%d fkind=%d ga=%d "
+					    "floor_line=%d map_line=%d exp_line=%d match=%d top_y=0x%08X\n",
+					    sim_tick,
+					    (int)cloud_id,
+					    (int)fp->player,
+					    (int)fp->fkind,
+					    (int)fp->ga,
+					    (int)floor_line,
+					    (int)map_line,
+					    (int)exp_line,
+					    (int)(match != FALSE),
+					    top_y_bits);
+				}
+			}
+			fighter_gobj = fighter_gobj->link_next;
+		}
+	}
 }
 #endif
 
@@ -2189,6 +3192,38 @@ u32 syNetSyncHashActiveWeaponsForRollback(void)
 }
 
 #ifdef PORT
+static sb32 syNetSyncFighterInRebirthScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	return ((fp->status_id >= nFTCommonStatusRebirthDown) && (fp->status_id <= nFTCommonStatusRebirthWait))
+	           ? TRUE
+	           : FALSE;
+}
+
+static sb32 syNetSyncFighterRebirthHaloLifecycleActive(const FTStruct *fp)
+{
+	return syNetSyncFighterInRebirthScope(fp);
+}
+
+static sb32 syNetSyncEffectIsRebirthHaloCoupling(const GObj *effect_gobj, const EFStruct *ep, const FTStruct *fp)
+{
+	DObj *dobj;
+
+	if ((effect_gobj == NULL) || (ep == NULL) || (fp == NULL) || (ep->fighter_gobj == NULL))
+	{
+		return FALSE;
+	}
+	if (ep->proc_update != gcPlayAnimAll)
+	{
+		return FALSE;
+	}
+	dobj = DObjGetStruct(effect_gobj);
+	return ((dobj != NULL) && (dobj->user_data.p == fp->joints[nFTPartsJointTopN])) ? TRUE : FALSE;
+}
+
 u32 syNetSyncHashActiveEffectsForRollback(void)
 {
 	GObj *sorted[SYNET_SYNC_EFFECT_HASH_SORT_MAX];
@@ -2216,17 +3251,33 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		EFStruct *ep;
 		DObj *dobj;
 		u32 fold;
+		sb32 rebirth_halo_effect;
+		sb32 ness_pkwave_effect;
+		sb32 ness_psychic_magnet_effect;
+		sb32 ness_shock_effect;
 
 		ep = efGetStruct(gobj);
+		rebirth_halo_effect = FALSE;
+		ness_pkwave_effect = FALSE;
+		ness_psychic_magnet_effect = FALSE;
+		ness_shock_effect = FALSE;
 		if (ep == NULL)
 		{
 			if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect))
 			{
 				fold = 2166136261U;
-				fold = syNetSyncFnvAccumulateU32(fold, gobj->id);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->link_id);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->obj_kind);
 				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
-				fold = syNetSyncFnvAccumulateU32(
-				    fold, syNetSyncPointerFingerprintLow32((const void *)gobj->gobjproc_head));
+				dobj = DObjGetStruct(gobj);
+				if (dobj != NULL)
+				{
+					Vec3f pos = dobj->translate.vec.f;
+
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+				}
 				hash ^= fold;
 				hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 			}
@@ -2234,20 +3285,79 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		}
 		fold = 2166136261U;
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->bank_id);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)syNetRbSnapEffectRespawnKindFromLive(gobj, ep));
 		fold = syNetSyncFnvAccumulateU32(fold,
 		                                 (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U);
 		fold = syNetSyncFnvAccumulateU32(fold, (ep->is_pause_effect != FALSE) ? 1U : 0U);
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
-		fold =
-		    syNetSyncFnvAccumulateU32(fold, syNetSyncPointerFingerprintLow32((const void *)ep->proc_update));
 		if (ep->proc_update == efManagerFoxReflectorProcUpdate)
 		{
 			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.index);
 			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.status);
 		}
+		if (ep->proc_update == efManagerShieldProcUpdate)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.shield.player);
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)(ep->effect_vars.shield.is_damage_shield != FALSE));
+		}
+		if ((ep->proc_update == gcPlayAnimAll) && (ep->fighter_gobj != NULL))
+		{
+			FTStruct *fp_halo;
+
+			fp_halo = ftGetStruct(ep->fighter_gobj);
+			if (fp_halo != NULL)
+			{
+				rebirth_halo_effect = syNetSyncEffectIsRebirthHaloCoupling(gobj, ep, fp_halo);
+				if (rebirth_halo_effect != FALSE)
+				{
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_rebirth != FALSE) ? 1U : 0U);
+					fold = syNetSyncFnvAccumulateU32(
+					    fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_despawn_wait);
+					fold = syNetSyncFnvAccumulateU32(
+					    fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_lower_wait);
+				}
+				else if (((fp_halo->fkind == nFTKindNess) || (fp_halo->fkind == nFTKindNNess)) &&
+				         (DObjGetStruct(gobj) != NULL) &&
+				         (DObjGetStruct(gobj)->user_data.p == fp_halo->joints[5]))
+				{
+					switch (fp_halo->status_id)
+					{
+					case nFTNessStatusSpecialHiStart:
+					case nFTNessStatusSpecialHiHold:
+					case nFTNessStatusSpecialHiEnd:
+					case nFTNessStatusSpecialHiJibaku:
+					case nFTNessStatusSpecialAirHiStart:
+					case nFTNessStatusSpecialAirHiHold:
+					case nFTNessStatusSpecialAirHiEnd:
+					case nFTNessStatusSpecialAirHiBound:
+					case nFTNessStatusSpecialAirHiJibaku:
+						ness_pkwave_effect = TRUE;
+						fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+						fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
+						break;
+
+					default:
+						break;
+					}
+				}
+				else if (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE)
+				{
+					ness_psychic_magnet_effect = TRUE;
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
+					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_absorb != FALSE) ? 1U : 0U);
+				}
+			}
+		}
+		if (ep->proc_update == efManagerVelAddDestroyAnimEnd)
+		{
+			ness_shock_effect = TRUE;
+		}
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
 		dobj = DObjGetStruct(gobj);
-		if (dobj != NULL)
+		if ((dobj != NULL) && (rebirth_halo_effect == FALSE) && (ness_pkwave_effect == FALSE) &&
+		    (ness_psychic_magnet_effect == FALSE) && (ness_shock_effect == FALSE))
 		{
 			Vec3f pos = dobj->translate.vec.f;
 

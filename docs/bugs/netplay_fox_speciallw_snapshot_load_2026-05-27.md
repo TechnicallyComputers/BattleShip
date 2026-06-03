@@ -50,6 +50,23 @@ tick=360  partition=figh_full  FC fail snap@359
 - Expect `effect_respawn kind=FOX_REFLECTOR result=ok` on load when GObj was missing.
 - `LOAD_HASH_DRIFT` at tick 240 should not fire with `ROLLBACK_VERIFY_EFFECT_HASH=1` after fix.
 
+## Wrong-fighter reflector after GObj id reuse (2026-05-28)
+
+**Symptom:** Fox down+B reflector shell sticks on Mario after synctest restore; intermittent on Linux guest. Log: `effect_respawn kind=FOX_REFLECTOR fighter_gobj_id=1000` (Mario) while Fox owns `fox_speciallw_effect_gobj_id=1011` (id reused from Mario rebirth halo).
+
+**Cause:** Respawn trusted stale `effect_blob->fighter_gobj_id` after GObj id recycle. Stale `fox_speciallw_effect_gobj_id` when Fox left reflector scope still triggered ensure/respawn. Cross-ISA `eff` drift triggered periodic synctest emergency restore mid-reflector.
+
+**Fix:**
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapResolveFoxReflectorParentGobj` | Parent from Fox fighter blob owner, not stale effect blob parent |
+| `syNetRbSnapFoxSpecialLwEffectIdFromBlob` | Zero coupled id when blob status outside reflector scope |
+| `syNetRbSnapPruneStaleFoxReflectors` | Eject reflectors on non-Fox / out-of-scope / wrong coupled id |
+| `syNetRbSnapshotSynctestShouldSkip` + `reason=fox_reflector` | Defer synctest during SpecialLw / AirLw window |
+
+**Verify:** Mario/Fox soak; trim ticks 1330–1360. No `FOX_REFLECTOR resolved_parent` on Mario's gobj. Reflector despawn when Fox exits SpecialLw.
+
 ## Code pointers
 
 | Area | Symbol |
@@ -58,3 +75,5 @@ tick=360  partition=figh_full  FC fail snap@359
 | Effect rebind | `syNetRbSnapRebindFighterEffectGobjs` |
 | Load verify order | `syNetRollbackLoadPostTick` |
 | Effect hash | `syNetSyncHashActiveEffectsForRollback` |
+| Reflector parent resolve | `syNetRbSnapResolveFoxReflectorParentGobj` |
+| Stale reflector prune | `syNetRbSnapPruneStaleFoxReflectors` |

@@ -24,6 +24,11 @@ sb32 syNetPeerIsVSSessionActive(void)
 	return FALSE;
 }
 
+u32 syNetPeerGetHighestRemoteTick(void)
+{
+	return 0U;
+}
+
 u32 syNetPeerGetVsContractViHz(void)
 {
 	return 0U;

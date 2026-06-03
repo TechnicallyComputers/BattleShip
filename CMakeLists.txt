@@ -690,41 +690,26 @@ if(SSB64_NETMENU)
     endif()
 else()
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
-    # Decomp PORT TUs include <sys/net*.h> for syNetRbSnap* coupling helpers (shared with netplay rollback).
-    # Per-TU -I: netplay include/ shims, netplay/sys for objman_gcport, then port/net for netpeer headers.
+    # Offline build (SSB64_NETMENU=OFF): decomp net rollback blocks are stripped at compile time
+    # (#if defined(PORT) && defined(SSB64_NETMENU)). No port/net rollback TUs linked.
+    # net_port_glue_offline.c + netsync_hash_stubs.c satisfy remaining port shell symbols.
     set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
     set(_SSB64_DECOMP_NETINCLUDE_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/sccommon/scvsbattle.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/objman.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/taskman.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopymariospecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopypikachuspecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftkirby/ftkirbycopysamusspecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftmario/ftmariospecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftness/ftnessspecialhi.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftness/ftnessspecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftpikachu/ftpikachuspecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftpikachu/ftpikachuspeciallw.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftsamus/ftsamusspecialn.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftchar/ftyoshi/ftyoshispecialhi.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itfflower.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itlgun.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/it/itcommon/itstarrod.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/gm/gmcamera.c")
-    set(_SSB64_OFFLINE_NET_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/sys/netrollbacksnapshot.c")
-    target_sources(ssb64_game PRIVATE ${_SSB64_OFFLINE_NET_SOURCES})
-    list(APPEND _SSB64_DECOMP_NETINCLUDE_SOURCES ${_SSB64_OFFLINE_NET_SOURCES})
-    # netplay/include/string.h must precede decomp/include/string.h for netrollbacksnapshot.c.
-    # INCLUDE_DIRECTORIES (not COMPILE_OPTIONS "-I a -I b") — a single COMPILE_OPTIONS string is
-    # passed as one argv on Unix/macOS CI and the compiler never sees port/net for <sys/*.h>.
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommoncatch2.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonentry.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonthrow.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonwait.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftmain.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/gm/gmcamera.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/if/ifcommon.c")
     set(_SSB64_OFFLINE_NET_INCLUDE_DIRS
         "${SSB64_NETPLAY_INCLUDE_SHIMS}"
         "${SSB64_NETPLAY_DIR}"
         "${_SSB64_PORT_NET_SYS_PARENT}")
     set_source_files_properties(
-        ${_SSB64_OFFLINE_NET_SOURCES} ${_SSB64_DECOMP_NETINCLUDE_SOURCES}
+        ${_SSB64_DECOMP_NETINCLUDE_SOURCES}
         PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
 endif()
 
@@ -840,9 +825,42 @@ if (SSB64_NETMENU)
     else()
         set(_ssb64_fp_contract_off "-ffp-contract=off")
     endif()
+    # Every decomp TU whose float output feeds a rollback/frame-commit sync hash must be
+    # contraction-free, or clang fuses a*b+c differently per ISA (aarch64 vs x86_64) and the
+    # quantize grid can no longer absorb the per-frame ULP divergence (eff/item/wpn hashes split
+    # first because effects/weapons/items run heavy Vec3f + transcendental math). Same-ISA peers
+    # stay bit-identical regardless, which is why Linux<->Linux was stable before quantization.
+    # Sim-critical hash producers: ft (figh), ef (eff), wp (wpn), it (item), mp (map/collision),
+    # lb (shared vector math used everywhere), gm (cam + collision/world-pose matrix math),
+    # sys/objanim (anim).
+    #
+    # NOTE: stock decomp TUs (taskman, scvsbattle, lbcommon, scmanager, mnvsmode, mnvsresults) are
+    # unified under decomp/src/ with compile gates. Net-only sources remain under decomp/src/netplay/.
+    # lbcommon is the shared 2D/3D magnitude/normalize math (lbCommonMag2D/NormDist2D = sqrtf(x*x + y*y))
+    # on the item/fighter physics hot path. The "/decomp/src/lb/" pattern does NOT match
+    # "/decomp/src/netplay/lb/", so without the explicit netplay match below that relocated TU
+    # so without the explicit netplay match below that relocated TU compiled WITH contraction:
+    # aarch64 fused x*x + y*y into one FMA while baseline x86_64 used two rounded ops, diverging
+    # the bomb terminal-velocity clamp cross-ISA (Link bomb spam desync, 2026-05-29). Match the
+    # whole netplay tree so any relocated sim TU stays contraction-free.
+    #
+    # Same gap re-bit gm/: the matcher used to key on "/decomp/src/gm/gmcamera.c$" only, leaving
+    # gmcollision.c compiled WITH contraction. gmCollisionGetWorldPosition / TransformMatrixAll /
+    # the 4x4 matrix multiply are dense (mtx[0][0]*x + mtx[1][0]*y + mtx[2][0]*z) + mtx[3][0]
+    # dot-products that fuse to a single fmadd on aarch64. That 1-ULP world-position drift is
+    # cosmetic for fighters (their synced pose is the quantized physics root), but itMainSetFighterRelease
+    # seeds a THROWN item's *persistent synced position* directly from a fighter joint world
+    # position (gmCollisionGetFighterPartsWorldPosition), so the unfused/fused split leaks into the
+    # item hash and forks it at the next synctest — and the 1/65536 quantize grid is finer than the
+    # f32 ULP at stage-scale |x|>256 coords, so it cannot merge the two adjacent floats (Link bomb
+    # spam desync on Sector Z, 2026-05-30). Match the whole /decomp/src/gm/ tree (all five TUs are
+    # gameplay sim) so the collision/matrix surface stays contraction-free, not just gmcamera.c.
     foreach(_src IN LISTS SSB64_DECOMP_SOURCES)
-        if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
-            _src MATCHES "/decomp/src/gm/gmcamera\\.c$" OR _src MATCHES "/decomp/src/mp/mpcollision\\.c$")
+        if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/ef/" OR
+            _src MATCHES "/decomp/src/wp/" OR _src MATCHES "/decomp/src/it/" OR
+            _src MATCHES "/decomp/src/mp/" OR _src MATCHES "/decomp/src/lb/" OR
+            _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/netplay/" OR
+            _src MATCHES "/decomp/src/sys/objanim\\.c$")
             set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
         endif()
     endforeach()

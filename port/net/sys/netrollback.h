@@ -25,12 +25,12 @@
  * Symmetric follower resim is on by default with rollback (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0` disables;
  * `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only). `resim_rng_verify` logs each completed resim by default
  * (`SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables). Debounce: `SSB64_NETPLAY_ROLLBACK_DEBOUNCE_FRAMES`.
- * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Anim-only drift
- * (fighter/world/RNG/item/wpn/map/cam match) soft-continues when verify still fails after apply ordering fixes.
+ * Soft load-hash drift after heavy rollback: `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=1`. Presentational-only drift
+ * (fighter/world/RNG/item/wpn/map/eff match; anim and/or cam differ) soft-continues when verify still fails after apply.
  * Symmetric episodes: wire-locked resim target, post-load baseline gate before forward sim, no snapshot
  * save during resim/episode cooldown. While resim pending, coordination transport still sends INPUT padding
  * and `ROLLBACK_SYNC` (type 24) plus receives baseline/sync. Out of scope: full snapshot exchange, pure
- * independent GGPO without symmetric notify, hard-fail on anim-only load drift. See
+ * independent GGPO without symmetric notify, hard-fail on presentational-only load drift. See
  * `docs/netplay_rollback_test_matrix.md`.
  * Load failure restores a pre-load emergency snapshot and stops the VS session. See
  * `docs/netplay_rollback_refactor_contracts.md`.

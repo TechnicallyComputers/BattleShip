@@ -114,8 +114,11 @@ extern void syNetSyncResetFhashLightMismatchTriggerSession(void);
 extern void syNetSyncFhashLightMismatchTriggerOnTick(u32 tick);
 /* Netplay: battle clock tied to authoritative sim tick (not wall-clock scheduler tics). */
 extern void syNetSyncResetNetplayBattleClock(void);
+/* Minutes for netplay timer reconcile/HUD (battle_state->time_limit). */
+extern u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void);
 extern void syNetSyncOnNetplayBattleGo(void);
 extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);
+extern void syNetSyncReconcileBattleTimePassedForSnapshotSave(u32 completed_sim_tick);
 extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
 /*
  * `SSB64_NETPLAY_ITEM_HASH_TRACE=1`: log GObj walk order + per-item fold at hash-compute time.
@@ -124,6 +127,18 @@ extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
  * timers, relation GObj ids, and low bits of dispatch proc pointers (`proc_update`/hit/shield/setoff/damage/dead).
  */
 extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
+/* Always-on ordered item walk when item hash drift is detected (load verify / frame commit). */
+extern void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
+/* Per-item pos/vel/status rows when item hash drifts (`SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1`). */
+extern void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
+/*
+ * Post-tick snapshot when synctest skips during item throw windows (`fighter_throw` / `item_throw`).
+ * Default on during VS when unset; emits `item_throw_window` + `item_hold_coupling` rows and optionally
+ * chains `item_field_diff` / `item_hash_walk` when those envs are enabled.
+ */
+extern void syNetSyncLogItemThrowWindowDiag(u32 sim_tick, const char *skip_reason);
+/* Yoshi's Island cloud lifecycle + stand-detection (`SSB64_NETPLAY_YOSTER_CLOUD_DIAG=1`). */
+extern void syNetSyncLogYosterCloudDiag(s32 cloud_id);
 /* Per-player `syNetSyncHashFighterStructLight` at `sim_state_tick` (`SSB64_NETPLAY_FIGHTER_SLOT_HASH_LOG`). */
 extern void syNetSyncCollectFighterSlotHashes(u32 out_slot_hash[GMCOMMON_PLAYERS_MAX]);
 extern void syNetSyncLogFighterSlotHashes(u32 tick);

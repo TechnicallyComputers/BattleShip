@@ -1,7 +1,6 @@
 /*
- * Offline (SSB64_NETMENU=OFF): netrollbacksnapshot.c is linked for syNetRbSnap* coupling
- * helpers used by PORT decomp TUs, but netsync.c is not. Provide no-op hash/reconcile stubs
- * for snapshot save paths (unused when rollback is inactive).
+ * Offline (SSB64_NETMENU=OFF): netsync hash/reconcile stubs for port shell symbols.
+ * Rollback snapshot TUs are not linked; decomp net blocks are compile-stripped.
  */
 #include <sys/netsync.h>
 
@@ -30,6 +29,29 @@ u32 syNetSyncHashFighterSlotAnim(const FTStruct *fp, GObj *fighter_gobj)
 void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
 {
 	(void)sim_tick;
+}
+
+void syNetSyncReconcileBattleTimePassedForSnapshotSave(u32 completed_sim_tick)
+{
+	(void)completed_sim_tick;
+}
+
+void syNetSyncResetNetplayBattleClock(void)
+{
+}
+
+void syNetSyncOnNetplayBattleGo(void)
+{
+}
+
+u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void)
+{
+	return 0U;
+}
+
+u32 syNetSyncHashBattleFighters(void)
+{
+	return 0U;
 }
 
 u32 syNetSyncHashBattleFightersFull(void)

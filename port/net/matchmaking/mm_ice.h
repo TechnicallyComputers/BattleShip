@@ -36,6 +36,15 @@ typedef void (*MmIceOnGatheringDoneFn)(void *user_ptr);
 
 extern sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg);
 extern void mmIceShutdown(void);
+/** TRUE while a libjuice agent exists (not shut down). */
+extern sb32 mmIceAgentLive(void);
+/** Android POLL mode: pause shared libjuice poll thread during matchmaking HTTPS. */
+extern void mmIcePauseIo(void);
+extern void mmIceResumeIo(void);
+/** Drain stacked juice_pause_io depth so poll-mode UDP recv is not stuck after HTTPS. */
+extern void mmIceEnsureIoResumed(void);
+/** FALSE only when ICE is COMPLETED (VS staging recv); TRUE during CONNECTING/CONNECTED for fdsan. */
+extern sb32 mmIceShouldSerializeMatchmakingHttps(void);
 extern void mmIceSetLanDirectGather(sb32 enabled);
 extern sb32 mmIceIsLanDirectGather(void);
 extern sb32 mmIceIsFailed(void);
@@ -53,12 +62,19 @@ extern sb32 mmIceStartGathering(void);
 extern sb32 mmIceGatherInProgress(void);
 extern sb32 mmIceGatherFailed(void);
 extern sb32 mmIceGetLocalDescription(char *out, u32 out_cap);
-extern void mmIceSetCandidatePolicy(sb32 allow_peer_host, sb32 signal_local_host);
+extern void mmIceSetCandidatePolicy(sb32 allow_peer_host, sb32 signal_local_host, const char *peer_lan_hostport,
+                                      const char *local_lan_hostport);
 extern sb32 mmIceFilterHostFromSignalingSdp(char *sdp);
 extern sb32 mmIceShouldAcceptRemoteCandidate(const char *candidate_sdp);
 extern sb32 mmIceShouldSignalLocalCandidate(const char *candidate_sdp);
 /** TRUE when SDP contains a real `a=ice-ufrag:` line (required for queue / set_remote_description). */
 extern sb32 mmIceSdpHasIceUfrag(const char *sdp);
+/** Parse `a=ice-ufrag` / `a=ice-pwd` from queue SDP. */
+extern sb32 mmIceParseSdpIceCredentials(const char *sdp, char *ufrag_out, u32 ufrag_cap, char *pwd_out, u32 pwd_cap);
+/** After mmIceInit, before gather: restore queue ufrag/pwd so peer's stored ice_sdp stays valid. */
+extern sb32 mmIceSetLocalIceAttributesFromSdp(const char *sdp);
+/** Block until async gather thread completes; drains callback queues once. */
+extern void mmIceJoinGathering(void);
 extern sb32 mmIceApplyRemoteDescription(const char *sdp);
 /** Full remote SDP or single candidate line; sets *out_desc_applied when juice_set_remote_description succeeds. */
 extern sb32 mmIceApplyPeerIceSignaling(const char *sdp, sb32 *out_desc_applied);
@@ -97,6 +113,11 @@ typedef enum MmIceState
 
 #define mmIceInit(b, c) FALSE
 #define mmIceShutdown() ((void)0)
+#define mmIceAgentLive() FALSE
+#define mmIcePauseIo() ((void)0)
+#define mmIceResumeIo() ((void)0)
+#define mmIceEnsureIoResumed() ((void)0)
+#define mmIceShouldSerializeMatchmakingHttps() TRUE
 #define mmIceSetLanDirectGather(e) ((void)(e))
 #define mmIceIsLanDirectGather() FALSE
 #define mmIceIsFailed() FALSE
@@ -105,11 +126,14 @@ typedef enum MmIceState
 #define mmIceGatherInProgress() FALSE
 #define mmIceGatherFailed() FALSE
 #define mmIceGetLocalDescription(o, n) FALSE
-#define mmIceSetCandidatePolicy(a, s) ((void)(a), (void)(s))
+#define mmIceSetCandidatePolicy(a, s, p, l) ((void)(a), (void)(s), (void)(p), (void)(l))
 #define mmIceFilterHostFromSignalingSdp(s) FALSE
 #define mmIceShouldAcceptRemoteCandidate(s) TRUE
 #define mmIceShouldSignalLocalCandidate(s) TRUE
 #define mmIceSdpHasIceUfrag(s) FALSE
+#define mmIceParseSdpIceCredentials(s, u, uc, p, pc) FALSE
+#define mmIceSetLocalIceAttributesFromSdp(s) FALSE
+#define mmIceJoinGathering() ((void)0)
 #define mmIceApplyRemoteDescription(s) FALSE
 #define mmIceApplyPeerIceSignaling(s, o) FALSE
 #define mmIceAddRemoteCandidate(s) FALSE

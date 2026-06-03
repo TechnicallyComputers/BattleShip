@@ -72,24 +72,34 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 		u32 snap_w;
 		u32 snap_i;
 		u32 snap_r;
+		u32 snap_ef;
 
 		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
-		if (syNetRbSnapshotGetStoredSubsystemHashes(snap_tick, &snap_f, &snap_w, &snap_i, &snap_r) != FALSE)
+		if (syNetRbSnapshotGetStoredSubsystemHashesEx(snap_tick, &snap_f, &snap_w, &snap_i, &snap_r, &snap_ef) !=
+		    FALSE)
 		{
 			out->fighter_digest = snap_f;
 			out->world_digest = snap_w;
 			out->item_digest = snap_i;
 			out->rng_digest = snap_r;
+			out->effect_digest = snap_ef;
 		}
 		else
-#endif
 		{
 			out->fighter_digest = syNetSyncHashBattleFightersFull();
 			out->world_digest = syNetSyncHashRollbackWorld();
 			out->item_digest = syNetSyncHashActiveItemsForRollback();
 			out->rng_digest = syNetSyncHashRNGSeed();
+			out->effect_digest = syNetSyncHashActiveEffectsForRollback();
 		}
-#ifdef PORT
+	}
+#else
+	{
+		out->fighter_digest = syNetSyncHashBattleFightersFull();
+		out->world_digest = syNetSyncHashRollbackWorld();
+		out->item_digest = syNetSyncHashActiveItemsForRollback();
+		out->rng_digest = syNetSyncHashRNGSeed();
+		out->effect_digest = syNetSyncHashActiveEffectsForRollback();
 	}
 #endif
 }
@@ -132,7 +142,8 @@ sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFra
 sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b)
 {
 	if ((a->fighter_digest != b->fighter_digest) || (a->world_digest != b->world_digest) ||
-	    (a->item_digest != b->item_digest) || (a->rng_digest != b->rng_digest))
+	    (a->item_digest != b->item_digest) || (a->rng_digest != b->rng_digest) ||
+	    (a->effect_digest != b->effect_digest))
 	{
 		return TRUE;
 	}

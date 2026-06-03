@@ -16,6 +16,13 @@ extern sb32 mmLanPeerHostportIsOnLocalLan(const char *peer_hostport);
 extern sb32 mmLanPeerSharesLocalLanSubnet(const char *peer_hostport, const char *local_lan_hostport);
 
 /*
+ * TRUE when both IPv4 host:port values are RFC1918 on the same shared-LAN segment
+ * (192.168/24, 172.16/16, or 10/8). Used to accept multi-NIC peer host candidates on LAN
+ * without requiring kernel interface-subnet match against peer_lan.
+ */
+extern sb32 mmLanIpv4HostportsOnSameSharedLanSegment(const char *hostport_a, const char *hostport_b);
+
+/*
  * TRUE when both host:port strings parse as IPv4 and addresses match (STUN reflexive WAN IPs).
  * Automatch uses this to detect same public IP; peer_lan is tried first only when
  * mmLanPeerSharesLocalLanSubnet(peer_lan, local_lan) is TRUE. Otherwise reflexive host:port

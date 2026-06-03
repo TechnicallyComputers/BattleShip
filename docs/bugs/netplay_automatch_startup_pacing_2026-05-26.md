@@ -22,6 +22,8 @@
 | Default `STRICT_REMOTE_LEAD_BUFFER_TICKS=2` when unset | Extra startup slack without raising strict slack env |
 | Stage INPUT while `bind` incomplete but battle gates not ready | Do not drop early peer bundles during staging |
 
+**Follow-up (2026-06-02):** [netplay_input_bind_startup_cadence_2026-06-02.md](netplay_input_bind_startup_cadence_2026-06-02.md) — `INPUT_BIND` RTX used taskman `% 15` while exec-hold counted display-rate gate pumps; immediate send on `StartVSSession`, wall-ms RTX, bind during staging rendezvous.
+
 ## Verification
 
 - LAN automatch: both sides `ICE: connected remote=` with host typ on LAN; no watchdog during connect; VS runs past sim 4 without strict-R abort.

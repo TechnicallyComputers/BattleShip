@@ -134,6 +134,8 @@ extern sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatc
 						       u32 row_begin, const SYNetInputFrame *rows, u32 row_count);
 extern sb32 syNetRollbackEpisodePeerSealRowsComplete(s32 player);
 extern sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void);
+extern sb32 syNetRollbackEpisodeLocalSealRowsSendComplete(void);
+extern u32 syNetRollbackEpisodeGetLocalSealRowsSendPendingMask(void);
 extern u32 syNetRollbackEpisodeGetSealSpan(void);
 extern u32 syNetRollbackEpisodeGetMissingPeerSealSlotsMask(void);
 extern void syNetRollbackEpisodeLogSealRowsWaitDetail(u32 load_tick, u32 missing_mask);
@@ -141,6 +143,7 @@ extern sb32 syNetRollbackEpisodeTakeSealRowsChunkForSend(u32 *out_epoch_id, u32 
 							 s32 *out_slot, u32 *out_row_begin, SYNetInputFrame *out_frames,
 							 u32 max_frames, u32 *out_row_count);
 extern void syNetRollbackEpisodeNoteSealRowsChunkSent(s32 slot, u32 row_begin, u32 row_count);
+extern void syNetRollbackEpisodePumpOutboundSealRows(u32 max_chunks);
 extern u32 syNetRollbackEpisodeComputeSpanInputDigest(u32 from_tick, u32 to_tick);
 extern u32 syNetRollbackEpisodeComputeSlotSpanInputDigest(s32 player, u32 from_tick, u32 to_tick);
 /* Snapshot span input digest once peer seal rows are complete (before forward replay). */

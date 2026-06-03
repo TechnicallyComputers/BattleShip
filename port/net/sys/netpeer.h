@@ -78,6 +78,8 @@ extern void syNetPeerStopVSSession(void);
  */
 extern void syNetPeerEndVSSessionLocally(void);
 extern sb32 syNetPeerIsVSSessionActive(void);
+/* TRUE while automatch/bootstrap run is driving VS entry (not mid-match Go). */
+extern sb32 syNetPeerIsBootstrapRunInProgress(void);
 /*
  * Barrier VI contract Hz (host default 60; guest latched from BATTLE_START_TIME wire layout).
  * Used by PortPushFrame to lock netplay sim stepping / taskman pacing independently of host monitor Hz.
@@ -129,7 +131,7 @@ extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 extern void syNetPeerTrySendRollbackBaselineDigest(void);
-extern void syNetPeerTrySendEpisodeSealRows(void);
+extern sb32 syNetPeerTrySendEpisodeSealRows(void);
 extern void syNetPeerTrySendRollbackSyncNotice(void);
 extern void syNetPeerSendLocalInput(void);
 /* Best-effort notify before local rollback fatal teardown so peer stops without strict-input stall. */
@@ -298,11 +300,15 @@ extern void syNetPeerSetTurnOutboundRelay(sb32 enabled);
 extern sb32 syNetPeerEnableTurnChannelRelay(const char *peer_permission_hostport);
 #if defined(SSB64_NETPLAY_ICE)
 extern void syNetPeerSetIceTransport(sb32 enabled);
+extern sb32 syNetPeerIsIceTransportActive(void);
 #endif
 extern void syNetPeerSetAutomatchBootstrapContext(const char *match_id, const char *ticket_id);
+extern void syNetPeerSetAutomatchBootstrapContextEx(const char *match_id, const char *ticket_id,
+                                                    const char *peer_player_id);
 extern void syNetPeerClearAutomatchBootstrapContext(void);
 extern sb32 syNetPeerGetAutomatchBootstrapContext(char *match_id_out, u32 match_cap, char *ticket_out,
                                                   u32 ticket_cap);
+extern sb32 syNetPeerGetAutomatchPeerPlayerId(char *peer_player_id_out, u32 cap);
 /* After bootstrap success in staging: arm and poll a synchronized scene-go rendezvous. */
 extern sb32 syNetPeerBeginStageSceneRendezvous(void);
 extern sb32 syNetPeerUpdateStageSceneRendezvous(void);

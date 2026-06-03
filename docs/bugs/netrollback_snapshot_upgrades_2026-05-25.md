@@ -51,5 +51,11 @@ Folded into `hash_map` at save (tag `0x47524F55`). Apply after map, before world
 
 ## Still open
 
-- Sector `map_dobjs[12]` (presentation-only).
 - Inishie `pblock_pos_ids` (stage-static pointer table).
+
+## Sector Z Arwing (2026-05-30)
+
+- `SYNetRbSnapGroundSector` v2 scalars (`map_gobj_flags`, `unk_sector_*`).
+- `SYNetRbSnapArwingBlob` slot partition (12× `SYNetRbSnapDObjAnimBlob`).
+- `syNetRbSnapEnsureSectorArwingAfterParticleReset` + `grSectorReestablishArwingVisualTree`.
+- See [`netplay_sector_arwing_rollback_2026-05-30.md`](netplay_sector_arwing_rollback_2026-05-30.md).

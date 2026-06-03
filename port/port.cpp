@@ -46,6 +46,7 @@
 #endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
+#include "android_network.h"
 #if defined(__ANDROID__)
 #include <android/log.h>
 #define SSB64_ANDROID_LOG_TAG "ssb64"
@@ -658,6 +659,10 @@ static int PortInitImpl(int argc, char* argv[]) {
 	}
 	port_log("SSB64: Window OK\n");
 
+#if !defined(__ANDROID__)
+	port_android_network_install(nullptr);
+#endif
+
 #if defined(__ANDROID__)
 	portAndroidJniWarmupLate();
 #endif
@@ -851,8 +856,30 @@ static void portAndroidJniWarmupEarly(void)
 static void portAndroidJniWarmupLate(void)
 {
 	SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
+	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
 	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
 		port_log("SSB64: SDL_INIT_GAMECONTROLLER warm-up failed: %s\n", SDL_GetError());
+	}
+	/* Load gamecontrollerdb.txt on SDLThread before the controller coroutine
+	 * runs osContInit — SDL Android file/env helpers require a valid JNI frame. */
+	if (sContext != nullptr) {
+		try {
+			const std::string controllerDb =
+			    Ship::Context::LocateFileAcrossAppDirs("gamecontrollerdb.txt");
+			const int mappingsAdded =
+			    SDL_GameControllerAddMappingsFromFile(controllerDb.c_str());
+			if (mappingsAdded >= 0) {
+				port_log("SSB64: Android gamecontrollerdb loaded from %s (%d mappings)\n",
+				         controllerDb.c_str(), mappingsAdded);
+			} else {
+				port_log("SSB64: Android gamecontrollerdb skip %s (%s)\n",
+				         controllerDb.c_str(), SDL_GetError());
+			}
+		} catch (const std::exception& e) {
+			port_log("SSB64: Android gamecontrollerdb skip (%s)\n", e.what());
+		} catch (...) {
+			port_log("SSB64: Android gamecontrollerdb skip (unknown error)\n");
+		}
 	}
 	SDL_SetHint(SDL_HINT_AUDIODRIVER, "aaudio");
 }
