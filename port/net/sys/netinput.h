@@ -179,6 +179,10 @@ extern u32 syNetInputGetStrictRemoteLeadBufferTicks(void);
  * `syNetPeerUpdate` so the battle sim is not executed twice for the same tick.
  */
 extern sb32 syNetInputStrictContractSkippedPublishThisPass(void);
+/* `SSB64_NETPLAY_STRICT_STALL_DIAG` (0/1/2): strict R/V/W/S/K stall + net slice after rollback resim. */
+extern void syNetInputMaybeLogStrictStallDiag(u32 tick, char admission_letter, sb32 suppress_scene, sb32 partial_publish,
+                                              const char *phase_tag);
+extern void syNetInputMaybeLogNetSliceDiag(u32 tick, sb32 allow_battle_sim, sb32 allow_net_update);
 /* Cumulative FuncRead admission outcomes for active VS (non-resim): P=publish, E=exec hold, W=clock hold, S=stall, K=skew, R=strict remote missing. */
 extern void syNetInputLogAdmissionStatsSummary(const char *tag, sb32 reset_counts_after);
 #endif

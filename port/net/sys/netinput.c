@@ -23,11 +23,17 @@
 
 #ifdef PORT
 #include <sys/netdesyncclassifier.h>
+#include "gameloop.h"
+#include <sys/net_debug_agent_log.h>
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+#include <sys/netreconnect.h>
+#endif
 #endif
 
 #ifdef PORT
 #include <sc/scmanager.h>
 #include <sc/sctypes.h>
+#include <stdio.h>
 #include <string.h>
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -271,6 +277,9 @@ static int sSYNetInputSessionIngressPumpsOverride;
 static sb32 sSYNetInputSessionBundleRedundancyOverrideValid;
 static int sSYNetInputSessionBundleRedundancyOverride;
 static int sSYNetInputDelaySyncDiagLevelCache = -999;
+static int sSYNetInputStrictStallDiagLevelCache = -999;
+static u32 sSYNetInputStrictStallDiagLastTick = ~(u32)0;
+static u32 sSYNetInputStrictStallDiagLastFrames;
 static u32 sSYNetInputDelaySyncDiagLastCommittedD = ~(u32)0;
 static int sSYNetInputStrictRemoteLeadBufferEnvCache = -999;
 static SYNetInputStrictCache sSYNetInputStrictCache;
@@ -4628,6 +4637,12 @@ void syNetInputExportPeerConnectStatus(s32 *out_last_tick, u8 *out_disconnected,
 	for (i = 0; i < n; i++)
 	{
 		out_disconnected[i] = 0;
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+		if (syNetReconnectExportPeerDisconnect(i) != 0)
+		{
+			out_disconnected[i] = 1;
+		}
+#endif
 		if (sSYNetInputSlots[i].last_confirmed.is_valid != FALSE)
 		{
 			out_last_tick[i] = (s32)sSYNetInputSlots[i].last_confirmed.tick;
@@ -5391,6 +5406,120 @@ static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
  * On abort: verdict stays blocked (`strict_remote_stall_abort`); FuncRead returns without publish (must not
  * `syNetTickCommitVerdictAllowAll` or the stall counter resets on the accidental publish path).
  */
+static int syNetInputGetStrictStallDiagLevel(void)
+{
+	const char *e;
+
+	if (sSYNetInputStrictStallDiagLevelCache != -999)
+	{
+		return sSYNetInputStrictStallDiagLevelCache;
+	}
+	e = getenv("SSB64_NETPLAY_STRICT_STALL_DIAG");
+	sSYNetInputStrictStallDiagLevelCache = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 0;
+	if (sSYNetInputStrictStallDiagLevelCache < 0)
+	{
+		sSYNetInputStrictStallDiagLevelCache = 0;
+	}
+	if (sSYNetInputStrictStallDiagLevelCache > 2)
+	{
+		sSYNetInputStrictStallDiagLevelCache = 2;
+	}
+	return sSYNetInputStrictStallDiagLevelCache;
+}
+
+void syNetInputMaybeLogStrictStallDiag(u32 tick, char admission_letter, sb32 suppress_scene, sb32 partial_publish,
+                                       const char *phase_tag)
+{
+	int lvl;
+	u32 wire_base;
+	u32 wire_eff;
+	u32 hr;
+	u32 wire_gap;
+	sb32 should_log;
+
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	lvl = syNetInputGetStrictStallDiagLevel();
+	if (lvl == 0)
+	{
+		return;
+	}
+	if ((admission_letter != 'R') && (admission_letter != 'V') && (admission_letter != 'W') &&
+	    (admission_letter != 'S') && (admission_letter != 'K'))
+	{
+		return;
+	}
+	if (tick != sSYNetInputStrictStallDiagLastTick)
+	{
+		sSYNetInputStrictStallDiagLastTick = tick;
+		sSYNetInputStrictStallDiagLastFrames = 0U;
+	}
+	sSYNetInputStrictStallDiagLastFrames++;
+	should_log = FALSE;
+	if (lvl >= 2)
+	{
+		should_log = TRUE;
+	}
+	else if (sSYNetInputStrictStallDiagLastFrames == 1U)
+	{
+		should_log = TRUE;
+	}
+	else if ((sSYNetInputStrictStallDiagLastFrames % 30U) == 0U)
+	{
+		should_log = TRUE;
+	}
+	else if ((syNetRollbackGetAppliedResimCount() != 0U) && (sSYNetInputStrictStallDiagLastFrames <= 3U))
+	{
+		should_log = TRUE;
+	}
+	if (should_log == FALSE)
+	{
+		return;
+	}
+	wire_base = syNetPeerGetBaseRequiredWireTick(tick);
+	wire_eff = syNetPeerGetEffectiveWireFrontierForAdmission(tick);
+	hr = syNetPeerGetHighestRemoteTick();
+	wire_gap = (hr < wire_base) ? (wire_base - hr) : 0U;
+	port_log(
+	    "SSB64 NetInput: strict_stall_diag phase=%s sim=%u admit=%c sup=%d partial=%d stuck=%u hr=%u wire_base=%u wire_eff=%u wire_gap=%u D=%u rb_resim=%d rb_applied=%u commit_gen=%u\n",
+	    (phase_tag != NULL) ? phase_tag : "funcread",
+	    (unsigned int)tick,
+	    (int)(unsigned char)admission_letter,
+	    (suppress_scene != FALSE) ? 1 : 0,
+	    (partial_publish != FALSE) ? 1 : 0,
+	    (unsigned int)sSYNetInputStrictStallDiagLastFrames,
+	    (unsigned int)hr,
+	    (unsigned int)wire_base,
+	    (unsigned int)wire_eff,
+	    (unsigned int)wire_gap,
+	    (unsigned int)syNetPeerGetCommittedInputDelay(),
+	    (syNetRollbackIsResimulating() != FALSE) ? 1 : 0,
+	    (unsigned int)syNetRollbackGetAppliedResimCount(),
+	    (unsigned int)syNetPeerGetGlobalCommitGen());
+}
+
+void syNetInputMaybeLogNetSliceDiag(u32 tick, sb32 allow_battle_sim, sb32 allow_net_update)
+{
+	int lvl;
+
+	lvl = syNetInputGetStrictStallDiagLevel();
+	if (lvl == 0)
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetPlay: net_slice_diag sim=%u allow_battle_sim=%d allow_net_update=%d rb_resim=%d rb_applied=%u hr=%u wire_base=%u\n",
+	    (unsigned int)tick,
+	    (allow_battle_sim != FALSE) ? 1 : 0,
+	    (allow_net_update != FALSE) ? 1 : 0,
+	    (syNetRollbackIsResimulating() != FALSE) ? 1 : 0,
+	    (unsigned int)syNetRollbackGetAppliedResimCount(),
+	    (unsigned int)syNetPeerGetHighestRemoteTick(),
+	    (unsigned int)syNetPeerGetBaseRequiredWireTick(tick));
+}
+
 static void syNetInputLogStrictDecision(u32 tick, u32 wire_base, u32 d, u32 hr, sb32 miss)
 {
 	u32 wire_strict;
@@ -5440,6 +5569,12 @@ static sb32 syNetInputStrictRemoteMissAbortIfStuck(u32 sim_tick)
 	{
 		limit = 1U;
 	}
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	if (sSYNetInputStrictRStuckFrames < limit)
 	{
 		return FALSE;
@@ -5578,8 +5713,10 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 		{
 			out->allow_full_input_publish = FALSE;
 			out->allow_battle_sim_step = FALSE;
-			out->suppress_scene_update = (shared.hold_reason == 'R') ? TRUE : FALSE;
-			out->strict_partial_publish_local = (shared.hold_reason == 'R') ? TRUE : FALSE;
+			out->suppress_scene_update =
+			    (shared.hold_reason == 'R' || shared.hold_reason == 'H') ? TRUE : FALSE;
+			out->strict_partial_publish_local =
+			    (shared.hold_reason == 'R' || shared.hold_reason == 'H') ? TRUE : FALSE;
 			out->admission_letter = shared.hold_reason;
 			if (shared.hold_reason == 'R')
 			{
@@ -5596,6 +5733,10 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 				}
 				syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
 				                            syNetPeerGetHighestRemoteTick(), TRUE);
+			}
+			else if (shared.hold_reason == 'H')
+			{
+				syNetInputMaybeIngressExtraPumpsOnStall();
 			}
 			return;
 		}
@@ -5756,6 +5897,27 @@ void syNetInputFuncRead(void)
 				{
 					sSYNetInputSuppressSceneUpdateAfterRead = TRUE;
 				}
+				syNetInputMaybeLogStrictStallDiag(tick, tcv.admission_letter, tcv.suppress_scene_update,
+				                                  tcv.strict_partial_publish_local, "funcread");
+				// #region agent log
+				if ((tcv.admission_letter == 'R') || (tcv.admission_letter == 'H'))
+				{
+					char agent_data[384];
+
+					snprintf(agent_data, sizeof(agent_data),
+					         "{\"tick\":%u,\"admit\":\"%c\",\"sup\":%d,\"partial\":%d,\"allow_battle_sim\":%d,"
+					         "\"allow_publish\":%d,\"hr\":%u,\"wire_base\":%u,\"push\":%d,\"commit_gen\":%u}",
+					         (unsigned int)tick, (int)tcv.admission_letter,
+					         (tcv.suppress_scene_update != FALSE) ? 1 : 0,
+					         (tcv.strict_partial_publish_local != FALSE) ? 1 : 0,
+					         (tcv.allow_battle_sim_step != FALSE) ? 1 : 0,
+					         (tcv.allow_full_input_publish != FALSE) ? 1 : 0,
+					         (unsigned int)syNetPeerGetHighestRemoteTick(),
+					         (unsigned int)syNetPeerGetBaseRequiredWireTick(tick), port_get_push_frame_count(),
+					         (unsigned int)syNetPeerGetGlobalCommitGen());
+					net_debug_agent_log_line("BC", "netinput.c:funcread_stall", "funcread_stall_return", agent_data);
+				}
+				// #endregion
 				syNetInputAdmissionBump(tcv.admission_letter);
 				syNetInputMaybeLogFrameCommitDiag(tick, tcv.admission_letter, TRUE, FALSE);
 				if ((tcv.admission_letter == 'R') || (tcv.admission_letter == 'V'))

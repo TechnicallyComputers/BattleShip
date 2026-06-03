@@ -1324,6 +1324,131 @@ sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void)
 #endif
 }
 
+sb32 syNetRollbackEpisodeLocalSealRowsSendComplete(void)
+{
+#ifdef PORT
+	s32 slots[MAXCONTROLLERS];
+	s32 count;
+	s32 i;
+	u32 span;
+
+	if (syNetRollbackEpisodeSealRowsExchangeEnabled() == FALSE)
+	{
+		return TRUE;
+	}
+	if (syNetRollbackEpisodeInputsSealed() == FALSE)
+	{
+		return TRUE;
+	}
+	span = syNetRollbackEpisodeSealSpan();
+	if (span == 0U)
+	{
+		return TRUE;
+	}
+	if (syNetRollbackEpisodeEnumerateLocalAuthoritySlots(slots, MAXCONTROLLERS, &count) == FALSE)
+	{
+		return TRUE;
+	}
+	for (i = 0; i < count; i++)
+	{
+		s32 slot;
+		u32 begin;
+
+		slot = slots[i];
+		if ((slot < 0) || (slot >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		begin = (u32)sSYNetRollbackEpisodeFsm.seal_send_row_begin[slot];
+		if ((begin < nSYNetRollbackEpisodeSealSendDone) && (begin < span))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+#else
+	return TRUE;
+#endif
+}
+
+u32 syNetRollbackEpisodeGetLocalSealRowsSendPendingMask(void)
+{
+#ifdef PORT
+	s32 slots[MAXCONTROLLERS];
+	s32 count;
+	u32 mask;
+	s32 i;
+	u32 span;
+
+	mask = 0U;
+	if (syNetRollbackEpisodeSealRowsExchangeEnabled() == FALSE)
+	{
+		return 0U;
+	}
+	if (syNetRollbackEpisodeInputsSealed() == FALSE)
+	{
+		return 0U;
+	}
+	span = syNetRollbackEpisodeSealSpan();
+	if (span == 0U)
+	{
+		return 0U;
+	}
+	if (syNetRollbackEpisodeEnumerateLocalAuthoritySlots(slots, MAXCONTROLLERS, &count) == FALSE)
+	{
+		return 0U;
+	}
+	for (i = 0; i < count; i++)
+	{
+		s32 slot;
+		u32 begin;
+
+		slot = slots[i];
+		if ((slot < 0) || (slot >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		begin = (u32)sSYNetRollbackEpisodeFsm.seal_send_row_begin[slot];
+		if ((begin < nSYNetRollbackEpisodeSealSendDone) && (begin < span))
+		{
+			mask |= (u32)(1U << slot);
+		}
+	}
+	return mask;
+#else
+	return 0U;
+#endif
+}
+
+void syNetRollbackEpisodePumpOutboundSealRows(u32 max_chunks)
+{
+#ifdef PORT
+	u32 i;
+
+	if (max_chunks == 0U)
+	{
+		max_chunks = 1U;
+	}
+	if (max_chunks > 8U)
+	{
+		max_chunks = 8U;
+	}
+	for (i = 0; i < max_chunks; i++)
+	{
+		if (syNetRollbackEpisodeLocalSealRowsSendComplete() != FALSE)
+		{
+			break;
+		}
+		if (syNetPeerTrySendEpisodeSealRows() == FALSE)
+		{
+			break;
+		}
+	}
+#else
+	(void)max_chunks;
+#endif
+}
+
 u32 syNetRollbackEpisodeGetSealSpan(void)
 {
 #ifdef PORT
@@ -1538,7 +1663,12 @@ void syNetRollbackEpisodePrepareSealRowsRetransmit(void)
 	u32 span;
 
 	if ((syNetRollbackEpisodeSealRowsExchangeEnabled() == FALSE) ||
-	    (syNetRollbackEpisodeInputsSealed() == FALSE) || (syNetRollbackEpisodeAllPeerSealRowsComplete() != FALSE))
+	    (syNetRollbackEpisodeInputsSealed() == FALSE))
+	{
+		return;
+	}
+	if ((syNetRollbackEpisodeAllPeerSealRowsComplete() != FALSE) &&
+	    (syNetRollbackEpisodeLocalSealRowsSendComplete() != FALSE))
 	{
 		return;
 	}

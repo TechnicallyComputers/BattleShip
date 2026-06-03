@@ -14,17 +14,22 @@
 #include <sys/netpeer_frame_commit.h>
 #include <sys/netrollback_episode.h>
 #include <sys/netrollbacksnapshot.h>
+#include <sys/net_debug_agent_log.h>
 #endif
 #include <sys/netsync.h>
 #include <sys/objman.h>
 #include <sys/objman_gcport.h>
 #if defined(SSB64_NETMENU)
 #include <sys/netfighterphase.h>
+#include <sys/netplay_rebirth_gate.h>
 #endif
 #include <sys/utils.h>
 #include <sys/taskman.h>
 #include <sys/netphase.h>
 #include <sys/nettickgridlock.h>
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+#include <sys/netreconnect.h>
+#endif
 
 #ifdef SSB64_NETMENU
 #if defined(SSB64_NETMENU) && !defined(SSB64_NETPLAY_ICE)
@@ -336,6 +341,14 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_RESIM_POST 25
 #define SYNETPEER_PACKET_EPISODE_SEAL_ROWS 26
 #define SYNETPEER_PACKET_BOOTSTRAP_ABORT 27
+#define SYNETPEER_PACKET_RECONNECT_HOLD 28
+#define SYNETPEER_PACKET_RECONNECT_READY 29
+#define SYNETPEER_PACKET_RECONNECT_ACK 30
+#define SYNETPEER_PACKET_FORFEIT 31
+#define SYNETPEER_RECONNECT_HOLD_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
+#define SYNETPEER_RECONNECT_READY_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
+#define SYNETPEER_RECONNECT_ACK_BYTES SYNETPEER_RECONNECT_READY_BYTES
+#define SYNETPEER_RECONNECT_FORFEIT_BYTES (4 + 2 + 2 + 4 + 4 + 1 + 1 + 2 + 4)
 /* ~3s at default bootstrap retry sleep (16666us) when the peer sends nothing. */
 #define SYNETPEER_BOOTSTRAP_PEER_IDLE_FAST_FAIL_SLICES 180U
 #define SYNETPEER_BOOTSTRAP_ABORT_BURST 5U
@@ -358,14 +371,16 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 	 ((u16)(W) == (u16)SYNETPEER_VERSION_DUAL_LOCAL))
 
 #define SYNETPEER_AUTOMATCH_OFFER_BYTES (4 + 2 + 2 + 4 + 2 + 1 + 1 + 4 + 4)
+/* Host-authoritative automatch rules: 4 stocks, no timer (SCBattleState.stocks is 0-based). */
+#define SYNETPEER_AUTOMATCH_DEFAULT_STOCKS 3U
 #define SYNETPEER_INPUT_BIND_BYTES (4 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 4)
 #define SYNETPEER_BATTLE_EXEC_SYNC_BYTES_LEGACY (4 + 2 + 2 + 4 + 4 + 4 + 4)
 #define SYNETPEER_BATTLE_EXEC_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4 + 4)
 #define SYNETPEER_INPUT_DELAY_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
-/* Frame commit token (NetSync validation cadence): header(12) + validation_tick + 8 token u32s + checksum(4) = 52. */
-#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
+/* Frame commit token (NetSync validation cadence): header(12) + validation_tick + 9 token u32s + checksum(4) = 52. */
+#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_V1 (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (72)
@@ -474,6 +489,7 @@ static s32 sSYNetPeerAdmissionWireBiasTicks;
 static sb32 sSYNetPeerOptionalWallCalFromExecHoldStarted;
 static char sSYNetPeerBootstrapMatchId[72];
 static char sSYNetPeerBootstrapTicketId[72];
+static char sSYNetPeerBootstrapPeerPlayerId[72];
 static u32 sSYNetPeerDelaySyncDiagExecReadyMark = ~(u32)0;
 static int sSYNetPeerDelaySyncDiagEnvCache = -999;
 static u32 sSYNetPeerAutoRunwayConsec;
@@ -881,6 +897,8 @@ static sb32 sSYNetPeerInputBindPeerOk;
 static sb32 sSYNetPeerInputBindAckLogged;
 static u8 sSYNetPeerInputBindPeerPrimaryDev;
 static u32 sSYNetPeerInputBindGraceUntilFrame;
+static u64 sSYNetPeerInputBindLastSendUnixMs;
+#define SYNETPEER_INPUT_BIND_RETRANSMIT_MS_DEFAULT 33U
 static sb32 sSYNetPeerBattleStartTimeDupLogOnce;
 static sb32 sSYNetPeerBattleStartTimeConflictLogged;
 static sb32 sSYNetPeerBattleStartViWireUsesExtended;
@@ -1324,6 +1342,11 @@ static sb32 syNetPeerPollAutomatchBootstrapTransport(void)
 			syNetPeerRequestAutomatchAbort();
 			return TRUE;
 		}
+		/*
+		 * ICE automatch: guest often completes ICE before the host finishes ICE_CONNECT +
+		 * bootstrap. Raw-UDP fast-fail (~3s nominal) aborts while the host is still catching up.
+		 */
+		return FALSE;
 	}
 #endif
 	sSYNetPeerBootstrapSlicesSincePeerActivity++;
@@ -1505,6 +1528,11 @@ static sb32 syNetPeerDatagramSocketIsUsable(void)
 void syNetPeerSetIceTransport(sb32 enabled)
 {
 	sSYNetPeerIceTransport = (enabled != FALSE) ? TRUE : FALSE;
+}
+
+sb32 syNetPeerIsIceTransportActive(void)
+{
+	return sSYNetPeerIceTransport;
 }
 #endif
 
@@ -3629,6 +3657,140 @@ void syNetPeerSendControlPacket(u16 packet_type)
 #endif
 }
 
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+static void syNetPeerSendReconnectPacket(u16 packet_type, u32 sim_tick, u32 epoch, u8 slot_a, u8 slot_b, u8 reason,
+                                         u32 wire_bytes)
+{
+	u8 buffer[32];
+	u8 *cursor = buffer;
+	u32 checksum;
+
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, packet_type);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, sim_tick);
+	if (packet_type == SYNETPEER_PACKET_RECONNECT_HOLD)
+	{
+		syNetPeerWriteU32(&cursor, epoch);
+		*cursor++ = slot_a;
+		*cursor++ = reason;
+		*cursor++ = 0;
+		*cursor++ = 0;
+	}
+	else if (packet_type == SYNETPEER_PACKET_FORFEIT)
+	{
+		*cursor++ = slot_a;
+		*cursor++ = slot_b;
+		*cursor++ = 0;
+		*cursor++ = 0;
+	}
+	else
+	{
+		syNetPeerWriteU32(&cursor, epoch);
+	}
+	checksum = syNetPeerChecksumBytes(buffer, wire_bytes - 4U);
+	syNetPeerWriteU32(&cursor, checksum);
+	(void)syNetPeerSendControlDatagram(buffer, wire_bytes);
+}
+
+void syNetPeerSendReconnectHold(u32 sim_tick, u32 epoch, u8 pausing_slot, u8 reason)
+{
+	syNetPeerSendReconnectPacket(SYNETPEER_PACKET_RECONNECT_HOLD, sim_tick, epoch, pausing_slot, 0U, reason,
+	                             SYNETPEER_RECONNECT_HOLD_BYTES);
+}
+
+void syNetPeerSendReconnectReady(u32 sim_tick, u32 epoch)
+{
+	syNetPeerSendReconnectPacket(SYNETPEER_PACKET_RECONNECT_READY, sim_tick, epoch, 0U, 0U, 0U,
+	                             SYNETPEER_RECONNECT_READY_BYTES);
+}
+
+void syNetPeerSendReconnectAck(u32 sim_tick, u32 epoch)
+{
+	syNetPeerSendReconnectPacket(SYNETPEER_PACKET_RECONNECT_ACK, sim_tick, epoch, 0U, 0U, 0U,
+	                             SYNETPEER_RECONNECT_ACK_BYTES);
+}
+
+void syNetPeerSendReconnectForfeit(u32 sim_tick, u8 forfeiting_slot, u8 winner_slot)
+{
+	syNetPeerSendReconnectPacket(SYNETPEER_PACKET_FORFEIT, sim_tick, 0U, forfeiting_slot, winner_slot, 0U,
+	                             SYNETPEER_RECONNECT_FORFEIT_BYTES);
+}
+
+static void syNetPeerHandleReconnectPacket(const u8 *buffer, s32 size, u16 expected_type, u32 expected_size)
+{
+	const u8 *cursor = buffer;
+	const u8 *checksum_ptr;
+	u32 magic;
+	u32 session_id;
+	u32 checksum;
+	u32 expected_checksum;
+	u16 version;
+	u16 packet_type;
+	u32 sim_tick;
+	u32 epoch;
+	u8 slot_a;
+	u8 slot_b;
+	u8 reason;
+
+	if ((size != (s32)expected_size) || (buffer == NULL))
+	{
+		return;
+	}
+	expected_checksum = syNetPeerChecksumBytes(buffer, expected_size - 4U);
+	magic = syNetPeerReadU32(&cursor);
+	version = syNetPeerReadU16(&cursor);
+	packet_type = syNetPeerReadU16(&cursor);
+	session_id = syNetPeerReadU32(&cursor);
+	if ((magic != SYNETPEER_MAGIC) || (version != SYNETPEER_VERSION) || (packet_type != expected_type) ||
+	    (session_id != sSYNetPeerSessionID))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	sim_tick = syNetPeerReadU32(&cursor);
+	if (expected_type == SYNETPEER_PACKET_RECONNECT_HOLD)
+	{
+		epoch = syNetPeerReadU32(&cursor);
+		slot_a = *cursor++;
+		reason = *cursor;
+	}
+	else if (expected_type == SYNETPEER_PACKET_FORFEIT)
+	{
+		slot_a = *cursor++;
+		slot_b = *cursor;
+	}
+	else
+	{
+		epoch = syNetPeerReadU32(&cursor);
+	}
+	checksum_ptr = buffer + expected_size - 4U;
+	checksum = syNetPeerReadU32(&checksum_ptr);
+	if (checksum != expected_checksum)
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	if (expected_type == SYNETPEER_PACKET_RECONNECT_HOLD)
+	{
+		syNetReconnectOnHoldIngress(sim_tick, epoch, slot_a, reason);
+	}
+	else if (expected_type == SYNETPEER_PACKET_FORFEIT)
+	{
+		syNetReconnectOnForfeitIngress(sim_tick, slot_a, slot_b);
+	}
+	else if (expected_type == SYNETPEER_PACKET_RECONNECT_READY)
+	{
+		syNetReconnectOnReadyIngress(sim_tick, epoch);
+	}
+	else if (expected_type == SYNETPEER_PACKET_RECONNECT_ACK)
+	{
+		syNetReconnectOnAckIngress(sim_tick, epoch);
+	}
+}
+#endif
+
 #if defined(PORT)
 void syNetPeerSendVsSessionEndNotifyPeer(void)
 {
@@ -3688,6 +3850,24 @@ static u32 syNetPeerAutomix32(u32 a, u32 b, u32 c)
 	a ^= (sSYNetPeerSessionID + 7919U);
 	a *= 16777619U;
 	return a != 0U ? a : 1U;
+}
+
+/* Stable across peers in one automatch pair (match_id); avoids stage/RNG keyed only on session_id. */
+static u32 syNetPeerHashBootstrapMatchIdU32(void)
+{
+	u32 h = 2166136261U;
+	const char *p;
+
+	for (p = sSYNetPeerBootstrapMatchId; (p != NULL) && (*p != '\0'); p++)
+	{
+		h ^= (u32)((u8)*p);
+		h *= 16777619U;
+	}
+	if (h == 0U)
+	{
+		h = (sSYNetPeerSessionID != 0U) ? sSYNetPeerSessionID : 1U;
+	}
+	return h;
 }
 
 static void syNetPeerSendAutomatchOfferPacketMaybe(void)
@@ -3752,6 +3932,40 @@ static void syNetPeerHandleAutomatchOfferPacket(const u8 *buffer, s32 size)
 	sSYAutoGotPeerOffer = TRUE;
 }
 
+#if defined(SSB64_NETMENU)
+/*
+ * Host-only debug: SSB64_NETPLAY_AUTOMATCH_STAGE_KIND=<gkind> forces MATCH_CONFIG stage_kind
+ * (numeric GRKind, e.g. 5 = Yoshi's Island). Ignored when unset. Does not bypass guest automatch
+ * policy checks (invalid 0xDE still dropped on guest).
+ */
+static sb32 syNetPeerAutomatchTryForceStageKind(u32 *stage_kind_out)
+{
+	const char *env;
+	s32 gkind;
+
+	if (stage_kind_out == NULL)
+	{
+		return FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_AUTOMATCH_STAGE_KIND");
+	if ((env == NULL) || (env[0] == '\0'))
+	{
+		return FALSE;
+	}
+	gkind = atoi(env);
+	if ((gkind < (s32)nGRKindBattleStart) || (gkind > (s32)nGRKindBattleEnd) || (gkind == 0xDE))
+	{
+		port_log(
+		    "SSB64 NetPeer: AUTOMATCH_STAGE_KIND=%s ignored (need VS gkind %d..%d, e.g. 0=Castle 1=Sector 5=Yoster)\n",
+		    env, (int)nGRKindBattleStart, (int)nGRKindBattleEnd);
+		return FALSE;
+	}
+	*stage_kind_out = (u32)gkind;
+	port_log("SSB64 NetPeer: automatch stage forced by env AUTOMATCH_STAGE_KIND=%u\n", *stage_kind_out);
+	return TRUE;
+}
+#endif /* SSB64_NETMENU */
+
 static sb32 syNetPeerComposeAutomatchMatchMetadata(void)
 {
 	SYNetInputReplayMetadata *m = &sSYNetPeerBootstrapMetadata;
@@ -3797,70 +4011,78 @@ static sb32 syNetPeerComposeAutomatchMatchMetadata(void)
 	hcost = sAutoLocalCostume;
 	gfk = sAutoPeerFkind;
 	gcost = sAutoPeerCostume;
-
-	syNetPeerMakeBootstrapMetadata(m);
-
-	m->player_count = 2;
-	m->stage_kind = (u32)pool[(seed_pick ^ sSYNetPeerSessionID ^ npool) % npool];
-	m->fighter_kinds[0] = hfk;
-	m->fighter_kinds[1] = gfk;
-	m->costumes[0] = hcost;
-	m->costumes[1] = gcost;
-	m->scene_kind = nSCKindVSBattle;
-
-	m->stocks = (u32)3;
-	m->time_limit = (u32)SCBATTLE_TIMELIMIT_INFINITE;
-	/*
-	 * Host-only MATCH_CONFIG carry: default automatch matches have **no** items (fewer rollback
-	 * vectors while stabilizing netplay).
-	 *
-	 * Enable items: `SSB64_NETPLAY_AUTOMATCH_ITEMS=1` (or any non-zero). Sets middle spawn rate +
-	 * all toggles + item_switch aligned with mn VS defaults.
-	 *
-	 * Legacy: when `AUTOMATCH_ITEMS` is unset, `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS=0` (explicit zero)
-	 * enables items — old scripts that flipped only NO_ITEMS still work.
-	 *
-	 * Hard off: non-zero `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS` overrides and forces items off.
-	 *
-	 * If neither env is relevant, `syNetPeerMakeBootstrapMetadata` already zeroed toggles /
-	 * appearance_rate / item_switch off.
-	 */
 	{
-		const char *items_env;
-		const char *no_items_env;
-		sb32 want_items;
+		u32 match_mix = syNetPeerHashBootstrapMatchIdU32();
 
-		want_items = FALSE;
-		items_env = getenv("SSB64_NETPLAY_AUTOMATCH_ITEMS");
-		no_items_env = getenv("SSB64_NETPLAY_AUTOMATCH_NO_ITEMS");
+		syNetPeerMakeBootstrapMetadata(m);
 
-		if ((items_env != NULL) && (items_env[0] != '\0'))
-		{
-			want_items = (atoi(items_env) != 0) ? TRUE : FALSE;
-		}
-		else if ((no_items_env != NULL) && (no_items_env[0] != '\0'))
-		{
-			want_items = (atoi(no_items_env) == 0) ? TRUE : FALSE;
-		}
+		m->player_count = 2;
+		m->stage_kind = (u32)pool[(seed_pick ^ match_mix ^ npool) % npool];
+#if defined(SSB64_NETMENU)
+		(void)syNetPeerAutomatchTryForceStageKind(&m->stage_kind);
+#endif
+		m->fighter_kinds[0] = hfk;
+		m->fighter_kinds[1] = gfk;
+		m->costumes[0] = hcost;
+		m->costumes[1] = gcost;
+		m->scene_kind = nSCKindVSBattle;
 
-		if ((no_items_env != NULL) && (no_items_env[0] != '\0') && (atoi(no_items_env) != 0))
+		m->stocks = SYNETPEER_AUTOMATCH_DEFAULT_STOCKS;
+		m->time_limit = (u32)SCBATTLE_TIMELIMIT_INFINITE;
+		/*
+		 * Host-only MATCH_CONFIG carry: default automatch matches have **no** items (fewer rollback
+		 * vectors while stabilizing netplay).
+		 *
+		 * Enable items: `SSB64_NETPLAY_AUTOMATCH_ITEMS=1` (or any non-zero). Sets middle spawn rate +
+		 * all toggles + item_switch aligned with mn VS defaults.
+		 *
+		 * Legacy: when `AUTOMATCH_ITEMS` is unset, `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS=0` (explicit zero)
+		 * enables items — old scripts that flipped only NO_ITEMS still work.
+		 *
+		 * Hard off: non-zero `SSB64_NETPLAY_AUTOMATCH_NO_ITEMS` overrides and forces items off.
+		 *
+		 * If neither env is relevant, `syNetPeerMakeBootstrapMetadata` already zeroed toggles /
+		 * appearance_rate / item_switch off.
+		 */
 		{
+			const char *items_env;
+			const char *no_items_env;
+			sb32 want_items;
+
 			want_items = FALSE;
-		}
+			items_env = getenv("SSB64_NETPLAY_AUTOMATCH_ITEMS");
+			no_items_env = getenv("SSB64_NETPLAY_AUTOMATCH_NO_ITEMS");
 
-		if (want_items != FALSE)
-		{
-			m->item_toggles = ~(u32)0;
-			m->item_appearance_rate = (u8)nSCBattleItemSwitchMiddle;
-			m->item_switch = (u32)nSCBattleItemSwitchMiddle;
+			if ((items_env != NULL) && (items_env[0] != '\0'))
+			{
+				want_items = (atoi(items_env) != 0) ? TRUE : FALSE;
+			}
+			else if ((no_items_env != NULL) && (no_items_env[0] != '\0'))
+			{
+				want_items = (atoi(no_items_env) == 0) ? TRUE : FALSE;
+			}
+
+			if ((no_items_env != NULL) && (no_items_env[0] != '\0') && (atoi(no_items_env) != 0))
+			{
+				want_items = FALSE;
+			}
+
+			if (want_items != FALSE)
+			{
+				m->item_toggles = ~(u32)0;
+				m->item_appearance_rate = (u8)nSCBattleItemSwitchMiddle;
+				m->item_switch = (u32)nSCBattleItemSwitchMiddle;
+			}
 		}
+		m->game_type = (u8)nSCBattleGameTypeRoyal;
+		m->game_rules = SCBATTLE_GAMERULE_STOCK;
+		m->rng_seed = syNetPeerAutomix32(seed_pick, (((u32)hfk) << 24) ^ (((u32)gfk) << 16) ^ (((u32)combo)),
+		                                 m->stage_kind ^ match_mix);
+		m->netplay_sim_slot_host_hw = 0U;
+		m->netplay_sim_slot_client_hw = 1U;
+		port_log("SSB64 NetPeer: automatch metadata composed stage=%u seed=%u pool=%u match_mix=0x%08X\n",
+		         m->stage_kind, m->rng_seed, npool, match_mix);
 	}
-	m->game_type = (u8)nSCBattleGameTypeRoyal;
-	m->game_rules = SCBATTLE_GAMERULE_STOCK;
-	m->rng_seed = syNetPeerAutomix32(
-	    seed_pick, (((u32)hfk) << 24) ^ (((u32)gfk) << 16) ^ (((u32)combo)), m->stage_kind ^ sSYNetPeerSessionID);
-	m->netplay_sim_slot_host_hw = 0U;
-	m->netplay_sim_slot_client_hw = 1U;
 	return TRUE;
 }
 
@@ -4317,6 +4539,7 @@ static void syNetPeerInputBindReset(void)
 	sSYNetPeerInputBindAckLogged = FALSE;
 	sSYNetPeerInputBindPeerPrimaryDev = (u8)MAXCONTROLLERS;
 	sSYNetPeerInputBindGraceUntilFrame = 0U;
+	sSYNetPeerInputBindLastSendUnixMs = 0ULL;
 }
 
 static void syNetPeerInputBindMaybeLogAck(void)
@@ -4368,6 +4591,7 @@ static void syNetPeerSendInputBindPacket(void)
 		if (sent == (int)SYNETPEER_INPUT_BIND_BYTES)
 		{
 			sSYNetPeerInputBindSent = TRUE;
+			sSYNetPeerInputBindLastSendUnixMs = syNetPeerNowUnixMs();
 			syNetPeerInputBindMaybeLogAck();
 		}
 #if defined(SSB64_NETPLAY_ICE)
@@ -4442,9 +4666,33 @@ static void syNetPeerHandleInputBindPacket(const u8 *buffer, s32 size)
 	syNetPeerInputBindMaybeLogAck();
 }
 
+static u32 syNetPeerInputBindRetransmitMs(void)
+{
+	const char *env;
+	s32 parsed;
+
+	env = getenv("SSB64_NETPLAY_INPUT_BIND_RETRANSMIT_MS");
+	if ((env == NULL) || (env[0] == '\0'))
+	{
+		return SYNETPEER_INPUT_BIND_RETRANSMIT_MS_DEFAULT;
+	}
+	parsed = atoi(env);
+	if (parsed < 8)
+	{
+		return 8U;
+	}
+	if (parsed > 500)
+	{
+		return 500U;
+	}
+	return (u32)parsed;
+}
+
 static void syNetPeerInputBindServiceTransport(void)
 {
 	u32 frame_now;
+	u64 now_ms;
+	u64 interval_ms;
 
 	if ((sSYNetPeerIsActive == FALSE) || (syNetPeerRequireInputBindStrict() == FALSE))
 	{
@@ -4455,10 +4703,14 @@ static void syNetPeerInputBindServiceTransport(void)
 	{
 		return;
 	}
-	if ((frame_now % 15U) != 0U)
+	now_ms = syNetPeerNowUnixMs();
+	interval_ms = (u64)syNetPeerInputBindRetransmitMs();
+	if ((sSYNetPeerInputBindLastSendUnixMs != 0ULL) && (now_ms >= sSYNetPeerInputBindLastSendUnixMs) &&
+	    ((now_ms - sSYNetPeerInputBindLastSendUnixMs) < interval_ms))
 	{
 		return;
 	}
+	sSYNetPeerInputBindLastSendUnixMs = now_ms;
 	syNetPeerSendInputBindPacket();
 }
 
@@ -4531,6 +4783,28 @@ static sb32 syNetPeerBattleExecSyncIsComplete(void)
 	return (sSYNetPeerExecSyncClientGotHost != FALSE) && (sSYNetPeerExecSyncClientEchoSent != FALSE);
 }
 
+static s64 syNetPeerViPhaseBucketDeltaToBiasNs(s32 phase_delta_buckets)
+{
+	u32 hz;
+	s64 per_ns;
+
+	if (phase_delta_buckets == 0)
+	{
+		return 0LL;
+	}
+	hz = syNetPeerGetVsContractViHz();
+	if (hz < 1U)
+	{
+		hz = 60U;
+	}
+	if (hz > 480U)
+	{
+		hz = 480U;
+	}
+	per_ns = 1000000000LL / (s64)hz;
+	return (s64)phase_delta_buckets * per_ns;
+}
+
 static void syNetPeerMaybeLatchBothSidesStartupAfterExecSync(void)
 {
 	u32 agreed;
@@ -4561,8 +4835,48 @@ static void syNetPeerMaybeLatchBothSidesStartupAfterExecSync(void)
 	 */
 	port_reset_push_frame_count_for_net_barrier();
 	port_reset_vs_decouple_pacing_for_net_barrier();
+	{
+		u32 agreed_phase;
+		u32 local_vi_phase;
+		s32 phase_delta;
+		s64 bias_ns;
+
+		agreed_phase = (sSYNetPeerBootstrapIsHost != FALSE) ? sSYNetPeerExecSyncHostViPhase
+		                                                    : sSYNetPeerExecSyncPeerViPhaseLatch;
+		local_vi_phase = syNetPeerCurrentViPhaseBucketNow();
+		if ((agreed_phase != 0U) && (local_vi_phase != 0U))
+		{
+			phase_delta = (s32)local_vi_phase - (s32)agreed_phase;
+			bias_ns = syNetPeerViPhaseBucketDeltaToBiasNs(phase_delta);
+			if (bias_ns != 0LL)
+			{
+				port_add_vs_decouple_barrier_latch_bias_ns(bias_ns);
+				port_log(
+				    "SSB64 NetPeer: both_sides_latched_startup decouple_vi_phase_bias_ns=%lld phase_delta=%d agreed_phase=%u local_phase=%u\n",
+				    (long long)bias_ns, (int)phase_delta, (unsigned int)agreed_phase, (unsigned int)local_vi_phase);
+			}
+		}
+	}
 	port_log("SSB64 NetPeer: both_sides_latched_startup agreed_tick=%u role=%s (push+decouple epoch reset)\n",
 	         (unsigned int)agreed, (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client");
+	// #region agent log
+	{
+		char agent_data[320];
+		u32 local_vi_phase;
+		u32 peer_vi_phase;
+
+		local_vi_phase = syNetPeerCurrentViPhaseBucketNow();
+		peer_vi_phase = (sSYNetPeerBootstrapIsHost != FALSE) ? sSYNetPeerExecSyncHostViPhase
+		                                                     : sSYNetPeerExecSyncPeerViPhaseLatch;
+		snprintf(agent_data, sizeof(agent_data),
+		         "{\"agreed_tick\":%u,\"role\":\"%s\",\"local_sim\":%u,\"local_vi_phase\":%u,\"peer_vi_phase\":%u,"
+		         "\"vi_phase_delta\":%d,\"push_after_reset\":%d,\"taskman\":%u}",
+		         (unsigned int)agreed, (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+		         (unsigned int)syNetInputGetTick(), (unsigned int)local_vi_phase, (unsigned int)peer_vi_phase,
+		         (int)local_vi_phase - (int)peer_vi_phase, port_get_push_frame_count(), (unsigned int)dSYTaskmanFrameCount);
+		net_debug_agent_log_line("D", "netpeer.c:both_sides_latched_startup", "startup_barrier_latched", agent_data);
+	}
+	// #endregion
 	syNetInputLogStartupInputBindingSnapshot(agreed);
 }
 
@@ -4949,6 +5263,14 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 		out->hold_reason = 'E';
 		return;
 	}
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		out->advance = FALSE;
+		out->hold_reason = 'H';
+		return;
+	}
+#endif
 	required_wire = out->required_wire;
 	ring_ready = syNetPeerRemoteInputsPresentForWireTick(required_wire);
 	if (ring_ready != FALSE)
@@ -5219,6 +5541,20 @@ static void syNetPeerHandleBattleExecSyncPacket(const u8 *buffer, s32 size)
 			    "SSB64 NetPeer: battle_exec_sync client latched tick=%u host_vi_phase=%u local_vi_phase=%u host_push_diag=%u local_push=%d local_tm=%u\n",
 			    agreed_tick, vi_phase_wire, local_vi_phase, peer_push_diag, port_get_push_frame_count(),
 			    (u32)dSYTaskmanFrameCount);
+			// #region agent log
+			{
+				char agent_data[320];
+
+				snprintf(agent_data, sizeof(agent_data),
+				         "{\"agreed_tick\":%u,\"host_vi_phase\":%u,\"local_vi_phase\":%u,\"vi_phase_delta\":%d,"
+				         "\"local_sim\":%u,\"host_push_diag\":%u,\"local_push\":%d,\"taskman\":%u}",
+				         (unsigned int)agreed_tick, (unsigned int)vi_phase_wire, (unsigned int)local_vi_phase,
+				         (int)local_vi_phase - (int)vi_phase_wire, (unsigned int)syNetInputGetTick(),
+				         (unsigned int)peer_push_diag, port_get_push_frame_count(), (unsigned int)dSYTaskmanFrameCount);
+				net_debug_agent_log_line("A", "netpeer.c:battle_exec_sync_client_latch", "exec_sync_client_latched",
+				                         agent_data);
+			}
+			// #endregion
 		}
 		else if (agreed_tick != sSYNetPeerExecSyncAgreedTick)
 		{
@@ -5358,13 +5694,16 @@ void syNetPeerHandleMatchConfigPacket(const u8 *buffer, s32 size)
 	{
 		/* Host-authoritative item policy: automatch default is no-items (0); AUTOMATCH_ITEMS=1 sends ~0. */
 		if ((metadata.scene_kind != (u32)nSCKindVSBattle) || (metadata.player_count != 2U) ||
-		    (metadata.stocks != 3U) || ((s32)metadata.time_limit != SCBATTLE_TIMELIMIT_INFINITE) ||
+		    (metadata.stocks != SYNETPEER_AUTOMATCH_DEFAULT_STOCKS) ||
+		    ((s32)metadata.time_limit != (s32)SCBATTLE_TIMELIMIT_INFINITE) ||
 		    (metadata.game_rules != SCBATTLE_GAMERULE_STOCK) ||
 		    (metadata.game_type != (u8)nSCBattleGameTypeRoyal) ||
 		    (metadata.stage_kind == (u32)(0xDE)) ||
 		    ((metadata.item_toggles != 0U) && (metadata.item_toggles != ~(u32)0)) ||
 		    (metadata.netplay_sim_slot_host_hw != 0U) || (metadata.netplay_sim_slot_client_hw != 1U))
 		{
+			port_log("SSB64 NetPeer: automatch MATCH_CONFIG dropped stage=%u items=0x%08X\n",
+			         metadata.stage_kind, metadata.item_toggles);
 			sSYNetPeerPacketsDropped++;
 			return;
 		}
@@ -5373,6 +5712,8 @@ void syNetPeerHandleMatchConfigPacket(const u8 *buffer, s32 size)
 	if (sSYNetPeerBootstrapIsHost == FALSE)
 	{
 		syNetPeerStageBootstrapMetadata(&metadata);
+		port_log("SSB64 NetPeer: automatch MATCH_CONFIG staged stage=%u seed=%u\n", metadata.stage_kind,
+		         metadata.rng_seed);
 	}
 	syNetPeerNoteBootstrapPeerActivity();
 }
@@ -5421,6 +5762,12 @@ void syNetPeerReceiveBootstrapPackets(void)
 {
 	u8 buffer[SYNETPEER_PACKET_RECV_MAX];
 
+#if defined(SSB64_NETPLAY_ICE)
+	if (sSYNetPeerIceTransport != FALSE)
+	{
+		(void)mmIcePoll();
+	}
+#endif
 	if (syNetPeerDatagramSocketIsUsable() == FALSE)
 	{
 		return;
@@ -5452,6 +5799,7 @@ static void syNetPeerResetAutomatchBootstrapAttemptState(void)
 	sSYNetPeerBootstrapStartReceived = FALSE;
 	sSYNetPeerBootstrapMetadataApplied = FALSE;
 	sSYNetPeerBootstrapMetadataStaged = FALSE;
+	memset(&sSYNetPeerBootstrapMetadata, 0, sizeof(sSYNetPeerBootstrapMetadata));
 	sSYAutoGotPeerOffer = FALSE;
 	sAutoPeerNonce = 0U;
 	sAutoPeerFkind = 0U;
@@ -5518,6 +5866,7 @@ static void syNetPeerBootstrapFailTeardown(void)
 	sSYNetPeerBootstrapStartReceived = FALSE;
 	sSYNetPeerBootstrapMetadataApplied = FALSE;
 	sSYNetPeerBootstrapMetadataStaged = FALSE;
+	memset(&sSYNetPeerBootstrapMetadata, 0, sizeof(sSYNetPeerBootstrapMetadata));
 #endif
 }
 
@@ -5647,12 +5996,6 @@ sb32 syNetPeerRunBootstrap(void)
 		return TRUE;
 	}
 
-#if defined(SSB64_NETMENU)
-	if (handshake != FALSE)
-	{
-		syNetPeerSendControlPacket(SYNETPEER_PACKET_READY);
-	}
-#endif
 #if defined(SSB64_NETMENU)
 	if (handshake == FALSE)
 #endif
@@ -5784,6 +6127,7 @@ sb32 syNetPeerUpdateStageSceneRendezvous(void)
 		return FALSE;
 	}
 	syNetPeerPumpIngressTransport("staging");
+	syNetPeerInputBindServiceTransport();
 	if (sSYNetPeerStageSceneGoDeadlineValid == FALSE)
 	{
 		syNetPeerSendControlPacket(SYNETPEER_PACKET_STAGE_SCENE_READY);
@@ -5896,8 +6240,14 @@ static sb32 syNetPeerAutomatchBindMatches(const char *bind_hostport)
 
 void syNetPeerSetAutomatchBootstrapContext(const char *match_id, const char *ticket_id)
 {
+	syNetPeerSetAutomatchBootstrapContextEx(match_id, ticket_id, NULL);
+}
+
+void syNetPeerSetAutomatchBootstrapContextEx(const char *match_id, const char *ticket_id, const char *peer_player_id)
+{
 	sSYNetPeerBootstrapMatchId[0] = '\0';
 	sSYNetPeerBootstrapTicketId[0] = '\0';
+	sSYNetPeerBootstrapPeerPlayerId[0] = '\0';
 	if ((match_id != NULL) && (match_id[0] != '\0'))
 	{
 		snprintf(sSYNetPeerBootstrapMatchId, sizeof(sSYNetPeerBootstrapMatchId), "%s", match_id);
@@ -5906,12 +6256,17 @@ void syNetPeerSetAutomatchBootstrapContext(const char *match_id, const char *tic
 	{
 		snprintf(sSYNetPeerBootstrapTicketId, sizeof(sSYNetPeerBootstrapTicketId), "%s", ticket_id);
 	}
+	if ((peer_player_id != NULL) && (peer_player_id[0] != '\0'))
+	{
+		snprintf(sSYNetPeerBootstrapPeerPlayerId, sizeof(sSYNetPeerBootstrapPeerPlayerId), "%s", peer_player_id);
+	}
 }
 
 void syNetPeerClearAutomatchBootstrapContext(void)
 {
 	sSYNetPeerBootstrapMatchId[0] = '\0';
 	sSYNetPeerBootstrapTicketId[0] = '\0';
+	sSYNetPeerBootstrapPeerPlayerId[0] = '\0';
 }
 
 sb32 syNetPeerGetAutomatchBootstrapContext(char *match_id_out, u32 match_cap, char *ticket_out, u32 ticket_cap)
@@ -5926,6 +6281,20 @@ sb32 syNetPeerGetAutomatchBootstrapContext(char *match_id_out, u32 match_cap, ch
 	}
 	snprintf(match_id_out, match_cap, "%s", sSYNetPeerBootstrapMatchId);
 	snprintf(ticket_out, ticket_cap, "%s", sSYNetPeerBootstrapTicketId);
+	return TRUE;
+}
+
+sb32 syNetPeerGetAutomatchPeerPlayerId(char *peer_player_id_out, u32 cap)
+{
+	if ((peer_player_id_out == NULL) || (cap < 8U))
+	{
+		return FALSE;
+	}
+	if (sSYNetPeerBootstrapPeerPlayerId[0] == '\0')
+	{
+		return FALSE;
+	}
+	snprintf(peer_player_id_out, cap, "%s", sSYNetPeerBootstrapPeerPlayerId);
 	return TRUE;
 }
 
@@ -6333,20 +6702,28 @@ static void syNetPeerLogCrossIsaSessionBanner(void)
 #elif defined(__x86_64__) || defined(_M_X64)
 	isa_tag = "x86_64";
 #endif
+	/*
+	 * fp_contract=off reflects the actual build: sim-critical decomp TUs (ft/ef/wp/it/mp/lb, the
+	 * whole relocated decomp/src/netplay/ tree incl. netplay/lb/lbcommon.c, gm/gmcamera,
+	 * sys/objanim) and all port netmenu sources compile with -ffp-contract=off so a*b+c is not
+	 * fused per-ISA. The literal was previously "on" and misreported the regime; the netplay/lb
+	 * coverage was added 2026-05-29 (the matcher had keyed only on /decomp/src/lb/, missing the
+	 * NETMENU swap to /decomp/src/netplay/lb/ — see netplay_link_bomb_rollback_2026-05-29.md).
+	 */
 #if defined(__ANDROID__)
-	port_log("SSB64 NetPeer: cross_isa_session platform=android isa=%s fp_contract=on sim_f32_quantize=vs_default\n",
+	port_log("SSB64 NetPeer: cross_isa_session platform=android isa=%s fp_contract=off sim_f32_quantize=vs_default\n",
 	         isa_tag);
 #elif defined(__APPLE__)
-	port_log("SSB64 NetPeer: cross_isa_session platform=darwin isa=%s fp_contract=on sim_f32_quantize=vs_default\n",
+	port_log("SSB64 NetPeer: cross_isa_session platform=darwin isa=%s fp_contract=off sim_f32_quantize=vs_default\n",
 	         isa_tag);
 #elif defined(__linux__)
-	port_log("SSB64 NetPeer: cross_isa_session platform=linux isa=%s fp_contract=on sim_f32_quantize=vs_default\n",
+	port_log("SSB64 NetPeer: cross_isa_session platform=linux isa=%s fp_contract=off sim_f32_quantize=vs_default\n",
 	         isa_tag);
 #elif defined(_WIN32)
-	port_log("SSB64 NetPeer: cross_isa_session platform=windows isa=%s fp_contract=on sim_f32_quantize=vs_default\n",
+	port_log("SSB64 NetPeer: cross_isa_session platform=windows isa=%s fp_contract=off sim_f32_quantize=vs_default\n",
 	         isa_tag);
 #else
-	port_log("SSB64 NetPeer: cross_isa_session platform=other isa=%s fp_contract=on sim_f32_quantize=vs_default\n",
+	port_log("SSB64 NetPeer: cross_isa_session platform=other isa=%s fp_contract=off sim_f32_quantize=vs_default\n",
 	         isa_tag);
 #endif
 }
@@ -6402,6 +6779,23 @@ void syNetPeerStartVSSession(void)
 		syNetPeerRefreshSkewGapEwmaPacingFromEnv();
 		syNetPeerRefreshRunwayPredictLimitsFromEnv();
 		syNetPeerRefreshTickGridExecGateFromEnv();
+#if defined(SSB64_NETPLAY_ICE)
+		if (sSYNetPeerIceTransport != FALSE)
+		{
+			mmIceEnsureIoResumed();
+		}
+#endif
+		/*
+		 * Automatch: syNetPeerRunBootstrap() sets IsActive before the first StartVSSession, so the new-session
+		 * path below (InputBindReset + immediate send) never runs. Re-arm bind on VSBattle re-entry when the
+		 * exchange is still incomplete — otherwise the client can sit in execution hold until a late peer ack.
+		 */
+		if ((syNetPeerRequireInputBindStrict() != FALSE) && (syNetPeerInputBindIsComplete() == FALSE))
+		{
+			syNetPeerInputBindReset();
+			syNetPeerSendInputBindPacket();
+		}
+		syNetPeerInputBindServiceTransport();
 		return;
 	}
 	syNetPeerRefreshCachedNetplayEnvForNewMatch();
@@ -6426,6 +6820,16 @@ void syNetPeerStartVSSession(void)
 	sSYNetPeerLastPacketTicksValid = FALSE;
 	syNetPeerInputBindReset();
 	syNetPeerBattleExecSyncReset();
+#if defined(SSB64_NETPLAY_ICE)
+	if (sSYNetPeerIceTransport != FALSE)
+	{
+		mmIceEnsureIoResumed();
+	}
+#endif
+	if (syNetPeerRequireInputBindStrict() != FALSE)
+	{
+		syNetPeerSendInputBindPacket();
+	}
 	/* Startup barrier is hard-disabled: this architecture runs without barrier-phase gating. */
 	sSYNetPeerBattleBarrierEnabled = FALSE;
 	sSYNetPeerIsActive = TRUE;
@@ -7202,6 +7606,19 @@ static void syNetPeerMergeIncomingConnectStatus(const s32 *remote_tick, const u8
 			{
 				sSYNetPeerPeerDisconnectConsec++;
 			}
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+			if (sSYNetPeerPeerDisconnectConsec >= SYNETPEER_STRICT_DISCONNECT_LATCH_K)
+			{
+				for (di = 0; di < MAXCONTROLLERS; di++)
+				{
+					if (remote_disc[di] != 0U)
+					{
+						syNetReconnectNotifyPeerDisconnect((u8)di);
+						break;
+					}
+				}
+			}
+#endif
 		}
 		else
 		{
@@ -7680,6 +8097,23 @@ void syNetPeerSendLocalInput(void)
 	{
 		if (sInputSendsThisSimTick >= 3U)
 		{
+			static int s_input_send_cap_diag_cache = -999;
+			const char *e;
+
+			if (s_input_send_cap_diag_cache == -999)
+			{
+				e = getenv("SSB64_NETPLAY_STRICT_STALL_DIAG");
+				s_input_send_cap_diag_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+			}
+			if (s_input_send_cap_diag_cache != 0)
+			{
+				port_log(
+				    "SSB64 NetPeer: INPUT send cap sim=%u sends=%u hr=%u wire_base=%u (strict stall egress limit)\n",
+				    (unsigned int)sim_tick,
+				    (unsigned int)sInputSendsThisSimTick,
+				    (unsigned int)syNetPeerGetHighestRemoteTick(),
+				    (unsigned int)syNetPeerGetBaseRequiredWireTick(sim_tick));
+			}
 			return;
 		}
 		sInputSendsThisSimTick++;
@@ -8029,6 +8463,44 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 					return;
 				}
 				break;
+
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+			case SYNETPEER_PACKET_RECONNECT_HOLD:
+				if (size == (s32)SYNETPEER_RECONNECT_HOLD_BYTES)
+				{
+					syNetPeerHandleReconnectPacket(buffer, size, SYNETPEER_PACKET_RECONNECT_HOLD,
+					                               SYNETPEER_RECONNECT_HOLD_BYTES);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_RECONNECT_READY:
+				if (size == (s32)SYNETPEER_RECONNECT_READY_BYTES)
+				{
+					syNetPeerHandleReconnectPacket(buffer, size, SYNETPEER_PACKET_RECONNECT_READY,
+					                               SYNETPEER_RECONNECT_READY_BYTES);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_RECONNECT_ACK:
+				if (size == (s32)SYNETPEER_RECONNECT_ACK_BYTES)
+				{
+					syNetPeerHandleReconnectPacket(buffer, size, SYNETPEER_PACKET_RECONNECT_ACK,
+					                               SYNETPEER_RECONNECT_ACK_BYTES);
+					return;
+				}
+				break;
+
+			case SYNETPEER_PACKET_FORFEIT:
+				if (size == (s32)SYNETPEER_RECONNECT_FORFEIT_BYTES)
+				{
+					syNetPeerHandleReconnectPacket(buffer, size, SYNETPEER_PACKET_FORFEIT,
+					                               SYNETPEER_RECONNECT_FORFEIT_BYTES);
+					return;
+				}
+				break;
+#endif
 		}
 		/*
 		 * Valid SSB64 header but not an INPUT bundle — do not fall through to the INPUT size gate
@@ -8429,6 +8901,20 @@ void syNetPeerPumpIngressTransport(const char *caller_tag)
 		syNetPeerReceiveBootstrapPackets();
 		return;
 	}
+#if defined(SSB64_NETPLAY_ICE)
+	/*
+	 * Android poll mode: matchmaking HTTPS may leave juice io_pause_depth > 0 (send works, recv
+	 * blocked). Unstick before PopReceived during execution hold / bind / exec-sync startup.
+	 */
+	if (sSYNetPeerIceTransport != FALSE)
+	{
+		if (syNetPeerCheckBattleExecutionReady() == FALSE)
+		{
+			mmIceEnsureIoResumed();
+		}
+		(void)mmIcePoll();
+	}
+#endif
 	sSYNetPeerIngressPumpCalls++;
 	pk_before = sSYNetPeerPacketsReceived;
 	hr0 = syNetPeerGetHighestRemoteTick();
@@ -8989,7 +9475,9 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			port_log(
 			    "SSB64 NetPeer: FRAME_COMMIT_STATE_DIVERGE_DETAIL validation=%u snap_tick=%u "
 			    "token_figh_local=0x%08X token_figh_peer=0x%08X live_figh_full=0x%08X live_figh_light=0x%08X ring_figh=0x%08X "
-			    "token_world_local=0x%08X token_world_peer=0x%08X live_world=0x%08X inp_local=0x%08X inp_peer=0x%08X\n",
+			    "token_world_local=0x%08X token_world_peer=0x%08X live_world=0x%08X "
+			    "token_eff_local=0x%08X token_eff_peer=0x%08X "
+			    "inp_local=0x%08X inp_peer=0x%08X\n",
 			    vtick,
 			    snap_tick,
 			    local->fighter_digest,
@@ -9000,6 +9488,8 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			    local->world_digest,
 			    peer->world_digest,
 			    live_world,
+			    local->effect_digest,
+			    peer->effect_digest,
 			    local->input_digest,
 			    peer->input_digest);
 		}
@@ -9065,6 +9555,7 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	syNetPeerWriteU32(&cursor, t->world_digest);
 	syNetPeerWriteU32(&cursor, t->item_digest);
 	syNetPeerWriteU32(&cursor, t->rng_digest);
+	syNetPeerWriteU32(&cursor, t->effect_digest);
 	chk = syNetPeerChecksumBytes(buf, (u32)(cursor - buf));
 	syNetPeerWriteU32(&cursor, chk);
 	if (syNetPeerSendControlDatagram(buf, (u32)sizeof(buf)) != (int)sizeof(buf))
@@ -9110,6 +9601,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	peer.world_digest = syNetPeerReadU32(&c);
 	peer.item_digest = syNetPeerReadU32(&c);
 	peer.rng_digest = syNetPeerReadU32(&c);
+	peer.effect_digest = syNetPeerReadU32(&c);
 	checksum = syNetPeerReadU32(&c);
 	peer.frame_id = (s32)frame_id_u;
 	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
@@ -9574,7 +10066,7 @@ static void syNetPeerReadEpisodeSealWireFrame(const u8 **cursor, SYNetInputFrame
 	frame->is_valid = syNetPeerReadU8(cursor);
 }
 
-void syNetPeerTrySendEpisodeSealRows(void)
+sb32 syNetPeerTrySendEpisodeSealRows(void)
 {
 	u8 buf[SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES];
 	SYNetInputFrame frames[SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX];
@@ -9593,12 +10085,12 @@ void syNetPeerTrySendEpisodeSealRows(void)
 							 frames, SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX,
 							 &row_count) == FALSE)
 	{
-		return;
+		return FALSE;
 	}
 	if ((row_count == 0U) || (row_count > SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX) ||
 	    (syNetPeerDatagramSocketIsUsable() == FALSE))
 	{
-		return;
+		return FALSE;
 	}
 	cursor = buf;
 	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
@@ -9638,7 +10130,9 @@ void syNetPeerTrySendEpisodeSealRows(void)
 		    syNetRollbackEpisodeComputeSlotSpanInputDigest(slot, mismatch_tick, target_tick));
 		syNetRollbackEpisodeNoteSealRowsChunkSent(slot, row_begin, row_count);
 		syNetRollbackTryOpenResimReplayGate();
+		return TRUE;
 	}
+	return FALSE;
 }
 
 static void syNetPeerHandleEpisodeSealRowsPacket(const u8 *buffer, s32 size)
@@ -10136,9 +10630,15 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		return;
 	}
 	tick = syNetInputGetTick();
-	if ((tick == 0U) || ((tick - sSYNetPeerLastFrameCommitValidationTick) < syNetPeerNetSyncLogInterval()))
 	{
-		return;
+		u32 fc_interval;
+
+		fc_interval = syNetPeerNetSyncLogInterval();
+		fc_interval = syNetRbSnapshotFrameCommitIntervalCap(fc_interval);
+		if ((tick == 0U) || ((tick - sSYNetPeerLastFrameCommitValidationTick) < fc_interval))
+		{
+			return;
+		}
 	}
 	sSYNetPeerLastFrameCommitValidationTick = tick;
 	{
@@ -10600,7 +11100,23 @@ void syNetPeerUpdateBattleGate(void)
 		sSYNetPeerExecutionHoldFrames++;
 		syNetPeerLogExecutionHold();
 	}
-	else syNetPeerLogExecutionBegin();
+	else
+	{
+		syNetPeerLogExecutionBegin();
+#if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+		if (sSYNetPeerIceTransport != FALSE)
+		{
+			(void)mmIcePoll();
+			syNetReconnectPollTransportArm();
+			if ((syNetReconnectHoldActive() == FALSE) && (syNetReconnectMidMatchEligible() != FALSE) &&
+			    (mmIceIsFailed() != FALSE))
+			{
+				syNetReconnectNotifyTransportBad();
+			}
+		}
+		syNetReconnectUpdate();
+#endif
+	}
 }
 
 #ifdef PORT
@@ -10639,6 +11155,15 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 	}
 	tick = syNetInputGetTick();
 	if (tick == 0U)
+	{
+		return;
+	}
+	/*
+	 * Skew/R stall net slice calls syNetPeerUpdate without gcRunAll. Skip hash/joint traces until FuncRead wire
+	 * admission allows a battle sim step for this tick (completed sim boundary only).
+	 */
+	if ((syNetPeerIsVSSessionActive() != FALSE) && (syNetRollbackIsResimulating() == FALSE) &&
+	    (syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate() == FALSE))
 	{
 		return;
 	}
@@ -10853,6 +11378,7 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			    remote_cap,
 			    (hr > 0U) ? (int)((s32)tick - (s32)remote_cap) : 0);
 			syNetSyncLogFighterSlotHashes(tick);
+			syNetplayRebirthSimDiagLogTick(tick);
 			syNetSyncLogPKThunderHoldDiag(tick);
 		}
 	}
@@ -10966,7 +11492,15 @@ void syNetPeerStopVSSession(void)
 	syNetPeerCloseSocket();
 #if defined(SSB64_NETMENU)
 	syNetPeerResetAutomatchBootstrapAttemptState();
-	syNetPeerClearAutomatchBootstrapContext();
+#if defined(SSB64_NETPLAY_ICE)
+	if (syNetReconnectShouldPreserveAutomatchContext() == FALSE)
+#endif
+	{
+		syNetPeerClearAutomatchBootstrapContext();
+	}
+#if defined(SSB64_NETPLAY_ICE)
+	syNetReconnectShutdown();
+#endif
 #endif
 	sSYNetPeerBarrierWallClockStartMs = 0ULL;
 	sSYNetPeerBarrierEscapeApplied = FALSE;
@@ -10982,6 +11516,11 @@ void syNetPeerStopVSSession(void)
 sb32 syNetPeerIsVSSessionActive(void)
 {
 	return sSYNetPeerIsActive;
+}
+
+sb32 syNetPeerIsBootstrapRunInProgress(void)
+{
+	return sSYNetPeerBootstrapRunInProgress;
 }
 
 u32 syNetPeerGetVsContractViHz(void)

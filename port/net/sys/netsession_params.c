@@ -30,8 +30,8 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_FC_VALIDATION_WAN_RTT_MS    150U
 #define SYNETSESSION_FC_VALIDATION_TICKS_MIN      30U
 #define SYNETSESSION_FC_VALIDATION_TICKS_MAX     120U
-#define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 4U
-#define SYNETSESSION_PARAMS_RESIM_TICKS_MAX 16U
+#define SYNETSESSION_PARAMS_RESIM_TICKS_MIN 12U
+#define SYNETSESSION_PARAMS_RESIM_TICKS_MAX 24U
 
 static sb32 sSYNetSessionParamsNegotiatedValid;
 static SYNetSessionParams sSYNetSessionParamsNegotiated;
@@ -325,15 +325,15 @@ static u32 syNetSessionParamsComputeResimTicksFromRtt(u32 rtt_ms)
 
 	if (rtt_ms < 120U)
 	{
-		ticks = 4U;
+		ticks = 12U;
 	}
 	else if (rtt_ms < 220U)
 	{
-		ticks = 6U;
+		ticks = 16U;
 	}
 	else
 	{
-		ticks = 8U;
+		ticks = 20U;
 	}
 	if (ticks < SYNETSESSION_PARAMS_RESIM_TICKS_MIN)
 	{

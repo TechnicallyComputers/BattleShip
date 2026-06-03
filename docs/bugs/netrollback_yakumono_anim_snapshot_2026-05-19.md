@@ -28,6 +28,25 @@ Extend `SYNetRbSnapYakuBlob` with `SYNetRbSnapDObjAnimBlob anim`, `flags`, and `
 - `aobj->interpolate` (TraI) is not snapshotted; Zebes platforms typically use TraX/Y/Z. Add per-node `interpolate` if a stage needs TraI.
 - Fighter joints had the same `event32` gap; see [`netrollback_fighter_joint_anim_event32_2026-05-19.md`](netrollback_fighter_joint_anim_event32_2026-05-19.md).
 
+## Yamabuki tower gate lifecycle
+
+Saffron's tower door is a layered hazard, not just a yakumono anim:
+
+| Layer | Runtime owner | Snapshot/hash owner | Notes |
+| ----- | ------------- | ------------------- | ----- |
+| Collision wall | yakumono id 3 (`mpCollisionSetYakumonoPosID`) | map yakumono blob + `map=`/`mph=` | Closed at x 960, open at x 1600. Any live `gate_pos` drift shows up as map-kin drift. |
+| Stage gate state | `gGRCommonStruct.yamabuki` | `SYNetRbSnapGroundYamabuki` + `syNetSyncFoldYamabukiGateRollbackWorld` | Owns `gate_status`, `gate_noentry`, `monster_wait`, `gate_wait`, `monster_id_prev`, and `gate_pos`. |
+| Door mesh | `gate_gobj` DObj tree | slot-local Yamabuki gate DObj blob + `anim=` | The visible panel is the first child DObj, not the root. Completed open anim wraps to frame 0 unless held. |
+| Ground monster item | item link | item blob/hash | Spawn timing and Hitokage flame cadence can affect `item=`, `eff=`, and `figh=` independently of the door mesh. |
+
+Important lifecycle details for rollback work:
+
+- `Wait + gate_pos.x >= 1280` is already collision-open even before the Pokemon exists; presentation must hold the child DObj at frame 9 after the open anim completes.
+- On spawn, PORT reuses `gate_wait` while `gate_status=Open` as the minimum post-spawn egress timer. This avoids immediately moving yakumono id 3 back to x 960 when the newly spawned monster's initial `monster.x - coll_width` is still below the closed threshold.
+- After the egress timer expires, `grYamabukiGateUpdateOpen` still holds yakumono id 3 at x 1600 while the quantized tracked edge (`monster.x - coll_width`) is below x 960. Only once that edge reaches the doorway does it derive `gate_pos.x`, clamp to [960, 1600], and possibly close behind the monster.
+- Rollback restore must run the Yamabuki gate repair after item apply so the live ground-monster GObj can be resolved before collision and presentation are finalized.
+- Because `gate_wait` is already in the ground blob and world hash, reusing it as the Open-state minimum egress timer adds no new rollback serialization surface; the extended hold is derived from restored item pose and collision width.
+
 ## Verification
 
 Re-run Zebes crouch/S-spam soak with `SSB64_NETPLAY_RESIM_TICK_TRACE=1`: expect `mph` match on `resim_tick t=405+` after epoch-0 load, and `map_yaku post-load` with `live_n == stored_n` on both peers.

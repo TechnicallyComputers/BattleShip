@@ -17,6 +17,8 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | Resolved bugs (index + per-bug root cause / fix write-ups) | `docs/bugs/README.md` |
 | Linux menu rendering bug family (CSS/pause/HUD sprites, upstream delta) | `docs/linux_menu_rendering_fixes_2026-05-22.md` |
 | Netplay: sim tick authority vs `hr` / VI / admission bias | `docs/netplay_timebase_authority.md` |
+| Netplay rollback boundary + decomp gating pattern | `docs/netplay_rollback_refactor_contracts.md` |
+| FTStatusVars union overlays, witness, stomp diagnosis | `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` |
 | Android port status + offline/netplay APK CI | `docs/android_port_status_2026-05-01.md` |
 
 Ongoing investigations and handoff notes are loose `.md` files at the top level of `docs/` — check there before starting work on rendering, collision, or animation issues so you don't duplicate prior effort.
@@ -94,14 +96,71 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 
 5. **DECOMP PRESERVATION — preserve behavior, not byte-matching**: The decomp describes the *game*, not the build. Keep IDO idioms (goto, odd casts, temp variables) that encode original N64 semantics — those are load-bearing and must not be "modernized." But don't preserve **compiler compat shims** (warning suppressions, permissive flags, header shortcuts) that hurt port stability just to avoid touching decomp source. If a suppressed diagnostic is masking real bugs on modern LP64 toolchains (e.g., `-Wno-implicit-function-declaration` silently truncating 64-bit pointer returns to `int`), fix the root cause — add the missing include, wrap a port fix in `#ifdef PORT`, or adjust the decomp file itself — rather than keeping the suppression. **Accuracy to game behavior > accuracy to ROM bytes.** When choosing between stability and ROM-matching, choose stability and document the deviation in `docs/bugs/`.
 
+6. **FTSTATUSVARS / UNION STOMP — structural fix, not mirrors**: `FTStruct.status_vars` is a union of per-status overlays (`entry`, `catchwait`, `rebirth`, …) that all alias the same bytes. A **union stomp** is when code reads/writes one overlay while a different overlay is live for the current `status_id`, silently corrupting gameplay state. This class of bug is amplified in netplay because rollback snapshots `memcpy` the whole blob with no overlay tag.
+
+   **Do not add new out-of-union mirror fields** (e.g. caching a union value in a separate `FTStruct` field and preferring the mirror in getters) as the primary fix. Existing mirrors (`hit_lr`, `shuffle_tics`, `dead_gate_wait`) are legacy band-aids — leave them alone unless removing them as part of the migration, but **never introduce new ones**.
+
+   **The approved fix path (Approach C):**
+   1. **Accessors** — route all `status_vars.common.*` reads/writes through `decomp/src/ft/ftstatusvars.h` (`ftStatusVarsEntry()`, `ftStatusVarsCatchWait()`, …). Never add raw union access in new or touched code.
+   2. **Witness** — diagnose stomps with `SSB64_NETPLAY_STATUSVARS_WITNESS=1`. Compare `accessed` vs `expected` overlay from the ownership table; integrity checks flag union/mirror divergence. Extend `syNetplayStatusVarsWitnessFillRange` for false negatives before guessing.
+   3. **Parallel storage (C2)** — the end-state is per-overlay storage that eliminates aliasing so mirrors can be deleted. Snapshot serialization gets overlay tags in the same milestone.
+
+   When a gameplay or netplay bug smells like stale/wrong per-status state (premature throw, wrong facing on Appear, rebirth halo drift, etc.), read `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` first, migrate the call site to accessors, run the witness, then fix the stomping writer — not another mirror.
+
+7. **NETPLAY ROLLBACK BOUNDARY — dual isolation (compile + runtime)**:
+
+   **Two boundaries — never collapse into `#ifdef PORT` alone:**
+
+   | Layer | Mechanism | Offline binary (`SSB64_NETMENU=OFF`) | Netmenu binary, offline modes (1P/Training) | Netmenu binary, active netplay |
+   |-------|-----------|--------------------------------------|---------------------------------------------|--------------------------------|
+   | **Compile** | `#if defined(PORT) && defined(SSB64_NETMENU)` | Net blocks **preprocessed out**; no net headers, no rollback `.o` linked | Net code **compiled in** | Same |
+   | **Runtime** | `syNetplayRollbackSemanticsActive()` | N/A (code absent) | **FALSE** → vanilla forward sim | **TRUE** → rollback policy |
+
+   - **`#ifdef PORT`** — PC port vs N64 (LP64 reloc casts, null guards, crash fixes). **Not** netplay-specific.
+   - **`SSB64_NETMENU`** — netplay feature compiled and linked (`port/net/**`, `decomp/src/netplay/**`, libcurl).
+   - **`syNetplayRollbackSemanticsActive()`** — active peer VS session or resim; gates **policy** inside the netmenu binary.
+
+   Rollback/netplay policy must **never** mutate live forward sim outside an active VS session or resim.
+
+   **Required decomp pattern** (fighters, stages, items, custom maps):
+
+   ```c
+   #if defined(PORT) && defined(SSB64_NETMENU)
+   /* SSB64_NETMENU: stripped from offline builds. Runtime: active VS/resim only. */
+   /* Netplay rollback only: <one-line why>. See docs/bugs/<slug>.md. */
+   if (syNetplayRollbackSemanticsActive() != FALSE)
+   {
+       ... /* rollback policy */
+       return; /* Mario-style: netplay branch then vanilla below */
+   }
+   #endif
+   /* Vanilla forward sim — offline binary AND offline modes in netmenu binary. */
+   ```
+
+   **Quantize / canonicalize** (helpers no-op when inactive, but still net API):
+
+   ```c
+   #if defined(PORT) && defined(SSB64_NETMENU)
+   /* Netplay rollback only: F32 grid (no-op unless syNetplaySimQuantizeActive()). */
+   syNetplayQuantizeDObjTranslate(dobj);
+   #endif
+   ```
+
+   - **Port safety** may stay `#ifdef PORT` without `SSB64_NETMENU` or session gate.
+   - **Snapshot apply** in `port/net/sys/*` runs only during rollback load — no forward-sim gate.
+   - Every rollback `if` needs **`/* Netplay rollback only: ... */`** (and bug-doc link when non-obvious).
+   - Offline builds must **not** link `netrollbacksnapshot.c` / rollback TUs; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c`.
+
+   Full contract: `docs/netplay_rollback_refactor_contracts.md`.
+
 ### Context Management
 
-6. **SUB-AGENT SWARMING**: For tasks touching >5 independent files, launch parallel sub-agents. Each agent gets its own context window.
+8. **SUB-AGENT SWARMING**: For tasks touching >5 independent files, launch parallel sub-agents. Each agent gets its own context window.
 
-7. **CONTEXT DECAY AWARENESS**: After 10+ messages, re-read any file before editing. Do not trust memory of file contents.
+9. **CONTEXT DECAY AWARENESS**: After 10+ messages, re-read any file before editing. Do not trust memory of file contents.
 
-8. **FILE READ BUDGET**: For files over 500 LOC, use offset and limit parameters to read in chunks.
+10. **FILE READ BUDGET**: For files over 500 LOC, use offset and limit parameters to read in chunks.
 
-9. **EDIT INTEGRITY**: Before every edit, re-read the file. After editing, verify the change applied correctly. Never batch >3 edits to the same file without a verification read.
+11. **EDIT INTEGRITY**: Before every edit, re-read the file. After editing, verify the change applied correctly. Never batch >3 edits to the same file without a verification read.
 
-10. **NO SEMANTIC SEARCH**: When renaming or changing any function/type/variable, search separately for: direct calls, type references, string literals, dynamic references, re-exports, and tests.
+12. **NO SEMANTIC SEARCH**: When renaming or changing any function/type/variable, search separately for: direct calls, type references, string literals, dynamic references, re-exports, and tests.

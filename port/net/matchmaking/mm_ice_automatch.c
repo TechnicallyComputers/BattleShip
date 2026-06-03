@@ -5,12 +5,14 @@
 #include "mm_ice.h"
 #include "mm_lan_detect.h"
 #include <mm_matchmaking.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 extern int atoi(const char *str);
 #include <sys/netpeer.h>
+#include <sys/netpeer_socket_platform.h>
 
 #include "port_log.h"
 
@@ -20,11 +22,15 @@ extern int atoi(const char *str);
 #define ICE_TRICKLE_QUIET_CONNECTED_TICKS 12U
 /* Shared-LAN: wait for host-pair re-nomination if libjuice completes on relay first. */
 #define ICE_LAN_RELAY_SETTLE_TICKS 60U
+/* Guest may match before host; allow time for host match + role-ready poll (60 Hz). */
+#define ICE_ROLE_READY_WAIT_MAX_TICKS 480U
 
 static char sIceTicket[64];
 static char sIceBind[144];
 static char sIceLocalLan[144];
 static sb32 sIceRemoteDescApplied;
+/** Peer signaling SDP is applied on the live libjuice agent (skip re-apply on rehydrate). */
+static sb32 sIcePeerSdpOnAgent;
 static sb32 sIceGatheringDone;
 static sb32 sIceHostRole;
 static sb32 sIceRemoteGatheringDonePosted;
@@ -43,7 +49,270 @@ static const char *sIceConnectFailReason = "ICE connection failed";
 static sb32 sIcePeerSetupFailed;
 static sb32 sIceAwaitPeerControllingReady;
 static sb32 sIceAwaitPeerRoleReadyLogged;
+static u32 sIceRoleReadyWaitTicks;
 static char sIceDeferredPeerSdp[4096];
+/** Set from BeginConnect until connect tick success/fail or Reset — blocks worker match polls. */
+static sb32 sIceConnectPhaseActive;
+
+static char sIceQueueSdp[4096];
+static char sIceSavedStunHost[128];
+static char sIceSavedTurnHost[128];
+static char sIceSavedTurnUser[256];
+static char sIceSavedTurnPass[256];
+static u16 sIceSavedStunPort;
+static u16 sIceSavedTurnPort;
+static sb32 sIceSavedLanDirectGather;
+static sb32 sIcePollSuspended;
+static char sIceAppliedPeerSdp[4096];
+
+#if defined(__ANDROID__)
+static pthread_mutex_t sIceNetSerializeMutex = PTHREAD_MUTEX_INITIALIZER;
+static sb32 sIceHttpsPauseActive;
+static sb32 sIceConnectTickInside;
+static sb32 sIceConnectTickMutexHeld;
+#endif
+
+#if defined(__ANDROID__)
+static u64 sQueuePollLastEnqueueMs;
+static u64 sQueuePollCooldownUntilMs;
+static u32 sQueuePollStillQueuedStreak;
+
+#define MN_AM_QUEUE_POLL_MIN_MS_DEFAULT 400U
+#define MN_AM_QUEUE_POLL_HTTP0_COOLDOWN_MS_DEFAULT 750U
+#define MN_AM_QUEUE_POLL_MAX_MS_DEFAULT 4000U
+
+static u32 mnVSNetAutomatchAMQueuePollMinMs(void)
+{
+	const char *e;
+	s32 ms;
+
+	e = getenv("SSB64_MATCHMAKING_ANDROID_QUEUE_POLL_MIN_MS");
+	ms = (e != NULL && e[0] != '\0') ? atoi(e) : (s32)MN_AM_QUEUE_POLL_MIN_MS_DEFAULT;
+	if (ms < 100)
+	{
+		ms = 100;
+	}
+	if (ms > 10000)
+	{
+		ms = 10000;
+	}
+	return (u32)ms;
+}
+
+static u32 mnVSNetAutomatchAMQueuePollHttp0CooldownMs(void)
+{
+	const char *e;
+	s32 ms;
+
+	e = getenv("SSB64_MATCHMAKING_ANDROID_QUEUE_POLL_HTTP0_COOLDOWN_MS");
+	ms = (e != NULL && e[0] != '\0') ? atoi(e) : (s32)MN_AM_QUEUE_POLL_HTTP0_COOLDOWN_MS_DEFAULT;
+	if (ms < 100)
+	{
+		ms = 100;
+	}
+	if (ms > 30000)
+	{
+		ms = 30000;
+	}
+	return (u32)ms;
+}
+
+static u32 mnVSNetAutomatchAMQueuePollEffectiveMinMs(void)
+{
+	u32 min_ms;
+	u32 shift;
+
+	min_ms = mnVSNetAutomatchAMQueuePollMinMs();
+	if (sQueuePollStillQueuedStreak <= 1U)
+	{
+		return min_ms;
+	}
+	shift = sQueuePollStillQueuedStreak - 1U;
+	if (shift > 3U)
+	{
+		shift = 3U;
+	}
+	min_ms <<= shift;
+	if (min_ms > MN_AM_QUEUE_POLL_MAX_MS_DEFAULT)
+	{
+		min_ms = MN_AM_QUEUE_POLL_MAX_MS_DEFAULT;
+	}
+	return min_ms;
+}
+
+void mnVSNetAutomatchAMQueuePollReset(void)
+{
+	sQueuePollLastEnqueueMs = 0ULL;
+	sQueuePollCooldownUntilMs = 0ULL;
+	sQueuePollStillQueuedStreak = 0U;
+}
+
+sb32 mnVSNetAutomatchAMQueuePollMayEnqueue(sb32 trickle_only)
+{
+	u64 now;
+	u32 min_ms;
+
+	if (trickle_only != FALSE)
+	{
+		return TRUE;
+	}
+	if (sIcePollSuspended == FALSE)
+	{
+		return TRUE;
+	}
+	now = syNetPeerOsMonotonicMs();
+	if ((sQueuePollCooldownUntilMs != 0ULL) && (now < sQueuePollCooldownUntilMs))
+	{
+		return FALSE;
+	}
+	min_ms = mnVSNetAutomatchAMQueuePollEffectiveMinMs();
+	if ((sQueuePollLastEnqueueMs != 0ULL) && ((now - sQueuePollLastEnqueueMs) < (u64)min_ms))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+void mnVSNetAutomatchAMQueuePollNoteEnqueued(void)
+{
+	sQueuePollLastEnqueueMs = syNetPeerOsMonotonicMs();
+}
+
+void mnVSNetAutomatchAMQueuePollNoteStillQueued(void)
+{
+	if (sQueuePollStillQueuedStreak < 16U)
+	{
+		sQueuePollStillQueuedStreak++;
+	}
+}
+
+void mnVSNetAutomatchAMQueuePollNoteHttp0Cooldown(void)
+{
+	u64 now;
+
+	now = syNetPeerOsMonotonicMs();
+	sQueuePollCooldownUntilMs = now + (u64)mnVSNetAutomatchAMQueuePollHttp0CooldownMs();
+	if (sQueuePollStillQueuedStreak < 16U)
+	{
+		sQueuePollStillQueuedStreak++;
+	}
+}
+#else
+void mnVSNetAutomatchAMQueuePollReset(void)
+{
+}
+
+sb32 mnVSNetAutomatchAMQueuePollMayEnqueue(sb32 trickle_only)
+{
+	(void)trickle_only;
+	return TRUE;
+}
+
+void mnVSNetAutomatchAMQueuePollNoteEnqueued(void)
+{
+}
+
+void mnVSNetAutomatchAMQueuePollNoteStillQueued(void)
+{
+}
+
+void mnVSNetAutomatchAMQueuePollNoteHttp0Cooldown(void)
+{
+}
+#endif
+
+static sb32 mnVSNetAutomatchAMIceInitGatherAgent(const char *bind_spec);
+static void mnVSNetAutomatchAMIceOnLocalCandidate(const char *sdp, void *user_ptr);
+static void mnVSNetAutomatchAMIceOnGatheringDone(void *user_ptr);
+static void mnVSNetAutomatchAMIceApplyCandidatePolicy(const MmMatchResult *mr);
+static sb32 mnVSNetAutomatchAMIceApplyPeerSdp(const char *peer_sdp, sb32 *out_desc_applied);
+static void mnVSNetAutomatchAMIceDrainRemoteCandidates(void);
+
+static sb32 mnVSNetAutomatchAMIceHttpsSerializeEnabled(void)
+{
+#if defined(__ANDROID__)
+	const char *e;
+
+	e = getenv("SSB64_MATCHMAKING_ICE_HTTPS_SERIALIZE");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return (atoi(e) != 0) ? TRUE : FALSE;
+	}
+	/* Pause libjuice poll I/O during matchmaking HTTPS (Android fdsan); not destroy/rehydrate. */
+	return TRUE;
+#else
+	(void)0;
+	return FALSE;
+#endif
+}
+
+static sb32 mnVSNetAutomatchAMIcePollSuspendEnabled(void)
+{
+#if defined(__ANDROID__)
+	const char *e;
+
+	e = getenv("SSB64_MATCHMAKING_ICE_SUSPEND_POLL");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return (atoi(e) != 0) ? TRUE : FALSE;
+	}
+	/* Avoid libjuice poll thread + curl overlap during MN_AM_POLL (Android fdsan). */
+	return TRUE;
+#else
+	(void)0;
+	return FALSE;
+#endif
+}
+
+static void mnVSNetAutomatchAMIceSaveServerConfig(const MmIceServerConfig *cfg)
+{
+	sIceSavedStunHost[0] = '\0';
+	sIceSavedTurnHost[0] = '\0';
+	sIceSavedTurnUser[0] = '\0';
+	sIceSavedTurnPass[0] = '\0';
+	sIceSavedStunPort = MM_ICE_DEFAULT_STUN_PORT;
+	sIceSavedTurnPort = MM_ICE_DEFAULT_TURN_PORT;
+	sIceSavedLanDirectGather = FALSE;
+	if (cfg == NULL)
+	{
+		return;
+	}
+	if (cfg->stun_host != NULL && cfg->stun_host[0] != '\0')
+	{
+		snprintf(sIceSavedStunHost, sizeof(sIceSavedStunHost), "%s", cfg->stun_host);
+	}
+	if (cfg->turn_host != NULL && cfg->turn_host[0] != '\0')
+	{
+		snprintf(sIceSavedTurnHost, sizeof(sIceSavedTurnHost), "%s", cfg->turn_host);
+	}
+	if (cfg->turn_user != NULL && cfg->turn_user[0] != '\0')
+	{
+		snprintf(sIceSavedTurnUser, sizeof(sIceSavedTurnUser), "%s", cfg->turn_user);
+	}
+	if (cfg->turn_pass != NULL && cfg->turn_pass[0] != '\0')
+	{
+		snprintf(sIceSavedTurnPass, sizeof(sIceSavedTurnPass), "%s", cfg->turn_pass);
+	}
+	sIceSavedStunPort = (cfg->stun_port != 0U) ? cfg->stun_port : MM_ICE_DEFAULT_STUN_PORT;
+	sIceSavedTurnPort = (cfg->turn_port != 0U) ? cfg->turn_port : MM_ICE_DEFAULT_TURN_PORT;
+	sIceSavedLanDirectGather = cfg->lan_direct_gather;
+}
+
+static void mnVSNetAutomatchAMIceFillSavedServerConfig(MmIceServerConfig *cfg)
+{
+	if (cfg == NULL)
+	{
+		return;
+	}
+	memset(cfg, 0, sizeof(*cfg));
+	cfg->stun_host = (sIceSavedStunHost[0] != '\0') ? sIceSavedStunHost : NULL;
+	cfg->stun_port = sIceSavedStunPort;
+	cfg->turn_host = (sIceSavedTurnHost[0] != '\0') ? sIceSavedTurnHost : NULL;
+	cfg->turn_port = sIceSavedTurnPort;
+	cfg->turn_user = (sIceSavedTurnUser[0] != '\0') ? sIceSavedTurnUser : NULL;
+	cfg->turn_pass = (sIceSavedTurnPass[0] != '\0') ? sIceSavedTurnPass : NULL;
+	cfg->lan_direct_gather = sIceSavedLanDirectGather;
+}
 
 static void mnVSNetAutomatchAMIceRefreshLocalLanFromGather(void);
 
@@ -84,6 +353,11 @@ static sb32 mnVSNetAutomatchAMIceApplyPeerSdp(const char *peer_sdp, sb32 *out_de
 		sIcePeerSetupFailed = TRUE;
 		port_log("SSB64 ICE: mmIceApplyPeerIceSignaling failed (invalid peer SDP)\n");
 		return FALSE;
+	}
+	if ((out_desc_applied != NULL) && (*out_desc_applied != FALSE))
+	{
+		snprintf(sIceAppliedPeerSdp, sizeof(sIceAppliedPeerSdp), "%s", peer_sdp);
+		sIcePeerSdpOnAgent = TRUE;
 	}
 	return TRUE;
 }
@@ -211,7 +485,11 @@ static void mnVSNetAutomatchAMIceApplyCandidatePolicy(const MmMatchResult *mr)
 
 	allow_peer = mnVSNetAutomatchAMIceDeriveAllowPeerHost(mr);
 	signal_local = mnVSNetAutomatchAMIceDeriveSignalLocalHost();
-	mmIceSetCandidatePolicy(allow_peer, signal_local);
+	mmIceSetCandidatePolicy(allow_peer, signal_local,
+	                        (allow_peer != FALSE && mr != NULL && mr->peer_lan_hostport[0] != '\0')
+	                            ? mr->peer_lan_hostport
+	                            : NULL,
+	                        (sIceLocalLan[0] != '\0') ? sIceLocalLan : NULL);
 	port_log("SSB64 ICE: candidate policy allow_peer_host=%d signal_local_host=%d peer_lan=%s local_lan=%s\n",
 	         (int)allow_peer, (int)signal_local,
 	         (mr != NULL && mr->peer_lan_hostport[0] != '\0') ? mr->peer_lan_hostport : "(none)",
@@ -275,7 +553,7 @@ static void mnVSNetAutomatchAMIceDrainRemoteCandidates(void)
 		{
 			if (mnVSNetAutomatchAMIceEnvVerbose() != FALSE)
 			{
-				port_log("SSB64 ICE: filtered remote trickle host candidate\n");
+				port_log("SSB64 ICE: filtered remote trickle candidate %.*s\n", 120, cand);
 			}
 			continue;
 		}
@@ -379,13 +657,60 @@ static void mnVSNetAutomatchAMIceOnGatheringDone(void *user_ptr)
 	sIceGatheringDone = TRUE;
 }
 
+static sb32 mnVSNetAutomatchAMIceInitGatherAgent(const char *bind_spec)
+{
+	MmIceServerConfig cfg;
+
+	if ((bind_spec == NULL) || (bind_spec[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (sIceSavedLanDirectGather != FALSE)
+	{
+		mmIceSetLanDirectGather(TRUE);
+	}
+	else
+	{
+		mmIceSetLanDirectGather(FALSE);
+	}
+	mnVSNetAutomatchAMIceFillSavedServerConfig(&cfg);
+	if (mmIceInit(bind_spec, &cfg) == FALSE)
+	{
+		return FALSE;
+	}
+	if ((sIceQueueSdp[0] != '\0') && (mmIceSetLocalIceAttributesFromSdp(sIceQueueSdp) == FALSE))
+	{
+		port_log("SSB64 ICE: restore queue ufrag/pwd failed\n");
+		mmIceShutdown();
+		return FALSE;
+	}
+	(void)mmIceSetIceControlling(FALSE);
+	mmIceSetCallbacks(mnVSNetAutomatchAMIceOnLocalCandidate, mnVSNetAutomatchAMIceOnGatheringDone, NULL);
+	if (mmIceStartGathering() == FALSE)
+	{
+		mmIceShutdown();
+		return FALSE;
+	}
+	mmIceJoinGathering();
+	if (mmIceGatherFailed() != FALSE)
+	{
+		port_log("SSB64 ICE: gather failed after agent init\n");
+		mmIceShutdown();
+		return FALSE;
+	}
+	mnVSNetAutomatchAMIceRefreshLocalLanFromGather();
+	return TRUE;
+}
+
 void mnVSNetAutomatchAMIceReset(void)
 {
+	mnVSNetAutomatchAMQueuePollReset();
 	mmMatchmakingIceSignalsClear();
 	sIceTicket[0] = '\0';
 	sIceBind[0] = '\0';
 	sIceLocalLan[0] = '\0';
 	sIceRemoteDescApplied = FALSE;
+	sIcePeerSdpOnAgent = FALSE;
 	sIceGatheringDone = FALSE;
 	sIceHostRole = FALSE;
 	sIceRemoteGatheringDonePosted = FALSE;
@@ -401,7 +726,23 @@ void mnVSNetAutomatchAMIceReset(void)
 	sIcePeerSetupFailed = FALSE;
 	sIceAwaitPeerControllingReady = FALSE;
 	sIceAwaitPeerRoleReadyLogged = FALSE;
+	sIceConnectPhaseActive = FALSE;
 	sIceDeferredPeerSdp[0] = '\0';
+	sIceQueueSdp[0] = '\0';
+	sIceSavedStunHost[0] = '\0';
+	sIceSavedTurnHost[0] = '\0';
+	sIceSavedTurnUser[0] = '\0';
+	sIceSavedTurnPass[0] = '\0';
+	sIceSavedStunPort = MM_ICE_DEFAULT_STUN_PORT;
+	sIceSavedTurnPort = MM_ICE_DEFAULT_TURN_PORT;
+	sIceSavedLanDirectGather = FALSE;
+	sIcePollSuspended = FALSE;
+	sIceAppliedPeerSdp[0] = '\0';
+#if defined(__ANDROID__)
+	sIceHttpsPauseActive = FALSE;
+	sIceConnectTickInside = FALSE;
+	sIceConnectTickMutexHeld = FALSE;
+#endif
 	mmMatchmakingIceConnectCacheReset();
 	memset(&sIceValidateMatch, 0, sizeof(sIceValidateMatch));
 }
@@ -413,7 +754,84 @@ void mnVSNetAutomatchAMIceOnTicketAssigned(const char *ticket)
 		return;
 	}
 	snprintf(sIceTicket, sizeof(sIceTicket), "%s", ticket);
-	mnVSNetAutomatchAMIceFlushPreTicketCandidates();
+	if (mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE)
+	{
+		mnVSNetAutomatchAMIceFlushPreTicketCandidates();
+	}
+}
+
+void mnVSNetAutomatchAMIceSuspendForQueuePoll(void)
+{
+	if (mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE)
+	{
+		return;
+	}
+	if (sIcePollSuspended != FALSE)
+	{
+		return;
+	}
+	sPreTicketCandHead = 0U;
+	sPreTicketCandCount = 0U;
+	mmMatchmakingIceSignalsClear();
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() != FALSE)
+	{
+		(void)pthread_mutex_lock(&sIceNetSerializeMutex);
+	}
+#endif
+	if (mmIceAgentLive() != FALSE)
+	{
+		mmIceEnsureIoResumed();
+		(void)mmIcePoll();
+	}
+	mmIceShutdown();
+	sIcePollSuspended = TRUE;
+	sIceGatheringDone = TRUE;
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() != FALSE)
+	{
+		(void)pthread_mutex_unlock(&sIceNetSerializeMutex);
+	}
+#endif
+	port_log("SSB64 ICE: suspended agent for queue HTTPS (Android fdsan)\n");
+}
+
+sb32 mnVSNetAutomatchAMIceNeedsResume(void)
+{
+	return (sIcePollSuspended != FALSE) ? TRUE : FALSE;
+}
+
+sb32 mnVSNetAutomatchAMIceResumeForConnect(void)
+{
+	const char *bind_spec;
+
+	if (sIcePollSuspended == FALSE)
+	{
+		return TRUE;
+	}
+	if (sIceQueueSdp[0] == '\0')
+	{
+		port_log("SSB64 ICE: resume failed (no saved queue SDP)\n");
+		return FALSE;
+	}
+	bind_spec = (sIceLocalLan[0] != '\0') ? sIceLocalLan : sIceBind;
+	if (bind_spec[0] == '\0')
+	{
+		port_log("SSB64 ICE: resume failed (no bind spec)\n");
+		return FALSE;
+	}
+	sIceGatheringDone = FALSE;
+	sIceRemoteGatheringDonePosted = FALSE;
+	sIceTrickleQuietTicks = 0U;
+	if (mnVSNetAutomatchAMIceInitGatherAgent(bind_spec) == FALSE)
+	{
+		return FALSE;
+	}
+	sIcePollSuspended = FALSE;
+	mnVSNetAutomatchAMQueuePollReset();
+	mmIceEnsureIoResumed();
+	port_log("SSB64 ICE: resumed agent for connect bind=%s\n", bind_spec);
+	return TRUE;
 }
 
 sb32 mnVSNetAutomatchAMIceShouldIgnorePollError(const MmMatchResult *ev)
@@ -422,7 +840,7 @@ sb32 mnVSNetAutomatchAMIceShouldIgnorePollError(const MmMatchResult *ev)
 	{
 		return FALSE;
 	}
-	/* Transient client/network or server errors during ICE — keep connect tick alive. */
+	/* Transient client/network or server errors during queue poll or ICE — keep automatch alive. */
 	if (ev->http_status == 0L)
 	{
 		return TRUE;
@@ -521,17 +939,11 @@ const char *mnVSNetAutomatchAMIceLocalLan(void)
 	return (sIceLocalLan[0] != '\0') ? sIceLocalLan : NULL;
 }
 
-sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 wan_cap, char *lan_out, u32 lan_cap,
-                                      char *ice_sdp_out, u32 ice_sdp_cap)
+sb32 mnVSNetAutomatchAMIceInitOnWorker(const char *bind_spec)
 {
 	MmIceTurnBundle turn;
 	MmIceServerConfig cfg;
 	sb32 likely_lan;
-
-	(void)wan_out;
-	(void)wan_cap;
-	(void)ice_sdp_out;
-	(void)ice_sdp_cap;
 
 	mnVSNetAutomatchAMIceReset();
 	snprintf(sIceBind, sizeof(sIceBind), "%s", bind_spec);
@@ -546,10 +958,6 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 		if (lan_env != NULL && lan_env[0] != '\0')
 		{
 			snprintf(sIceLocalLan, sizeof(sIceLocalLan), "%s", lan_env);
-			if (lan_out != NULL && lan_cap > 0U)
-			{
-				snprintf(lan_out, lan_cap, "%s", lan_env);
-			}
 		}
 		else if (mnVSNetAutomatchAMIceBindPortIsEphemeral(bind_spec) == FALSE &&
 		         mmIceParseBindHostFromSpec(bind_spec, bind_host, sizeof(bind_host)) != FALSE)
@@ -563,19 +971,6 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 			else
 			{
 				snprintf(sIceLocalLan, sizeof(sIceLocalLan), "%s", bind_host);
-			}
-			if (lan_out != NULL && lan_cap > 0U)
-			{
-				snprintf(lan_out, lan_cap, "%s", sIceLocalLan);
-			}
-		}
-		else if (lan_out != NULL && lan_cap > 0U)
-		{
-			lan_out[0] = '\0';
-			if (mnVSNetAutomatchAMIceBindPortIsEphemeral(bind_spec) == FALSE)
-			{
-				(void)mmLanDetectEndpoint(lan_out, lan_cap, -1, bind_spec);
-				snprintf(sIceLocalLan, sizeof(sIceLocalLan), "%s", lan_out);
 			}
 		}
 		else if (mnVSNetAutomatchAMIceBindPortIsEphemeral(bind_spec) == FALSE)
@@ -594,7 +989,17 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.lan_direct_gather =
 	    (likely_lan != FALSE && mnVSNetAutomatchAMIceEnvLanDirectGather() != FALSE) ? TRUE : FALSE;
-	if (mmMatchmakingFetchTurnCredentials(&turn) != FALSE)
+	if (mmMatchmakingTryGetCachedTurnCredentials(&turn) != FALSE)
+	{
+		port_log("SSB64 ICE: using prefetched TURN credentials stun=%s:%u turn=%s:%u\n", turn.stun_host,
+		         (unsigned int)turn.stun_port, turn.turn_host, (unsigned int)turn.turn_port);
+	}
+	else if (mmMatchmakingFetchTurnCredentials(&turn) != FALSE)
+	{
+		port_log("SSB64 ICE: TURN credentials ok stun=%s:%u turn=%s:%u\n", turn.stun_host, (unsigned int)turn.stun_port,
+		         turn.turn_host, (unsigned int)turn.turn_port);
+	}
+	if ((turn.turn_user[0] != '\0') && (turn.turn_pass[0] != '\0'))
 	{
 		cfg.stun_host = turn.stun_host;
 		cfg.stun_port = turn.stun_port;
@@ -602,8 +1007,6 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 		cfg.turn_port = turn.turn_port;
 		cfg.turn_user = turn.turn_user;
 		cfg.turn_pass = turn.turn_pass;
-		port_log("SSB64 ICE: TURN credentials ok stun=%s:%u turn=%s:%u\n", turn.stun_host, (unsigned int)turn.stun_port,
-		         turn.turn_host, (unsigned int)turn.turn_port);
 		if (turn.turns_port != 0U)
 		{
 			port_log("SSB64 ICE: TURNS port %u not used by libjuice (UDP %u only)\n",
@@ -620,6 +1023,7 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 		port_log("SSB64 ICE: TURN required (no local LAN) but no TURN credentials — aborting gather\n");
 		return FALSE;
 	}
+	mnVSNetAutomatchAMIceSaveServerConfig(&cfg);
 	if (mmIceInit(bind_spec, &cfg) == FALSE)
 	{
 		port_log("SSB64 ICE: mmIceInit failed\n");
@@ -653,7 +1057,7 @@ sb32 mnVSNetAutomatchAMIcePlayerReady(const char *bind_spec, char *wan_out, u32 
 		return FALSE;
 	}
 	/* Policy refreshed after gather in bind tick; signal local host when LAN-direct is likely. */
-	mmIceSetCandidatePolicy(FALSE, (likely_lan != FALSE) ? TRUE : FALSE);
+	mmIceSetCandidatePolicy(FALSE, (likely_lan != FALSE) ? TRUE : FALSE, NULL, NULL);
 	return TRUE;
 }
 
@@ -674,7 +1078,7 @@ sb32 mnVSNetAutomatchAMIceBindTick(char *ice_sdp_out, u32 ice_sdp_cap)
 	}
 	mnVSNetAutomatchAMIceRefreshLocalLanFromGather();
 	signal_local = mnVSNetAutomatchAMIceBindTickSignalLocal();
-	mmIceSetCandidatePolicy(FALSE, signal_local);
+	mmIceSetCandidatePolicy(FALSE, signal_local, NULL, (sIceLocalLan[0] != '\0') ? sIceLocalLan : NULL);
 	if (mmIceGetLocalDescription(sdp, sizeof(sdp)) == FALSE)
 	{
 		if (port_log_debug_active())
@@ -691,16 +1095,14 @@ sb32 mnVSNetAutomatchAMIceBindTick(char *ice_sdp_out, u32 ice_sdp_cap)
 	if (ice_sdp_out != NULL && ice_sdp_cap > 0U)
 	{
 		snprintf(ice_sdp_out, ice_sdp_cap, "%s", sdp);
-		if (signal_local == FALSE)
-		{
-			(void)mmIceFilterHostFromSignalingSdp(ice_sdp_out);
-		}
+		(void)mmIceFilterHostFromSignalingSdp(ice_sdp_out);
 		if (mmIceSdpHasIceUfrag(ice_sdp_out) == FALSE)
 		{
 			port_log("SSB64 ICE: queue SDP missing a=ice-ufrag after filter (len=%zu), deferring queue\n",
 			         strlen(ice_sdp_out));
 			return FALSE;
 		}
+		snprintf(sIceQueueSdp, sizeof(sIceQueueSdp), "%s", ice_sdp_out);
 	}
 	return TRUE;
 }
@@ -713,6 +1115,7 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	sb32 peer_ready;
 
 	sIceRemoteDescApplied = FALSE;
+	sIcePeerSdpOnAgent = FALSE;
 	sIceRemoteGatheringDonePosted = FALSE;
 	sIceTrickleQuietTicks = 0U;
 	sIceCompletedSettleTicks = 0U;
@@ -722,8 +1125,12 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	sIcePeerSetupFailed = FALSE;
 	sIceAwaitPeerControllingReady = FALSE;
 	sIceAwaitPeerRoleReadyLogged = FALSE;
+	sIceRoleReadyWaitTicks = 0U;
 	sIceDeferredPeerSdp[0] = '\0';
 	sIceHostRole = (mr != NULL && mr->you_are_host != FALSE) ? TRUE : FALSE;
+#if defined(__ANDROID__)
+	sIceHttpsPauseActive = FALSE;
+#endif
 	mnVSNetAutomatchAMIceRefreshLocalLanForPeer(mr);
 	mnVSNetAutomatchAMIceApplyCandidatePolicy(mr);
 	if (mr != NULL)
@@ -739,6 +1146,11 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	port_log("SSB64 ICE: role=%s (you_are_host=%d)\n", (sIceHostRole != FALSE) ? "controlling" : "controlled",
 	         (mr != NULL) ? (int)mr->you_are_host : 0);
 	snprintf(sIceTicket, sizeof(sIceTicket), "%s", (mr != NULL) ? mr->ticket_id : "");
+	sIceConnectPhaseActive = TRUE;
+	if (sIceTicket[0] != '\0')
+	{
+		mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
+	}
 	mnVSNetAutomatchAMIceFlushPreTicketCandidates();
 	mnVSNetAutomatchAMIceDrainRemoteCandidates();
 	ok = TRUE;
@@ -752,7 +1164,7 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	}
 	if (sIceHostRole != FALSE)
 	{
-		mmMatchmakingEnqueueIceRoleReady(FALSE, sIceTicket, "pair", 1U);
+		mmMatchmakingPostIceRoleReadySync(sIceTicket, "pair", 1U);
 	}
 	if ((mr != NULL) && (mr->peer_ice_sdp[0] != '\0'))
 	{
@@ -787,6 +1199,7 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 			{
 				snprintf(sIceDeferredPeerSdp, sizeof(sIceDeferredPeerSdp), "%s", mr->peer_ice_sdp);
 				sIceAwaitPeerControllingReady = TRUE;
+				mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
 				port_log("SSB64 ICE: deferring peer SDP until controlling role_ready\n");
 			}
 		}
@@ -803,26 +1216,185 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	return ok;
 }
 
+void mnVSNetAutomatchAMIceHttpsLockBeforeRequest(void)
+{
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() == FALSE)
+	{
+		return;
+	}
+	(void)pthread_mutex_lock(&sIceNetSerializeMutex);
+	if (sIcePollSuspended != FALSE)
+	{
+		return;
+	}
+	sIceHttpsPauseActive = FALSE;
+	if (mmIceAgentLive() != FALSE)
+	{
+		mmIcePauseIo();
+		sIceHttpsPauseActive = TRUE;
+	}
+#endif
+}
+
+void mnVSNetAutomatchAMIceHttpsUnlockAfterRequest(void)
+{
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() == FALSE)
+	{
+		return;
+	}
+	if (sIcePollSuspended == FALSE)
+	{
+		if (sIceHttpsPauseActive != FALSE)
+		{
+			mmIceResumeIo();
+			sIceHttpsPauseActive = FALSE;
+		}
+		mmIceEnsureIoResumed();
+	}
+	(void)pthread_mutex_unlock(&sIceNetSerializeMutex);
+#endif
+}
+
+sb32 mnVSNetAutomatchAMIceWorkerMatchPollBlocked(sb32 trickle_only)
+{
+	(void)trickle_only;
+	/* Worker GET /v1/match overlaps live ICE; role_ready uses main-thread sync trickle. */
+	if ((sIceConnectPhaseActive != FALSE) && (mmIceAgentLive() != FALSE) && (mmIceIsCompleted() == FALSE))
+	{
+		return TRUE;
+	}
+	if (sIceAwaitPeerControllingReady != FALSE)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+#if defined(__ANDROID__)
+static void mnVSNetAutomatchAMIceConnectTickAcquireMutex(void)
+{
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((sIceConnectTickInside != FALSE) && (sIceConnectTickMutexHeld == FALSE))
+	{
+		(void)pthread_mutex_lock(&sIceNetSerializeMutex);
+		sIceConnectTickMutexHeld = TRUE;
+	}
+}
+#endif
+
+static void mnVSNetAutomatchAMIceRoleReadyTricklePollSync(void)
+{
+	if (sIceTicket[0] == '\0')
+	{
+		return;
+	}
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() != FALSE)
+	{
+		/* Unlock serialize mutex so worker POST …/ice can proceed; pause juice on this thread only. */
+		if (sIceConnectTickMutexHeld != FALSE)
+		{
+			(void)pthread_mutex_unlock(&sIceNetSerializeMutex);
+			sIceConnectTickMutexHeld = FALSE;
+		}
+		if ((sIcePollSuspended == FALSE) && (mmIceAgentLive() != FALSE))
+		{
+			mmIcePauseIo();
+		}
+		(void)mmMatchmakingPollMatchIceTrickleSyncEx(sIceTicket, FALSE);
+		if (sIcePollSuspended == FALSE)
+		{
+			mmIceEnsureIoResumed();
+		}
+		return;
+	}
+#endif
+	(void)mmMatchmakingPollMatchIceTrickleSync(sIceTicket);
+}
+
+sb32 mnVSNetAutomatchAMIceConnectTickEnter(void)
+{
+#if defined(__ANDROID__)
+	sIceConnectTickMutexHeld = FALSE;
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() == FALSE)
+	{
+		return TRUE;
+	}
+	sIceConnectTickInside = TRUE;
+	/* role_ready wait uses main-thread sync trickle; mutex skipped until post-SDP connect poll. */
+	if (sIceAwaitPeerControllingReady == FALSE)
+	{
+		(void)pthread_mutex_lock(&sIceNetSerializeMutex);
+		sIceConnectTickMutexHeld = TRUE;
+	}
+#endif
+	return TRUE;
+}
+
+void mnVSNetAutomatchAMIceConnectTickLeave(void)
+{
+#if defined(__ANDROID__)
+	if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() == FALSE)
+	{
+		return;
+	}
+	sIceConnectTickInside = FALSE;
+	if (sIceConnectTickMutexHeld != FALSE)
+	{
+		(void)pthread_mutex_unlock(&sIceNetSerializeMutex);
+		sIceConnectTickMutexHeld = FALSE;
+	}
+#endif
+}
+
 s32 mnVSNetAutomatchAMIceConnectTick(void)
 {
 	MmIceState st;
+	s32 ret;
 
 	if (sIcePeerSetupFailed != FALSE)
 	{
 		return -1;
 	}
+	if (mnVSNetAutomatchAMIceConnectTickEnter() == FALSE)
+	{
+		mnVSNetAutomatchAMIceConnectTickLeave();
+		return -1;
+	}
 	if (sIceAwaitPeerControllingReady != FALSE)
 	{
 		sb32 desc_applied;
+		sb32 peer_ready;
 
-		if (mmMatchmakingIcePeerControllingReady() == FALSE)
+		peer_ready = mmMatchmakingIcePeerControllingReady();
+		if (peer_ready == FALSE)
 		{
-			if (sIceAwaitPeerRoleReadyLogged == FALSE)
+			sIceRoleReadyWaitTicks++;
+			if ((sIceTicket[0] != '\0') && (((sIceRoleReadyWaitTicks % 16U) == 1U)))
 			{
-				port_log("SSB64 ICE: waiting for peer controlling role_ready\n");
-				sIceAwaitPeerRoleReadyLogged = TRUE;
+				mnVSNetAutomatchAMIceRoleReadyTricklePollSync();
 			}
-			return 0;
+			peer_ready = mmMatchmakingIcePeerControllingReady();
+			if (peer_ready == FALSE && sIceRoleReadyWaitTicks < ICE_ROLE_READY_WAIT_MAX_TICKS)
+			{
+				if (sIceAwaitPeerRoleReadyLogged == FALSE)
+				{
+					port_log("SSB64 ICE: waiting for peer controlling role_ready\n");
+					sIceAwaitPeerRoleReadyLogged = TRUE;
+				}
+				(void)mmIcePoll();
+				mnVSNetAutomatchAMIceDrainRemoteCandidates();
+				ret = 0;
+				goto ice_connect_done;
+			}
+			port_log(
+			    "SSB64 ICE: peer_controlling_ready timeout (%u ticks) — applying deferred peer SDP (check host role-ready / trickle polls)\n",
+			    (unsigned int)sIceRoleReadyWaitTicks);
 		}
 		if (sIceDeferredPeerSdp[0] == '\0')
 		{
@@ -833,7 +1405,8 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 			desc_applied = FALSE;
 			if (mnVSNetAutomatchAMIceApplyPeerSdp(sIceDeferredPeerSdp, &desc_applied) == FALSE)
 			{
-				return -1;
+				ret = -1;
+				goto ice_connect_done;
 			}
 			if (desc_applied != FALSE)
 			{
@@ -845,6 +1418,9 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 			port_log("SSB64 ICE: peer SDP applied after controlling role_ready\n");
 		}
 	}
+#if defined(__ANDROID__)
+	mnVSNetAutomatchAMIceConnectTickAcquireMutex();
+#endif
 	st = mmIcePoll();
 	mnVSNetAutomatchAMIceDrainRemoteCandidates();
 	mnVSNetAutomatchAMIceMaybePostRemoteGatheringDone();
@@ -869,7 +1445,8 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 				{
 					snprintf(sIceCompletedRemote, sizeof(sIceCompletedRemote), "%s", remote);
 				}
-				return 0;
+				ret = 0;
+				goto ice_connect_done;
 			}
 			else if (mmIceIsConnected() != FALSE)
 			{
@@ -881,7 +1458,8 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 				sIceConnectFailReason = "ICE path validation failed (no nominated path)";
 				port_log("SSB64 ICE: path validation failed (no selected remote)\n");
 				sIceValidateMatchActive = FALSE;
-				return -1;
+				ret = -1;
+				goto ice_connect_done;
 			}
 		}
 		else
@@ -913,7 +1491,8 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 							    "SSB64 ICE: shared LAN nominated relay remote=%s; waiting for host-pair renomination\n",
 							    remote);
 						}
-						return 0;
+						ret = 0;
+						goto ice_connect_done;
 					}
 					port_log("SSB64 ICE: shared LAN still on relay after settle remote=%s\n", remote);
 				}
@@ -924,13 +1503,15 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 					sIceConnectFailReason = "ICE path validation failed";
 					port_log("SSB64 ICE: session abort (path validation failed)\n");
 					sIceValidateMatchActive = FALSE;
-					return -1;
+					ret = -1;
+					goto ice_connect_done;
 				}
 			}
 			sIceValidateMatchActive = FALSE;
 		}
 		syNetPeerSetIceTransport(TRUE);
-		return 1;
+		ret = 1;
+		goto ice_connect_done;
 	}
 	sIceCompletedSettleTicks = 0U;
 	sIceLanRelaySettleTicks = 0U;
@@ -951,9 +1532,22 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 	{
 		sIceConnectFailReason = "ICE connection failed";
 		port_log("SSB64 ICE: connection failed\n");
-		return -1;
+		ret = -1;
+		goto ice_connect_done;
 	}
-	return 0;
+	ret = 0;
+
+ice_connect_done:
+	if (ret != 0)
+	{
+		sIceConnectPhaseActive = FALSE;
+	}
+	if (ret > 0)
+	{
+		mmIceEnsureIoResumed();
+	}
+	mnVSNetAutomatchAMIceConnectTickLeave();
+	return ret;
 }
 
 const char *mnVSNetAutomatchAMIceConnectFailureReason(void)
@@ -1018,7 +1612,7 @@ sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bin
 	{
 		return FALSE;
 	}
-	syNetPeerSetAutomatchBootstrapContext(mr->match_id, mr->ticket_id);
+	syNetPeerSetAutomatchBootstrapContextEx(mr->match_id, mr->ticket_id, mr->peer_player_id);
 	if ((mmIceGetSelectedPath(NULL, 0U, remote, sizeof(remote)) == FALSE) || (remote[0] == '\0'))
 	{
 		if (sIceCompletedRemote[0] != '\0')
@@ -1064,19 +1658,18 @@ sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bin
 
 u32 mnVSNetAutomatchAMIceConnectTricklePollInterval(void)
 {
-	/* After both sides posted gathering-done, trickle polls only burn worker/HTTP; slow down until completed. */
 	if (mmIceIsCompleted() != FALSE)
 	{
 		return 0U;
 	}
-	if ((mmIceIsConnected() != FALSE) && (sIceRemoteGatheringDonePosted != FALSE) &&
-	    (mmMatchmakingIceSignalsQueuedCount() == 0U))
+	if (sIceAwaitPeerControllingReady != FALSE)
 	{
-		return 16U;
+		return 0U;
 	}
+	/* connected→completed: main-thread mmIcePoll only (no worker GET pause windows). */
 	if (mmIceIsConnected() != FALSE)
 	{
-		return 8U;
+		return 0U;
 	}
 	return 2U;
 }

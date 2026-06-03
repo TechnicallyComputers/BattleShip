@@ -2,8 +2,10 @@
 
 #include <ft/fighter.h>
 #include <if/ifcommon.h>
+#include <sc/scdef.h>
 #include <sc/scmanager.h>
 #include <sys/netinput.h>
+#include <sys/netpeer.h>
 #include <sys/utils.h>
 
 #include <stdio.h>

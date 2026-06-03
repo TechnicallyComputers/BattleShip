@@ -32,6 +32,7 @@ public class BattleShipActivity extends SDLActivity {
         UserStoragePaths.publishUserDataDirToNative(getApplicationContext());
         DebugSessionHelper.attach(this);
         TouchOverlay.install(this);
+        NetworkMonitor.bindContext(this);
     }
 
     @Override

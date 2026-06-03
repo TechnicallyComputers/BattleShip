@@ -476,6 +476,42 @@ sb32 mmLanPeerSharesLocalLanSubnet(const char *peer_hostport, const char *local_
 	return mmLanIpv4OnInterfaceSubnet(&peer, &local);
 }
 
+sb32 mmLanIpv4HostportsOnSameSharedLanSegment(const char *hostport_a, const char *hostport_b)
+{
+	struct in_addr a;
+	struct in_addr b;
+	u32 ha;
+	u32 hb;
+
+	if ((hostport_a == NULL) || (hostport_a[0] == '\0') || (hostport_b == NULL) || (hostport_b[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if ((parse_hostport_ipv4(hostport_a, &a) == FALSE) || (parse_hostport_ipv4(hostport_b, &b) == FALSE))
+	{
+		return FALSE;
+	}
+	if ((addr_is_rfc1918(&a) == FALSE) || (addr_is_rfc1918(&b) == FALSE))
+	{
+		return FALSE;
+	}
+	ha = (u32)ntohl(a.s_addr);
+	hb = (u32)ntohl(b.s_addr);
+	if (((ha & 0xff000000U) == 0x0a000000U) && ((hb & 0xff000000U) == 0x0a000000U))
+	{
+		return TRUE;
+	}
+	if (((ha & 0xfff00000U) == 0xac100000U) && ((hb & 0xfff00000U) == 0xac100000U))
+	{
+		return ((ha & 0xffff0000U) == (hb & 0xffff0000U)) ? TRUE : FALSE;
+	}
+	if (((ha & 0xffff0000U) == 0xc0a80000U) && ((hb & 0xffff0000U) == 0xc0a80000U))
+	{
+		return ((ha & 0xffffff00U) == (hb & 0xffffff00U)) ? TRUE : FALSE;
+	}
+	return FALSE;
+}
+
 sb32 mmHostportWanIpv4Equal(const char *local_wan_hostport, const char *peer_wan_hostport)
 {
 	struct in_addr local_addr;

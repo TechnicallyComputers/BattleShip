@@ -29,6 +29,13 @@ Item blobs also omitted `is_thrown`, so respawned bombs could not restore thrown
 | `syNetRbSnapRespawnItemFromBlob()` — route `nITKindLinkBomb` through `itManagerMakeItem` + owner fighter; log/skip other fighter kinds | [`port/net/sys/netrollbacksnapshot.c`](port/net/sys/netrollbacksnapshot.c) |
 | `syNetRbSnapReapplyLinkBombStatusAfterBlob()` — restore Hold/Thrown/Dropped/Wait/Fall procs after blob apply | same |
 | Capture/apply `item_flags` bit `0x04` for `is_thrown` | same |
+| `item_flags` bit `0x08` + nibble `0xF0`: portable Link bomb status (Hold/Thrown/Explode/…) for rollback reapply | same |
+| Explode reapply binds procs only (no `ExplodeInitAttackColl`) so blob `multi`/`event_id`/attack coll survive load | same |
+
+## 2026-05-29 follow-up (DK/Link cross-ISA rollback)
+
+Log: single `LOAD_HASH_DRIFT` at tick **1055** during `item_hold` with item+figh+eff mismatch; soft-continued.
+Explode status was inferred as Thrown/Wait after blob apply, resetting attack state and leaving phantom hitboxes.
 
 ## Soak pass criteria
 

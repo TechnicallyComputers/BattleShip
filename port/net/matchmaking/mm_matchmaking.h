@@ -11,6 +11,9 @@ typedef enum MmPollKind
 	MM_POLL_NONE = 0,
 	MM_POLL_ERROR,
 	MM_POLL_PLAYER_READY,
+#if defined(SSB64_NETPLAY_ICE)
+	MM_POLL_ICE_PLAYER_READY,
+#endif
 	MM_POLL_QUEUED,
 	MM_POLL_MATCHED,
 	MM_POLL_CANCEL_OK,
@@ -68,6 +71,14 @@ extern sb32 mmMatchmakingJsonCopyQuotedValue(const char *body, const char *key_n
 extern sb32 mmMatchmakingJsonCopyU64Field(const char *body, const char *key_name, u64 *out_val);
 extern sb32 mmMatchmakingJsonCopyBoolField(const char *body, const char *key_name, sb32 *out_val);
 
+extern sb32 mmMatchmakingGetLocalPlayerId(char *out, u32 out_cap);
+extern void mmMatchmakingPostMatchResultSync(const char *match_id, const char *winner_id, const char *loser_id,
+                                             const char *reason);
+extern sb32 mmMatchmakingFetchMatchOutcomeSync(const char *match_id, char *status_out, u32 status_cap,
+                                               char *winner_out, u32 winner_cap, char *loser_out, u32 loser_cap,
+                                               char *reason_out, u32 reason_cap);
+extern long mmMatchmakingPostIceRestartSync(const char *ticket_id, u32 connect_epoch);
+
 extern void mmMatchmakingEnqueueEnsurePlayer(sb32 verbose);
 extern void mmMatchmakingEnqueueJoinQueue(sb32 verbose, const char *udp_endpoint, u8 fighter_kind, sb32 has_fkind,
                                           const char *lan_endpoint_opt);
@@ -79,6 +90,8 @@ extern void mmMatchmakingEnqueueJoinQueueIce(sb32 verbose, const char *udp_endpo
                                              const char *turn_endpoint_opt);
 extern void mmMatchmakingEnqueueIceSignal(sb32 verbose, const char *ticket_id, const char *candidate_sdp);
 extern void mmMatchmakingEnqueueIceRoleReady(sb32 verbose, const char *ticket_id, const char *edge_id, u32 connect_epoch);
+/** Controlling peer: POST role-ready on caller thread (avoids worker-queue delay vs guest trickle polls). */
+extern void mmMatchmakingPostIceRoleReadySync(const char *ticket_id, const char *edge_id, u32 connect_epoch);
 extern sb32 mmMatchmakingIceConnectPresent(void);
 extern sb32 mmMatchmakingIcePeerControllingReady(void);
 extern void mmMatchmakingIceConnectCacheReset(void);
@@ -95,6 +108,10 @@ typedef struct MmIceTurnBundle
 } MmIceTurnBundle;
 
 extern sb32 mmMatchmakingFetchTurnCredentials(MmIceTurnBundle *out);
+/** Copy TURN bundle prefetched during ENSURE (worker); FALSE if none cached. */
+extern sb32 mmMatchmakingTryGetCachedTurnCredentials(MmIceTurnBundle *out);
+extern void mmMatchmakingEnqueueIcePlayerReady(sb32 verbose, const char *bind_spec);
+extern void mmMatchmakingEnqueueIceReconnectInit(sb32 verbose);
 extern sb32 mmMatchmakingPopIceCandidate(char *out, u32 out_cap);
 extern u32 mmMatchmakingIceSignalsQueuedCount(void);
 extern void mmMatchmakingIceSignalsClear(void);
@@ -107,12 +124,21 @@ extern void mmMatchmakingEnqueueHeartbeatWithEndpointsEx(sb32 verbose, const cha
 extern void mmMatchmakingEnqueuePollMatch(sb32 verbose, const char *ticket_id);
 #if defined(SSB64_NETPLAY_ICE)
 extern void mmMatchmakingEnqueuePollIceTrickle(sb32 verbose, const char *ticket_id);
+/** Drop queued worker GET /v1/match polls (main thread owns trickle during role_ready wait). */
+extern void mmMatchmakingDropPendingPollMatchJobs(const char *ticket_id);
+/** Caller-thread GET match poll for ICE trickle + ice_connect (Android role_ready wait; avoids worker curl + juice fdsan). */
+extern sb32 mmMatchmakingPollMatchIceTrickleSync(const char *ticket_id);
+/** Same; ice_serialize=FALSE skips mutex (caller must pause libjuice IO during CONNECTING). */
+extern sb32 mmMatchmakingPollMatchIceTrickleSyncEx(const char *ticket_id, sb32 ice_serialize);
 #endif
 extern void mmMatchmakingEnqueueCancel(sb32 verbose, const char *ticket_id);
 
 extern sb32 mmMatchmakingDrainCompleted(MmMatchResult *out);
+/** TRUE when a worker GET /v1/match is in flight or queued for ticket_id. */
+extern sb32 mmMatchmakingPollMatchOutstanding(const char *ticket_id);
 /* Approximate pending MM worker jobs (HTTPS not yet finished); for adaptive client polling. */
 extern u32 mmMatchmakingApproxPendingJobs(void);
+extern u32 mmMatchmakingAdaptivePollEvery(u32 base_interval);
 
 #else
 
@@ -134,11 +160,14 @@ typedef struct MmMatchResult
 #define mmMatchmakingEnqueueHeartbeat(v, t)
 #define mmMatchmakingEnqueueHeartbeatWithEndpoints(v, t, u, l)
 #define mmMatchmakingEnqueuePollMatch(v, t)
+#define mmMatchmakingDropPendingPollMatchJobs(t) ((void)0)
 #define mmMatchmakingEnqueueCancel(v, t)
 #define mmMatchmakingDrainCompleted(out) FALSE
+#define mmMatchmakingPollMatchOutstanding(t) FALSE
 #define mmMatchmakingApproxPendingJobs() ((u32)0)
 #define mmMatchmakingIceSignalsClear() ((void)0)
 #define mmMatchmakingEnqueueIceRoleReady(v, t, e, n) ((void)0)
+#define mmMatchmakingPostIceRoleReadySync(t, e, n) ((void)0)
 #define mmMatchmakingIceConnectPresent() FALSE
 #define mmMatchmakingIcePeerControllingReady() FALSE
 #define mmMatchmakingIceConnectCacheReset() ((void)0)

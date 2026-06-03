@@ -1,17 +1,18 @@
 # Ssb64NetmenuSources.cmake — SSB64_NETMENU build policy:
 #
-# - Netplay game logic lives under decomp/src/netplay/ (include/, sys/, lb/, sc/, menus/).
+# - Netplay game logic lives under decomp/src/netplay/ (include/, sys/, menus/, sc/automatch, …).
 # - Transport, rollback, and matchmaking stay under port/net/.
 # - Include paths: cmake/Ssb64NetplayIncludes.cmake
-# - This module removes stock decomp TUs superseded by netplay/, appends all
-#   decomp/src/netplay/*.c, and links every port/net/*.c.
+# - Stock decomp TUs (taskman, scvsbattle, lbcommon, scmanager, mnvsresults) are unified
+#   under decomp/src/ with compile gates. mn/mnvsmode/mnvsmode.c is replaced at link time
+#   by netplay/menus/mnvsmodenet.c (full hub fork, not a patch).
+# - This module appends decomp/src/netplay/*.c (net-only menus, automatch, …) and links port/net/*.c.
 #
 # Inputs:  CMAKE_CURRENT_SOURCE_DIR, SSB64_DECOMP_SOURCES (list, modified in place)
 # Outputs: SSB64_PORT_NETMENU_SOURCES (port/net/*.c only; netplay sources are in SSB64_DECOMP_SOURCES)
 
 set(_ssb64_port_net_root "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
 set(_ssb64_netplay_root "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/netplay")
-set(_ssb64_decomp_src_root "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src")
 
 file(GLOB_RECURSE _ssb64_port_net_c CONFIGURE_DEPENDS
     "${_ssb64_port_net_root}/*.c"
@@ -21,14 +22,10 @@ file(GLOB_RECURSE _ssb64_netplay_c CONFIGURE_DEPENDS
 )
 list(FILTER _ssb64_netplay_c EXCLUDE REGEX "\\.inc\\.c$")
 
-# Stock decomp paths replaced by decomp/src/netplay (relative paths differ for menus).
+# mnvsmodenet.c is a full VS Mode hub fork (~1500 LOC), not a compile-gated patch of
+# mn/mnvsmode/mnvsmode.c — exclude stock mnvsmode from netmenu link to avoid duplicate symbols.
 set(_ssb64_netplay_stock_remove
-    "${_ssb64_decomp_src_root}/sys/taskman.c"
-    "${_ssb64_decomp_src_root}/lb/lbcommon.c"
-    "${_ssb64_decomp_src_root}/sc/scmanager.c"
-    "${_ssb64_decomp_src_root}/sc/sccommon/scvsbattle.c"
-    "${_ssb64_decomp_src_root}/mn/mnvsmode/mnvsmode.c"
-    "${_ssb64_decomp_src_root}/mn/mnvsmode/mnvsresults.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/mn/mnvsmode/mnvsmode.c"
 )
 foreach(_stock IN LISTS _ssb64_netplay_stock_remove)
     list(REMOVE_ITEM SSB64_DECOMP_SOURCES "${_stock}")

@@ -13,6 +13,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <wchar.h>
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -75,6 +76,8 @@ static char sLastSrflxHostport[128];
 static char sLastRelayHostport[128];
 static sb32 sAllowPeerHostCandidates = TRUE;
 static sb32 sSignalLocalHostCandidates = TRUE;
+static char sPeerLanFilterHostport[128];
+static char sLocalLanFilterHostport[128];
 static u32 sFilteredRemoteHostCount;
 static u32 sFilteredRemoteRelayCount;
 static sb32 sPendingStateLog;
@@ -421,24 +424,247 @@ static void mmIceStripRelayCandidatesFromSdp(char *sdp)
 	mmIceStripRelayLinesFromSdp(sdp, TRUE);
 }
 
-void mmIceSetCandidatePolicy(sb32 allow_peer_host, sb32 signal_local_host)
+static sb32 mmIceHostIpv4ExactMatch(const char *candidate_addr, const char *lan_ref_hostport)
+{
+	char cand_ip[64];
+	char lan_ip[64];
+	struct in_addr cand_addr;
+	struct in_addr lan_addr;
+	const char *colon;
+	const char *lan_colon;
+
+	colon = strrchr(candidate_addr, ':');
+	lan_colon = strrchr(lan_ref_hostport, ':');
+	if ((colon == NULL) || (colon <= candidate_addr) || (lan_colon == NULL) || (lan_colon <= lan_ref_hostport))
+	{
+		return FALSE;
+	}
+	snprintf(cand_ip, sizeof(cand_ip), "%.*s", (int)(colon - candidate_addr), candidate_addr);
+	snprintf(lan_ip, sizeof(lan_ip), "%.*s", (int)(lan_colon - lan_ref_hostport), lan_ref_hostport);
+	if (inet_pton(AF_INET, cand_ip, &cand_addr) != 1 || inet_pton(AF_INET, lan_ip, &lan_addr) != 1)
+	{
+		return FALSE;
+	}
+	return (cand_addr.s_addr == lan_addr.s_addr) ? TRUE : FALSE;
+}
+
+static sb32 mmIceHostCandidateAllowedForPeerLan(const char *candidate_sdp, const char *peer_lan_hostport)
+{
+	char typ[16];
+	char addr[128];
+	char ip[64];
+	const char *colon;
+
+	if ((peer_lan_hostport == NULL) || (peer_lan_hostport[0] == '\0'))
+	{
+		return TRUE;
+	}
+	if (mmIceParseCandidateFields(candidate_sdp, typ, sizeof(typ), addr, sizeof(addr)) == FALSE)
+	{
+		return TRUE;
+	}
+	if (strcmp(typ, "host") != 0)
+	{
+		return TRUE;
+	}
+	colon = strrchr(addr, ':');
+	if (colon == NULL || colon <= addr)
+	{
+		return FALSE;
+	}
+	snprintf(ip, sizeof(ip), "%.*s", (int)(colon - addr), addr);
+	if (mmLanIpv4StringIsRfc1918(ip) == FALSE)
+	{
+		return FALSE;
+	}
+	if (mmIceHostIpv4ExactMatch(addr, peer_lan_hostport) != FALSE)
+	{
+		return TRUE;
+	}
+	return mmLanIpv4HostportsOnSameSharedLanSegment(addr, peer_lan_hostport);
+}
+
+static sb32 mmIceHostCandidateAllowedForLocalLan(const char *candidate_sdp, const char *local_lan_hostport)
+{
+	char typ[16];
+	char addr[128];
+
+	if ((local_lan_hostport == NULL) || (local_lan_hostport[0] == '\0'))
+	{
+		return TRUE;
+	}
+	if (mmIceParseCandidateFields(candidate_sdp, typ, sizeof(typ), addr, sizeof(addr)) == FALSE)
+	{
+		return TRUE;
+	}
+	if (strcmp(typ, "host") != 0)
+	{
+		return TRUE;
+	}
+	if (mmIceHostIpv4ExactMatch(addr, local_lan_hostport) != FALSE)
+	{
+		return TRUE;
+	}
+	return mmLanPeerSharesLocalLanSubnet(addr, local_lan_hostport);
+}
+
+static sb32 mmIceSdpHasAllowedRemotePeerHost(const char *sdp, const char *peer_lan_hostport)
+{
+	const char *scan;
+
+	if ((sdp == NULL) || (sdp[0] == '\0') || (peer_lan_hostport == NULL) || (peer_lan_hostport[0] == '\0'))
+	{
+		return FALSE;
+	}
+	for (scan = sdp; *scan != '\0';)
+	{
+		const char *line_end = scan;
+
+		while (*line_end != '\0' && *line_end != '\n' && *line_end != '\r')
+		{
+			line_end++;
+		}
+		if ((mmIceCandidateLineIsHost(scan) != FALSE) &&
+		    (mmIceHostCandidateAllowedForPeerLan(scan, peer_lan_hostport) != FALSE))
+		{
+			return TRUE;
+		}
+		scan = line_end;
+		while (*scan == '\n' || *scan == '\r')
+		{
+			scan++;
+		}
+	}
+	return FALSE;
+}
+
+static void mmIceStripMisalignedHostLinesFromSdp(char *sdp, const char *lan_ref_hostport, sb32 count_filtered,
+                                                 sb32 remote_peer_lan)
+{
+	char *scan;
+	char *dst;
+
+	if ((sdp == NULL) || (sdp[0] == '\0') || (lan_ref_hostport == NULL) || (lan_ref_hostport[0] == '\0'))
+	{
+		return;
+	}
+	dst = sdp;
+	for (scan = sdp; *scan != '\0';)
+	{
+		char *line_end = scan;
+		sb32 allowed;
+
+		while (*line_end != '\0' && *line_end != '\n' && *line_end != '\r')
+		{
+			line_end++;
+		}
+		allowed = (remote_peer_lan != FALSE) ? mmIceHostCandidateAllowedForPeerLan(scan, lan_ref_hostport)
+		                                     : mmIceHostCandidateAllowedForLocalLan(scan, lan_ref_hostport);
+		if ((mmIceCandidateLineIsHost(scan) != FALSE) && (allowed == FALSE))
+		{
+			if (count_filtered != FALSE)
+			{
+				sFilteredRemoteHostCount++;
+			}
+			scan = line_end;
+			while (*scan == '\n' || *scan == '\r')
+			{
+				scan++;
+			}
+			continue;
+		}
+		while (scan < line_end)
+		{
+			*dst++ = *scan++;
+		}
+		while (*scan == '\n' || *scan == '\r')
+		{
+			*dst++ = *scan++;
+		}
+	}
+	*dst = '\0';
+}
+
+static void mmIceEnsurePeerLanRemoteCandidate(juice_agent_t *agent, sb32 peer_host_missing)
+{
+	char cand[MM_ICE_CANDIDATE_MAX];
+	char ip[64];
+	const char *colon;
+	unsigned port;
+	int juice_ret;
+
+	if ((agent == NULL) || (peer_host_missing == FALSE) || (sPeerLanFilterHostport[0] == '\0') ||
+	    (sAllowPeerHostCandidates == FALSE))
+	{
+		return;
+	}
+	colon = strrchr(sPeerLanFilterHostport, ':');
+	if (colon == NULL || colon <= sPeerLanFilterHostport)
+	{
+		return;
+	}
+	snprintf(ip, sizeof(ip), "%.*s", (int)(colon - sPeerLanFilterHostport), sPeerLanFilterHostport);
+	port = (unsigned)atoi(colon + 1);
+	if (port == 0U)
+	{
+		return;
+	}
+	snprintf(cand, sizeof(cand), "a=candidate:0 1 UDP 2130706431 %s %u typ host", ip, port);
+	juice_ret = juice_add_remote_candidate(agent, cand);
+	if (juice_ret != 0)
+	{
+#ifdef PORT
+		port_log("SSB64 ICE: peer_lan remote candidate add failed peer_lan=%s juice_ret=%d\n", sPeerLanFilterHostport,
+		         juice_ret);
+#endif
+		return;
+	}
+#ifdef PORT
+	port_log("SSB64 ICE: ensured peer_lan remote candidate %s\n", sPeerLanFilterHostport);
+#endif
+}
+
+void mmIceSetCandidatePolicy(sb32 allow_peer_host, sb32 signal_local_host, const char *peer_lan_hostport,
+                             const char *local_lan_hostport)
 {
 	sAllowPeerHostCandidates = (allow_peer_host != FALSE) ? TRUE : FALSE;
 	sSignalLocalHostCandidates = (signal_local_host != FALSE) ? TRUE : FALSE;
+	sPeerLanFilterHostport[0] = '\0';
+	sLocalLanFilterHostport[0] = '\0';
+	if ((peer_lan_hostport != NULL) && (peer_lan_hostport[0] != '\0') && (sAllowPeerHostCandidates != FALSE))
+	{
+		snprintf(sPeerLanFilterHostport, sizeof(sPeerLanFilterHostport), "%s", peer_lan_hostport);
+	}
+	if ((local_lan_hostport != NULL) && (local_lan_hostport[0] != '\0'))
+	{
+		snprintf(sLocalLanFilterHostport, sizeof(sLocalLanFilterHostport), "%s", local_lan_hostport);
+	}
 	sFilteredRemoteHostCount = 0U;
 	sFilteredRemoteRelayCount = 0U;
 }
 
 sb32 mmIceFilterHostFromSignalingSdp(char *sdp)
 {
-	if ((sdp == NULL) || (sdp[0] == '\0') || (sSignalLocalHostCandidates != FALSE))
+	if ((sdp == NULL) || (sdp[0] == '\0'))
 	{
 		return TRUE;
 	}
-	mmIceStripHostLinesFromSdp(sdp, FALSE);
+	if (sSignalLocalHostCandidates == FALSE)
+	{
+		mmIceStripHostLinesFromSdp(sdp, FALSE);
 #ifdef PORT
-	port_log("SSB64 ICE: omitted local host candidate(s) from signaling SDP (no local LAN)\n");
+		port_log("SSB64 ICE: omitted local host candidate(s) from signaling SDP (no local LAN)\n");
 #endif
+		return TRUE;
+	}
+	if (sLocalLanFilterHostport[0] != '\0')
+	{
+		mmIceStripMisalignedHostLinesFromSdp(sdp, sLocalLanFilterHostport, FALSE, FALSE);
+#ifdef PORT
+		port_log("SSB64 ICE: stripped non-local-LAN host candidate(s) from signaling SDP (local_lan=%s)\n",
+		         sLocalLanFilterHostport);
+#endif
+	}
 	return TRUE;
 }
 
@@ -457,6 +683,12 @@ sb32 mmIceShouldAcceptRemoteCandidate(const char *candidate_sdp)
 	}
 	if (sAllowPeerHostCandidates != FALSE)
 	{
+		if ((strcmp(typ, "host") == 0) && (sPeerLanFilterHostport[0] != '\0') &&
+		    (mmIceHostCandidateAllowedForPeerLan(candidate_sdp, sPeerLanFilterHostport) == FALSE))
+		{
+			sFilteredRemoteHostCount++;
+			return FALSE;
+		}
 		return TRUE;
 	}
 	if (strcmp(typ, "host") != 0)
@@ -471,10 +703,6 @@ sb32 mmIceShouldSignalLocalCandidate(const char *candidate_sdp)
 {
 	char typ[16];
 
-	if (sSignalLocalHostCandidates != FALSE)
-	{
-		return TRUE;
-	}
 	if (mmIceParseCandidateFields(candidate_sdp, typ, sizeof(typ), NULL, 0U) == FALSE)
 	{
 		return TRUE;
@@ -483,6 +711,15 @@ sb32 mmIceShouldSignalLocalCandidate(const char *candidate_sdp)
 	if ((sAllowPeerHostCandidates != FALSE) && (strcmp(typ, "relay") == 0))
 	{
 		return FALSE;
+	}
+	if (sSignalLocalHostCandidates != FALSE)
+	{
+		if ((strcmp(typ, "host") == 0) && (sLocalLanFilterHostport[0] != '\0') &&
+		    (mmIceHostCandidateAllowedForLocalLan(candidate_sdp, sLocalLanFilterHostport) == FALSE))
+		{
+			return FALSE;
+		}
+		return TRUE;
 	}
 	return (strcmp(typ, "host") != 0) ? TRUE : FALSE;
 }
@@ -878,6 +1115,43 @@ static void mmIceLoadTurnFromEnv(void)
 	sTurnServerCount = 1;
 }
 
+static juice_concurrency_mode_t mmIceSelectConcurrencyMode(void)
+{
+#if defined(__ANDROID__)
+	const char *env;
+
+	env = getenv("SSB64_MATCHMAKING_ICE_CONCURRENCY");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		if (strcmp(env, "thread") == 0)
+		{
+			return JUICE_CONCURRENCY_MODE_THREAD;
+		}
+		if (strcmp(env, "poll") == 0)
+		{
+			return JUICE_CONCURRENCY_MODE_POLL;
+		}
+	}
+	/* Per-agent "juice agent" threads + HTTPS trickle on worker tick collide with Android fdsan (fatal). */
+	return JUICE_CONCURRENCY_MODE_POLL;
+#else
+	return JUICE_CONCURRENCY_MODE_THREAD;
+#endif
+}
+
+static const char *mmIceConcurrencyModeName(juice_concurrency_mode_t mode)
+{
+	if (mode == JUICE_CONCURRENCY_MODE_POLL)
+	{
+		return "poll";
+	}
+	if (mode == JUICE_CONCURRENCY_MODE_MUX)
+	{
+		return "mux";
+	}
+	return "thread";
+}
+
 sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 {
 	juice_config_t config;
@@ -930,7 +1204,7 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	}
 
 	memset(&config, 0, sizeof(config));
-	config.concurrency_mode = JUICE_CONCURRENCY_MODE_THREAD;
+	config.concurrency_mode = mmIceSelectConcurrencyMode();
 	if (lan_direct != FALSE)
 	{
 		config.stun_server_host = NULL;
@@ -952,6 +1226,9 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	config.cb_recv = mmIceOnRecv;
 	config.user_ptr = NULL;
 
+#ifdef PORT
+	port_log("SSB64 ICE: libjuice concurrency=%s\n", mmIceConcurrencyModeName(config.concurrency_mode));
+#endif
 	agent = juice_create(&config);
 	if (agent == NULL)
 	{
@@ -983,6 +1260,8 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	sLastRelayHostport[0] = '\0';
 	sAllowPeerHostCandidates = TRUE;
 	sSignalLocalHostCandidates = TRUE;
+	sPeerLanFilterHostport[0] = '\0';
+	sLocalLanFilterHostport[0] = '\0';
 	sFilteredRemoteHostCount = 0U;
 	sFilteredRemoteRelayCount = 0U;
 	sPendingStateLog = FALSE;
@@ -1021,6 +1300,77 @@ sb32 mmIceInit(const char *bind_hostport, const MmIceServerConfig *cfg)
 	return TRUE;
 }
 
+sb32 mmIceAgentLive(void)
+{
+	sb32 live;
+
+	(void)pthread_mutex_lock(&sIceMutex);
+	live = (sAgent != NULL) ? TRUE : FALSE;
+	(void)pthread_mutex_unlock(&sIceMutex);
+	return live;
+}
+
+#define MM_ICE_IO_PAUSE_DRAIN_MAX 16U
+
+static void mmIceDrainIoPauseOnAgent(juice_agent_t *agent)
+{
+	u32 i;
+
+	if (agent == NULL)
+	{
+		return;
+	}
+	for (i = 0U; i < MM_ICE_IO_PAUSE_DRAIN_MAX; i++)
+	{
+		(void)juice_resume_io(agent);
+	}
+}
+
+void mmIcePauseIo(void)
+{
+	juice_agent_t *agent;
+
+	agent = mmIceAgentSnapshot();
+	if (agent != NULL)
+	{
+		(void)juice_pause_io(agent);
+	}
+}
+
+void mmIceResumeIo(void)
+{
+	juice_agent_t *agent;
+
+	agent = mmIceAgentSnapshot();
+	if (agent != NULL)
+	{
+		(void)juice_resume_io(agent);
+	}
+}
+
+void mmIceEnsureIoResumed(void)
+{
+	mmIceDrainIoPauseOnAgent(mmIceAgentSnapshot());
+}
+
+sb32 mmIceShouldSerializeMatchmakingHttps(void)
+{
+	MmIceState st;
+
+	if (mmIceAgentLive() == FALSE)
+	{
+		return FALSE;
+	}
+	(void)pthread_mutex_lock(&sIceMutex);
+	st = sIceState;
+	(void)pthread_mutex_unlock(&sIceMutex);
+	if (st == MM_ICE_STATE_COMPLETED)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 void mmIceShutdown(void)
 {
 	juice_agent_t *agent;
@@ -1033,6 +1383,8 @@ void mmIceShutdown(void)
 	sGatheringDonePosted = FALSE;
 	sAllowPeerHostCandidates = TRUE;
 	sSignalLocalHostCandidates = TRUE;
+	sPeerLanFilterHostport[0] = '\0';
+	sLocalLanFilterHostport[0] = '\0';
 	sFilteredRemoteHostCount = 0U;
 	sFilteredRemoteRelayCount = 0U;
 	sPendingStateLog = FALSE;
@@ -1042,6 +1394,7 @@ void mmIceShutdown(void)
 	sGatherThreadResult = 0;
 	if (agent != NULL)
 	{
+		mmIceDrainIoPauseOnAgent(agent);
 		juice_destroy(agent);
 	}
 	sIceLastSendJuiceErr = JUICE_ERR_INVALID;
@@ -1125,6 +1478,126 @@ sb32 mmIceSdpHasIceUfrag(const char *sdp)
 	return ((sdp != NULL) && (strstr(sdp, "a=ice-ufrag:") != NULL)) ? TRUE : FALSE;
 }
 
+static sb32 mmIceCopySdpAttributeValue(const char *line, const char *prefix, char *out, u32 out_cap)
+{
+	size_t prefix_len;
+	size_t val_len;
+	const char *val;
+
+	if ((line == NULL) || (prefix == NULL) || (out == NULL) || (out_cap == 0U))
+	{
+		return FALSE;
+	}
+	prefix_len = strlen(prefix);
+	if (strncmp(line, prefix, prefix_len) != 0)
+	{
+		return FALSE;
+	}
+	val = line + prefix_len;
+	val_len = strlen(val);
+	while (val_len > 0U && (val[val_len - 1U] == '\r' || val[val_len - 1U] == '\n'))
+	{
+		val_len--;
+	}
+	if (val_len == 0U || val_len >= (size_t)out_cap)
+	{
+		return FALSE;
+	}
+	memcpy(out, val, val_len);
+	out[val_len] = '\0';
+	return TRUE;
+}
+
+sb32 mmIceParseSdpIceCredentials(const char *sdp, char *ufrag_out, u32 ufrag_cap, char *pwd_out, u32 pwd_cap)
+{
+	const char *scan;
+	sb32 have_ufrag;
+	sb32 have_pwd;
+
+	if ((sdp == NULL) || (ufrag_out == NULL) || (pwd_out == NULL))
+	{
+		return FALSE;
+	}
+	ufrag_out[0] = '\0';
+	pwd_out[0] = '\0';
+	have_ufrag = FALSE;
+	have_pwd = FALSE;
+	for (scan = sdp; *scan != '\0';)
+	{
+		const char *line_end = scan;
+		char line[128];
+
+		while (*line_end != '\0' && *line_end != '\n' && *line_end != '\r')
+		{
+			line_end++;
+		}
+		if ((size_t)(line_end - scan) >= sizeof(line))
+		{
+			scan = line_end;
+			while (*scan == '\n' || *scan == '\r')
+			{
+				scan++;
+			}
+			continue;
+		}
+		snprintf(line, sizeof(line), "%.*s", (int)(line_end - scan), scan);
+		if (have_ufrag == FALSE && mmIceCopySdpAttributeValue(line, "a=ice-ufrag:", ufrag_out, ufrag_cap) != FALSE)
+		{
+			have_ufrag = TRUE;
+		}
+		else if (have_pwd == FALSE && mmIceCopySdpAttributeValue(line, "a=ice-pwd:", pwd_out, pwd_cap) != FALSE)
+		{
+			have_pwd = TRUE;
+		}
+		if (have_ufrag != FALSE && have_pwd != FALSE)
+		{
+			return TRUE;
+		}
+		if (*line_end == '\0')
+		{
+			break;
+		}
+		scan = line_end + 1;
+		while (*scan == '\n' || *scan == '\r')
+		{
+			scan++;
+		}
+	}
+	return FALSE;
+}
+
+sb32 mmIceSetLocalIceAttributesFromSdp(const char *sdp)
+{
+	char ufrag[32];
+	char pwd[64];
+	juice_agent_t *agent;
+	int ret;
+
+	if (mmIceParseSdpIceCredentials(sdp, ufrag, (u32)sizeof(ufrag), pwd, (u32)sizeof(pwd)) == FALSE)
+	{
+		return FALSE;
+	}
+	agent = mmIceAgentSnapshot();
+	if (agent == NULL)
+	{
+		return FALSE;
+	}
+	ret = juice_set_local_ice_attributes(agent, ufrag, pwd);
+#ifdef PORT
+	if (ret != 0)
+	{
+		port_log("SSB64 ICE: juice_set_local_ice_attributes failed ret=%d\n", ret);
+	}
+#endif
+	return (ret == 0) ? TRUE : FALSE;
+}
+
+void mmIceJoinGathering(void)
+{
+	mmIceGatherJoinLocked();
+	(void)mmIcePoll();
+}
+
 static sb32 mmIceSdpIsCandidateOnly(const char *sdp)
 {
 	if ((sdp == NULL) || (sdp[0] == '\0'))
@@ -1144,6 +1617,7 @@ sb32 mmIceApplyRemoteDescription(const char *sdp)
 	char session[512];
 	char merged[JUICE_MAX_SDP_STRING_LEN];
 	int juice_ret;
+	sb32 peer_host_missing;
 
 	juice_agent_t *agent;
 
@@ -1158,11 +1632,28 @@ sb32 mmIceApplyRemoteDescription(const char *sdp)
 	mmIceStripEndOfCandidates(buf);
 	mmIceStripHostCandidatesFromSdp(buf);
 	mmIceStripRelayCandidatesFromSdp(buf);
+	if ((sAllowPeerHostCandidates != FALSE) && (sPeerLanFilterHostport[0] != '\0'))
+	{
+		mmIceStripMisalignedHostLinesFromSdp(buf, sPeerLanFilterHostport, TRUE, TRUE);
+	}
+	peer_host_missing = FALSE;
+	if ((sAllowPeerHostCandidates != FALSE) && (sPeerLanFilterHostport[0] != '\0'))
+	{
+		peer_host_missing = (mmIceSdpHasAllowedRemotePeerHost(buf, sPeerLanFilterHostport) == FALSE) ? TRUE : FALSE;
+	}
 #ifdef PORT
 	if (sFilteredRemoteHostCount > 0U)
 	{
-		port_log("SSB64 ICE: filtered %u remote host candidate(s) from peer SDP (no shared LAN)\n",
-		         (unsigned int)sFilteredRemoteHostCount);
+		if (sPeerLanFilterHostport[0] != '\0')
+		{
+			port_log("SSB64 ICE: filtered %u remote host candidate(s) not on peer_lan=%s\n",
+			         (unsigned int)sFilteredRemoteHostCount, sPeerLanFilterHostport);
+		}
+		else
+		{
+			port_log("SSB64 ICE: filtered %u remote host candidate(s) from peer SDP (no shared LAN)\n",
+			         (unsigned int)sFilteredRemoteHostCount);
+		}
 	}
 	if (sFilteredRemoteRelayCount > 0U)
 	{
@@ -1191,6 +1682,7 @@ sb32 mmIceApplyRemoteDescription(const char *sdp)
 #endif
 		return FALSE;
 	}
+	mmIceEnsurePeerLanRemoteCandidate(agent, peer_host_missing);
 	return TRUE;
 }
 

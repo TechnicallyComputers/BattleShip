@@ -10,15 +10,33 @@ name: Android Netplay
 on:
   pull_request:
     paths:
-      - 'android/**'
-      - 'port/net/**'
-      - 'decomp/src/netplay/**'
+      - 'CMakeLists.txt'
+      - 'cmake/Ssb64Netmenu*.cmake'
+      - 'cmake/Ssb64Libjuice.cmake'
       - 'cmake/Ssb64CurlAndroid.cmake'
       - 'cmake/curl/**'
+      - 'third_party/libjuice/**'
+      - 'decomp'
+      - 'decomp/src/netplay/**'
+      - 'decomp/src/sys/objanim.c'
+      - 'decomp/src/gm/**'
+      - 'decomp/src/gr/**'
+      - 'decomp/src/ft/**'
+      - 'decomp/src/ef/**'
+      - 'decomp/src/wp/**'
+      - 'decomp/src/it/**'
+      - 'decomp/src/mp/**'
+      - 'decomp/src/lb/**'
+      - 'libultraship'
       - 'libultraship/cmake/dependencies/**'
-      - 'cmake/Ssb64Netmenu*.cmake'
-      - 'CMakeLists.txt'
+      - 'port/net/**'
+      - 'port/stubs/**'
+      - 'android/**'
       - 'port/app_paths.cpp'
+      - 'port/android*.cpp'
+      - 'port/port.cpp'
+      - 'port/debug_env.c'
+      - '.github/workflows/android-netplay.yml'
   workflow_dispatch:
 
 permissions:

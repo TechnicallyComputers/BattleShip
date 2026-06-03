@@ -7,6 +7,51 @@ This note tracks the **target** rollback architecture during the GGPO-style refa
 - **`syNetInputGetTick()`** is the only sim step counter during VS.
 - Wire labels use **`sim + D`** (committed input delay). See [`netplay_timebase_authority.md`](netplay_timebase_authority.md).
 
+## Rollback semantics boundary (forward sim)
+
+**Rule:** rollback/netplay policy must not mutate live forward sim outside an active netplay VS session.
+
+- **`syNetplayRollbackSemanticsActive()`** — TRUE when `syNetPeerIsVSSessionActive()` or `syNetRollbackIsResimulating()`.
+- **`syNetplaySimQuantizeActive()`** — defers to rollback semantics (F32 grid + canonicalize paths).
+- **Port safety** (stale GObj guards, LP64 fixes) may stay under `#ifdef PORT` without the session gate.
+- **Rollback policy** (spawn/cull/reacquire helpers, delay re-arm, collide guards, sanitize-on-forward-tick) must gate on `syNetplayRollbackSemanticsActive()` in decomp procs, or no-op inside `port/net/sys/netrollbacksnapshot.c` mutators.
+- **Snapshot apply/sanitize** in `port/net/sys/*` runs only during rollback load/resim within a net session — no gate needed on forward offline ticks.
+
+Offline VS, 1P, Training, and netmenu offline classic VS (no active peer session) keep vanilla decomp behavior.
+
+### Decomp coding standard (enforced in CLAUDE.md)
+
+**Dual boundary — compile and runtime are both required:**
+
+| Layer | Wrapper | Purpose |
+|-------|---------|---------|
+| Port | `#ifdef PORT` | LP64, null guards, reloc — not netplay |
+| Compile | `#if defined(PORT) && defined(SSB64_NETMENU)` | Net headers/calls absent from `SSB64_NETMENU=OFF` binary |
+| Runtime | `syNetplayRollbackSemanticsActive()` | Policy only during active VS / resim inside netmenu binary |
+
+```c
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* SSB64_NETMENU: stripped from offline builds. Runtime: active VS/resim only. */
+/* Netplay rollback only: <one-line why>. See docs/bugs/<slug>.md. */
+if (syNetplayRollbackSemanticsActive() != FALSE)
+{
+    ...
+    return; /* Mario-style: netplay path then vanilla below */
+}
+#endif
+/* Vanilla forward sim */
+```
+
+Reference implementations: `ftmariospecialn.c` (`ProcAccessory`), `ftnessspecialhi.c` (PK Thunder), `gryamabuki.c` (tower gate).
+
+**Yamabuki (Saffron) tower gate (2026-06-02):** forward-sim rollback policy in `gryamabuki.c` gates on `syNetplayRollbackSemanticsActive()`. Includes live-monster spawn guard (netplay only — fixes offline 1P second-spawn regression), spawn egress wait, held-pose presentation sync, `BeginAnimOpen`/`Close` paths, and manual anim stepping. Offline uses vanilla `AddAnimOpen`/`AddAnimClose`, standard collision clamp at 960, and plain `gcPlayAnimAll` per tick. Rollback restore exports remain apply-path only.
+
+**Stage hygiene pass (2026-06-02):** `grjungle.c` gates barrel DObj repair/reestablish on `syNetplayRollbackSemanticsActive()` (offline vanilla anim paths). `grsector.c`, `grhyrule.c`, `grzebes.c` quantize blocks use `#ifdef PORT` + `syNetplaySimQuantizeActive()` (offline no-op). `gryoster.c` gates zero-altitude cloud recovery on rollback session. All listed in `_SSB64_DECOMP_NETINCLUDE_SOURCES` for offline builds.
+
+**Fighter/item hygiene pass (2026-06-02):** Kirby Copy Mario/Luigi, Pikachu Thunder Jolt, Kirby Copy Pikachu, and Pikachu Thunder (down+B start) use Mario-style `ProcAccessory` / spawn branching (`syNetplayRollbackSemanticsActive()` + vanilla fallthrough). Yoshi egg throw, Samus/Kirby Copy Samus charge shot reacquire/cull, and held-item weapon dedup (Star Rod, Fire Flower, L-Gun) gate rollback policy on active session. Snapshot mutators `syNetRbSnapCullYoshiChargeEggsForFighter` and `syNetRbSnapHeldItemWeaponNeedsSpawn` no-op offline as defense in depth.
+
+**Compile-boundary enforcement (2026-06-02):** Reverted net rollback blocks from `#ifdef PORT` to `#if defined(PORT) && defined(SSB64_NETMENU)` repowide (fighters, stages, items, TaruCann/Twister, collision/anim quantize). Runtime policy still gates on `syNetplayRollbackSemanticsActive()`. Offline builds (`SSB64_NETMENU=OFF`) no longer link `netrollbacksnapshot.c` or other rollback TUs; `_SSB64_DECOMP_NETINCLUDE_SOURCES` shrunk to shell/debug TUs only.
+
 ## Input timeline (target)
 
 Each remote human slot should expose one logical row per sim tick with explicit state:
@@ -23,7 +68,7 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 - **Unified resim reconcile** — `syNetInputRollbackReconcileResimSpan`: remote slots = wire-confirmed; local slots = transmitted (else non-predicted published per tick). Called from `syNetRollbackBeginResim`, **`syNetInputRollbackReconcileAfterResimCompleted`** (end of forward resim), and **`syNetInputRollbackReconcilePublishedCommitWindow`** (before each frame-commit token build).
 - **Conservative remote button prediction** — remote human slots: hold-last sticks, buttons default 0 (`SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` for legacy hold-last).
 - **No patch-only correction (2026-05-18)** — significant predicted-remote mismatch queues deferred symmetric resim; no live `PatchPublishedFromRemoteConfirmed` on that tick. Prediction recovery disabled unless `SSB64_NETPLAY_PREDICTION_RECOVERY=1`. Digital tap patch-without-rollback disabled during active rollback.
-- **Symmetric resim execution** — wire-locked `target_tick` when symmetric follower is active (no per-peer `highest_remote + D + 1` shrink); post-load **baseline gate** (`figh`/`world`/`item`/`rng`) before `AdvanceResimBudget`; skip snapshot save during `resim_pending` / episode cooldown; cosmetic RNG reset on snapshot load; confirmed-only remote rows during resim (no predicted fallback). See [`netrollback_rng_item_identity_drift_2026-05-17.md`](bugs/netrollback_rng_item_identity_drift_2026-05-17.md).
+- **Symmetric resim execution** — wire-locked `target_tick` when symmetric follower is active (no per-peer `highest_remote + D + 1` shrink); post-load **baseline gate** (`figh`/`world`/`item`/`rng`) before forward replay; skip snapshot save during `resim_pending` / episode cooldown; cosmetic RNG reset on snapshot load; confirmed-only remote rows during resim (no predicted fallback). **Forward replay pacing (2026-06-01):** after baseline gate opens, spans ≤ `SSB64_NETPLAY_ROLLBACK_MAX_BURST_TICKS` (default 24) replay synchronously via `syNetRollbackAdvanceResimBudgetEx`; deeper spans use per-frame budget (`SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME`, default 12). See [`netrollback_burst_resim_2026-06-01.md`](bugs/netrollback_burst_resim_2026-06-01.md).
 - **Symmetric peer notices** — follower resim on by default when rollback is active (`SSB64_NETPLAY_ROLLBACK_SYMMETRIC=0` disables; `SSB64_NETPLAY_ROLLBACK_SYMMETRIC_DIAG=1` log-only).
 - **Resim RNG verify** — log after each completed resim by default (`SSB64_NETPLAY_RESIM_RNG_VERIFY=0` disables).
 - **Resim coordination transport (2026-05-18)** — while `ResimPending`, peers still run `ReceiveRemoteInput` + `SendLocalInput` + `ROLLBACK_BASELINE` + `ROLLBACK_SYNC` (type 24) so symmetric notify and baseline echo are not blocked. Exception to the “no network during forward resim” target below.

@@ -19,6 +19,7 @@ typedef struct SYNetFrameCommitToken
 	u32 world_digest;
 	u32 item_digest;
 	u32 rng_digest;
+	u32 effect_digest;
 
 } SYNetFrameCommitToken;
 
@@ -31,7 +32,7 @@ u32 syNetFrameCommitHashSlotBindings(s32 local_sim_slot, s32 remote_sim_slot, s3
 sb32 syNetFrameCommitTokensDesync(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b,
 				  sb32 *out_delta_frame_id, sb32 *out_delta_input_digest, sb32 *out_delta_slot_binding,
 				  sb32 *out_delta_tick_anchor);
-/* TRUE when fighter/world/item/rng digests disagree (sim state desync at validation boundary). */
+/* TRUE when fighter/world/item/rng/effect digests disagree (sim state desync at validation boundary). */
 sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b);
 /*
  * TRUE when frame-commit tokens agree on state digests but rollback snapshot at validation_tick-1 does not
