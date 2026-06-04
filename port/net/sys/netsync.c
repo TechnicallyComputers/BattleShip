@@ -91,6 +91,21 @@ static u32 syNetSyncHashF32(f32 value)
 	return reinterpret.uv;
 }
 
+#if defined(SSB64_NETMENU)
+static u32 syNetSyncHashF32ForRollback(f32 value)
+{
+	union SYNetSyncF32Reinterpret
+	{
+		f32 fv;
+		u32 uv;
+
+	} reinterpret;
+
+	reinterpret.fv = syNetplayQuantizeF32ForRollbackHash(value);
+	return reinterpret.uv;
+}
+#endif
+
 #ifdef PORT
 static u32 syNetSyncHashU8Array(const u8 *values, s32 count)
 {
@@ -493,7 +508,28 @@ static u32 syNetSyncFoldMpCollisionBounds(void)
 	return hash;
 }
 
-u32 syNetSyncHashMapCollisionKinematics(void)
+#if defined(SSB64_NETMENU)
+static u32 syNetSyncFoldMpCollisionBoundsForRollback(void)
+{
+	u32 hash;
+	const MPBounds *b;
+
+	hash = 2166136261U;
+	b = &gMPCollisionBounds.current;
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->top));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->bottom));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->left));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->right));
+	b = &gMPCollisionBounds.diff;
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->top));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->bottom));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->left));
+	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(b->right));
+	return hash;
+}
+#endif
+
+static u32 syNetSyncHashMapCollisionKinematicsCore(sb32 for_rollback_hash)
 {
 	u32 hash;
 	s32 i;
@@ -503,7 +539,16 @@ u32 syNetSyncHashMapCollisionKinematics(void)
 
 	hash = 2166136261U;
 	hash = syNetSyncFnvAccumulateU32(hash, (u32)gMPCollisionUpdateTic);
-	hash = syNetSyncFnvAccumulateU32(hash, syNetSyncFoldMpCollisionBounds());
+#if defined(SSB64_NETMENU)
+	if (for_rollback_hash != FALSE)
+	{
+		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncFoldMpCollisionBoundsForRollback());
+	}
+	else
+#endif
+	{
+		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncFoldMpCollisionBounds());
+	}
 	n = gMPCollisionYakumonosNum;
 	if (n < 0)
 	{
@@ -522,14 +567,42 @@ u32 syNetSyncHashMapCollisionKinematics(void)
 			continue;
 		}
 		hash = syNetSyncFnvAccumulateU32(hash, (u32)dobj->user_data.s);
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.x));
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.y));
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.z));
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].x));
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].y));
-		hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].z));
+#if defined(SSB64_NETMENU)
+		if (for_rollback_hash != FALSE)
+		{
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(dobj->translate.vec.f.x));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(dobj->translate.vec.f.y));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(dobj->translate.vec.f.z));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(gMPCollisionSpeeds[i].x));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(gMPCollisionSpeeds[i].y));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32ForRollback(gMPCollisionSpeeds[i].z));
+		}
+		else
+#endif
+		{
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.x));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.y));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(dobj->translate.vec.f.z));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].x));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].y));
+			hash = syNetSyncFnvAccumulateU32(hash, syNetSyncHashF32(gMPCollisionSpeeds[i].z));
+		}
 	}
 	return hash;
+}
+
+u32 syNetSyncHashMapCollisionKinematics(void)
+{
+	return syNetSyncHashMapCollisionKinematicsCore(FALSE);
+}
+
+u32 syNetSyncHashMapCollisionKinematicsForRollback(void)
+{
+#if defined(SSB64_NETMENU)
+	return syNetSyncHashMapCollisionKinematicsCore(TRUE);
+#else
+	return syNetSyncHashMapCollisionKinematicsCore(FALSE);
+#endif
 }
 
 u32 syNetSyncHashGcRunAllTraversalFingerprint(void)

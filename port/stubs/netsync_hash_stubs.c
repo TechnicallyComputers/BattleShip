@@ -84,6 +84,11 @@ u32 syNetSyncHashMapCollisionKinematics(void)
 	return 0U;
 }
 
+u32 syNetSyncHashMapCollisionKinematicsForRollback(void)
+{
+	return 0U;
+}
+
 u32 syNetSyncHashRNGSeed(void)
 {
 	return 0U;

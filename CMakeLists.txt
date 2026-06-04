@@ -490,6 +490,8 @@ file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h"
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
+# intro_room_draw_diag.c uses decomp types/GObj BSS — compiled in ssb64_game, not ssb64.
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/intro_room_draw_diag\\.c$")
 # port/net/*.c belongs in ssb64_game (needs port/net on the include path); see cmake/Ssb64NetmenuSources.cmake
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/net/")
 # RelocFileTable.{us,jp}.cpp both define gRelocFileTable — compile only the
@@ -528,18 +530,17 @@ list(APPEND SSB64_SRC_PORT
     ${SSB64_CSS_ARROW_LEFT_H}
 )
 
-# Debug tools (GBI trace + Acmd trace) — netmenu only; offline uses port/stubs/debug_trace_stubs.c
-file(GLOB SSB64_DEBUG_TOOLS
-    "debug_tools/gbi_trace/*.c" "debug_tools/gbi_trace/*.h"
-    "debug_tools/acmd_trace/*.c" "debug_tools/acmd_trace/*.h"
-)
-set(SSB64_DEBUG_TRACE_STUB
-    "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/debug_trace_stubs.c"
-)
+# Debug tools — GBI trace in all PORT builds (SSB64_GBI_TRACE env); Acmd trace netmenu only.
+file(GLOB SSB64_GBI_TRACE_SOURCES
+    "debug_tools/gbi_trace/*.c" "debug_tools/gbi_trace/*.h")
+file(GLOB SSB64_ACMD_TRACE_SOURCES
+    "debug_tools/acmd_trace/*.c" "debug_tools/acmd_trace/*.h")
+set(SSB64_ACMD_TRACE_STUB
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/acmd_trace_stubs.c")
 if(SSB64_NETMENU)
-    set(SSB64_EXE_TRACE_SOURCES ${SSB64_DEBUG_TOOLS})
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_GBI_TRACE_SOURCES} ${SSB64_ACMD_TRACE_SOURCES})
 else()
-    set(SSB64_EXE_TRACE_SOURCES ${SSB64_DEBUG_TRACE_STUB})
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_GBI_TRACE_SOURCES} ${SSB64_ACMD_TRACE_STUB})
 endif()
 
 set(SSB64_DECOMP_SOURCES
@@ -718,13 +719,15 @@ endif()
 
 # Port stub definitions (C code that satisfies N64 linker symbols)
 file(GLOB SSB64_STUBS "port/stubs/*.c")
-list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/debug_trace_stubs\\.c$")
+list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/acmd_trace_stubs\\.c$")
 if(SSB64_NETMENU)
     # Extended netpeer / rollback live in port/net when netmenu is on; omit offline-only glue (would duplicate symbols).
     list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/net_port_glue_offline\\.c$")
     list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/netsync_hash_stubs\\.c$")
 endif()
 target_sources(ssb64_game PRIVATE ${SSB64_STUBS})
+target_sources(ssb64_game PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/port/intro_room_draw_diag.c)
 if(NOT SSB64_NETMENU)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/netsync_hash_stubs.c"
@@ -741,6 +744,13 @@ set(SSB64_LIBULTRA_PORT
     # NOTE: sprite.c is NOT included — drawbitmap is assembly-only (MIPS).
     # Sprite functions are stubbed in port/stubs/n64_stubs.c instead.
 )
+if (SSB64_NETMENU)
+    # Deterministic cross-ISA __sinf/__cosf (N64 Cody-Waite polynomial); offline uses libc_compat wrappers.
+    list(APPEND SSB64_LIBULTRA_PORT
+        decomp/src/libultra/gu/sinf.c
+        decomp/src/libultra/gu/cosf.c
+    )
+endif()
 target_sources(ssb64_game PRIVATE ${SSB64_LIBULTRA_PORT})
 
 # N64 audio library — synthesis driver, sequence player, voice management.
@@ -859,12 +869,25 @@ if (SSB64_NETMENU)
     # f32 ULP at stage-scale |x|>256 coords, so it cannot merge the two adjacent floats (Link bomb
     # spam desync on Sector Z, 2026-05-30). Match the whole /decomp/src/gm/ tree (all five TUs are
     # gameplay sim) so the collision/matrix surface stays contraction-free, not just gmcamera.c.
+    #
+    # Class A (cross-libm trig): __sinf/__cosf must use in-tree N64 polynomial (gu/sinf.c + cosf.c),
+    # not system libm — -ffp-contract=off cannot fix precompiled libm. See
+    # docs/netplay_cross_isa_float_determinism.md and docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
+    #
+    # Class B gaps (2026-06-04): gr/ (Sector Arwing orientation), sys/utils.c (syUtilsArcTan /
+    # jibaku angle), sys/vector.c (syVectorAngleDiff3D); gu/sinf.c + cosf.c (double polynomial FMA).
     foreach(_src IN LISTS SSB64_DECOMP_SOURCES)
         if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/ef/" OR
             _src MATCHES "/decomp/src/wp/" OR _src MATCHES "/decomp/src/it/" OR
             _src MATCHES "/decomp/src/mp/" OR _src MATCHES "/decomp/src/lb/" OR
-            _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/netplay/" OR
-            _src MATCHES "/decomp/src/sys/objanim\\.c$")
+            _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/gr/" OR
+            _src MATCHES "/decomp/src/netplay/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
+            _src MATCHES "/decomp/src/sys/utils\\.c$" OR _src MATCHES "/decomp/src/sys/vector\\.c$")
+            set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+        endif()
+    endforeach()
+    foreach(_src IN LISTS SSB64_LIBULTRA_PORT)
+        if (_src MATCHES "libultra/gu/sinf\\.c$" OR _src MATCHES "libultra/gu/cosf\\.c$")
             set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
         endif()
     endforeach()
@@ -941,6 +964,10 @@ else()
     # (US) or `BattleShip-JP` (JP), so the two are distinct applications.
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${SSB64_APP_NAME}")
 endif()
+
+# OBJECT library via $<TARGET_OBJECTS:ssb64_game> does not always serialize the
+# final link against every .o under parallel make — wait for ssb64_game first.
+add_dependencies(${PROJECT_NAME} ssb64_game)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set_target_properties(ssb64_game PROPERTIES

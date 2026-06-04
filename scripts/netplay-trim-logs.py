@@ -660,7 +660,9 @@ def parse_netstatusvars_line(line: str) -> tuple[str, str, dict[str, str]] | Non
     m = NETSTATUSVARS_RE.search(line)
     if m is None:
         return None
-    event = m.group(1)
+    # The 2-token capture can grab a trailing key=value for single-word events
+    # (e.g. "airveltransn_nan tick=522"); keep only the leading non-field tokens.
+    event = " ".join(tok for tok in m.group(1).split() if "=" not in tok)
     fields = parse_kv_tail(line[m.end() :])
     tp = NETSTATUSVARS_TICK_PLAYER_RE.search(line)
     if tp is not None:
@@ -754,6 +756,35 @@ def collect_netstatusvars_summary(lines: list[str]) -> list[str]:
             f"    NetStatusVars corrupt: {len(corrupt)} by_kind={kinds} "
             f"first tick={first[0]} player={first[2].get('player', '?')}"
         )
+
+    # JumpAerial NaN family: SetStatus entry snapshot + first per-tick non-finite overlay/vel.
+    entries = [e for e in events if e[1] == "jumpaerial entry"]
+    if entries:
+        ft, _ev, ff = entries[0]
+        out.append(
+            f"    NetStatusVars jumpaerial entry: {len(entries)} first tick={ft} "
+            f"player={ff.get('player', '?')} fkind={ff.get('fkind', '?')} "
+            f"vel_air={ff.get('vel_air', '?')} drift={ff.get('drift', '?')} vel_x={ff.get('vel_x', '?')}"
+        )
+    jumpaerial_corrupt = [c for c in corrupt if c[2].get("kind") == "jumpaerial"]
+    if jumpaerial_corrupt:
+        ft, _ev, ff = jumpaerial_corrupt[0]
+        out.append(
+            f"    NetStatusVars corrupt jumpaerial: {len(jumpaerial_corrupt)} first tick={ft} "
+            f"player={ff.get('player', '?')} drift={ff.get('drift', '?')} "
+            f"vel_air={ff.get('vel_air', '?')} (bit patterns expose cross-ISA +nan/-nan split)"
+        )
+
+    # ftPhysicsGetAirVelTransN input dump — the producing math for the JumpAerial NaN.
+    airveltransn = [e for e in events if e[1] == "airveltransn_nan"]
+    if airveltransn:
+        ft, _ev, ff = airveltransn[0]
+        out.append(
+            f"    NetStatusVars airveltransn_nan: {len(airveltransn)} first tick={ft} "
+            f"player={ff.get('player', '?')} out={ff.get('out', '?')} rot_z={ff.get('rot_z', '?')} "
+            f"transn_t={ff.get('transn_t', '?')} topn_s={ff.get('topn_s', '?')} "
+            f"anim_vel={ff.get('anim_vel', '?')} cos={ff.get('cos', '?')} sin={ff.get('sin', '?')}"
+        )
     return out
 
 
@@ -827,12 +858,15 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
     weapon_states: list[tuple[str, str, dict[str, str]]] = []
     sanitize_gravity_rows: list[tuple[str, str, dict[str, str]]] = []
     sanitize_delay_rows: list[tuple[str, str, dict[str, str]]] = []
+    fighter_nans: list[tuple[str, str, dict[str, str]]] = []
     suspects: list[str] = []
 
     for tick_s, event, fields in events:
         by_event[event] = by_event.get(event, 0) + 1
         resim = fields.get("resim", "0") == "1"
-        if event == "hold_enter":
+        if event == "fighter_nan":
+            fighter_nans.append((tick_s, event, fields))
+        elif event == "hold_enter":
             holds.append((tick_s, event, fields))
             delay_s = fields.get("delay", "?")
             gravity_delay_s = fields.get("gravity_delay", "?")
@@ -901,6 +935,14 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
 
     out: list[str] = []
     out.append(f"    NESS_PKTHUNDER_GATE rows: {len(events)} events={by_event}")
+    if fighter_nans:
+        ft, _ev, ff = fighter_nans[0]
+        out.append(
+            f"    SUSPECT fighter_nan: {len(fighter_nans)} first tick={ft} "
+            f"player={ff.get('player', '?')} site={ff.get('site', '?')} bad={ff.get('bad', '?')} "
+            f"translate={ff.get('translate', '?')} vel_air={ff.get('vel_air', '?')} "
+            f"(downstream of the JumpAerial airveltransn_nan; ±nan sign diverges per ISA)"
+        )
     out.append(f"    hold_enter: {len(holds)}  jibaku_trigger: {len(jibakus)}  jibaku_phase: {len(jibaku_phases)}")
     if sanitize_gravity_rows or sanitize_delay_rows:
         out.append(
@@ -1565,6 +1607,75 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
     return out
 
 
+def collect_nan_signatures(lines: list[str]) -> dict[str, dict[str, str]]:
+    """Per-tick bit-pattern signatures for the cross-ISA NaN families."""
+    fams: dict[str, dict[str, str]] = {
+        "airveltransn_nan": {},
+        "corrupt jumpaerial": {},
+        "fighter_nan": {},
+    }
+    for ln in lines:
+        p = parse_netstatusvars_line(ln)
+        if p is not None:
+            tick, event, fields = p
+            if event == "corrupt" and fields.get("kind") == "jumpaerial":
+                fams["corrupt jumpaerial"][tick] = (
+                    f"drift={fields.get('drift')} vel_air={fields.get('vel_air')}"
+                )
+            elif event == "airveltransn_nan":
+                fams["airveltransn_nan"][tick] = (
+                    f"out={fields.get('out')} rot_z={fields.get('rot_z')} "
+                    f"transn_t={fields.get('transn_t')} topn_s={fields.get('topn_s')} "
+                    f"anim_vel={fields.get('anim_vel')} cos={fields.get('cos')} sin={fields.get('sin')}"
+                )
+            continue
+        p = parse_ness_pkthunder_gate_line(ln)
+        if p is not None:
+            tick, event, fields = p
+            if event == "fighter_nan":
+                fams["fighter_nan"][tick] = (
+                    f"bad={fields.get('bad')} translate={fields.get('translate')} "
+                    f"vel_air={fields.get('vel_air')}"
+                )
+    return fams
+
+
+def diff_netstatusvars_nan(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
+    """Report the first tick where a NaN-family bit pattern diverges between the two peers.
+
+    This automates the cross-ISA root-cause walk: the JumpAerial / airveltransn NaN carries a
+    sign bit that differs per ISA (+nan 0x7fc00000 vs -nan 0xffc00000), which is the actual hash
+    divergence even when both peers later settle to identical ±inf."""
+    fa = collect_nan_signatures(log_a.kept)
+    fb = collect_nan_signatures(log_b.kept)
+    out: list[str] = [f"=== NaN cross-ISA diff ({log_a.label} vs {log_b.label}) ==="]
+    any_family = False
+    for family in ("airveltransn_nan", "corrupt jumpaerial", "fighter_nan"):
+        ma, mb = fa[family], fb[family]
+        if not ma and not mb:
+            continue
+        any_family = True
+        common = sorted(set(ma.keys()) & set(mb.keys()), key=int)
+        out.append(
+            f"  [{family}] {log_a.label} rows={len(ma)} {log_b.label} rows={len(mb)} "
+            f"common_ticks={len(common)}"
+        )
+        reported = False
+        for tick in common:
+            if ma[tick] != mb[tick]:
+                out.append(f"    first divergent tick={tick}")
+                out.append(f"      {log_a.label}: {ma[tick]}")
+                out.append(f"      {log_b.label}: {mb[tick]}")
+                reported = True
+                break
+        if not reported and common:
+            out.append("    no bit-pattern divergence on common ticks (identical across ISAs)")
+    if not any_family:
+        out.append("  no NaN-family diagnostics in either log")
+    out.append("")
+    return out
+
+
 def process_file(
     label: str,
     path: Path,
@@ -1734,6 +1845,7 @@ def main() -> int:
     summary = build_summary(logs)
     if args.diff_ticks and len(logs) >= 2:
         summary.extend(diff_sim_state_ticks(logs[0], logs[1]))
+        summary.extend(diff_netstatusvars_nan(logs[0], logs[1]))
     if diff_death_rebirth and len(logs) >= 2:
         summary.extend(diff_death_rebirth_sim(logs[0], logs[1]))
         summary.extend(diff_rebirth_gate(logs[0], logs[1]))

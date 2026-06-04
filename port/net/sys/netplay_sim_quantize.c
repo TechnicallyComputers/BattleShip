@@ -89,15 +89,11 @@ sb32 syNetplaySimQuantizeActive(void)
 #endif
 }
 
-f32 syNetplayQuantizeF32(f32 value)
+static f32 syNetplayQuantizeF32Grid(f32 value)
 {
 	f64 scaled;
 	f32 result;
 
-	if (syNetplaySimQuantizeActive() == FALSE)
-	{
-		return value;
-	}
 	scaled = (f64)value * 65536.0;
 	if (scaled >= 0.0)
 	{
@@ -109,6 +105,24 @@ f32 syNetplayQuantizeF32(f32 value)
 	}
 	result = (f32)(scaled / 65536.0);
 	return (result == 0.0F) ? 0.0F : result;
+}
+
+f32 syNetplayQuantizeF32(f32 value)
+{
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return value;
+	}
+	return syNetplayQuantizeF32Grid(value);
+}
+
+f32 syNetplayQuantizeF32ForRollbackHash(f32 value)
+{
+#if defined(SSB64_NETMENU)
+	return syNetplayQuantizeF32Grid(value);
+#else
+	return value;
+#endif
 }
 
 f32 syNetplayQuantizeAnimScalar(f32 value)
