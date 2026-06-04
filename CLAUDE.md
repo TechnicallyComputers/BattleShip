@@ -118,7 +118,7 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 
 6. **FTSTATUSVARS / UNION STOMP — structural fix, not mirrors**: `FTStruct.status_vars` is a union of per-status overlays (`entry`, `catchwait`, `rebirth`, …) that all alias the same bytes. A **union stomp** is when code reads/writes one overlay while a different overlay is live for the current `status_id`, silently corrupting gameplay state. This class of bug is amplified in netplay because rollback snapshots `memcpy` the whole blob with no overlay tag.
 
-   **Do not add new out-of-union mirror fields** (e.g. caching a union value in a separate `FTStruct` field and preferring the mirror in getters) as the primary fix. Existing mirrors (`hit_lr`, `shuffle_tics`, `dead_gate_wait`) are legacy band-aids — leave them alone unless removing them as part of the migration, but **never introduce new ones**.
+   **Do not add new out-of-union mirror fields** (e.g. caching a union value in a separate `FTStruct` field and preferring the mirror in getters) as the primary fix. Existing mirrors (`hit_lr`, `shuffle_tics`) are legacy band-aids — leave them alone unless removing them as part of the migration, but **never introduce new ones**. `dead_gate_wait` is netmenu-only (`PORT && SSB64_NETMENU`); offline uses JRickey union `dead.wait` only.
 
    **The approved fix path (Approach C):**
    1. **Accessors** — route all `status_vars.common.*` reads/writes through `decomp/src/ft/ftstatusvars.h` (`ftStatusVarsEntry()`, `ftStatusVarsCatchWait()`, …). Never add raw union access in new or touched code.
@@ -127,22 +127,21 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 
    When a gameplay or netplay bug smells like stale/wrong per-status state (premature throw, wrong facing on Appear, rebirth halo drift, etc.), read `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` first, migrate the call site to accessors, run the witness, then fix the stomping writer — not another mirror.
 
-7. **NETPLAY ROLLBACK BOUNDARY — dual isolation (compile + runtime)**:
+7. **OFFLINE vs NETMENU — we do not patch the offline build**:
 
-   **Two boundaries — never collapse into `#ifdef PORT` alone:**
+   **Offline (`SSB64_NETMENU=OFF`)** = JRickey’s maintained PC port at the release decomp SHA. Trust official offline sim; do not add fork “fixes,” wrappers, mirrors, or debug tooling. **Netmenu** = all fork netplay/rollback work unless JRickey promotes a change upstream.
 
-   | Layer | Mechanism | Offline binary (`SSB64_NETMENU=OFF`) | Netmenu binary, offline modes (1P/Training) | Netmenu binary, active netplay |
-   |-------|-----------|--------------------------------------|---------------------------------------------|--------------------------------|
-   | **Compile** | `#if defined(PORT) && defined(SSB64_NETMENU)` | Net blocks **preprocessed out**; no net headers, no rollback `.o` linked | Net code **compiled in** | Same |
-   | **Runtime** | `syNetplayRollbackSemanticsActive()` | N/A (code absent) | **FALSE** → vanilla forward sim | **TRUE** → rollback policy |
+   | Layer | Mechanism | Offline binary | Netmenu binary |
+   |-------|-----------|----------------|----------------|
+   | **Product** | CMake `SSB64_NETMENU` | JRickey release parity | JRickey + fork netplay |
+   | **Compile** | `#if defined(PORT) && defined(SSB64_NETMENU)` | Fork net blocks **preprocessed out** | Fork net code compiled |
+   | **Runtime** | `syNetplayRollbackSemanticsActive()` | N/A (code absent) | Active VS/resim only |
 
-   - **`#ifdef PORT`** — PC port vs N64 (LP64 reloc casts, null guards, crash fixes). **Not** netplay-specific.
-   - **`SSB64_NETMENU`** — netplay feature compiled and linked (`port/net/**`, `decomp/src/netplay/**`, libcurl).
-   - **`syNetplayRollbackSemanticsActive()`** — active peer VS session or resim; gates **policy** inside the netmenu binary.
+   - **`#ifdef PORT` alone** — only for code **already in JRickey `port-patches`** at the release baseline (reloc/LUS paths JRickey ships). Any **fork-only** `#ifdef PORT` block is assumed netplay work → gate `PORT && SSB64_NETMENU` or revert until JRickey review.
+   - **`SSB64_NETMENU`** — netplay compiled and linked (`port/net/**`, `decomp/src/netplay/**`, libcurl, `debug_tools/`).
+   - **Promotion** — offline benefit from a netplay fix requires JRickey review; widen IFDEF or upstream merge, never self-ship in offline.
 
-   Rollback/netplay policy must **never** mutate live forward sim outside an active VS session or resim.
-
-   **Required decomp pattern** (fighters, stages, items, custom maps):
+   **Required decomp pattern** (fighters, stages, items):
 
    ```c
    #if defined(PORT) && defined(SSB64_NETMENU)
@@ -154,24 +153,12 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
        return; /* Mario-style: netplay branch then vanilla below */
    }
    #endif
-   /* Vanilla forward sim — offline binary AND offline modes in netmenu binary. */
+   /* JRickey vanilla forward sim — offline binary AND offline modes in netmenu binary. */
    ```
 
-   **Quantize / canonicalize** (helpers no-op when inactive, but still net API):
-
-   ```c
-   #if defined(PORT) && defined(SSB64_NETMENU)
-   /* Netplay rollback only: F32 grid (no-op unless syNetplaySimQuantizeActive()). */
-   syNetplayQuantizeDObjTranslate(dobj);
-   #endif
-   ```
-
-   - **Port safety** may stay `#ifdef PORT` without `SSB64_NETMENU` or session gate.
    - **Snapshot apply** in `port/net/sys/*` runs only during rollback load — no forward-sim gate.
-   - Every rollback `if` needs **`/* Netplay rollback only: ... */`** (and bug-doc link when non-obvious).
-   - Offline builds must **not** link `netrollbacksnapshot.c` / rollback TUs; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c`.
-
-   Full contract: `docs/netplay_rollback_refactor_contracts.md`.
+   - Offline must **not** link `port/net/**`, `debug_tools/`, or rollback TUs; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c` + `port/stubs/debug_trace_stubs.c`.
+   - Tracked checklist: `docs/decomp_upstream_divergence_audit_2026-06-03.md`. Full contract: `docs/netplay_rollback_refactor_contracts.md`.
 
 ### Context Management
 
