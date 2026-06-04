@@ -519,6 +519,20 @@ if ($Netplay) {
 } else {
     & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
 }
+#
+# Pin Python3_EXECUTABLE to the same `python` the workflow's
+# `pip install Pillow` step ran under. On Windows GHA runners the image
+# ships several Python installs (hostedtoolcache, Strawberry Perl, vcpkg,
+# Windows Store stub); without a hint, CMake's find_package(Python3) can
+# resolve to a different interpreter than the one pip targeted, and the
+# CSS-arrow asset rules then fail with "Pillow is required" mid-build.
+$PythonExe = (Get-Command python).Source
+Write-Host "Using Python: $PythonExe"
+cmake -B $BuildDir $Root `
+    -DCMAKE_BUILD_TYPE=Release `
+    "-DSSB64_VERSION=$Ver" `
+    "-DPython3_EXECUTABLE=$PythonExe" `
+    | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 if ($Netplay) {
