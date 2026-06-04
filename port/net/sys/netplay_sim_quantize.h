@@ -32,6 +32,11 @@ extern sb32 syNetplayRollbackSemanticsActive(void);
 
 /* Round to a shared 1/65536 grid (double intermediate) on all peers. */
 extern f32 syNetplayQuantizeF32(f32 value);
+/*
+ * Same grid as syNetplayQuantizeF32 but always active for rollback map-hash save/verify (ignores
+ * SSB64_NETPLAY_SIM_F32_QUANTIZE). Snapshot blobs stay raw; hash boundaries use this pass only.
+ */
+extern f32 syNetplayQuantizeF32ForRollbackHash(f32 value);
 /* Like syNetplayQuantizeF32 but preserves AOBJ_ANIM_NULL (F32_MIN). */
 extern f32 syNetplayQuantizeAnimScalar(f32 value);
 extern void syNetplayQuantizeVec3f(Vec3f *vec);

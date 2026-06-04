@@ -32,6 +32,7 @@ Sequence:
 | **Apply order** | Hold sanitize: delay → gravity → sync (sync last). |
 | **Sync reconstruct** | Preserve `HoldEntryTick` from `NotifyHoldEntered`; set `entry_delay = live_delay + hold_frames`, same for gravity — never copy scrubbed blob counters into tracking. |
 | **Pass-floor snap** | Block all descending air jibaku (`vel_y <= 0`) on `MAP_VERTEX_COLL_PASS` floors, not shallow descent only (steep down-jibaku was still clipping). |
+| **Cliff/ledge snap** | Removed — cliff edge ground-snap block trapped Ness at platform edges; anchor/cull parity fixes address launch snap instead. |
 | **Gravity scrub** | Sanitize gravity on Start+Hold; `NotifyThrowStarted` records throw-scope tick; expected gravity from throw frames; Hold sync never lowers `entry_gravity`. |
 | **Diag** | `hold_enter` logs `gravity_delay`; `netplay-trim-logs.py` summarizes `sanitize_gravity` + flags `hold_enter gravity_delay=0`. |
 

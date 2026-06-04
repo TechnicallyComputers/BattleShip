@@ -157,7 +157,7 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
    ```
 
    - **Snapshot apply** in `port/net/sys/*` runs only during rollback load — no forward-sim gate.
-   - Offline must **not** link `port/net/**`, `debug_tools/`, or rollback TUs; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c` + `port/stubs/debug_trace_stubs.c`.
+   - Offline must **not** link `port/net/**`, rollback TUs, or `debug_tools/acmd_trace/`; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c` + `port/stubs/acmd_trace_stubs.c`. **`debug_tools/gbi_trace/`** links in all PORT builds (`SSB64_GBI_TRACE=1` at runtime).
    - Tracked checklist: `docs/decomp_upstream_divergence_audit_2026-06-03.md`. Full contract: `docs/netplay_rollback_refactor_contracts.md`.
 
 ### Context Management

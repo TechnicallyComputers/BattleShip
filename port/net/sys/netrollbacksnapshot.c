@@ -2862,6 +2862,31 @@ static void syNetRbSnapReconcileSectorArwingDeckYakumonoFromFlightTree(void)
 	grSectorArwingUpdateCollisions();
 }
 
+/*
+ * Sector Z deck line 1 is derived from the Arwing flight tree on apply; skip restoring mp_yaku[1] from the
+ * map blob when the saved ground partition says the patrol is active.
+ */
+static sb32 syNetRbSnapSectorArwingDeckYakumonoDerivedFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	const SYNetRbSnapGroundSector *sec;
+
+	if ((slot == NULL) || (slot->ground_captured == FALSE) || (slot->ground.gkind != nGRKindSector))
+	{
+		return FALSE;
+	}
+	if (slot->ground.payload_len < SYNETRB_SNAP_GROUND_SECTOR_V1_PAYLOAD_LEN)
+	{
+		return FALSE;
+	}
+	sec = (const SYNetRbSnapGroundSector *)slot->ground.payload;
+	return (sec->arwing_pilot_curr != -2) ? TRUE : FALSE;
+}
+
+static void syNetRbSnapshotPrepareMapStateForHash(void)
+{
+	syNetRbSnapReconcileSectorArwingDeckYakumonoFromFlightTree();
+}
+
 static void syNetRbSnapRefreshSectorArwingDeckFighterPlatformCoupling(void)
 {
 	GObj *fighter_gobj;
@@ -5692,10 +5717,6 @@ static void syNetRbSnapCaptureYakuDObj(SYNetRbSnapYakuBlob *yaku, DObj *dobj, co
 	yaku->user_data_s = dobj->user_data.s;
 	yaku->flags = dobj->flags;
 	yaku->anim_joint_event32 = (dobj->anim_joint.event32 != NULL) ? (uintptr_t)dobj->anim_joint.event32 : 0U;
-#if defined(SSB64_NETMENU)
-	syNetplayQuantizeVec3f(&yaku->translate);
-	syNetplayQuantizeVec3f(&yaku->speed);
-#endif
 	syNetRbSnapCaptureDObjAnim(&yaku->anim, dobj);
 }
 
@@ -5720,19 +5741,10 @@ static void syNetRbSnapApplyYakuDObj(DObj *dobj, const SYNetRbSnapYakuBlob *yaku
 		dobj->parent_gobj->anim_frame = dobj->anim_frame;
 	}
 	dobj->translate.vec.f = yaku->translate;
-#if defined(SSB64_NETMENU)
-	syNetplayQuantizeDObjTranslate(dobj);
-	if (speed_out != NULL)
-	{
-		*speed_out = yaku->speed;
-		syNetplayQuantizeVec3f(speed_out);
-	}
-#else
 	if (speed_out != NULL)
 	{
 		*speed_out = yaku->speed;
 	}
-#endif
 	dobj->user_data.s = yaku->user_data_s;
 }
 
@@ -5813,6 +5825,12 @@ static void syNetRbSnapApplyMap(const SYNetRbSnapshotSlot *slot)
 		{
 			continue;
 		}
+#ifdef PORT
+		if ((i == 1) && (syNetRbSnapSectorArwingDeckYakumonoDerivedFromSlot(slot) != FALSE))
+		{
+			continue;
+		}
+#endif
 		syNetRbSnapApplyYakuDObj(dobj, &slot->mp_yaku[i], &gMPCollisionSpeeds[i]);
 	}
 	if (slot->mp_bounds_captured != FALSE)
@@ -9293,6 +9311,95 @@ static u32 syNetRbSnapFoldGroundPayloadHash(const SYNetRbSnapGroundBlob *ground)
 	return hash;
 }
 
+/*
+ * Ground blobs store raw sim scalars. Rollback map hash folds a hash-grid view of known F32 payload fields
+ * so save and verify agree without quantizing stored snapshot bytes.
+ */
+static u32 syNetRbSnapFoldGroundPayloadHashForRollback(const SYNetRbSnapGroundBlob *ground)
+{
+	u8 payload_scratch[SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX];
+	u32 hash;
+	u32 n;
+
+	if ((ground == NULL) || (ground->payload_len == 0U))
+	{
+		return 2166136261U;
+	}
+	n = (u32)ground->payload_len;
+	if (n > SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX)
+	{
+		n = SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX;
+	}
+	memcpy(payload_scratch, ground->payload, n);
+#if defined(SSB64_NETMENU)
+	switch (ground->gkind)
+	{
+	case nGRKindHyrule:
+		if (n >= (u32)sizeof(SYNetRbSnapGroundHyrule))
+		{
+			SYNetRbSnapGroundHyrule *hy = (SYNetRbSnapGroundHyrule *)payload_scratch;
+
+			hy->twister_leftedge_x = syNetplayQuantizeF32ForRollbackHash(hy->twister_leftedge_x);
+			hy->twister_rightedge_x = syNetplayQuantizeF32ForRollbackHash(hy->twister_rightedge_x);
+			hy->twister_vel = syNetplayQuantizeF32ForRollbackHash(hy->twister_vel);
+			hy->twister_pos.x = syNetplayQuantizeF32ForRollbackHash(hy->twister_pos.x);
+			hy->twister_pos.y = syNetplayQuantizeF32ForRollbackHash(hy->twister_pos.y);
+			hy->twister_pos.z = syNetplayQuantizeF32ForRollbackHash(hy->twister_pos.z);
+		}
+		break;
+	case nGRKindJungle:
+		if (n >= (u32)sizeof(SYNetRbSnapGroundJungle))
+		{
+			SYNetRbSnapGroundJungle *jg = (SYNetRbSnapGroundJungle *)payload_scratch;
+
+			jg->tarucann_rotate_step = syNetplayQuantizeF32ForRollbackHash(jg->tarucann_rotate_step);
+			jg->tarucann_rotate_z = syNetplayQuantizeF32ForRollbackHash(jg->tarucann_rotate_z);
+			jg->tarucann_translate.x = syNetplayQuantizeF32ForRollbackHash(jg->tarucann_translate.x);
+			jg->tarucann_translate.y = syNetplayQuantizeF32ForRollbackHash(jg->tarucann_translate.y);
+			jg->tarucann_translate.z = syNetplayQuantizeF32ForRollbackHash(jg->tarucann_translate.z);
+		}
+		break;
+	case nGRKindSector:
+		if (n >= (u32)sizeof(SYNetRbSnapGroundSector))
+		{
+			SYNetRbSnapGroundSector *sec = (SYNetRbSnapGroundSector *)payload_scratch;
+
+			sec->arwing_target_x = syNetplayQuantizeF32ForRollbackHash(sec->arwing_target_x);
+		}
+		break;
+	default:
+		break;
+	}
+#endif
+	hash = 2166136261U;
+	hash = syNetRbSnapFnvAccumulateU32(hash, (u32)ground->gkind);
+	{
+		u32 i;
+
+		for (i = 0; i < n; i++)
+		{
+			hash = syNetRbSnapFnvAccumulateU32(hash, (u32)payload_scratch[i]);
+		}
+	}
+	return hash;
+}
+
+static u32 syNetRbSnapshotComputeMapHashWithGround(const SYNetRbSnapGroundBlob *ground)
+{
+	u32 hash;
+
+	hash = syNetSyncHashMapCollisionKinematicsForRollback();
+#ifdef PORT
+	if ((ground != NULL) && (ground->payload_len > 0U))
+	{
+		u32 ground_hash = syNetRbSnapFoldGroundPayloadHashForRollback(ground);
+
+		hash = syNetRbSnapFnvAccumulateU32(hash ^ ground_hash, 0x47524F55U);
+	}
+#endif
+	return hash;
+}
+
 static sb32 syNetRbSnapHyruleTwisterStatusNeedsGObj(u8 twister_status);
 static void syNetRbSnapHyruleTwisterNormalizeAtCapture(SYNetRbSnapGroundHyrule *dst,
 							 const GRCommonGroundVarsHyrule *src);
@@ -9607,11 +9714,7 @@ static void syNetRbSnapCaptureGround(SYNetRbSnapshotSlot *slot)
 
 		slot->ground.payload_len = (u16)sizeof(*dst);
 		dst->map_gobj_id = syNetRbSnapGobjId(src->map_gobj);
-#if defined(SSB64_NETMENU)
-		dst->arwing_target_x = syNetplayQuantizeF32(src->arwing_target_x);
-#else
 		dst->arwing_target_x = src->arwing_target_x;
-#endif
 		dst->arwing_appear_timer = src->arwing_appear_timer;
 		dst->arwing_state_timer = src->arwing_state_timer;
 		dst->arwing_status = src->arwing_status;
@@ -9979,11 +10082,7 @@ static void syNetRbSnapApplyGround(const SYNetRbSnapshotSlot *slot)
 			GRCommonGroundVarsSector *dst = &gGRCommonStruct.sector;
 
 			dst->map_gobj = (src->map_gobj_id != 0U) ? gcFindGObjByID(src->map_gobj_id) : NULL;
-#if defined(SSB64_NETMENU)
-			dst->arwing_target_x = syNetplayQuantizeF32(src->arwing_target_x);
-#else
 			dst->arwing_target_x = src->arwing_target_x;
-#endif
 			dst->arwing_appear_timer = src->arwing_appear_timer;
 			dst->arwing_state_timer = src->arwing_state_timer;
 			dst->arwing_status = src->arwing_status;
@@ -10059,28 +10158,16 @@ u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque)
 
 u32 syNetRbSnapshotComputeMapHashLive(void)
 {
-	u32 hash;
+	SYNetRbSnapshotSlot scratch;
 
-#ifdef PORT
-	/* Match syNetRbSnapCaptureMap: deck yakumono line 1 must track the flight tree before hashing. */
-	syNetRbSnapReconcileSectorArwingDeckYakumonoFromFlightTree();
-#endif
-	hash = syNetSyncHashMapCollisionKinematics();
-#ifdef PORT
+	syNetRbSnapshotPrepareMapStateForHash();
+	memset(&scratch, 0, sizeof(scratch));
+	syNetRbSnapCaptureGround(&scratch);
+	if (scratch.ground_captured == FALSE)
 	{
-		SYNetRbSnapshotSlot scratch;
-
-		memset(&scratch, 0, sizeof(scratch));
-		syNetRbSnapCaptureGround(&scratch);
-		if (scratch.ground_captured != FALSE)
-		{
-			u32 ground_hash = syNetRbSnapFoldGroundPayloadHash(&scratch.ground);
-
-			hash = syNetRbSnapFnvAccumulateU32(hash ^ ground_hash, 0x47524F55U);
-		}
+		return syNetRbSnapshotComputeMapHashWithGround(NULL);
 	}
-#endif
-	return hash;
+	return syNetRbSnapshotComputeMapHashWithGround(&scratch.ground);
 }
 
 static void syNetRbSnapSanitizeEffectVarsBlob(u8 *vars_out, const EFStruct *ep)
@@ -14848,15 +14935,12 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	slot->hash_item = syNetSyncHashActiveItemsForRollback();
 	slot->hash_weapon = syNetSyncHashActiveWeaponsForRollback();
 #ifdef PORT
-	syNetRbSnapReconcileSectorArwingDeckYakumonoFromFlightTree();
-#endif
-	slot->hash_map = syNetSyncHashMapCollisionKinematics();
-#ifdef PORT
-	{
-		u32 ground_hash = syNetRbSnapshotFoldGroundHash(slot);
-
-		slot->hash_map = syNetRbSnapFnvAccumulateU32(slot->hash_map ^ ground_hash, 0x47524F55U);
-	}
+	syNetRbSnapshotPrepareMapStateForHash();
+	syNetRbSnapCaptureGround(slot);
+	slot->hash_map = syNetRbSnapshotComputeMapHashWithGround(
+	    (slot->ground_captured != FALSE) ? &slot->ground : NULL);
+#else
+	slot->hash_map = syNetSyncHashMapCollisionKinematicsForRollback();
 #endif
 	slot->hash_rng = syNetSyncHashRNGSeed();
 	slot->hash_camera = syNetSyncHashGMCamera();

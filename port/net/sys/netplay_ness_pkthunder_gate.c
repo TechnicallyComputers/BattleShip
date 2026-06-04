@@ -45,8 +45,14 @@ static s32 sSYNetplayNessDeferPKCullPlayer;
 static u32 sSYNetplayNessPostCullFloorGraceUntilTick[GMCOMMON_PLAYERS_MAX];
 static u32 sSYNetplayNessAirJibakuStartTick[GMCOMMON_PLAYERS_MAX];
 static sb32 sSYNetplayNessGroundSnapBlockLogged[GMCOMMON_PLAYERS_MAX];
+static sb32 sSYNetplayNessPosStaleLogged[GMCOMMON_PLAYERS_MAX];
+static u32 sSYNetplayNessJibakuNotifyTick[GMCOMMON_PLAYERS_MAX];
+/* NaN probe latch: 1 once a non-finite fighter field is seen, re-armed when finite again.
+ * Keeps the finite->NaN transition to a single log line per occurrence. */
+static u8 sSYNetplayNessFighterNaNState[GMCOMMON_PLAYERS_MAX];
 
 #define SY_NETPLAY_NESS_PK_DEFER_CULL_TICKS 2U
+#define SY_NETPLAY_NESS_PKTHUNDER_POS_STALE_DIST_SQ (128.0F * 128.0F)
 #define SY_NETPLAY_NESS_PK_POST_CULL_FLOOR_GRACE_TICKS 2U
 #define SY_NETPLAY_NESS_AIR_JIBAKU_LAUNCH_GUARD_TICKS 4U
 
@@ -54,6 +60,11 @@ static void syNetplayNessScheduleDeferPKTeardown(FTStruct *fp);
 static s32 syNetplayNessCountLivePKThunderWeapons(void);
 static void syNetplayNessLogJibakuWeaponState(FTStruct *fp);
 static sb32 syNetplayNessFighterInPKThunderHoldScope(const FTStruct *fp);
+static void syNetplayNessClearPKThunderPos(FTStruct *fp);
+static void syNetplayNessGetPKThunderCouplingPos(GObj *fighter_gobj, FTStruct *fp, f32 *out_fx, f32 *out_fy,
+                                                 f32 *out_ax, f32 *out_ay, f32 *out_hx, f32 *out_hy);
+static void syNetplayNessWitnessPKThunderPosStale(GObj *fighter_gobj, FTStruct *fp, const char *site);
+void syNetplayNessRefreshPKThunderPosFromHead(GObj *fighter_gobj, FTStruct *fp);
 static void syNetplayNessClearPkScopeEarliestLoadTick(s32 player);
 static void syNetplayNessNotePkScopeEarliestLoadTick(FTStruct *fp);
 static u32 syNetplayNessEffectivePkScopeLoadTick(s32 player);
@@ -80,6 +91,122 @@ static sb32 syNetplayNessPKThunderGateDiagEnabled(void)
 	env = getenv("SSB64_NETPLAY_NESS_PKTHUNDER_GATE_DIAG");
 	sSYNetplayNessPKThunderGateDiagCache = ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? 1 : 0;
 	return (sSYNetplayNessPKThunderGateDiagCache != 0) ? TRUE : FALSE;
+}
+
+/* TRUE for Inf or NaN. Bit-pattern test avoids pulling <math.h>/isnan into this TU and
+ * works regardless of the build's fast-math state (x != x can be optimized away). */
+static sb32 syNetplayNessF32IsNonFinite(f32 v)
+{
+	union
+	{
+		f32 f;
+		u32 u;
+	} bits;
+
+	bits.f = v;
+	return (((bits.u >> 23) & 0xFFU) == 0xFFU) ? TRUE : FALSE;
+}
+
+/* Catch the first tick Ness's sim-driving floats go non-finite. The PK Thunder desync starts
+ * with fighter translate / vel_air becoming NaN (different sign bit per ISA -> hash divergence);
+ * this pins which field and which tick/site so we can guard the producing math. Diag-only. */
+void syNetplayNessProbeFighterNaN(GObj *fighter_gobj, FTStruct *fp, const char *site)
+{
+	DObj *fighter_dobj;
+	s32 pi;
+	u32 bad;
+	f32 tx;
+	f32 ty;
+	f32 tz;
+	f32 vx;
+	f32 vy;
+	f32 vz;
+	f32 jibaku_angle;
+	f32 anchor_x;
+	f32 anchor_y;
+
+	if (syNetplayNessPKThunderGateDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((fighter_gobj == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	if ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess))
+	{
+		return;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+
+	fighter_dobj = DObjGetStruct(fighter_gobj);
+	tx = (fighter_dobj != NULL) ? fighter_dobj->translate.vec.f.x : 0.0F;
+	ty = (fighter_dobj != NULL) ? fighter_dobj->translate.vec.f.y : 0.0F;
+	tz = (fighter_dobj != NULL) ? fighter_dobj->translate.vec.f.z : 0.0F;
+	vx = fp->physics.vel_air.x;
+	vy = fp->physics.vel_air.y;
+	vz = fp->physics.vel_air.z;
+	jibaku_angle = fp->status_vars.ness.specialhi.pkjibaku_angle;
+	anchor_x = fp->status_vars.ness.specialhi.pkthunder_pos.x;
+	anchor_y = fp->status_vars.ness.specialhi.pkthunder_pos.y;
+
+	bad = 0U;
+	if (syNetplayNessF32IsNonFinite(tx) != FALSE)
+	{
+		bad |= (1U << 0);
+	}
+	if (syNetplayNessF32IsNonFinite(ty) != FALSE)
+	{
+		bad |= (1U << 1);
+	}
+	if (syNetplayNessF32IsNonFinite(tz) != FALSE)
+	{
+		bad |= (1U << 2);
+	}
+	if (syNetplayNessF32IsNonFinite(vx) != FALSE)
+	{
+		bad |= (1U << 3);
+	}
+	if (syNetplayNessF32IsNonFinite(vy) != FALSE)
+	{
+		bad |= (1U << 4);
+	}
+	if (syNetplayNessF32IsNonFinite(vz) != FALSE)
+	{
+		bad |= (1U << 5);
+	}
+	if (syNetplayNessF32IsNonFinite(jibaku_angle) != FALSE)
+	{
+		bad |= (1U << 6);
+	}
+	if (syNetplayNessF32IsNonFinite(anchor_x) != FALSE)
+	{
+		bad |= (1U << 7);
+	}
+	if (syNetplayNessF32IsNonFinite(anchor_y) != FALSE)
+	{
+		bad |= (1U << 8);
+	}
+
+	if (bad == 0U)
+	{
+		sSYNetplayNessFighterNaNState[pi] = 0U;
+		return;
+	}
+	if (sSYNetplayNessFighterNaNState[pi] != 0U)
+	{
+		return;
+	}
+	sSYNetplayNessFighterNaNState[pi] = 1U;
+	port_log(
+	    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=fighter_nan player=%d status=%d site=%s "
+	    "bad=0x%03x translate=(%f,%f,%f) vel_air=(%f,%f,%f) pkjibaku_angle=%f anchor=(%f,%f) resim=%d\n",
+	    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, site, (unsigned int)bad, tx, ty,
+	    tz, vx, vy, vz, jibaku_angle, anchor_x, anchor_y, (int)(syNetRollbackIsResimulating() != FALSE));
 }
 
 static sb32 syNetplayNessF32Matches(f32 live, f32 expected)
@@ -1038,11 +1165,164 @@ void syNetplayNessSyncHoldEntryTrackingFromApply(FTStruct *fp)
 	syNetplayNessSyncHoldEntryTracking(fp);
 }
 
+static void syNetplayNessClearPKThunderPos(FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return;
+	}
+	fp->status_vars.ness.specialhi.pkthunder_pos.x = 0.0F;
+	fp->status_vars.ness.specialhi.pkthunder_pos.y = 0.0F;
+	fp->status_vars.ness.specialhi.pkthunder_pos.z = 0.0F;
+}
+
+static void syNetplayNessGetPKThunderCouplingPos(GObj *fighter_gobj, FTStruct *fp, f32 *out_fx, f32 *out_fy,
+                                                 f32 *out_ax, f32 *out_ay, f32 *out_hx, f32 *out_hy)
+{
+	DObj *fighter_dobj;
+	GObj *head_gobj;
+	DObj *head_dobj;
+
+	fighter_dobj = (fighter_gobj != NULL) ? DObjGetStruct(fighter_gobj) : NULL;
+	head_gobj = (fp != NULL) ? fp->status_vars.ness.specialhi.pkthunder_gobj : NULL;
+	head_dobj = (head_gobj != NULL) ? DObjGetStruct(head_gobj) : NULL;
+
+	if (out_fx != NULL)
+	{
+		*out_fx = (fighter_dobj != NULL) ? fighter_dobj->translate.vec.f.x : 0.0F;
+	}
+	if (out_fy != NULL)
+	{
+		*out_fy = (fighter_dobj != NULL) ? fighter_dobj->translate.vec.f.y : 0.0F;
+	}
+	if (out_ax != NULL)
+	{
+		*out_ax = (fp != NULL) ? fp->status_vars.ness.specialhi.pkthunder_pos.x : 0.0F;
+	}
+	if (out_ay != NULL)
+	{
+		*out_ay = (fp != NULL) ? fp->status_vars.ness.specialhi.pkthunder_pos.y : 0.0F;
+	}
+	if (out_hx != NULL)
+	{
+		*out_hx = (head_dobj != NULL) ? head_dobj->translate.vec.f.x : 0.0F;
+	}
+	if (out_hy != NULL)
+	{
+		*out_hy = (head_dobj != NULL) ? head_dobj->translate.vec.f.y : 0.0F;
+	}
+}
+
+static void syNetplayNessWitnessPKThunderPosStale(GObj *fighter_gobj, FTStruct *fp, const char *site)
+{
+	GObj *head_gobj;
+	DObj *head_dobj;
+	Vec3f anchor;
+	f32 dx;
+	f32 dy;
+	f32 dist_sq;
+	s32 pi;
+
+	if ((syNetplayNessPKThunderGateDiagEnabled() == FALSE) || (fp == NULL) || (site == NULL))
+	{
+		return;
+	}
+	if (syNetplayNessFighterInPKThunderHoldScope(fp) == FALSE)
+	{
+		return;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX) || (sSYNetplayNessPosStaleLogged[pi] != FALSE))
+	{
+		return;
+	}
+	head_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
+	if ((head_gobj == NULL) || (wpGetStruct(head_gobj) == NULL))
+	{
+		head_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(fighter_gobj);
+	}
+	if (head_gobj == NULL)
+	{
+		return;
+	}
+	head_dobj = DObjGetStruct(head_gobj);
+	if (head_dobj == NULL)
+	{
+		return;
+	}
+	anchor = fp->status_vars.ness.specialhi.pkthunder_pos;
+	dx = anchor.x - head_dobj->translate.vec.f.x;
+	dy = anchor.y - head_dobj->translate.vec.f.y;
+	dist_sq = (dx * dx) + (dy * dy);
+	if (dist_sq <= SY_NETPLAY_NESS_PKTHUNDER_POS_STALE_DIST_SQ)
+	{
+		return;
+	}
+	sSYNetplayNessPosStaleLogged[pi] = TRUE;
+	port_log(
+	    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=pkthunder_pos_stale player=%d site=%s status=%d "
+	    "anchor=(%f,%f) head=(%f,%f) delta=(%f,%f) resim=%d\n",
+	    (unsigned int)syNetInputGetTick(), (int)pi, site, (int)fp->status_id, anchor.x, anchor.y,
+	    head_dobj->translate.vec.f.x, head_dobj->translate.vec.f.y, dx, dy,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
+void syNetplayNessSyncPKThunderPosDuringHold(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayNessFighterInPKThunderHoldScope(fp) == FALSE))
+	{
+		return;
+	}
+	syNetplayNessProbeFighterNaN(fighter_gobj, fp, "hold_tick");
+	/* Rollback only: defer to CheckCollide for pkthunder_pos on the self-hit frame (offline never
+	 * overwrites the anchor each Hold tick). */
+	if ((fp->status_vars.ness.specialhi.pkjibaku_delay <= 0) &&
+	    (fp->status_vars.ness.specialhi.pkthunder_end_delay <= 0) &&
+	    ((fp->passive_vars.ness.is_thunder_destroy & TRUE) == FALSE))
+	{
+		return;
+	}
+	syNetplayNessWitnessPKThunderPosStale(fighter_gobj, fp, "hold_update");
+	syNetplayNessRefreshPKThunderPosFromHead(fighter_gobj, fp);
+}
+
+void syNetplayNessPrepareHoldSelfHitCoupling(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayNessFighterInPKThunderHoldScope(fp) == FALSE))
+	{
+		return;
+	}
+	if ((fp->status_vars.ness.specialhi.pkjibaku_delay > 0) ||
+	    (fp->status_vars.ness.specialhi.pkthunder_end_delay > 0) ||
+	    ((fp->passive_vars.ness.is_thunder_destroy & TRUE) != FALSE))
+	{
+		return;
+	}
+	syNetplayNessCullOrphanPKThunderKeepHead(fighter_gobj, fp);
+}
+
 void syNetplayNessNotifyThrowStarted(GObj *fighter_gobj, FTStruct *fp)
 {
 	s32 pi;
 
-	(void)fighter_gobj;
 	if (fp == NULL)
 	{
 		return;
@@ -1051,6 +1331,8 @@ void syNetplayNessNotifyThrowStarted(GObj *fighter_gobj, FTStruct *fp)
 	{
 		return;
 	}
+	syNetplayNessProbeFighterNaN(fighter_gobj, fp, "throw_start");
+	syNetplayNessClearPKThunderPos(fp);
 	pi = fp->player;
 	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX))
 	{
@@ -1058,6 +1340,8 @@ void syNetplayNessNotifyThrowStarted(GObj *fighter_gobj, FTStruct *fp)
 		sSYNetplayNessHoldEntryTick[pi] = 0U;
 		sSYNetplayNessHoldEntryDelay[pi] = -1;
 		sSYNetplayNessHoldEntryGravityDelay[pi] = -1;
+		sSYNetplayNessPosStaleLogged[pi] = FALSE;
+		sSYNetplayNessJibakuNotifyTick[pi] = 0U;
 		syNetplayNessNotePkScopeEarliestLoadTick(fp);
 	}
 }
@@ -1067,7 +1351,6 @@ void syNetplayNessNotifyHoldEntered(GObj *fighter_gobj, FTStruct *fp)
 	s32 delay;
 	s32 pi;
 
-	(void)fighter_gobj;
 	if (fp == NULL)
 	{
 		return;
@@ -1076,6 +1359,7 @@ void syNetplayNessNotifyHoldEntered(GObj *fighter_gobj, FTStruct *fp)
 	{
 		return;
 	}
+	syNetplayNessProbeFighterNaN(fighter_gobj, fp, "hold_enter");
 	delay = fp->status_vars.ness.specialhi.pkjibaku_delay;
 	pi = fp->player;
 	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX))
@@ -1083,28 +1367,42 @@ void syNetplayNessNotifyHoldEntered(GObj *fighter_gobj, FTStruct *fp)
 		sSYNetplayNessHoldEntryTick[pi] = syNetInputGetTick();
 		sSYNetplayNessHoldEntryDelay[pi] = delay;
 		sSYNetplayNessHoldEntryGravityDelay[pi] = fp->status_vars.ness.specialhi.pkthunder_gravity_delay;
+		sSYNetplayNessPosStaleLogged[pi] = FALSE;
 		syNetplayNessNotePkScopeEarliestLoadTick(fp);
 		if (sSYNetplayNessHoldEntryTick[pi] > 0U)
 		{
 			syNetplayNessNotePkSessionEarliestLoadTick(pi, sSYNetplayNessHoldEntryTick[pi] - 1U);
 		}
 	}
+	syNetplayNessCullOrphanPKThunderKeepHead(fighter_gobj, fp);
+	syNetplayNessRefreshPKThunderPosFromHead(fighter_gobj, fp);
+	syNetplayNessWitnessPKThunderPosStale(fighter_gobj, fp, "hold_enter");
 	if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
 	{
 		sb32 resim = syNetRollbackIsResimulating();
+		f32 fighter_x;
+		f32 fighter_y;
+		f32 anchor_x;
+		f32 anchor_y;
+		f32 head_x;
+		f32 head_y;
 
+		syNetplayNessGetPKThunderCouplingPos(fighter_gobj, fp, &fighter_x, &fighter_y, &anchor_x, &anchor_y,
+		                                     &head_x, &head_y);
 		port_log(
-		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=hold_enter player=%d status=%d delay=%d gravity_delay=%d thund_destroy=%d wp_gobj=%p resim=%d\n",
+		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=hold_enter player=%d status=%d delay=%d gravity_delay=%d thund_destroy=%d wp_gobj=%p fighter=(%f,%f) anchor=(%f,%f) head=(%f,%f) resim=%d\n",
 		    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, delay,
 		    fp->status_vars.ness.specialhi.pkthunder_gravity_delay,
 		    (int)(fp->passive_vars.ness.is_thunder_destroy & TRUE),
-		    (void *)fp->status_vars.ness.specialhi.pkthunder_gobj, (int)(resim != FALSE));
+		    (void *)fp->status_vars.ness.specialhi.pkthunder_gobj, fighter_x, fighter_y, anchor_x, anchor_y,
+		    head_x, head_y, (int)(resim != FALSE));
 	}
 }
 
 void syNetplayNessNotifyJibakuTriggered(GObj *fighter_gobj, FTStruct *fp, s32 from_status_id)
 {
 	u32 hold_frames;
+	u32 now_tick;
 	s32 delay_before;
 	s32 pi;
 
@@ -1116,13 +1414,21 @@ void syNetplayNessNotifyJibakuTriggered(GObj *fighter_gobj, FTStruct *fp, s32 fr
 	{
 		return;
 	}
+	syNetplayNessProbeFighterNaN(fighter_gobj, fp, "jibaku");
+	pi = fp->player;
+	now_tick = syNetInputGetTick();
+	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayNessJibakuNotifyTick[pi] == now_tick))
+	{
+		return;
+	}
+	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX))
+	{
+		sSYNetplayNessJibakuNotifyTick[pi] = now_tick;
+	}
 	delay_before = fp->status_vars.ness.specialhi.pkjibaku_delay;
 	hold_frames = 0U;
-	pi = fp->player;
 	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayNessHoldEntryTick[pi] != 0U))
 	{
-		u32 now_tick = syNetInputGetTick();
-
 		if (now_tick >= sSYNetplayNessHoldEntryTick[pi])
 		{
 			hold_frames = now_tick - sSYNetplayNessHoldEntryTick[pi];
@@ -1135,14 +1441,23 @@ void syNetplayNessNotifyJibakuTriggered(GObj *fighter_gobj, FTStruct *fp, s32 fr
 	if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
 	{
 		sb32 resim = syNetRollbackIsResimulating();
+		f32 fighter_x;
+		f32 fighter_y;
+		f32 anchor_x;
+		f32 anchor_y;
+		f32 head_x;
+		f32 head_y;
 
+		syNetplayNessGetPKThunderCouplingPos(fighter_gobj, fp, &fighter_x, &fighter_y, &anchor_x, &anchor_y,
+		                                     &head_x, &head_y);
 		port_log(
-		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=jibaku_trigger player=%d from_status=%d delay_before=%d hold_frames=%u hold_entry_delay=%d thund_destroy=%d wp_gobj=%p resim=%d\n",
+		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=jibaku_trigger player=%d from_status=%d delay_before=%d hold_frames=%u hold_entry_delay=%d thund_destroy=%d wp_gobj=%p fighter=(%f,%f) anchor=(%f,%f) head=(%f,%f) resim=%d\n",
 		    (unsigned int)syNetInputGetTick(), (int)fp->player, from_status_id, delay_before,
 		    (unsigned int)hold_frames,
 		    ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX)) ? sSYNetplayNessHoldEntryDelay[pi] : -1,
 		    (int)(fp->passive_vars.ness.is_thunder_destroy & TRUE),
-		    (void *)fp->status_vars.ness.specialhi.pkthunder_gobj, (int)(resim != FALSE));
+		    (void *)fp->status_vars.ness.specialhi.pkthunder_gobj, fighter_x, fighter_y, anchor_x, anchor_y,
+		    head_x, head_y, (int)(resim != FALSE));
 	}
 	if (fighter_gobj != NULL)
 	{
@@ -1365,6 +1680,10 @@ void syNetplayNessRefreshPKThunderPosForJibakuLaunch(GObj *fighter_gobj, FTStruc
 	DObj *fighter_dobj;
 	WPStruct *wp;
 	Vec3f pos_before;
+	Vec3f head_pos;
+	f32 anchor_head_dx;
+	f32 anchor_head_dy;
+	f32 anchor_head_dist_sq;
 	f32 dist_x;
 	f32 dist_y;
 
@@ -1376,11 +1695,17 @@ void syNetplayNessRefreshPKThunderPosForJibakuLaunch(GObj *fighter_gobj, FTStruc
 	{
 		return;
 	}
+	syNetplayNessProbeFighterNaN(fighter_gobj, fp, "jibaku_launch");
+	syNetplayNessCullOrphanPKThunderKeepHead(fighter_gobj, fp);
 	pos_before = fp->status_vars.ness.specialhi.pkthunder_pos;
 	pkthunder_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
 	if ((pkthunder_gobj == NULL) || (wpGetStruct(pkthunder_gobj) == NULL))
 	{
 		pkthunder_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(fighter_gobj);
+		if (pkthunder_gobj != NULL)
+		{
+			fp->status_vars.ness.specialhi.pkthunder_gobj = pkthunder_gobj;
+		}
 	}
 	if (pkthunder_gobj == NULL)
 	{
@@ -1397,7 +1722,19 @@ void syNetplayNessRefreshPKThunderPosForJibakuLaunch(GObj *fighter_gobj, FTStruc
 	{
 		return;
 	}
-	fp->status_vars.ness.specialhi.pkthunder_pos = head_dobj->translate.vec.f;
+	head_pos = head_dobj->translate.vec.f;
+	anchor_head_dx = pos_before.x - head_pos.x;
+	anchor_head_dy = pos_before.y - head_pos.y;
+	anchor_head_dist_sq = (anchor_head_dx * anchor_head_dx) + (anchor_head_dy * anchor_head_dy);
+	if (((pos_before.x != 0.0F) || (pos_before.y != 0.0F)) &&
+	    (anchor_head_dist_sq <= SY_NETPLAY_NESS_PKTHUNDER_POS_STALE_DIST_SQ))
+	{
+		fp->status_vars.ness.specialhi.pkthunder_pos = pos_before;
+	}
+	else
+	{
+		fp->status_vars.ness.specialhi.pkthunder_pos = head_pos;
+	}
 	syNetplayQuantizeNessPKThunderHoldStatusVars(fp, &fp->status_vars);
 	if (syNetplayNessPKThunderGateDiagEnabled() == FALSE)
 	{

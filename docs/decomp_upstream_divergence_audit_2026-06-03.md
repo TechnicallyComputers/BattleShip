@@ -63,7 +63,7 @@ git -C decomp diff <release-sha> --name-only -- ':!src/relocData' | rg '#ifdef P
 
 **Goal:** Strip netmenu-only tooling and snapshot mirrors from `SSB64_NETMENU=OFF`.
 
-- [x] Link `debug_tools/` (GBI + Acmd trace) **only when `SSB64_NETMENU=ON`**; offline uses `port/stubs/debug_trace_stubs.c`
+- [x] Link `debug_tools/gbi_trace/` in all PORT builds; `debug_tools/acmd_trace/` **only when `SSB64_NETMENU=ON`**; offline uses `port/stubs/acmd_trace_stubs.c`
 - [x] **`dead_gate_wait`** — field + mirror getters netmenu-only; offline uses JRickey union `dead.wait` path
 - [x] Gate Ness PK Thunder `#ifdef PORT` weapon wrapper (`ftnessspecialhi.c`) — netmenu-only; offline JRickey paths
 - [x] Gate Samus charge `PortValidateCoupledCharge` + coupled-charge helpers — netmenu-only; offline JRickey paths
@@ -161,6 +161,18 @@ For each file in `git diff <release-sha>`:
 | `SSB64_DECOMP_DIAG=1` | `ftmain` SetStatus / hidden-parts logs (netmenu) |
 | `SSB64_NETPLAY_CATCHWAIT_DIAG=1` | CatchWait throw decision |
 | `SSB64_NETPLAY_HYRULE_TWISTER_DIAG=1` | Twister rider diag |
+
+---
+
+## Phase 8 — Cross-ISA float determinism (libm + matcher)
+
+Playbook: [netplay_cross_isa_float_determinism.md](netplay_cross_isa_float_determinism.md)
+
+- [x] **Class A — libm trig:** Netmenu compiles `decomp/src/libultra/gu/sinf.c` + `cosf.c`; gate out `libc_compat.c` `__sinf`/`__cosf` wrappers; define `__libm_qnan_f` port-side. Offline unchanged (system libm).
+- [x] **Class B — matcher:** `-ffp-contract=off` extended to `/decomp/src/gr/`, `sys/utils.c`, `sys/vector.c`, `libultra/gu/sinf.c`, `cosf.c`.
+- [ ] Cross-ISA soak: Ness PK Thunder FC @1285 `figh`; Sector Arwing orientation.
+
+Bug: [netplay_cross_isa_libm_trig_2026-06-04.md](bugs/netplay_cross_isa_libm_trig_2026-06-04.md).
 
 ---
 

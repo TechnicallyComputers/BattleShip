@@ -58,6 +58,10 @@ extern void syNetplayNessReconcilePKThunderWeaponsAfterApply(struct GObj *fighte
 
 extern void syNetplayNessRefreshPKThunderPosFromHead(struct GObj *fighter_gobj, struct FTStruct *fp);
 
+extern void syNetplayNessSyncPKThunderPosDuringHold(struct GObj *fighter_gobj);
+
+extern void syNetplayNessPrepareHoldSelfHitCoupling(struct GObj *fighter_gobj);
+
 extern void syNetplayNessRefreshPKThunderPosForJibakuLaunch(struct GObj *fighter_gobj, struct FTStruct *fp);
 
 extern void syNetplayNessRefreshPKThunderPosInBlobFromHead(struct GObj *fighter_gobj, struct FTStruct *fp,
@@ -76,6 +80,8 @@ extern void syNetplayNessNotifyAirJibakuGroundSnapBlocked(struct GObj *fighter_g
 extern sb32 syNetplayNessIsPKThunderGlobalDeferActive(void);
 
 extern void syNetplayNessNotifyJibakuPostFinish(struct GObj *fighter_gobj);
+
+extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStruct *fp, const char *site);
 
 #else
 
@@ -103,6 +109,8 @@ extern void syNetplayNessNotifyJibakuPostFinish(struct GObj *fighter_gobj);
 #define syNetplayNessNotifyJibakuPhase(fighter_gobj, phase) ((void)0)
 #define syNetplayNessReconcilePKThunderWeaponsAfterApply(fighter_gobj) ((void)0)
 #define syNetplayNessRefreshPKThunderPosFromHead(fighter_gobj, fp) ((void)0)
+#define syNetplayNessSyncPKThunderPosDuringHold(fighter_gobj) ((void)0)
+#define syNetplayNessPrepareHoldSelfHitCoupling(fighter_gobj) ((void)0)
 #define syNetplayNessRefreshPKThunderPosForJibakuLaunch(fighter_gobj, fp) ((void)0)
 #define syNetplayNessRefreshPKThunderPosInBlobFromHead(fighter_gobj, fp, blob_status_vars) ((void)0)
 #define syNetplayNessShouldDeferPKThunderHeadProcTeardown(wp) (FALSE)
@@ -112,6 +120,7 @@ extern void syNetplayNessNotifyJibakuPostFinish(struct GObj *fighter_gobj);
 #define syNetplayNessNotifyAirJibakuGroundSnapBlocked(fighter_gobj, fp) ((void)0)
 #define syNetplayNessIsPKThunderGlobalDeferActive() (FALSE)
 #define syNetplayNessNotifyJibakuPostFinish(fighter_gobj) ((void)0)
+#define syNetplayNessProbeFighterNaN(fighter_gobj, fp, site) ((void)0)
 
 #endif
 

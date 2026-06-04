@@ -1720,10 +1720,19 @@ static sb32 syNetRollbackTryRecoverEffectHashDrift(u32 tick, u32 live_ef)
 	return TRUE;
 }
 
-static sb32 syNetRollbackLoadHashDriftTrySoftContinue(u32 tick, u32 live_f)
+static sb32 syNetRollbackLoadHashDriftTrySoftContinue(u32 tick, u32 live_f, u32 live_m)
 {
 	if (syNetRollbackLoadHashDriftIsSoft() == FALSE)
 	{
+		return FALSE;
+	}
+	if (live_m != syNetRbSnapshotGetSlotHashMap(tick))
+	{
+		port_log(
+		    "SSB64 NetRollback: LOAD_HASH_DRIFT soft-continue blocked tick=%u reason=map_mismatch slot=0x%08X live=0x%08X\n",
+		    tick,
+		    syNetRbSnapshotGetSlotHashMap(tick),
+		    live_m);
 		return FALSE;
 	}
 	if (live_f != syNetRbSnapshotGetSlotHashFighter(tick))
@@ -1737,7 +1746,7 @@ static sb32 syNetRollbackLoadHashDriftTrySoftContinue(u32 tick, u32 live_f)
 	}
 	port_log(
 	    "SSB64 NetRollback: LOAD_HASH_DRIFT soft-continue tick=%u rollbacks=%u (set "
-	    "SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=0 to hard-abort)\n",
+	    "SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=0 to hard-abort; map drift never soft-continues)\n",
 	    tick,
 	    sSYNetRollbackRollbackCount);
 	return TRUE;
@@ -4984,7 +4993,7 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		{
 			return TRUE;
 		}
-		if (syNetRollbackLoadHashDriftTrySoftContinue(tick, live_f) != FALSE)
+		if (syNetRollbackLoadHashDriftTrySoftContinue(tick, live_f, live_m) != FALSE)
 		{
 			return TRUE;
 		}
@@ -5226,7 +5235,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 #endif
 			return TRUE;
 		}
-		if (syNetRollbackLoadHashDriftTrySoftContinue(tick, live_f) != FALSE)
+		if (syNetRollbackLoadHashDriftTrySoftContinue(tick, live_f, live_m) != FALSE)
 		{
 			syNetRbSnapshotRebindAllFighters();
 #if defined(SSB64_NETMENU)

@@ -26,6 +26,8 @@ struct FTStruct;
 extern u32 syNetSyncHashBattleFighters(void);
 /* Map collision / kinematic sentinel hash for broad “world moved” diagnostics. */
 extern u32 syNetSyncHashMapCollisionKinematics(void);
+/* Rollback save/load verify: same yakumono sample as above but F32 fields use the hash-only grid. */
+extern u32 syNetSyncHashMapCollisionKinematicsForRollback(void);
 /*
  * `gcRunAll`-shaped traversal fingerprint (common links + process queue order). Cross-peer-stable fields only;
  * see `gcPortHashGcRunAllTraversalFingerprint` / `docs/netplay_frame_composition.md`.
