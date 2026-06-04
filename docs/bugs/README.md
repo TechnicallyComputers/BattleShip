@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-06-03 | [decomp_upstream_divergence_audit](../decomp_upstream_divergence_audit_2026-06-03.md) | **CHECKLIST** — Offline = JRickey release baseline (no fork patches); netmenu = fork work behind `PORT && SSB64_NETMENU`. |
 | 2026-06-03 | [netplay_intro_facing_mirror_cleanup](netplay_intro_facing_mirror_cleanup_2026-06-03.md) | **FIX SHIPPED (soak pending)** — Intro Appear ~90° off: remove mirror-era TopN hammers; restore vanilla Appear fp->lr clear + ProcPhysics-only yaw; gate Wait figatree re-apply. |
 | 2026-06-03 | [netplay_ness_grab_floor_sink](netplay_ness_grab_floor_sink_2026-06-03.md) | **FIX SHIPPED (soak pending)** — Ness grab hold floor sink: invalidate/rebuild grabber hand matrix, refresh grabber coll before coupling, skip grabber root Y quantize; witness catchwait off-by-one tolerance. |
 | 2026-06-03 | [netplay_ness_pkthunder_hold_sanitize_race](netplay_ness_pkthunder_hold_sanitize_race_2026-06-03.md) | **FIX SHIPPED (soak pending)** — Mid-Hold rollback: sync-after-sanitize copied blob-zero into hold tracking → grace-expired skip on second pass; reconstruct tracking from live counters; block all pass-floor descending air jibaku snap. |

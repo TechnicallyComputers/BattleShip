@@ -528,11 +528,19 @@ list(APPEND SSB64_SRC_PORT
     ${SSB64_CSS_ARROW_LEFT_H}
 )
 
-# Debug tools (GBI trace + Acmd trace systems)
+# Debug tools (GBI trace + Acmd trace) — netmenu only; offline uses port/stubs/debug_trace_stubs.c
 file(GLOB SSB64_DEBUG_TOOLS
     "debug_tools/gbi_trace/*.c" "debug_tools/gbi_trace/*.h"
     "debug_tools/acmd_trace/*.c" "debug_tools/acmd_trace/*.h"
 )
+set(SSB64_DEBUG_TRACE_STUB
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/debug_trace_stubs.c"
+)
+if(SSB64_NETMENU)
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_DEBUG_TOOLS})
+else()
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_DEBUG_TRACE_STUB})
+endif()
 
 set(SSB64_DECOMP_SOURCES
     ${SSB64_SRC_CREDITS}
@@ -697,12 +705,7 @@ else()
     set(_SSB64_DECOMP_NETINCLUDE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/objman.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommoncatch2.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonentry.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonthrow.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftcommon/ftcommonwait.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftmain.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/gm/gmcamera.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/if/ifcommon.c")
     set(_SSB64_OFFLINE_NET_INCLUDE_DIRS
         "${SSB64_NETPLAY_INCLUDE_SHIMS}"
@@ -715,6 +718,7 @@ endif()
 
 # Port stub definitions (C code that satisfies N64 linker symbols)
 file(GLOB SSB64_STUBS "port/stubs/*.c")
+list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/debug_trace_stubs\\.c$")
 if(SSB64_NETMENU)
     # Extended netpeer / rollback live in port/net when netmenu is on; omit offline-only glue (would duplicate symbols).
     list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/net_port_glue_offline\\.c$")
@@ -923,13 +927,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # SHARED target builds with the .S preprocessed by clang.
     add_library(${PROJECT_NAME} SHARED
         ${SSB64_SRC_PORT}
-        ${SSB64_DEBUG_TOOLS}
+        ${SSB64_EXE_TRACE_SOURCES}
         $<TARGET_OBJECTS:ssb64_game>
         port/coroutine_aarch64.S
     )
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "main")
 else()
-    add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_DEBUG_TOOLS} $<TARGET_OBJECTS:ssb64_game>)
+    add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_EXE_TRACE_SOURCES} $<TARGET_OBJECTS:ssb64_game>)
 
     # User-facing binary name. The CMake target keeps the historical
     # `ssb64` identifier (matches the repo, build dirs, internal symbols),

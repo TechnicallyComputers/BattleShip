@@ -93,13 +93,14 @@ Every named overlay member starts at **0** (union). Individual field offsets bel
 
 ---
 
-## Out-of-union mirrors (load-bearing port bridges)
+## Out-of-union mirrors (port bridges)
 
 | Field | Location | Bridge role |
 |-------|----------|-------------|
-| `hit_lr` | `FTStruct` @ 2260 | Cached at Appear `SetStatus` from `entry.lr`; `ftCommonAppearGetEntryLR` prefers `hit_lr` over union during Appear. Cleared when transitioning to Wait. Witness logs include `hit_lr` on stomp. |
-| `shuffle_tics` | `FTStruct` @ 678 | Authoritative CatchWait throw countdown mirror; `ftCommonCatchWaitGetThrowWait` reads `shuffle_tics` when `status_id == CatchWait`. `ftMain` skips decrement during CatchWait to avoid double-count. Witness logs include `shuffle_tics` on stomp. |
-| `fp->lr` | `FTStruct` | Combat facing outside union; Appear path keeps `fp->lr` instead of clearing to 0; `ftCommonAppearProcPhysics` repairs `entry.lr` from `fp->lr` / `hit_lr`. |
+| `dead_gate_wait` | `FTStruct` | Authoritative dead countdown mirror for netplay snapshot invariants (`dead.wait` aliases entry/catch at union +0). |
+| `fp->lr` | `FTStruct` | Combat facing outside union; cleared to 0 during Appear SetStatus (upstream). |
+
+**Removed (2026-06-03):** Appear `hit_lr` cache / `GetEntryLR` fallback; CatchWait `shuffle_tics` throw mirror — upstream parity + accessor migration made these unnecessary offline.
 
 ---
 
@@ -107,10 +108,10 @@ Every named overlay member starts at **0** (union). Individual field offsets bel
 
 | Writer | Accessed overlay | Victim/grabber | Risk |
 |--------|------------------|----------------|------|
-| `ftCommonAppearProcPhysics` | `entry.lr` | self during character Appear | Motion events stomp `entry.lr`; repaired from `hit_lr`/`fp->lr` |
-| `ftCommonAppearSetStatus` | `entry.*` | self | Sets `hit_lr` mirror at Appear start |
+| `ftCommonAppearProcPhysics` | `entry` translate/rotate | self during character Appear | TopN translate only (upstream); no `entry.lr` repair |
+| `ftCommonAppearSetStatus` | `entry.*` | self | Saves combat `fp->lr` into `entry.lr`, clears `fp->lr` to 0 |
 | `ftCommonCatchPullProcUpdate` | `capture.is_goto_pulled_wait` | **victim** (`catch_gobj`) while grabber in CatchPull | Correct owner is victim capture overlay |
-| `ftCommonCatchWaitProcInterrupt` | `catchwait.throw_wait` + `shuffle_tics` | grabber in CatchWait | Union field kept in sync with mirror |
+| `ftCommonCatchWaitProcInterrupt` | `catchwait.throw_wait` | grabber in CatchWait | Direct countdown (upstream) |
 | `ftMainSetStatus` / motion figatree | entire blob | self | New status may read stale overlay bytes until init proc runs |
 | Snapshot save/load | entire blob | all fighters | Blind memcpy — no overlay tag (C2 follow-up) |
 | `ftCommonAttackS4CheckInterruptTurn` | `turn.lr_dash` | self in Turn | Same bytes as `attack4.lr` at union +0x10; must use turn accessor |
