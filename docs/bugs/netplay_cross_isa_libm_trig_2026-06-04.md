@@ -84,18 +84,20 @@ CSS / level select still broken after objdisplay/mncharacters pairing fix becaus
 
 **Intentional libc `sinf()` only:** `sys/audio.c` LFO / vibrato (weak `sinf` alias must stay off).
 
-## Render vs sim trig split (2026-06-04)
+## Render vs sim trig — split, then unified (2026-06-04)
 
-Pipeline 2 MVP recalc (`lbcommon` `func_ovl0_800CA*`, `objdisplay` cases 45/46, `mnCharactersMoveFighterCamera`) must **not** use netmenu N64 `__sinf`/`__cosf` polynomial — breaks `FTOFIX32` MVP matrices (fighters / intro / stage select 3D vanish). Sim / sync TUs keep N64 poly.
+**Original split (superseded):** while `__cosf` was still returning `+inf` (root cause #2), the Pipeline-2 MVP recalc callsites (`lbcommon` `func_ovl0_800CA*`, `objdisplay` cases 45/46, `mnCharactersMoveFighterCamera`, `syMatrixPerspF`) were routed to a `gSYSinTable` **float** workaround (`syMatrixSinF`/`syMatrixCosF`) so the broken poly couldn't produce degenerate `FTOFIX32` matrices (fighters / intro / stage-select 3D vanish). That float wrapper also carried the Q15-vs-s14 divisor bug (root cause #3).
+
+**Unification (current):** with the Cody-Waite constants fixed and `__sinf`/`__cosf` verified numerically correct (incl. large-angle range reduction, `sin²+cos² = 1`), the workaround is removed. Render and sim now share the **same deterministic N64 polynomial** in the netmenu build:
 
 | Layer | Mechanism |
 |-------|-----------|
 | **Sim** (`ft/`, `it/`, `wp/`, `vector.c`, …) | `__sinf` / `__cosf` → N64 polynomial when `SSB64_NETMENU=ON` |
-| **Render MVP** | `SSB64_RENDER_SINF` / `SSB64_RENDER_COSF` in `sys/matrix.h` — netmenu → `syMatrixSinF`/`syMatrixCosF` (`gSYSinTable` s14→float); else `__sinf`/`__cosf` (offline wrappers) |
-| **Render rotation (most 3D)** | Unchanged: `syGetSinCosUShort` / `syMatrixRotRpyR` lookup table |
-| **Audio** | Bare libc `sinf()` only |
+| **Render MVP** | `SSB64_RENDER_SINF` / `SSB64_RENDER_COSF` (`sys/matrix.h`) → `__sinf`/`__cosf` in **all** builds (macro kept only as a render-side marker). `syMatrixPerspF` netmenu branch → `__cosf`/`__sinf`; offline branch keeps libc `cosf`/`sinf` (JRickey parity) |
+| **Render rotation (most 3D)** | Unchanged: `syGetSinCosUShort` / `syMatrixRotRpyR` integer `gSYSinTable` lookup — original N64 fixed-point path, already deterministic & not an OS call |
+| **Audio** | Bare libc `sinf()` only (LFO/vibrato) |
 
-Definitions: `syMatrixSinF`/`syMatrixCosF` gated `#if PORT && SSB64_NETMENU` in `matrix.c`. Macro + callsite comments in `matrix.h`, `lbcommon.c`, `objdisplay.c`, `mncharacters.c`.
+`syMatrixSinF`/`syMatrixCosF` and the `SYMATRIX_*_TO_F32` macro were deleted from `matrix.c`. The original-decomp `syMatrixFastSin`/`syMatrixFastCos` are kept (untouched). Callsites in `lbcommon.c`/`objdisplay.c`/`mncharacters.c` still use the `SSB64_RENDER_*` macros and were not edited.
 
 ## Root cause #2 (2026-06-04) — `du` trig constants byte-swapped on little-endian (`__cosf(0)=+inf`)
 
@@ -113,6 +115,37 @@ Reading `.d` is only correct on **big-endian** N64. On **little-endian** PC (x86
 This is the deterministic origin: `cos=+inf` is identical on both peers; only the downstream `0·inf` NaN **sign bit** diverges per ISA (the actual `figh` hash split). Strong candidate for the broader "NETMENU=ON 3D render vanish / intro props missing" family too (any netmenu `__cosf` range-reduction caller).
 
 **Fix:** `SSB64_DU_HL(hi, lo)` macro in `PR/guint.h` reorders the halves at compile time by `__BYTE_ORDER__` (big-endian keeps N64 order; little-endian / unknown swaps), so `.d` reconstructs the intended double on any host. Applied to all `du` constants in `sinf.c` and `cosf.c`. Verified standalone: `rpi.d == 1/π` exactly. NETMENU=OFF unaffected (those TUs use the `libc_compat` `cosf`/`sinf` wrappers, not compiled). Diagnostics: `airveltransn_nan` / `corrupt jumpaerial` / `jumpaerial entry` witness rows + `diff_netstatusvars_nan` in `scripts/netplay-trim-logs.py`.
+
+## Root cause #3 (2026-06-04) — render MVP sin/cos 2x too large (`gSYSinTable` is Q15, not s14)
+
+**Symptom:** With root causes #1/#2 fixed, the soak NaN families are gone (`airveltransn_nan` / `corrupt jumpaerial` / `fighter_nan` all 0, no cross-ISA `figh` divergence) and the intro "render vanish" is resolved. New cosmetic regression: certain **spinning articles render ~2x bigger** in `SSB64_NETMENU=ON` only — e.g. Ness PK Thunder, the Yoshi Egg Lay capture egg. The camera/scene and fighters are correctly sized; only specific articles inflate.
+
+**Root cause:** The render-MVP wrapper introduced for the split (above) normalized the lookup table with the wrong divisor:
+
+```c
+#define SYMATRIX_S14_TO_F32(v) ((f32)(v) / 16384.0F)   /* WRONG */
+```
+
+`gSYSinTable` is **Q15**, not s14 — `gSYSinTable[1024] == 0x8000 == 32768 == 1.0`. (The integer matrix builders prove it: `syMatrixTraRotRpyRSca` does `(table*table) >> 14`, which only lands on `FTOFIX32` `×65536` format if each table entry is `value*32768`.) Dividing by 16384 made `syMatrixSinF`/`syMatrixCosF` return up to **2.0**.
+
+Why only some objects, and only netmenu:
+- `objdisplay.c` billboard cases 45/46 build the MVP as `gGCMatrixPerspF[..] * scale * cos/sin` — the inflated `cos/sin` multiplies object size directly → ~2x. Same for `lbcommon`/`mncharacters` render callsites.
+- `syMatrixPerspF` uses `cot = cos/sin`; the 2x cancels in the ratio, so the global projection (camera, fighters, stage) is unaffected — exactly why only the spinning articles look big.
+- Offline uses `__sinf/__cosf` (libm) for these callsites, so it was always correct.
+
+**Fix:** divide by `32768.0F` (renamed macro `SYMATRIX_Q15_TO_F32`) in `sys/matrix.c`. `syMatrixPerspF` behavior is unchanged (ratio). Offline unaffected (wrappers not compiled).
+
+## Follow-up (2026-06-04) — `sys/interp.c` contraction gap (Sector Z Arwing deck map-hash split)
+
+**Status:** Fix shipped (CMake matcher only) — **soak pending**.
+
+**Symptom:** Cross-ISA (Android aarch64 host ↔ Linux x86_64 guest) Sector Z soak after the figh-side trig fix landed. Ness jibaku play; fighters stay in perfect lockstep (`figh`/`world`/`rng`/`anim`/`eff`/`cam` byte-identical cross-peer) but the per-tick **map** hash splits: tick 1043 host `mph=0x9A840396` vs guest `mph=0xCB036590`. Masked while a fighter is fragile on the deck by the `sector_arwing_deck` synctest gate; once the player jumps **off**, the gate disengages and the still-divergent Arwing map state surfaces as `LOAD_HASH_DRIFT reason=map_mismatch` → `SYNCTEST_FAIL` (1043/1163/1399/1527) → hard `restoring live world and stopping VS session` (tick 1484). See `netplay-trimmed.log`.
+
+**Root cause:** `sys/interp.c` was **not** in the `-ffp-contract=off` matcher. The Arwing flight path drives `map_dobjs[0]->translate` through `syInterpQuad`/`syInterpCubic`; their spline evaluators (`syInterpCatromCubicSpline`, `syInterp*Bezier*`, `syInterpQuadSpline`, `syInterpGetCubicIntegralApprox`) are dense `ctrl[i]*w[i]` multiply-add polynomials. With contraction on, clang fuses these to `fmadd` on aarch64 but emits two rounded ops on x86_64 → ~1-ULP split in the raw translate. That straddles the 1/65536 grid midpoint, so the **already-present** `grSectorArwingCanonicalizeSimState` quantize (`grsector.c`, runs every forward + resim tick) snaps the two peers to *different* cells. Quantization could not fix it because the divergence is upstream of the grid; the TU had to be made bit-deterministic. `sys/objanim.c` (AObjEvent16 joint anim, what fighters use) was already matched — the spline TU used by stage motion was the gap, which is why only the map hash split.
+
+**Fix:** add `decomp/src/sys/interp\.c$` to the `SSB64_NETMENU` contraction matcher in `CMakeLists.txt`. No source change. NETMENU=OFF unaffected (the matcher is inside `if (SSB64_NETMENU)`). Verified: `interp.c.o_OPTIONS = -ffp-contract=off` in `ssb64_game` flags; full netmenu link clean.
+
+**Soak:** Sector Z VS, Android↔Linux, Ness on the Arwing deck — jump on/off repeatedly ≥60s; expect no cross-peer `mph` split and no `sector_arwing_deck` `map_mismatch` abort once the gate disengages. If it persists, next suspect is the snapshot save-vs-verify ground-fold round-trip (slot≠live within a peer) per [netrollback_map_hash_parity_2026-06-03.md](netrollback_map_hash_parity_2026-06-03.md).
 
 ## Related
 

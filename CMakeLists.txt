@@ -876,13 +876,25 @@ if (SSB64_NETMENU)
     #
     # Class B gaps (2026-06-04): gr/ (Sector Arwing orientation), sys/utils.c (syUtilsArcTan /
     # jibaku angle), sys/vector.c (syVectorAngleDiff3D); gu/sinf.c + cosf.c (double polynomial FMA).
+    #
+    # Class B gap (2026-06-04, Sector Z Arwing deck map-hash split): sys/interp.c. The Arwing flight
+    # path drives map_dobjs[0]->translate through syInterpQuad/syInterpCubic, whose spline evaluators
+    # (syInterpCatromCubicSpline, syInterp*Bezier*, syInterpGetCubicIntegralApprox) are dense
+    # ctrl[i]*w[i] multiply-add polynomials. With contraction on, clang fuses them to fmadd on aarch64
+    # (Android host) but two rounded ops on x86_64 (Linux guest); the ~1-ULP split straddles the
+    # 1/65536 grid midpoint so the already-present grSectorArwingCanonicalizeSimState quantize snaps
+    # the two peers to different cells -> map-hash-only desync (mph differs cross-peer while figh/world/
+    # rng/anim all match) and a sector_arwing_deck LOAD_HASH map_mismatch hard abort once the gate
+    # disengages. objanim.c (AObjEvent16 joint anim) was already matched; the spline TU was the gap.
+    # See docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
     foreach(_src IN LISTS SSB64_DECOMP_SOURCES)
         if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/ef/" OR
             _src MATCHES "/decomp/src/wp/" OR _src MATCHES "/decomp/src/it/" OR
             _src MATCHES "/decomp/src/mp/" OR _src MATCHES "/decomp/src/lb/" OR
             _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/gr/" OR
             _src MATCHES "/decomp/src/netplay/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
-            _src MATCHES "/decomp/src/sys/utils\\.c$" OR _src MATCHES "/decomp/src/sys/vector\\.c$")
+            _src MATCHES "/decomp/src/sys/utils\\.c$" OR _src MATCHES "/decomp/src/sys/vector\\.c$" OR
+            _src MATCHES "/decomp/src/sys/interp\\.c$")
             set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
         endif()
     endforeach()
@@ -1030,6 +1042,11 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
 endif()
 add_dependencies(ssb64_game GenerateCreditsAssets)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+	# Port TUs (lbreloc_byteswap.cpp, lbreloc_bridge.cpp) index gRelocFileTable;
+	# ensure RelocFileTable.<ver>.{h,cpp} exist before ssb64 links.
+	add_dependencies(${PROJECT_NAME} PrepareBuildInputs)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 if(SSB64_NETMENU)
     # ssb64_game: curl include paths in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).

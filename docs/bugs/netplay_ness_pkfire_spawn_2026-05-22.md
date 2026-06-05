@@ -32,6 +32,10 @@ PK Fire only spawned from `ftNessSpecialNProcAccessory` on anim `flag0`. Unlike 
 
 **Triple spawn offline:** Fireball-style latch cleared `flag1` when the owned weapon disappeared. PK Fire converts to an item quickly, so `flag1` was cleared and the frame-15 emergency path spawned again (~3 per press). Fix: latch for the entire throw; clear `flag1` only in `InitStatusVars`.
 
+## Follow-up (2026-06-05)
+
+**Self-hit on own PK Fire pillar:** Fighter items restored `owner_gobj` via `owner_gobj_id` (always 1000 for fighters), so post-rollback `ip->owner_gobj` could point at the wrong fighter and `itProcessSearchHitFighter` owner immunity failed. Fix: `syNetRbSnapResolveItemOwnerFromBlob` uses `blob->player` for `nITKindFighterStart..End` (PK Fire, Link bomb); `syNetRbSnapReconcileFighterOwnedItemOwners` rebinds live owners from `ip->player` after held-item coupling.
+
 ## Related
 
 - [`fireball_unified_spawn_2026-05-22.md`](fireball_unified_spawn_2026-05-22.md) — Mario Phase 5 pattern this mirrors.

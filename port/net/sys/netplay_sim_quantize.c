@@ -835,7 +835,7 @@ void syNetplayCanonicalizeNessPKJibakuLaunchState(GObj *fighter_gobj)
 		syNetplayQuantizeNessPKThunderPos(&fp->status_vars.ness.specialhi.pkthunder_pos);
 		fp->physics.vel_ground.x = syNetplayQuantizeF32(fp->physics.vel_ground.x);
 		syNetplayCanonicalizeNessPKJibakuSimState(fighter_gobj);
-	}
+	} 
 }
 
 void syNetplayQuantizeFighterPhysics(struct FTPhysics *physics)

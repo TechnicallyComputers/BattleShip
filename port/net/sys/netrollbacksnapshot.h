@@ -52,6 +52,11 @@ extern u32 syNetRbSnapshotFrameCommitIntervalCap(u32 default_interval);
 extern void syNetRbSnapshotReconcileLoadedItemsForVerify(u32 tick);
 /* Reconcile trail/shock effects from ring slot when sim core matches but eff hash drifted on verify. */
 extern sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 tick);
+/* Guard/Yoshi shield bubble ensure/prune/dedupe from ring slot or live (tap-churn orphan cleanup). */
+extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
+extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
+extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
+extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
 extern void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick);
 /* Live mid-sim reacquire when fighter coupling pointer was cleared but weapon still exists. */
@@ -134,6 +139,10 @@ extern s32 syNetRbEnumerateActiveEffectsSorted(struct GObj **out, s32 max, sb32 
 extern u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque);
 /* Live map digest: collision yakumono + ground fold (must match slot->hash_map at save). */
 extern u32 syNetRbSnapshotComputeMapHashLive(void);
+/* SSB64_NETPLAY_SNAPSHOT_MAP_HASH_DIAG=1: decompose kin vs ground fold on map load drift. */
+extern void syNetRbSnapshotLogMapHashDriftDiag(u32 tick);
+/* Same env: self-test immediately after ring save (stored hash vs ComputeMapHashLive). */
+extern void syNetRbSnapshotLogMapHashSaveSelfTest(u32 tick);
 #endif
 
 #ifdef PORT
@@ -155,6 +164,7 @@ extern u32 syNetRbSnapshotGetSlotHashEffect(u32 tick);
 extern void syNetRbSnapRepairStageAfterParticleResetForTick(u32 tick);
 /* TRUE during periodic synctest load+verify (live emergency restore follows). Skips twister repair entirely. */
 extern void syNetRbSnapRepairStageSetVerifyOnly(sb32 verify_only);
+extern void syNetRbSnapResetSectorArwingRepairDedup(void);
 #endif
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashesEx(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng,

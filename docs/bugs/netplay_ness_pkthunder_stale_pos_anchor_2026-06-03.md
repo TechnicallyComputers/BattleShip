@@ -1,7 +1,7 @@
 # Netplay — Ness PK Thunder stale `pkthunder_pos` anchor (2026-06-03)
 
 **Date:** 2026-06-03  
-**Status:** Fix shipped (soak pending)  
+**Status:** Revised (2026-06-04) — per-tick Hold sync reverted; jibaku keeps self-hit anchor  
 **Area:** `port/net/sys/netplay_ness_pkthunder_gate.c`, `decomp/src/ft/ftchar/ftness/ftnessspecialhi.c`
 
 ## Symptom
@@ -18,7 +18,8 @@ Vanilla only writes `status_vars.ness.specialhi.pkthunder_pos` on thunder self-c
 |-------|--------|
 | **Throw entry** | `NotifyThrowStarted`: zero `pkthunder_pos`; reset per-player stale witness flag. |
 | **Hold entry** | `NotifyHoldEntered`: cull orphan weapons, refresh from live head, then stale witness; log fighter/anchor/head coords. |
-| **Hold tick** | `syNetplayNessSyncPKThunderPosDuringHold` from ground/air Hold ProcUpdate (rollback-active only): witness then `RefreshPKThunderPosFromHead` before hold canonicalize. |
+| **Hold tick** | **Reverted 2026-06-04:** no per-tick head sync (vanilla self-hit anchor for jibaku). `SyncPKThunderPosDuringHold` = NaN probe only. |
+| **Jibaku launch** | `RefreshPKThunderPosForJibakuLaunch`: repair corrupt anchors only (`NeedsApplyRepair`); do not override valid self-hit when head has orbited. |
 | **Diag** | `pkthunder_pos_stale` witness when anchor/head delta > 128 units; `hold_enter` / `jibaku_trigger` logs include fighter + anchor + head positions. |
 
 All paths netmenu-only (`PORT && SSB64_NETMENU` + `syNetplayRollbackSemanticsActive()` on decomp hooks).
