@@ -25,6 +25,10 @@ Options:
   --summary-only      Print summary block only (no merged body)
   --diff-ticks        Report first sim_state_tick field mismatch between first two inputs
   --diff-death-rebirth  Report death/rebirth sim + gate diag mismatches (implies --diff-ticks extras)
+
+Keeps effect_xf_stale rows (always-on rate-limited + SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1 verbose), fireball_spawn paths/skips
+(WEAPON_DIAG=1), SIGSEGV/crash backtraces, and GFX stale-DL diag from the crash handler.
+Summarizes stale-xf ejects, fireball spawn/latch/retry, orphan guard_shield no_fighter prune spam.
 """
 
 from __future__ import annotations
@@ -58,6 +62,8 @@ DEFAULT_INCLUDE = [
     r"SSB64 NetSync: hyrule_twister",
     # Sector Z Arwing snapshot / restore diagnostics.
     r"SSB64 NetRbSnapshot: sector_arwing",
+    # Map hash round-trip decomposition (SSB64_NETPLAY_SNAPSHOT_MAP_HASH_DIAG=1).
+    r"SSB64 NetRbSnapshot: map_hash_",
     # Post-apply GObj link census (item/weapon/effect counts after snapshot load).
     r"SSB64 NetRbSnapshot: gobj_link_audit ",
     r"SSB64 NetRbSnapshot:",
@@ -73,6 +79,13 @@ DEFAULT_INCLUDE = [
     r"SSB64 DESYNC",
     r"SSB64 FRAME COMMIT REPORT",
     r"returning to character select",
+    # Crash / stale display-list triage (AppImage SIGSEGV + libultraship stale-DL diag).
+    r"SSB64: .*SIGSEGV",
+    r"SSB64: ---- main-thread backtrace",
+    r"SSB64: ---- registers ----",
+    r"SSB64: ---- end backtrace ----",
+    r"GFX STALE-DL DIAG",
+    r"badCmd host=",
 ]
 
 # High-volume lines that rarely help hash-drift / rollback triage.
@@ -191,6 +204,48 @@ SYNCTEST_YAMABUKI_SKIP_RE = re.compile(
 HYRULE_TWISTER_RE = re.compile(r"SSB64 NetRbSnapshot: hyrule_twister")
 GOBJ_LINK_AUDIT_RE = re.compile(
     r"SSB64 NetRbSnapshot: gobj_link_audit tick=(\d+) f=(\d+) i=(\d+) w=(\d+) ef6=(\d+) ef8=(\d+)"
+)
+EFFECT_XF_STALE_RE = re.compile(
+    r"SSB64 NetRbSnapshot: effect_xf_stale tick=(\d+) proc=(\S+) reason=(\S+) effect_gobj_id=(\d+) "
+    r"xf=(\S+) xf_owner=(\S+) particle=(\S+)"
+)
+GUARD_SHIELD_NO_FIGHTER_RE = re.compile(
+    r"SSB64 NetRbSnapshot: guard_shield_prune tick=0 path=eject reason=no_fighter effect_gobj_id=(\d+)"
+)
+CRASH_SIGSEGV_RE = re.compile(r"SSB64: .*SIGSEGV fault_addr=")
+STALE_DL_BAD_CMD_RE = re.compile(r"badCmd host=(\S+) class=(\S+) frame=(\d+)")
+FIREBALL_SPAWN_PATH_RE = re.compile(
+    r"SSB64 NetRbSnapshot: fireball_spawn path=(\S+) owner_player=(\d+)"
+)
+FIREBALL_SPAWN_SKIP_RE = re.compile(
+    r"SSB64 NetRbSnapshot: fireball_spawn skip=(\S+) owner_player=(\d+) status=(\d+)"
+)
+MAP_HASH_DRIFT_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_drift tick=(\d+) slot_stored=0x([0-9A-Fa-f]+) live_full=0x([0-9A-Fa-f]+) "
+    r"kin=0x([0-9A-Fa-f]+) ground_fold_slot=0x([0-9A-Fa-f]+) ground_fold_scratch=0x([0-9A-Fa-f]+) "
+    r"hash_kin_plus_slot_ground=0x([0-9A-Fa-f]+) hash_kin_plus_scratch_ground=0x([0-9A-Fa-f]+)"
+)
+MAP_HASH_GROUND_PAYLOAD_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_ground_payload tick=(\d+) gkind=(\d+) slot_len=(\d+) "
+    r"scratch_len=(\d+) match=(\d+) first_off=(-?\d+)"
+)
+MAP_HASH_YAKU1_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_yaku1 tick=(\d+) live_tx=([-0-9.eE+]+) ty=([-0-9.eE+]+) tz=([-0-9.eE+]+) "
+    r"live_sx=([-0-9.eE+]+) sy=([-0-9.eE+]+) sz=([-0-9.eE+]+) blob_tx=([-0-9.eE+]+) ty=([-0-9.eE+]+) "
+    r"tz=([-0-9.eE+]+) blob_sx=([-0-9.eE+]+) sy=([-0-9.eE+]+) sz=([-0-9.eE+]+) user_live=(\d+) "
+    r"user_blob=(\d+) mp_tic_live=(\d+) mp_tic_slot=(\d+)"
+)
+MAP_HASH_ARWING_D0_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_arwing_d0 tick=(\d+) live_frame=([-0-9.eE+]+) wait=([-0-9.eE+]+) "
+    r"tx=([-0-9.eE+]+) ty=([-0-9.eE+]+) blob_tx=([-0-9.eE+]+) ty=([-0-9.eE+]+) status=(\d+) "
+    r"deck_derived=(\d+)"
+)
+MAP_HASH_SAVE_SELF_TEST_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_save_self_test FAIL tick=(\d+) stored=0x([0-9A-Fa-f]+) "
+    r"immediate=0x([0-9A-Fa-f]+)"
+)
+MAP_HASH_SECTOR_FIELD_RE = re.compile(
+    r"SSB64 NetRbSnapshot: map_hash_sector_field tick=(\d+) field=(\S+) slot=(\S+) live=(\S+)"
 )
 GATE_ANIM_TRA_I_RE = re.compile(r"SSB64: gcPlayDObjAnimJoint - TraI ")
 # Ness PK Thunder / jibaku gate (SSB64_NETPLAY_NESS_PKTHUNDER_GATE_DIAG=1).
@@ -839,6 +894,41 @@ def collapse_ness_pkthunder_stall_lines(lines: list[str]) -> tuple[list[str], in
     return out, collapsed
 
 
+def _ness_pkthunder_parse_xy_pair(raw: str) -> tuple[float, float] | None:
+    """Parse dist=(x,y) or dist_root=(x,y) tail values from gate logs."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+    parts = s.split(",", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+
+
+def _ness_pkthunder_note_vertical_plunge_suspect(
+    suspects: list[str],
+    tick_s: str,
+    fields: dict[str, str],
+    event: str,
+    dist_key: str,
+) -> None:
+    """Flag near-vertical jibaku launch (|dy| at collide box edge, tiny dx)."""
+    pair = _ness_pkthunder_parse_xy_pair(fields.get(dist_key, ""))
+    if pair is None:
+        return
+    dx, dy = pair
+    if abs(dy) >= 350.0 and abs(dx) < 50.0:
+        suspects.append(
+            f"vertical_plunge tick={tick_s} player={fields.get('player', '?')} {event} "
+            f"{dist_key}=({dx:.1f},{dy:.1f})"
+        )
+
+
 def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
     """Summarize Ness PK Thunder hold/jibaku gate diagnostics."""
     events: list[tuple[str, str, dict[str, str]]] = []
@@ -853,6 +943,13 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
     holds: list[tuple[str, str, dict[str, str]]] = []
     jibakus: list[tuple[str, str, dict[str, str]]] = []
     jibaku_phases: list[tuple[str, str, dict[str, str]]] = []
+    jibaku_collides: list[tuple[str, str, dict[str, str]]] = []
+    jibaku_launch_dists: list[tuple[str, str, dict[str, str]]] = []
+    jibaku_pre_culls: list[tuple[str, str, dict[str, str]]] = []
+    jibaku_coupling_rows: list[tuple[str, str, dict[str, str]]] = []
+    pk_trail_culls: list[tuple[str, str, dict[str, str]]] = []
+    ground_snap_blocked: list[tuple[str, str, dict[str, str]]] = []
+    ground_snaps: list[tuple[str, str, dict[str, str]]] = []
     post_culls: list[tuple[str, str, dict[str, str]]] = []
     post_finishes: list[tuple[str, str, dict[str, str]]] = []
     weapon_states: list[tuple[str, str, dict[str, str]]] = []
@@ -891,6 +988,32 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
             sanitize_delay_rows.append((tick_s, event, fields))
         elif event == "jibaku_phase":
             jibaku_phases.append((tick_s, event, fields))
+        elif event == "jibaku_collide":
+            jibaku_collides.append((tick_s, event, fields))
+            _ness_pkthunder_note_vertical_plunge_suspect(suspects, tick_s, fields, "jibaku_collide", "dist_root")
+        elif event == "jibaku_launch_dist":
+            jibaku_launch_dists.append((tick_s, event, fields))
+            _ness_pkthunder_note_vertical_plunge_suspect(suspects, tick_s, fields, "jibaku_launch_dist", "dist")
+        elif event == "jibaku_pre_collide_cull":
+            jibaku_pre_culls.append((tick_s, event, fields))
+        elif event == "jibaku_coupling":
+            jibaku_coupling_rows.append((tick_s, event, fields))
+            _ness_pkthunder_note_vertical_plunge_suspect(suspects, tick_s, fields, "jibaku_coupling", "dist")
+        elif event == "pk_trail_cull":
+            pk_trail_culls.append((tick_s, event, fields))
+            try:
+                after_n = int(fields.get("weapons_after", "0"))
+                if after_n <= 1 and int(fields.get("weapons_before", "0")) > 1:
+                    suspects.append(
+                        f"head_only_pk tick={tick_s} player={fields.get('player', '?')} site={fields.get('site', '?')} "
+                        f"before={fields.get('weapons_before', '?')} after={after_n}"
+                    )
+            except ValueError:
+                pass
+        elif event == "air_jibaku_ground_snap_blocked":
+            ground_snap_blocked.append((tick_s, event, fields))
+        elif event == "air_jibaku_ground_snap":
+            ground_snaps.append((tick_s, event, fields))
         elif event == "jibaku_post_cull":
             post_culls.append((tick_s, event, fields))
         elif event == "jibaku_post_finish":
@@ -943,7 +1066,85 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
             f"translate={ff.get('translate', '?')} vel_air={ff.get('vel_air', '?')} "
             f"(downstream of the JumpAerial airveltransn_nan; ±nan sign diverges per ISA)"
         )
-    out.append(f"    hold_enter: {len(holds)}  jibaku_trigger: {len(jibakus)}  jibaku_phase: {len(jibaku_phases)}")
+    hold_ticks = by_event.get("hold_tick", 0)
+    jibaku_couplings = by_event.get("jibaku_coupling", 0)
+    jibaku_collide_n = by_event.get("jibaku_collide", 0)
+    jibaku_launch_n = by_event.get("jibaku_launch_dist", 0)
+    procmap_defers = by_event.get("air_jibaku_procmap_defer", 0)
+    ground_snap_n = by_event.get("air_jibaku_ground_snap", 0)
+    ground_snap_blocked_n = by_event.get("air_jibaku_ground_snap_blocked", 0)
+    pk_trail_cull_n = by_event.get("pk_trail_cull", 0)
+    out.append(
+        f"    hold_enter: {len(holds)}  hold_tick: {hold_ticks}  jibaku_trigger: {len(jibakus)}  "
+        f"jibaku_collide: {jibaku_collide_n}  jibaku_launch_dist: {jibaku_launch_n}  "
+        f"jibaku_coupling: {jibaku_couplings}  procmap_defer: {procmap_defers}  jibaku_phase: {len(jibaku_phases)}"
+    )
+    out.append(
+        f"    ground_snap: {ground_snap_n}  ground_snap_blocked: {ground_snap_blocked_n}  "
+        f"pk_trail_cull: {pk_trail_cull_n}"
+    )
+    if ground_snaps:
+        gs_samples: list[str] = []
+        for tick_s, _event, fields in ground_snaps[:6]:
+            gs_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} source={fields.get('source', '?')} "
+                f"vel_air=({fields.get('vel_air', '?')}) on_floor={fields.get('on_floor', '?')}"
+            )
+        out.append(f"    ground_snap samples: {'; '.join(gs_samples)}")
+    if ground_snap_blocked:
+        blocked_by_reason: dict[str, int] = {}
+        for _tick_s, _event, fields in ground_snap_blocked:
+            reason = fields.get("reason", "?")
+            blocked_by_reason[reason] = blocked_by_reason.get(reason, 0) + 1
+        out.append(f"    ground_snap_blocked by_reason: {blocked_by_reason}")
+        gb_samples: list[str] = []
+        for tick_s, _event, fields in ground_snap_blocked[:6]:
+            gb_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} reason={fields.get('reason', '?')} "
+                f"vel_air=({fields.get('vel_air', '?')}) floor_flags=0x{fields.get('floor_flags', '?')}"
+            )
+        out.append(f"    ground_snap_blocked samples: {'; '.join(gb_samples)}")
+    if pk_trail_culls:
+        pt_samples: list[str] = []
+        for tick_s, _event, fields in pk_trail_culls[:8]:
+            pt_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} site={fields.get('site', '?')} "
+                f"before={fields.get('weapons_before', '?')} after={fields.get('weapons_after', '?')}"
+            )
+        out.append(f"    pk_trail_cull samples: {'; '.join(pt_samples)}")
+    if jibaku_pre_culls:
+        out.append(f"    jibaku_pre_collide_cull: {len(jibaku_pre_culls)}")
+        pc_samples: list[str] = []
+        for tick_s, _event, fields in jibaku_pre_culls[:6]:
+            pc_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} before={fields.get('weapons_before', '?')} "
+                f"after={fields.get('weapons_after', '?')}"
+            )
+        out.append(f"    jibaku_pre_collide_cull samples: {'; '.join(pc_samples)}")
+    if jibaku_collides:
+        jc_samples: list[str] = []
+        for tick_s, _event, fields in jibaku_collides[:6]:
+            jc_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} dist_root={fields.get('dist_root', '?')} "
+                f"dist_topn={fields.get('dist_topn', '?')} head={fields.get('head', '?')}"
+            )
+        out.append(f"    jibaku_collide samples: {'; '.join(jc_samples)}")
+    if jibaku_launch_dists:
+        jl_samples: list[str] = []
+        for tick_s, _event, fields in jibaku_launch_dists[:6]:
+            jl_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} dist={fields.get('dist', '?')} "
+                f"vel_air=({fields.get('vel_air', '?')}) src={fields.get('launch_src', '?')}"
+            )
+        out.append(f"    jibaku_launch_dist samples: {'; '.join(jl_samples)}")
+    if jibaku_coupling_rows:
+        cp_samples: list[str] = []
+        for tick_s, _event, fields in jibaku_coupling_rows[:6]:
+            cp_samples.append(
+                f"tick={tick_s} p={fields.get('player', '?')} site={fields.get('site', '?')} "
+                f"dist={fields.get('dist', '?')} vel_air=({fields.get('vel_air', '?')})"
+            )
+        out.append(f"    jibaku_coupling samples: {'; '.join(cp_samples)}")
     if sanitize_gravity_rows or sanitize_delay_rows:
         out.append(
             f"    sanitize: delay={len(sanitize_delay_rows)} gravity={len(sanitize_gravity_rows)} "
@@ -1048,13 +1249,204 @@ def collect_ness_pkthunder_summary(lines: list[str]) -> list[str]:
         out.append(f"    jibaku samples: {'; '.join(samples)}")
         if len(jibakus) > 6:
             out.append(f"    ... +{len(jibakus) - 6} more jibaku_trigger rows")
-    if suspects:
-        out.append(f"    SUSPECT instant/early jibaku: {len(suspects)}")
-        for s in suspects[:8]:
+    plunge = [s for s in suspects if s.startswith("vertical_plunge ")]
+    head_only = [s for s in suspects if s.startswith("head_only_pk ")]
+    other_suspects = [
+        s for s in suspects if not s.startswith("vertical_plunge ") and not s.startswith("head_only_pk ")
+    ]
+    if head_only:
+        out.append(f"    SUSPECT head_only_pk trail cull: {len(head_only)}")
+        for s in head_only[:8]:
             out.append(f"      {s}")
-        if len(suspects) > 8:
-            out.append(f"      ... +{len(suspects) - 8} more")
+        if len(head_only) > 8:
+            out.append(f"      ... +{len(head_only) - 8} more")
+    if plunge:
+        out.append(f"    SUSPECT vertical_plunge jibaku: {len(plunge)}")
+        for s in plunge[:8]:
+            out.append(f"      {s}")
+        if len(plunge) > 8:
+            out.append(f"      ... +{len(plunge) - 8} more")
+    if other_suspects:
+        out.append(f"    SUSPECT instant/early jibaku: {len(other_suspects)}")
+        for s in other_suspects[:8]:
+            out.append(f"      {s}")
+        if len(other_suspects) > 8:
+            out.append(f"      ... +{len(other_suspects) - 8} more")
     return out
+
+
+def collect_effect_xf_stale_summary(lines: list[str]) -> list[str]:
+    """Summarize stale LBTransform ejects from particle-backed effect procs (SNAPSHOT_EFFECT_DIAG=1)."""
+    rows: list[tuple[str, ...]] = []
+    for ln in lines:
+        m = EFFECT_XF_STALE_RE.search(ln)
+        if m is not None:
+            rows.append(m.groups())
+    if not rows:
+        return []
+    out: list[str] = []
+    by_reason: dict[str, int] = {}
+    by_proc: dict[str, int] = {}
+    for r in rows:
+        by_proc[r[1]] = by_proc.get(r[1], 0) + 1
+        by_reason[r[2]] = by_reason.get(r[2], 0) + 1
+    first = rows[0]
+    out.append(
+        f"    effect_xf_stale rows: {len(rows)} by_proc={by_proc} by_reason={by_reason} "
+        f"first tick={first[0]} proc={first[1]} reason={first[2]} gobj_id={first[3]}"
+    )
+    owner_mismatch = [r for r in rows if r[2] == "owner_mismatch"]
+    if owner_mismatch:
+        out.append(
+            f"    effect_xf_stale owner_mismatch: {len(owner_mismatch)} "
+            f"(UAF — xf likely recycled into Gfx DL memory)"
+        )
+    return out
+
+
+def collect_fireball_spawn_summary(lines: list[str]) -> list[str]:
+    """Summarize Mario/Luigi fireball spawn helper (SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1)."""
+    by_path: dict[str, int] = {}
+    by_skip: dict[str, int] = {}
+    for ln in lines:
+        m = FIREBALL_SPAWN_PATH_RE.search(ln)
+        if m is not None:
+            by_path[m.group(1)] = by_path.get(m.group(1), 0) + 1
+            continue
+        m = FIREBALL_SPAWN_SKIP_RE.search(ln)
+        if m is not None:
+            by_skip[m.group(1)] = by_skip.get(m.group(1), 0) + 1
+    if not by_path and not by_skip:
+        return []
+    out: list[str] = []
+    out.append(f"    fireball_spawn paths: {sum(by_path.values())} by_path={by_path}")
+    if by_skip:
+        out.append(f"    fireball_spawn skips: {sum(by_skip.values())} by_skip={by_skip}")
+    latch_clear = by_skip.get("latch_clear", 0)
+    latched = by_skip.get("latched", 0)
+    emergency = by_path.get("emergency", 0)
+    retry = by_path.get("retry", 0)
+    anim = by_path.get("anim", 0)
+    if latch_clear:
+        out.append(
+            f"    fireball mid-throw latch_clear: {latch_clear} "
+            f"(ball lost after latch — retry path should follow as path=retry)"
+        )
+    if retry:
+        out.append(f"    fireball path=retry: {retry} (mid-throw recovery spawns)")
+    if emergency and anim:
+        out.append(
+            f"    SUSPECT fireball emergency+anim mix: emergency={emergency} anim={anim} "
+            f"(same session — check for double spawn per B)"
+        )
+    if latched > 200:
+        out.append(
+            f"    fireball skip=latched spam: {latched} rows "
+            f"(expected after spawn; empty throws if weapon_count=0 persists while latched)"
+        )
+    return out
+
+
+def collect_guard_shield_no_fighter_summary(lines: list[str]) -> list[str]:
+    """Summarize orphan guard-shield prune spam (effect GObj with no live fighter coupling)."""
+    ids: dict[str, int] = {}
+    for ln in lines:
+        m = GUARD_SHIELD_NO_FIGHTER_RE.search(ln)
+        if m is not None:
+            ids[m.group(1)] = ids.get(m.group(1), 0) + 1
+    if not ids:
+        return []
+    out: list[str] = []
+    out.append(f"    guard_shield no_fighter prune rows: {sum(ids.values())} by_gobj_id={ids}")
+    return out
+
+
+def collect_crash_summary(lines: list[str]) -> list[str]:
+    """Summarize SIGSEGV + stale-DL crash-handler lines."""
+    sigsegv = [ln for ln in lines if CRASH_SIGSEGV_RE.search(ln)]
+    backtrace = [ln for ln in lines if "main-thread backtrace" in ln]
+    stale_dl = [ln for ln in lines if STALE_DL_BAD_CMD_RE.search(ln)]
+    if not sigsegv and not backtrace and not stale_dl:
+        return []
+    out: list[str] = []
+    if sigsegv:
+        out.append(f"    SIGSEGV lines: {len(sigsegv)} last={sigsegv[-1].strip()[:160]}")
+    if backtrace:
+        out.append(f"    crash backtrace lines: {len(backtrace)} last={backtrace[-1].strip()[:160]}")
+    if stale_dl:
+        m = STALE_DL_BAD_CMD_RE.search(stale_dl[-1])
+        if m is not None:
+            out.append(
+                f"    stale-DL badCmd: frame={m.group(3)} host={m.group(1)} "
+                f"(fault addr often matches xf UAF into DL arena)"
+            )
+    return out
+
+
+def effect_xf_stale_signature(line: str) -> str | None:
+    m = EFFECT_XF_STALE_RE.search(line)
+    if m is None:
+        return None
+    return f"xfstale:proc={m.group(2)},reason={m.group(3)},gobj={m.group(4)}"
+
+
+def collapse_effect_xf_stale_lines(lines: list[str]) -> tuple[list[str], int]:
+    counts: dict[str, int] = {}
+    for ln in lines:
+        sig = effect_xf_stale_signature(ln)
+        if sig is not None:
+            counts[sig] = counts.get(sig, 0) + 1
+    out: list[str] = []
+    seen: set[str] = set()
+    collapsed = 0
+    for ln in lines:
+        sig = effect_xf_stale_signature(ln)
+        if sig is None:
+            out.append(ln)
+            continue
+        if sig in seen:
+            continue
+        seen.add(sig)
+        n = counts.get(sig, 1)
+        if n > 1:
+            out.append(f"{ln}  (... repeated {n - 1} more times with same proc/reason/gobj_id)")
+            collapsed += n - 1
+        else:
+            out.append(ln)
+    return out, collapsed
+
+
+def guard_shield_no_fighter_signature(line: str) -> str | None:
+    m = GUARD_SHIELD_NO_FIGHTER_RE.search(line)
+    if m is None:
+        return None
+    return f"shield_orphan:gobj={m.group(1)}"
+
+
+def collapse_guard_shield_no_fighter_lines(lines: list[str]) -> tuple[list[str], int]:
+    counts: dict[str, int] = {}
+    for ln in lines:
+        sig = guard_shield_no_fighter_signature(ln)
+        if sig is not None:
+            counts[sig] = counts.get(sig, 0) + 1
+    out: list[str] = []
+    seen: set[str] = set()
+    collapsed = 0
+    for ln in lines:
+        sig = guard_shield_no_fighter_signature(ln)
+        if sig is None:
+            out.append(ln)
+            continue
+        if sig in seen:
+            continue
+        seen.add(sig)
+        n = counts.get(sig, 1)
+        if n > 1:
+            out.append(f"{ln}  (... repeated {n - 1} more times)")
+            collapsed += n - 1
+        else:
+            out.append(ln)
+    return out, collapsed
 
 
 def collect_gobj_link_audit_summary(lines: list[str]) -> list[str]:
@@ -1245,6 +1637,151 @@ def collect_hash_drift_summary(lines: list[str]) -> list[str]:
     return out
 
 
+def collect_map_hash_drift_summary(lines: list[str]) -> list[str]:
+    """Summarize SSB64_NETPLAY_SNAPSHOT_MAP_HASH_DIAG map hash decomposition."""
+    out: list[str] = []
+    drifts: list[dict[str, str]] = []
+    ground_payloads: list[tuple[str, str, str]] = []
+    yaku1_rows: list[tuple[str, float, float, float, float, str, str]] = []
+    arwing_rows: list[tuple[str, float, float]] = []
+    save_self_tests: list[tuple[str, str, str]] = []
+    sector_fields: list[tuple[str, str, str, str]] = []
+
+    for ln in lines:
+        m = MAP_HASH_DRIFT_RE.search(ln)
+        if m is not None:
+            drifts.append(
+                {
+                    "tick": m.group(1),
+                    "slot_stored": m.group(2).upper(),
+                    "live_full": m.group(3).upper(),
+                    "kin": m.group(4).upper(),
+                    "ground_fold_slot": m.group(5).upper(),
+                    "ground_fold_scratch": m.group(6).upper(),
+                    "hash_kin_plus_slot_ground": m.group(7).upper(),
+                    "hash_kin_plus_scratch_ground": m.group(8).upper(),
+                }
+            )
+            continue
+        m = MAP_HASH_GROUND_PAYLOAD_RE.search(ln)
+        if m is not None:
+            ground_payloads.append((m.group(1), m.group(5), m.group(6)))
+            continue
+        m = MAP_HASH_YAKU1_RE.search(ln)
+        if m is not None:
+            live_tx = float(m.group(2))
+            blob_tx = float(m.group(8))
+            live_ty = float(m.group(3))
+            blob_ty = float(m.group(9))
+            yaku1_rows.append(
+                (
+                    m.group(1),
+                    abs(live_tx - blob_tx),
+                    abs(live_ty - blob_ty),
+                    live_tx,
+                    blob_tx,
+                    m.group(14),
+                    m.group(15),
+                )
+            )
+            continue
+        m = MAP_HASH_ARWING_D0_RE.search(ln)
+        if m is not None:
+            live_tx = float(m.group(4))
+            blob_tx = float(m.group(6))
+            arwing_rows.append((m.group(1), abs(live_tx - blob_tx), live_tx))
+            continue
+        m = MAP_HASH_SAVE_SELF_TEST_RE.search(ln)
+        if m is not None:
+            save_self_tests.append((m.group(1), m.group(2).upper(), m.group(3).upper()))
+            continue
+        m = MAP_HASH_SECTOR_FIELD_RE.search(ln)
+        if m is not None:
+            sector_fields.append((m.group(1), m.group(2), m.group(3), m.group(4)))
+
+    if not (
+        drifts
+        or ground_payloads
+        or yaku1_rows
+        or arwing_rows
+        or save_self_tests
+        or sector_fields
+    ):
+        return out
+
+    if drifts:
+        ticks = sorted({d["tick"] for d in drifts}, key=int)
+        out.append(f"    map_hash_drift rows: {len(drifts)} unique_ticks={len(ticks)}")
+        out.append(
+            f"    map_hash_drift ticks: {','.join(ticks[:8])}"
+            + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+        )
+        slot_live_mismatch = sum(1 for d in drifts if d["slot_stored"] != d["live_full"])
+        kin_scratch_live = sum(
+            1 for d in drifts if d["hash_kin_plus_scratch_ground"] == d["live_full"]
+        )
+        kin_slot_live = sum(1 for d in drifts if d["hash_kin_plus_slot_ground"] == d["live_full"])
+        ground_fold_match = sum(
+            1 for d in drifts if d["ground_fold_slot"] == d["ground_fold_scratch"]
+        )
+        out.append(
+            f"    map_hash_drift attribution: slot_stored!=live_full={slot_live_mismatch}/"
+            f"{len(drifts)} kin_plus_scratch==live_full={kin_scratch_live}/{len(drifts)} "
+            f"kin_plus_slot==live_full={kin_slot_live}/{len(drifts)} "
+            f"ground_fold_slot==scratch={ground_fold_match}/{len(drifts)}"
+        )
+        sample = drifts[0]
+        out.append(
+            f"    map_hash_drift sample tick={sample['tick']}: slot_stored=0x{sample['slot_stored']} "
+            f"live_full=0x{sample['live_full']} kin=0x{sample['kin']} "
+            f"ground_fold=0x{sample['ground_fold_slot']}"
+        )
+
+    if ground_payloads:
+        mismatch = [row for row in ground_payloads if row[1] == "0"]
+        out.append(
+            f"    map_hash_ground_payload rows: {len(ground_payloads)} match=0 rows={len(mismatch)}"
+        )
+        if mismatch:
+            ticks = sorted({row[0] for row in mismatch}, key=int)
+            out.append(
+                f"    map_hash_ground_payload mismatch ticks: {','.join(ticks[:8])}"
+                + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+            )
+
+    if sector_fields:
+        by_field: dict[str, int] = {}
+        for _, field, _, _ in sector_fields:
+            by_field[field] = by_field.get(field, 0) + 1
+        out.append(f"    map_hash_sector_field rows: {len(sector_fields)} by_field={by_field}")
+
+    if yaku1_rows:
+        max_tx = max(yaku1_rows, key=lambda row: row[1])
+        user_mismatch = sum(1 for row in yaku1_rows if row[5] != row[6])
+        out.append(
+            f"    map_hash_yaku1 rows: {len(yaku1_rows)} user_live!=user_blob={user_mismatch} "
+            f"max_tx_delta={max_tx[1]:.3f} tick={max_tx[0]} live_tx={max_tx[3]:.3f} "
+            f"blob_tx={max_tx[4]:.3f}"
+        )
+
+    if arwing_rows:
+        max_tx = max(arwing_rows, key=lambda row: row[1])
+        out.append(
+            f"    map_hash_arwing_d0 rows: {len(arwing_rows)} max_tx_delta={max_tx[1]:.3f} "
+            f"tick={max_tx[0]} live_tx={max_tx[2]:.3f}"
+        )
+
+    if save_self_tests:
+        ticks = sorted({row[0] for row in save_self_tests}, key=int)
+        out.append(f"    map_hash_save_self_test FAIL rows: {len(save_self_tests)}")
+        out.append(
+            f"    map_hash_save_self_test FAIL ticks: {','.join(ticks[:8])}"
+            + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+        )
+
+    return out
+
+
 def collect_rollback_stall_summary(lines: list[str]) -> list[str]:
     out: list[str] = []
     resim_lines = [ln for ln in lines if RESIM_COMPLETE_RE.search(ln)]
@@ -1271,6 +1808,7 @@ def collect_rollback_stall_summary(lines: list[str]) -> list[str]:
         worst_tick, worst_n = max(r_fc.items(), key=lambda kv: kv[1])
         out.append(f"    max R-stall frame_commit_diag: tick={worst_tick} count={worst_n}")
     out.extend(collect_hash_drift_summary(lines))
+    out.extend(collect_map_hash_drift_summary(lines))
     return out
 
 
@@ -1515,6 +2053,10 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
         out.extend(collect_hyrule_twister_summary(lg.kept))
         out.extend(collect_ness_pkthunder_summary(lg.kept))
         out.extend(collect_gobj_link_audit_summary(lg.kept))
+        out.extend(collect_effect_xf_stale_summary(lg.kept))
+        out.extend(collect_fireball_spawn_summary(lg.kept))
+        out.extend(collect_guard_shield_no_fighter_summary(lg.kept))
+        out.extend(collect_crash_summary(lg.kept))
         tra_i_count = sum(1 for ln in lg.kept if GATE_ANIM_TRA_I_RE.search(ln))
         if tra_i_count:
             out.append(f"    gate TraI apply trace rows: {tra_i_count} (SSB64: gcPlayDObjAnimJoint)")
@@ -1527,6 +2069,8 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
             or lg.collapse_stats.get("yamabuki_hitokage_collapsed", 0)
             or lg.collapse_stats.get("ness_pkthunder_stall_collapsed", 0)
             or lg.collapse_stats.get("netstatusvars_collapsed", 0)
+            or lg.collapse_stats.get("effect_xf_stale_collapsed", 0)
+            or lg.collapse_stats.get("guard_shield_no_fighter_collapsed", 0)
         ):
             out.append(
                 f"    collapsed repeats: r_stall={lg.collapse_stats.get('r_stall_collapsed', 0)} "
@@ -1536,7 +2080,9 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
                 f"yamabuki_gate_node={lg.collapse_stats.get('yamabuki_gate_node_collapsed', 0)} "
                 f"yamabuki_hitokage={lg.collapse_stats.get('yamabuki_hitokage_collapsed', 0)} "
                 f"ness_pkthunder_stall={lg.collapse_stats.get('ness_pkthunder_stall_collapsed', 0)} "
-                f"netstatusvars={lg.collapse_stats.get('netstatusvars_collapsed', 0)}"
+                f"netstatusvars={lg.collapse_stats.get('netstatusvars_collapsed', 0)} "
+                f"effect_xf_stale={lg.collapse_stats.get('effect_xf_stale_collapsed', 0)} "
+                f"guard_shield_no_fighter={lg.collapse_stats.get('guard_shield_no_fighter_collapsed', 0)}"
             )
     out.append("")
     return out
@@ -1840,6 +2386,12 @@ def main() -> int:
         netstatusvars_collapsed: int
         lg.kept, netstatusvars_collapsed = collapse_netstatusvars_lines(lg.kept)
         lg.collapse_stats["netstatusvars_collapsed"] = netstatusvars_collapsed
+        xf_stale_collapsed: int
+        lg.kept, xf_stale_collapsed = collapse_effect_xf_stale_lines(lg.kept)
+        lg.collapse_stats["effect_xf_stale_collapsed"] = xf_stale_collapsed
+        shield_orphan_collapsed: int
+        lg.kept, shield_orphan_collapsed = collapse_guard_shield_no_fighter_lines(lg.kept)
+        lg.collapse_stats["guard_shield_no_fighter_collapsed"] = shield_orphan_collapsed
         lg.lines_kept = len(lg.kept)
 
     summary = build_summary(logs)

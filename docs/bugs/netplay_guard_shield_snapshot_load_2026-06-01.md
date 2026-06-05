@@ -32,7 +32,7 @@ Same class as [Fox reflector wrong-fighter coupling](netplay_fox_speciallw_snaps
 | `syNetRbSnapFindLiveShieldEffectForFighter` | Rebind after respawn assigns new GObj id |
 | Load finalize | Guard-scope early `RebindFighterEffectGobjs` before joint anim reapply |
 | `syNetSyncHashActiveEffectsForRollback` | Fold shield `player` + `is_damage_shield` |
-| `syNetRbSnapshotSynctestShouldSkip` | Defer synctest during active guard (`reason=guard_shield`) |
+| Phase 11 (2026-06-05) | Removed synctest `guard_shield` defer — load path is blob-authoritative (see tap-churn doc) |
 
 ## Verify
 

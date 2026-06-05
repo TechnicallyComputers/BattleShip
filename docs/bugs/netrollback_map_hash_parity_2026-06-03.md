@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-03  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netsync.c`, `port/net/sys/netplay_sim_quantize.c`, `decomp/src/gr/grcommon/grsector.c`  
-**Status:** FIX SHIPPED — synctest soak pending
+**Status:** FIX SHIPPED — follow-up kin instant + repair dedup in [netrollback_map_hash_save_verify_kin_2026-06-04.md](netrollback_map_hash_save_verify_kin_2026-06-04.md)
 
 ## Symptoms
 

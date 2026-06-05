@@ -19,7 +19,7 @@ Hold timing on successful jibakus was vanilla-shaped (`delay=30`, 50–73 hold f
 | Layer | Change |
 |-------|--------|
 | **Hold early exit** | `event=hold_early_exit` from ground/air Hold ProcUpdate when thunder is destroyed and delays expired (`reason=thunder_destroy`). |
-| **Ground snap guard** | `ShouldBlockAirJibakuGroundSnap` also blocks when `floor_flags & MAP_VERTEX_COLL_PASS` and `vel_air.y > -15` (`pass_floor_shallow_descent`). |
+| **Ground snap guard** | `ShouldBlockAirJibakuGroundSnap` blocks descending air jibaku on pass/cliff vertex floors (`MAP_VERTEX_COLL_PASS \| MAP_VERTEX_COLL_CLIFF`, `vel_y <= 0`, not ledge `mask_stat`); launch guard 8 ticks; post-cull grace 4 ticks. |
 | **pkthunder_pos (2026-06 follow-up)** | Removed live Hold apply refresh; jibaku-only `RefreshPKThunderPosForJibakuLaunch` before angle calc. |
 | **Gravity delay (2026-06 follow-up)** | Re-arm on Hold entry / ground-air switch / apply sanitize — **netplay session only** (`syNetplayRollbackSemanticsActive`). |
 | **Map hash (2026-06 follow-up)** | Arwing yakumono reconcile before live/save map hash (rollback path only). |

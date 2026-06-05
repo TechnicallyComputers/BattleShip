@@ -62,6 +62,17 @@ extern void syNetplayNessSyncPKThunderPosDuringHold(struct GObj *fighter_gobj);
 
 extern void syNetplayNessPrepareHoldSelfHitCoupling(struct GObj *fighter_gobj);
 
+extern void syNetplayNessPrepareJibakuCoupling(struct GObj *fighter_gobj, struct FTStruct *fp);
+
+extern void syNetplayNessNotifyJibakuCollide(struct GObj *fighter_gobj, struct FTStruct *fp);
+
+extern void syNetplayNessNotifyJibakuLaunchDist(struct GObj *fighter_gobj, struct FTStruct *fp, f32 dist_x,
+                                               f32 dist_y);
+
+extern void syNetplayNessNotifyJibakuCouplingSample(struct GObj *fighter_gobj, struct FTStruct *fp, const char *site);
+
+extern void syNetplayNessNotifyAirJibakuProcMapDefer(struct GObj *fighter_gobj, struct FTStruct *fp);
+
 extern void syNetplayNessRefreshPKThunderPosForJibakuLaunch(struct GObj *fighter_gobj, struct FTStruct *fp);
 
 extern void syNetplayNessRefreshPKThunderPosInBlobFromHead(struct GObj *fighter_gobj, struct FTStruct *fp,
@@ -111,6 +122,11 @@ extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStr
 #define syNetplayNessRefreshPKThunderPosFromHead(fighter_gobj, fp) ((void)0)
 #define syNetplayNessSyncPKThunderPosDuringHold(fighter_gobj) ((void)0)
 #define syNetplayNessPrepareHoldSelfHitCoupling(fighter_gobj) ((void)0)
+#define syNetplayNessPrepareJibakuCoupling(fighter_gobj, fp) ((void)0)
+#define syNetplayNessNotifyJibakuCollide(fighter_gobj, fp) ((void)0)
+#define syNetplayNessNotifyJibakuLaunchDist(fighter_gobj, fp, dist_x, dist_y) ((void)0)
+#define syNetplayNessNotifyJibakuCouplingSample(fighter_gobj, fp, site) ((void)0)
+#define syNetplayNessNotifyAirJibakuProcMapDefer(fighter_gobj, fp) ((void)0)
 #define syNetplayNessRefreshPKThunderPosForJibakuLaunch(fighter_gobj, fp) ((void)0)
 #define syNetplayNessRefreshPKThunderPosInBlobFromHead(fighter_gobj, fp, blob_status_vars) ((void)0)
 #define syNetplayNessShouldDeferPKThunderHeadProcTeardown(wp) (FALSE)

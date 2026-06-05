@@ -54,7 +54,6 @@ static sb32 sSYNetInputRemoteAnalogOnsetPredEnvCache = -999;
 /* Raw analog without quantize: wider defaults avoid first-gesture GGPO over correction. */
 #define SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT 12
 #define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 14
-#define SYNETINPUT_NEUTRAL_GUARD_TICKS_DEFAULT 3
 #define SYNETINPUT_ANALOG_ONSET_STICK_MAG_DEFAULT 28
 #define SYNETINPUT_ANALOG_ONSET_STICK_MAG_MAX 80
 #define SYNETINPUT_ANALOG_ONSET_LOOKBACK_DEFAULT 60
@@ -65,7 +64,6 @@ static sb32 sSYNetInputRemoteAnalogOnsetPredEnvCache = -999;
 #define SYNETINPUT_ANALOG_ONSET_WIRE_PEEK_AHEAD_DEFAULT 8U
 static s32 sSYNetInputGgpoStickDeadband = -1;
 static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
-static s32 sSYNetInputNeutralGuardTicks = -1;
 static s32 sSYNetInputAnalogOnsetStickMag = -1;
 static s32 sSYNetInputAnalogOnsetLookback = -1;
 static s32 sSYNetInputAnalogOnsetFacingThresh = -1;
@@ -927,8 +925,6 @@ void syNetInputPromoteAllLocalAuthoritySlots(u32 tick)
 #define nSYNetRemoteAuthoritySourceWireConfirmed 1
 #define nSYNetRemoteAuthoritySourceHoldLast 2
 
-static sb32 syNetInputPredictRemoteButtonsHoldLast(void);
-
 static const char *syNetInputRemoteAuthoritySourceTag(s32 source_rank)
 {
 	switch (source_rank)
@@ -977,10 +973,7 @@ static sb32 syNetInputResolveRemoteHumanAuthorityFrameEx(s32 player, u32 tick, S
 	stick_y = 0;
 	if (last_confirmed->is_valid != FALSE)
 	{
-		if (syNetInputPredictRemoteButtonsHoldLast() != FALSE)
-		{
-			buttons = last_confirmed->buttons;
-		}
+		buttons = last_confirmed->buttons;
 		stick_x = last_confirmed->stick_x;
 		stick_y = last_confirmed->stick_y;
 	}
@@ -1415,26 +1408,6 @@ static s32 syNetInputEnvClampS32(s32 value, s32 min_v, s32 max_v)
 		return max_v;
 	}
 	return value;
-}
-
-static u32 syNetInputNeutralGuardMaxTicks(void)
-{
-	const char *env;
-	s32 parsed;
-
-	if (sSYNetInputNeutralGuardTicks >= 0)
-	{
-		return (u32)sSYNetInputNeutralGuardTicks;
-	}
-	parsed = SYNETINPUT_NEUTRAL_GUARD_TICKS_DEFAULT;
-	env = getenv("SSB64_NETPLAY_NEUTRAL_GUARD_TICKS");
-	if ((env != NULL) && (env[0] != '\0'))
-	{
-		parsed = atoi(env);
-	}
-	parsed = syNetInputEnvClampS32(parsed, 0, 3);
-	sSYNetInputNeutralGuardTicks = parsed;
-	return (u32)sSYNetInputNeutralGuardTicks;
 }
 
 static u32 syNetInputAnalogOnsetStickMag(void)
@@ -3057,40 +3030,13 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 #ifdef PORT
 static sb32 syNetInputTryGetPredictionSeedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_stick_x, s8 *out_stick_y);
-static sb32 syNetInputPredictRemoteButtonsHoldLast(void);
 static sb32 syNetInputStickLooksAnalog(s8 stick_x, s8 stick_y);
 static sb32 syNetInputStickSameAnalogIntent(s8 ax, s8 ay, s8 bx, s8 by);
-static sb32 syNetInputTryPeekRemoteAnalogForOnset(s32 player, u32 tick, u32 max_lookback, SYNetInputFrame *out_frame);
 static void syNetInputApplyAnalogPredictionDecay(s8 *stick_x, s8 *stick_y, u32 lead_ticks);
 static u32 syNetInputAnalogPredDecayTicks(void);
 #endif
 
 #ifdef PORT
-/*
- * Industry default: hold-last sticks under delay, but do not hold-last remote buttons (shield taps
- * become predicted held L). SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1 restores full hold-last.
- */
-static sb32 syNetInputPredictRemoteButtonsHoldLast(void)
-{
-	const char *env;
-	static sb32 sCached = -1;
-
-	if (sCached >= 0)
-	{
-		return (sCached != 0) ? TRUE : FALSE;
-	}
-	env = getenv("SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD");
-	if ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0))
-	{
-		sCached = 1;
-	}
-	else
-	{
-		sCached = 0;
-	}
-	return (sCached != 0) ? TRUE : FALSE;
-}
-
 static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_stick_x, s8 *out_stick_y)
 {
 	SYNetInputFrame seed;
@@ -3111,28 +3057,18 @@ static sb32 syNetInputTryGetPredictionStickSeed(s32 player, u32 tick, s8 *out_st
 static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetInputFrame *out_frame)
 {
 	SYNetInputFrame *last_confirmed = &sSYNetInputSlots[player].last_confirmed;
-	SYNetInputFrame *last_non_neutral = &sSYNetInputSlots[player].last_non_neutral;
 	u16 buttons;
 	s8 stick_x;
 	s8 stick_y;
-	u32 neutral_guard_max;
 	u32 lead_ticks;
-	u32 lookback;
 	sb32 had_stick_seed;
-	sb32 remote_recent_digital;
-	sb32 encoding_grace;
-	sb32 analog_onset_applied;
 
-	analog_onset_applied = FALSE;
 	buttons = 0;
 	stick_x = 0;
 	stick_y = 0;
 	if (last_confirmed->is_valid != FALSE)
 	{
-		if (syNetInputPredictRemoteButtonsHoldLast() != FALSE)
-		{
-			buttons = last_confirmed->buttons;
-		}
+		buttons = last_confirmed->buttons;
 		stick_x = last_confirmed->stick_x;
 		stick_y = last_confirmed->stick_y;
 	}
@@ -3164,73 +3100,6 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 			had_stick_seed = FALSE;
 		}
 	}
-	if ((last_confirmed->is_valid != FALSE) && (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE))
-	{
-		neutral_guard_max = syNetInputNeutralGuardMaxTicks();
-		lookback = syNetInputAnalogOnsetLookbackTicks();
-		if ((neutral_guard_max > 0U) && (tick > last_confirmed->tick) && (had_stick_seed == FALSE))
-		{
-			lead_ticks = tick - last_confirmed->tick;
-			if ((lead_ticks > 0U) && (lead_ticks <= neutral_guard_max))
-			{
-				if ((last_non_neutral->is_valid != FALSE) && (tick >= last_non_neutral->tick) &&
-				    ((tick - last_non_neutral->tick) <= lookback))
-				{
-					syNetInputApplyAnalogOnsetStick(&stick_x, &stick_y, last_non_neutral,
-					                                (s32)syNetInputAnalogOnsetStickMag(),
-					                                (s32)SYNETINPUT_ANALOG_ONSET_STICK_MAG_MAX);
-					analog_onset_applied = TRUE;
-					if (sSYNetInputAnalogOnsetLogBudget > 0U)
-					{
-						port_log(
-						    "SSB64 NetInput: analog_onset_predict player=%d tick=%u sx=%d sy=%d from_nn_tick=%u\n",
-						    (int)player,
-						    tick,
-						    stick_x,
-						    stick_y,
-						    last_non_neutral->tick);
-						sSYNetInputAnalogOnsetLogBudget--;
-					}
-				}
-				else
-				{
-					remote_recent_digital = syNetInputRemoteRecentEncodingIsDigital(player, tick, 4U);
-					encoding_grace =
-					    ((tick <= sSYNetInputSlots[player].remote_encoding_grace_until_tick) ? TRUE : FALSE);
-					if ((syNetInputFrameIsDigitalKeyboard(last_confirmed) != FALSE) ||
-					    (remote_recent_digital != FALSE) || (encoding_grace != FALSE))
-					{
-						stick_x = last_confirmed->stick_x;
-						stick_y = last_confirmed->stick_y;
-					}
-					else
-					{
-						SYNetInputFrame wire_peek;
-
-						if (syNetInputTryPeekRemoteAnalogForOnset(player, tick, SYNETINPUT_ANALOG_ONSET_WIRE_PEEK_FRAMES,
-						                                          &wire_peek) != FALSE)
-						{
-							syNetInputApplyAnalogOnsetStick(&stick_x, &stick_y, &wire_peek,
-							                                (s32)syNetInputAnalogOnsetStickMag(),
-							                                (s32)SYNETINPUT_ANALOG_ONSET_STICK_MAG_MAX);
-							analog_onset_applied = TRUE;
-						}
-						else if (last_confirmed->is_valid != FALSE)
-						{
-							/* Analog peer: hold-last confirmed sticks instead of predicting neutral. */
-							stick_x = last_confirmed->stick_x;
-							stick_y = last_confirmed->stick_y;
-						}
-						else
-						{
-							stick_x = 0;
-							stick_y = 0;
-						}
-					}
-				}
-			}
-		}
-	}
 	if (last_confirmed->is_valid != FALSE)
 	{
 		if (syNetInputFrameIsDigitalKeyboard(last_confirmed) != FALSE)
@@ -3256,7 +3125,7 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 		}
 	}
 	if ((sSYNetInputPredictNeutral != FALSE) && (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) == FALSE) &&
-	    (analog_onset_applied == FALSE) && (syNetInputRemoteRecentEncodingIsDigital(player, tick, 4U) != FALSE))
+	    (syNetInputRemoteRecentEncodingIsDigital(player, tick, 4U) != FALSE))
 	{
 		stick_x = 0;
 		stick_y = 0;
@@ -3271,7 +3140,7 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 		{
 			lead_ticks = 0U;
 		}
-		if ((syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) && (analog_onset_applied == FALSE) &&
+		if ((syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) &&
 		    (syNetInputFrameIsQuasiDigitalKeyboard(last_confirmed) == FALSE) &&
 		    (syNetInputStickLooksAnalog(stick_x, stick_y) == FALSE) &&
 		    (syNetInputRemoteRecentEncodingIsDigital(player, tick, 4U) != FALSE))

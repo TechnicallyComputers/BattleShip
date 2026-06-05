@@ -4946,6 +4946,10 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		                                        syNetRbSnapshotGetSlotHashAnimation(tick));
 		syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(tick);
 		syNetDesyncClassifierOnLoadHashDrift(tick);
+		if (live_m != syNetRbSnapshotGetSlotHashMap(tick))
+		{
+			syNetRbSnapshotLogMapHashDriftDiag(tick);
+		}
 		if (live_i != syNetRbSnapshotGetSlotHashItem(tick))
 		{
 			syNetSyncLogItemHashDriftDiag(tick,
@@ -4960,6 +4964,13 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 			                             syNetRbSnapshotGetSlotHashItem(tick),
 			                             live_i,
 			                             "load_hash_drift_with_items");
+		}
+		if ((sSYNetRollbackVerifyEffectHash != FALSE) &&
+		    (live_ef != syNetRbSnapshotGetSlotHashEffect(tick)))
+		{
+			syNetRbSnapshotReconcileGuardShieldEffectsAtTick(tick);
+			syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(tick);
+			live_ef = syNetSyncHashActiveEffectsForRollback();
 		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
 		                                                 live_c, live_a, live_ef) != FALSE)
@@ -5315,6 +5326,11 @@ void syNetRollbackAfterBattleUpdate(void)
 #if defined(SSB64_NETMENU)
 	syNetplayNessRunLiveJibakuCatchUpAll();
 	syNetplayRebirthCatchUpFightersTick();
+	if (syNetplayRollbackSemanticsActive() != FALSE)
+	{
+		syNetRbSnapReconcileGuardShieldEffectsLive();
+		syNetRbSnapReconcileYoshiEggLayEffectsLive();
+	}
 #endif
 	if (sSYNetRollbackResimPending != FALSE)
 	{
@@ -5383,7 +5399,6 @@ void syNetRollbackAfterBattleUpdate(void)
 				if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 				{
 					syNetRbSnapshotFinalizeLoad(probe_tick);
-					syNetRbSnapRepairStageAfterParticleResetForTick(probe_tick);
 					verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 				}
 				syNetRbSnapRepairStageSetVerifyOnly(FALSE);
@@ -6003,6 +6018,13 @@ static void syNetRollbackFinishForwardResim(void)
 	syNetRollbackEpisodeSetPhase(nSYNetRollbackEpisodePhaseLive);
 	syNetRollbackEpisodeReset();
 	sSYNetRollbackResimPending = FALSE;
+#if defined(SSB64_NETMENU)
+	if (syNetplayRollbackSemanticsActive() != FALSE)
+	{
+		syNetRbSnapReconcileGuardShieldEffectsLive();
+		syNetRbSnapReconcileYoshiEggLayEffectsLive();
+	}
+#endif
 	sSYNetRollbackResimAwaitingPeerBaseline = FALSE;
 	sSYNetRollbackResimBaselineGateOpen = FALSE;
 	sSYNetRollbackResimFromPeerSymmetric = FALSE;
