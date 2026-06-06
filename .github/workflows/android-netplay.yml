@@ -53,6 +53,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        # Gradle's externalNativeBuild invokes the same CMake rules as the
+        # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
+        # + png_to_c_array.py) needs PIL here too.
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
       - name: Install Android SDK + NDK r29
         uses: android-actions/setup-android@v3
         with:

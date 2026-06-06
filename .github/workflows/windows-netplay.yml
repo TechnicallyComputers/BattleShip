@@ -43,7 +43,12 @@ jobs:
         with:
           submodules: recursive
       - name: Install build deps
-        run: choco install ninja -y
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py import PIL.
+        # The arrow rules in CMakeLists.txt are unconditional.
+        run: |
+          choco install ninja -y
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
         shell: pwsh
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
