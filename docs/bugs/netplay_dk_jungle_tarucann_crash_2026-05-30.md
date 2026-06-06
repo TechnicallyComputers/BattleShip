@@ -57,7 +57,7 @@ No `nGRKindJungle` entry existed in `syNetRbSnapRepairStageAfterParticleReset`. 
 | `ftcommontarucann.c` | ProcPhysics rebinds barrel GObj and forces coupling repair before translate copy |
 | `netrollbacksnapshot.c` | Jungle blob v2: root/child `mobj->anim_wait` bits + valid mask |
 | `netrollbacksnapshot.c` | Restore re-anchors TaruCann rider translate from barrel root after load |
-| Env | `SSB64_NETPLAY_JUNGLE_TARUCANN_DIAG=1` logs restore pose (optional) |
+| Env | `SSB64_NETPLAY_JUNGLE_TARUCANN_DIAG=1` logs restore pose, `jungle_tarucann_occupancy` (live vs snap rider count/mask, shoot_wait/release_wait), per-rider waits, and `jungle_tarucann_orphan_shoot_suppressed` when shoot anim plays with no rider |
 
 ### Phase 4 (fire anim without launch after rollback)
 
@@ -97,6 +97,8 @@ Phase 5 soak regressed: barrel **X pinned** (`tx=3484.12` from tick ~509), **`PE
 | `grjungle.c` | Replace `mpCollisionPlayYakumonoAnim` with `grJungleRestoreTaruCannYakumonoKinematics` (zero yakumono speeds only, no anim/tic advance) |
 | `grjungle.c` | Slide re-arm: parse default joint without `gcPlayDObjAnimJoint` on restore |
 | `ftcommontarucann.c` | Orphan shoot anim → re-arm `shoot_wait=1`, launch on next `ProcUpdate` (never `ShootFighter` in reconcile) |
+| `ftcommontarucann.c` | Reconcile: in-progress `shoot_wait` syncs anim only; `release_wait >= 180` catch-up on restore; manual tap via input history; orphan shoot during countdown → fill (no `shoot_wait` arm) so auto timer reaches 180 |
+| `netrollbacksnapshot.c` | Jungle ground v3: rider count/mask, shoot_wait/release_wait, shoot_anim_active in map payload; light hash folds TaruCann waits; scrub stale tarucann overlay when not riding; resync suppresses orphan shoot anim when `live_riders=0` |
 
 ### Phase 5c (barrel anim snapshot partition — slide frozen)
 

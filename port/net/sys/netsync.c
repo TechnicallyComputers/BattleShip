@@ -5,6 +5,9 @@
 #include <ft/fighter.h>
 #include <ft/ftdef.h>
 #include <ft/ftchar/ftness/ftness.h>
+#if defined(PORT) && defined(SSB64_NETMENU)
+#include <ft/ftchar/ftkirby/ftkirby.h>
+#endif
 #include <gm/gmdef.h>
 #include <gm/gmcamera.h>
 #include <it/item.h>
@@ -254,6 +257,13 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, 0U);
 #endif
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
+	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_vars.kirby.speciallw.duration);
+	}
+#endif
 #if defined(PORT) && defined(SSB64_NETMENU)
 	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->gkind == nGRKindSector) &&
 	    (gGRCommonStruct.sector.is_arwing_line_active != FALSE) &&

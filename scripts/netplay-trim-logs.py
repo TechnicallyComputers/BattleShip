@@ -217,6 +217,9 @@ STALE_DL_BAD_CMD_RE = re.compile(r"badCmd host=(\S+) class=(\S+) frame=(\d+)")
 FIREBALL_SPAWN_PATH_RE = re.compile(
     r"SSB64 NetRbSnapshot: fireball_spawn path=(\S+) owner_player=(\d+)"
 )
+FIREBALL_CULL_STALE_RE = re.compile(
+    r"SSB64 NetRbSnapshot: fireball_spawn cull_stale owner_player=\d+ path=(\S+)"
+)
 FIREBALL_SPAWN_SKIP_RE = re.compile(
     r"SSB64 NetRbSnapshot: fireball_spawn skip=(\S+) owner_player=(\d+) status=(\d+)"
 )
@@ -1308,18 +1311,27 @@ def collect_fireball_spawn_summary(lines: list[str]) -> list[str]:
     """Summarize Mario/Luigi fireball spawn helper (SSB64_NETPLAY_SNAPSHOT_WEAPON_DIAG=1)."""
     by_path: dict[str, int] = {}
     by_skip: dict[str, int] = {}
+    cull_stale = 0
     for ln in lines:
         m = FIREBALL_SPAWN_PATH_RE.search(ln)
         if m is not None:
             by_path[m.group(1)] = by_path.get(m.group(1), 0) + 1
             continue
+        if FIREBALL_CULL_STALE_RE.search(ln) is not None:
+            cull_stale += 1
+            continue
         m = FIREBALL_SPAWN_SKIP_RE.search(ln)
         if m is not None:
             by_skip[m.group(1)] = by_skip.get(m.group(1), 0) + 1
-    if not by_path and not by_skip:
+    if not by_path and not by_skip and cull_stale == 0:
         return []
     out: list[str] = []
     out.append(f"    fireball_spawn paths: {sum(by_path.values())} by_path={by_path}")
+    if cull_stale:
+        out.append(
+            f"    fireball cull_stale: {cull_stale} "
+            f"(in-flight carry-over removed before anim/retry spawn)"
+        )
     if by_skip:
         out.append(f"    fireball_spawn skips: {sum(by_skip.values())} by_skip={by_skip}")
     latch_clear = by_skip.get("latch_clear", 0)

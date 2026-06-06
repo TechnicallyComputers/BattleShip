@@ -57,6 +57,7 @@ extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
+extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
 extern void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick);
 /* Live mid-sim reacquire when fighter coupling pointer was cleared but weapon still exists. */
@@ -188,6 +189,10 @@ extern u32 syNetRbSnapGetParticleResetGeneration(void);
 extern u32 syNetRbSnapHashCaptureYoshiEffectGobjId(const struct FTStruct *fp);
 extern void syNetRbSnapSanitizeCaptureYoshiEffectGobj(struct FTStruct *fp);
 extern void syNetRbSnapSanitizeAllFightersCaptureYoshiEffectGobjs(void);
+#if defined(SSB64_NETMENU)
+extern void syNetRbSnapQueueYoshiEggLayHatchCosmeticsLive(struct GObj *fighter_gobj);
+extern void syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics(void);
+#endif
 #endif
 
 #endif /* _SYNETRB_SNAPSHOT_H_ */
