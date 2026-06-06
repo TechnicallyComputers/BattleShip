@@ -4968,8 +4968,16 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		if ((sSYNetRollbackVerifyEffectHash != FALSE) &&
 		    (live_ef != syNetRbSnapshotGetSlotHashEffect(tick)))
 		{
-			syNetRbSnapshotReconcileGuardShieldEffectsAtTick(tick);
-			syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(tick);
+			if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
+			{
+				syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(tick);
+				syNetRbSnapshotReconcileGuardShieldEffectsAtTick(tick);
+			}
+			else
+			{
+				syNetRbSnapshotReconcileGuardShieldEffectsAtTick(tick);
+				syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(tick);
+			}
 			live_ef = syNetSyncHashActiveEffectsForRollback();
 		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
@@ -5328,8 +5336,16 @@ void syNetRollbackAfterBattleUpdate(void)
 	syNetplayRebirthCatchUpFightersTick();
 	if (syNetplayRollbackSemanticsActive() != FALSE)
 	{
-		syNetRbSnapReconcileGuardShieldEffectsLive();
-		syNetRbSnapReconcileYoshiEggLayEffectsLive();
+		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
+		{
+			syNetRbSnapReconcileYoshiEggLayEffectsLive();
+			syNetRbSnapReconcileGuardShieldEffectsLive();
+		}
+		else
+		{
+			syNetRbSnapReconcileGuardShieldEffectsLive();
+			syNetRbSnapReconcileYoshiEggLayEffectsLive();
+		}
 	}
 #endif
 	if (sSYNetRollbackResimPending != FALSE)
@@ -5338,6 +5354,9 @@ void syNetRollbackAfterBattleUpdate(void)
 	}
 	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (completed_tick <= sSYNetRollbackEpisodeResolvedThrough))
 	{
+#if defined(SSB64_NETMENU)
+		syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics();
+#endif
 		return;
 	}
 #if defined(SSB64_NETMENU)
@@ -5418,6 +5437,9 @@ void syNetRollbackAfterBattleUpdate(void)
 			}
 		}
 	}
+#if defined(SSB64_NETMENU)
+	syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics();
+#endif
 #endif
 }
 
@@ -6021,8 +6043,16 @@ static void syNetRollbackFinishForwardResim(void)
 #if defined(SSB64_NETMENU)
 	if (syNetplayRollbackSemanticsActive() != FALSE)
 	{
-		syNetRbSnapReconcileGuardShieldEffectsLive();
-		syNetRbSnapReconcileYoshiEggLayEffectsLive();
+		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
+		{
+			syNetRbSnapReconcileYoshiEggLayEffectsLive();
+			syNetRbSnapReconcileGuardShieldEffectsLive();
+		}
+		else
+		{
+			syNetRbSnapReconcileGuardShieldEffectsLive();
+			syNetRbSnapReconcileYoshiEggLayEffectsLive();
+		}
 	}
 #endif
 	sSYNetRollbackResimAwaitingPeerBaseline = FALSE;

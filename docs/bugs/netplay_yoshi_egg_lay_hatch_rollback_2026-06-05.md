@@ -1,6 +1,6 @@
 # Yoshi neutral-B egg hatch animation — rollback lifecycle — 2026-06-05
 
-**Status:** FIX SHIPPED (soak pending — phase 4: rebind-only live path, no per-tick spawn)  
+**Status:** FIX SHIPPED (soak pending — phase 9: vanilla hatch sequencing — shell vs particles-only)  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netrollback.c`
 
 ## Symptom
@@ -13,8 +13,10 @@ Logs showed `effect_apply kind=YOSHI_EGG_LAY fighter_gobj_id=0` (parent not reso
 
 1. **Egg-lay effect parent resolution** — effect blobs saved with `fighter_gobj_id=0` when `ep->fighter_gobj` was cleared; apply/respawn did not reverse-lookup victim via `captureyoshi_effect_gobj_id` (unlike guard shield `ResolveShieldParentGobj`).
 2. **Live reconcile gap** — `PruneStaleYoshiEggLayEffects` returned early when `slot==NULL`, so orphan egg-lay effects survived between rollback loads.
-3. **Hatch particles** — escape-at-save (`Fall` + escape velocity) skips `ftCommonYoshiEggProcUpdate` on load; LBParticle hatch scripts were wiped by rollback particle reset with no replay.
+3. **Hatch presentation** — escape-at-save (`Fall` + escape velocity) skips `ftCommonYoshiEggProcUpdate` on load; LBParticle hatch scripts were wiped by rollback particle reset with no replay, and the original egg-lay GObj was already absent so its break animation could not advance.
 4. **SIGSEGV in `ftCommonYoshiEggProcInterrupt`** — `no_fighter` prune ejected egg-lay GObj without clearing `captureyoshi.effect_gobj` on victim; next tick wiggled `->child == NULL` (`fault_addr=0x20`).
+5. **Replay-before-render + root mutation** — hatch replay fired during rollback load/resim, so the shell/particles could be advanced or reset before any rendered frame. Generic effect save quantization also touched the fighter-attached Yoshi egg root DObj; vanilla wiggle belongs to the child DObj, while the root must stay parent-derived from victim TopN.
+6. **Post-escape ghost shell** — live escape always queued a cosmetic shell + immediate particles on flush, even when the capture egg had already finished break anim index 1 on a visible frame. Fighter popped to Fall first, then a second full break anim replayed from frame 0.
 
 ## Fix
 
@@ -28,14 +30,25 @@ Logs showed `effect_apply kind=YOSHI_EGG_LAY fighter_gobj_id=0` (parent not reso
 | `SanitizeCaptureYoshiEffectGobj` | Validate gobj id + DObj `child` before YoshiEgg interrupt |
 | `ftCommonYoshiEggProcInterrupt` netmenu guard | Skip wiggle when egg DObj tree incomplete (rollback safety net) |
 | `ReplayYoshiEggLayHatchCosmeticsFromSlot` | Replay explode/break particles on load when blob is post-escape Fall |
-| Effect diag | `resolved_parent=` on apply; `yoshi_egg_lay_hatch_replay` lines |
+| Deferred hatch replay queue | Queue resim-detected hatch events and flush them after live battle update so shell + particles are born on a renderable frame |
+| Hatch shell cosmetic | Spawn a rollback-only egg-lay shell on the escape frame, force anim index 1, and self-eject when the break animation ends |
+| **`defer_particles` + live spawn** | Removed: visible live escape always queues break shell replay (`replay_shell=1`) with particles deferred to shell break end |
+| **`replay_shell` queue flag** | Visible live escape always replays cosmetic break shell on flush (index 1 only); resim/snapshot-apply unchanged |
+| **Prepare shell cleanup** | Reuse live egg-lay GObj: transition to hatch (index 1) via `force_index` + `SetAnim`; do not reset `anim_frame` to 0. Eject duplicate shells only (`Except(keep_gobj)`). Proc ejects after break anim completes (`anim_frame_before > 0` → `<= 0`), not on first tick |
+| **Prepare timing (netplay)** | Victim egg skips throw intro (index 2) in `ftCommonYoshiEggBeginPrepareAnimForNetplay`; hatch transition runs on escape tick via `syNetRbSnapStartYoshiEggLayHatchCosmeticLive`, not deferred flush; flush skips shell replay when hatch already complete (particles only) |
+| Hidden cosmetic marker | Keep the replay shell out of effect snapshot/hash/reconcile coupling so it never becomes `captureyoshi.effect_gobj` or causes `eff` drift |
+| Yoshi egg root quantize skip | Preserve the fighter-attached egg root DObj while still quantizing free-floating effects; captured-player stick input only wiggles the child shell |
+| Effect diag | `resolved_parent=` on apply; `yoshi_egg_lay_hatch_replay ... shell_gobj_id=` lines |
 
 ## Verify
 
 Yoshi neutral B egg lay → mash escape under rollback. Both peers should show hatch shell anim + shatter VFX every escape.
 
 - `SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1`: `resolved_parent=<victim gobj>` (not 0); prune/ensure lines during egg window.
-- Load at escape tick: `yoshi_egg_lay_hatch_replay` when Fall + escape `vel_y` signature.
+- Load at escape tick: `yoshi_egg_lay_hatch_replay` when Fall + escape `vel_y` signature. During resim, expect `deferred=1` followed by `yoshi_egg_lay_hatch_replay_flush ... shell_gobj_id != 0 replay_shell=1` on the next live frame.
+- Visible live escape after break completes: `yoshi_egg_lay_hatch_replay_flush ... replay_shell=0` (particles only, no second shell anim after Fall).
+- Visible live escape before break completes (resim-hidden break): `replay_shell=1`; particles appear when cosmetic shell break anim ends, not at flush start.
+- Captured-player stick input moves the egg child DObj only: the shell wiggles/squishes in place and no longer walks across the stage.
 - No eff-only `LOAD_HASH_DRIFT` soft-continues with frozen egg effect hash during status 178.
 
 Related: [netplay_yoshi_egg_lay_2026-06-01.md](netplay_yoshi_egg_lay_2026-06-01.md), [netplay_yoshi_egg_explode_particles_2026-06-01.md](netplay_yoshi_egg_explode_particles_2026-06-01.md).

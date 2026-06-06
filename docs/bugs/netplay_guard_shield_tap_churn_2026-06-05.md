@@ -91,6 +91,14 @@ Spam-tap shield under rollback (local player). Bubble should track body on/off.
 - Phase 31 (superseded by Phase 32): holding R to grab then shield should **hold** the shield (no GuardOn↔GuardOff spam) — matches offline. Defer lines must no longer show `is_release=1` while `z_live=1`; the authoritative schedule only fires when `z_auth=0 && z_live=0`. `figh` stays matched on every `LOAD_HASH_DRIFT` line (gate touches only the `is_release` write path, not hashed state). `release_defer` clusters during a sustained hold should disappear; `guard_shield_linger_end is_shield=0` only on a genuine release.
 - Phase 30: residual `eff` drift on **fast re-tap** (esp. Ness `p1`) should drop further. Expect `guard_shield_prune path=keep reason=slot_id_adopt` where Phase 29 would have shown `reason=unexpected_id` (eject); `reason=unexpected_id_duplicate` only when a true second bubble exists. No `effect_count>1` leak per player after the reconcile pass (dedup still keeps one). `figh` stays clean (adopt touches only `guard.effect_gobj`/`is_effect_attach`, neither in `figh`); `eff` should converge across re-tap because the bubble's `eff` fold (`shield.player`+`fighter_gobj->id`+pos) is id-independent. Same behavior for any character (no per-fkind branch).
 
+### Phase 33 (2026-06-05) — stale `is_shield` after shield+special spam blocks grab
+
+**Symptom:** After spamming shield + Z-move (special), neutral R/Z acts like shield instead of grab.
+
+**Cause:** Bubble reconcile skips ensure in `GuardSetOff` (`not_active_guard`) and heal was Wait-only. `is_shield=1` + stale `release_lag`/`is_release` could persist outside GuardOn/Guard/GuardOff; next Z/R press re-entered guard (`ftCommonGuardOnCheckInterruptSuccess`) instead of a clean grab window.
+
+**Fix:** Broaden live-forward `syNetRbSnapFighterShieldHealEligible` to clear stale body flag when Z is not held (auth **and** live) in Wait, `GuardSetOff`, or any status outside the active guard window (152–154), with no live bubble. Reset stale `is_release`/`release_lag` on heal. Active guard window and Z-held paths unchanged (vanilla owns those).
+
 ### Phase 13 resoak (2026-06-05)
 
 Solo Ness tap-spam ~tick 400–1310, synctest on:
