@@ -167,6 +167,7 @@ extern u32 syNetRbSnapshotGetSlotHashEffect(u32 tick);
 extern void syNetRbSnapRepairStageAfterParticleResetForTick(u32 tick);
 /* TRUE during periodic synctest load+verify (live emergency restore follows). Skips twister repair entirely. */
 extern void syNetRbSnapRepairStageSetVerifyOnly(sb32 verify_only);
+extern sb32 syNetRbSnapRepairStageIsVerifyOnly(void);
 extern void syNetRbSnapResetSectorArwingRepairDedup(void);
 #endif
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
