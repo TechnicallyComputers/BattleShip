@@ -4906,6 +4906,11 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	{
 		syNetRbSnapshotReapplyJointAnimAtTick(tick);
 	}
+	syNetRbSnapshotFinalizeVerifyEffectState(tick);
+	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	{
+		syNetSyncLogActiveEffectsFoldDiag("verify", tick);
+	}
 #endif
 #if defined(SSB64_NETMENU)
 	syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
@@ -5420,12 +5425,6 @@ void syNetRollbackAfterBattleUpdate(void)
 				if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 				{
 					syNetRbSnapshotPrepareLoadedSlotForVerify(probe_tick);
-					/*
-					 * Re-run blob apply + shield reconcile after joint anim reapply so parent-attached
-					 * shield translate/anim fields match the slot hash at verify time.
-					 */
-					(void)syNetRbSnapshotTryRepairEffectHashForVerify(probe_tick);
-					syNetSyncLogActiveEffectsFoldDiag("verify", probe_tick);
 					verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 				}
 				syNetRbSnapRepairStageSetVerifyOnly(FALSE);
