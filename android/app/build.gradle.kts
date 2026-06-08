@@ -49,6 +49,9 @@ val repoRoot = rootProject.projectDir.resolve("..").canonicalFile
 // Netplay APK: pass -Pssb64Netmenu=true (CI build-android-netplay job). Offline is default.
 val ssb64Netmenu: Boolean =
     project.findProperty("ssb64Netmenu")?.toString()?.equals("true", ignoreCase = true) == true
+// Alpha / soak: -Pssb64AutomatchStageKindDefault=6 bakes Dream Land automatch host stage.
+val ssb64AutomatchStageKindDefault: String? =
+    project.findProperty("ssb64AutomatchStageKindDefault")?.toString()?.takeIf { it.isNotEmpty() }
 
 /** Resolve a generated asset by checking the desktop build dir first
  *  (where new-worktree.sh symlinks main-tree outputs into build/), then
@@ -163,6 +166,9 @@ android {
                     add("-DANDROID_STL=c++_shared")
                     if (ssb64Netmenu) {
                         add("-DSSB64_NETMENU=ON")
+                        ssb64AutomatchStageKindDefault?.let { stageDefault ->
+                            add("-DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=$stageDefault")
+                        }
                     }
                 }
                 // Targets we explicitly want AGP to drive a build for.

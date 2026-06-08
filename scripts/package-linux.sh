@@ -104,6 +104,11 @@ if [[ "$IS_NETPLAY" -eq 0 ]] && [[ "$has_netmenu_off" -eq 0 ]]; then
 	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=OFF")
 fi
 
+if [[ -n "${SSB64_EXTRA_CMAKE_ARGS:-}" ]]; then
+	read -r -a _ssb64_extra_cmake <<< "$SSB64_EXTRA_CMAKE_ARGS"
+	EXTRA_CMAKE_ARGS+=("${_ssb64_extra_cmake[@]}")
+fi
+
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	BUILD_DIR="$ROOT/build-bundle-linux-netplay-$VER"
 	APPDIR="$DIST_DIR/BattleShip-Netplay.AppDir"

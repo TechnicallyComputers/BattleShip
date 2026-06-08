@@ -88,6 +88,11 @@ for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
     esac
 done
 
+if [[ -n "${SSB64_EXTRA_CMAKE_ARGS:-}" ]]; then
+    read -r -a _ssb64_extra_cmake <<< "$SSB64_EXTRA_CMAKE_ARGS"
+    EXTRA_CMAKE_ARGS+=("${_ssb64_extra_cmake[@]}")
+fi
+
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
     BUILD_DIR="$ROOT/build-bundle-macos-netplay-$VER"
 else

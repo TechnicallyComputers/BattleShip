@@ -1,0 +1,552 @@
+name: Release Alpha
+
+# Alpha channel release workflow (sibling of release.yml).
+#
+# Triggered by:
+#   - Pushing a tag matching v*-alpha* (e.g. v0.9.0-alpha, v0.9.0-alpha.1)
+#   - Manual dispatch from the GitHub UI for smoke-testing
+#
+# Netplay artifacts bake -DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=6 so automatch
+# hosts always pick Dream Land (nGRKindPupupu). Offline builds are unchanged.
+# Runtime env SSB64_NETPLAY_AUTOMATCH_STAGE_KIND still overrides the compile default.
+#
+# Platform jobs mirror release.yml: offline + netplay for macOS, Linux, Windows, Android.
+# US keeps historical artifact names; JP gets a "-jp" suffix.
+
+on:
+  push:
+    tags:
+      - 'v*-alpha*'
+  workflow_dispatch:    # manual trigger; no Release is created on dispatch-only runs
+
+env:
+  # Netplay-only: compile-time automatch host stage (Dream Land).
+  SSB64_EXTRA_CMAKE_ARGS: -DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=6
+  SSB64_ANDROID_AUTOMATCH_STAGE_KIND_DEFAULT: "6"
+
+permissions:
+  contents: write       # softprops/action-gh-release needs this on the
+                        # final job to attach assets and create the
+                        # Release. Read-only on every other step.
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # fetch-depth: 0 grabs full history + all tags in one operation.
+          # The built-in updater derives the version from `git describe
+          # --tags` at configure time; checkout@v4's default shallow clone
+          # omits tags. This used to be `fetch-tags: true`, but recent
+          # actions/checkout@v4 minor versions regressed on tag-triggered
+          # workflows — the action tries to fetch BOTH the triggering
+          # commit SHA AND refs/tags/<tag> and refuses with "Cannot fetch
+          # both <sha> and refs/tags/<tag> to refs/tags/<tag>". Using
+          # fetch-depth: 0 sidesteps the conflict.
+          fetch-depth: 0
+      - name: Install build deps
+        # libultraship's CMake calls find_package on:
+        #   libzip, nlohmann_json, tinyxml2, spdlog (libultraship/src)
+        #   SDL2, GLEW                              (mac.cmake)
+        # Local dev workflows inherit these from existing brew installs;
+        # CI hosts need them explicit. spdlog has a FetchContent fallback
+        # in mac.cmake but the others don't.
+        #
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+        # (CSS scroll-arrow PNG generation + bake-to-C-header) import PIL.
+        # The arrow rules are unconditional in CMakeLists.txt and fire on
+        # every build, so Pillow has to be present on every runner.
+        run: |
+          brew install cmake ninja \
+            sdl2 glew libzip nlohmann-json tinyxml2 spdlog \
+            zip create-dmg dylibbundler
+          python3 -m pip install --break-system-packages Pillow
+      - name: Package macOS .app + .dmg
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+        run: bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        # The .dmg is the standard drag-to-Applications installer macOS
+        # users expect. We don't ship the loose .app zip anymore — anyone
+        # wanting the bundle alone can pop the .dmg open and drag the
+        # .app out. Smaller release surface, friendlier UX.
+        with:
+          name: BattleShip-macos-${{ matrix.version }}
+          # NB: GHA `a && b || c` is not a ternary — an empty-string `b`
+          # is falsy and falls through to `c`. Keep the non-empty value
+          # in the `&&` branch and the empty default in `||`.
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}.dmg
+          if-no-files-found: error
+
+  build-macos-netplay:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py import PIL.
+        # Arrow rules are unconditional in CMakeLists.txt — same as build-macos.
+        run: |
+          brew install cmake ninja \
+            sdl2 glew libzip nlohmann-json tinyxml2 spdlog curl \
+            zip create-dmg dylibbundler ca-certificates
+          python3 -m pip install --break-system-packages Pillow
+      - name: Package macOS netplay .app + .dmg
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+          SSB64_EXTRA_CMAKE_ARGS: ${{ env.SSB64_EXTRA_CMAKE_ARGS }}
+        run: bash scripts/package-macos.sh --netplay
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-macos-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay.dmg
+          if-no-files-found: error
+
+  build-linux-netplay:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build zip clang \
+            libsdl2-dev libzip-dev libglew-dev \
+            nlohmann-json3-dev libtinyxml2-dev libspdlog-dev \
+            libcurl4-openssl-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            python3 python3-pil imagemagick file
+          # python3-pil: tools/generate_arrow_svg.py + tools/png_to_c_array.py import PIL.
+          sudo touch /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+          sudo chmod +x /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+      - name: Use clang as the C/C++ compiler
+        run: |
+          echo "CC=clang"   >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+      - name: Install AppImage tooling
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O /usr/local/bin/appimagetool
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            -O /usr/local/bin/linuxdeploy
+          chmod +x /usr/local/bin/appimagetool /usr/local/bin/linuxdeploy
+      - name: Package Linux netplay AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SSB64_VERSION: ${{ matrix.version }}
+          SSB64_EXTRA_CMAKE_ARGS: ${{ env.SSB64_EXTRA_CMAKE_ARGS }}
+        run: bash scripts/package-linux.sh --netplay
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-linux-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-x86_64.AppImage
+          if-no-files-found: error
+
+  build-linux:
+    # Build on jammy (glibc 2.35) so the AppImage runs everywhere we
+    # care about: Steam Deck (Holo, glibc 2.38), Debian 12 (2.36),
+    # Fedora 38+ (2.37+), Ubuntu 22.04+. The AppImage links against
+    # the build host's glibc — it's on linuxdeploy's excludelist, not
+    # bundled — so jammy's 2.35 sets the floor. Noble (2.39) is too
+    # new; it cuts off Steam Deck.
+    #
+    # jammy's libtinyxml2-dev ships only pkg-config metadata; the
+    # cmake/Findtinyxml2.cmake shim falls back to pkg-config and
+    # builds an IMPORTED target by hand so libultraship's
+    # find_package(tinyxml2) resolves cleanly.
+    #
+    # libzip-dev on jammy AND noble exports its CMake config with
+    # zipcmp / zipmerge / ziptool as IMPORTED EXECUTABLE targets, but
+    # neither distro packages those binaries. CMake's existence check
+    # fires at find_package() time even though we never invoke the
+    # tools — stub them with `touch + chmod +x` to bypass the check.
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # fetch-depth: 0 grabs full history + all tags in one operation.
+          # The built-in updater derives the version from `git describe
+          # --tags` at configure time; checkout@v4's default shallow clone
+          # omits tags. This used to be `fetch-tags: true`, but recent
+          # actions/checkout@v4 minor versions regressed on tag-triggered
+          # workflows — the action tries to fetch BOTH the triggering
+          # commit SHA AND refs/tags/<tag> and refuses with "Cannot fetch
+          # both <sha> and refs/tags/<tag> to refs/tags/<tag>". Using
+          # fetch-depth: 0 sidesteps the conflict.
+          fetch-depth: 0
+      - name: Install build deps
+        # libultraship find_package set: libzip, nlohmann_json, tinyxml2,
+        # spdlog, SDL2, GLEW. See header comment on the runner for the
+        # libzip CLI stub workaround.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build zip clang \
+            libsdl2-dev libzip-dev libglew-dev \
+            nlohmann-json3-dev libtinyxml2-dev libspdlog-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            python3 python3-pil imagemagick file
+          # python3-pil: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+          # import PIL.  The arrow rules in CMakeLists.txt are unconditional.
+          sudo touch /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+          sudo chmod +x /usr/bin/zipcmp /usr/bin/zipmerge /usr/bin/ziptool
+      - name: Use clang as the C/C++ compiler
+        # Match the macOS-validated Clang toolchain. GCC trips on
+        # decomp-style shadow headers (-Wint-conversion /
+        # -Wimplicit-function-declaration on va_args paths in
+        # src/sys/debug.c) that Clang accepts. Runtime is unchanged.
+        run: |
+          echo "CC=clang"   >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+      - name: Install AppImage tooling
+        # appimagetool packs an AppDir into a runnable AppImage.
+        # linuxdeploy walks the binary's NEEDED .so list, copies the
+        # actual library files into AppDir/usr/lib/ (excluding glibc /
+        # libGL / other system-driver libs per its built-in
+        # excludelist), and patches RPATH. Without this, the AppImage
+        # links dynamically against whatever .so versions happen to be
+        # on the user's distro and fails on anything but the build host.
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O /usr/local/bin/appimagetool
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            -O /usr/local/bin/linuxdeploy
+          chmod +x /usr/local/bin/appimagetool /usr/local/bin/linuxdeploy
+      - name: Package Linux AppImage
+        # APPIMAGE_EXTRACT_AND_RUN=1 lets linuxdeploy / appimagetool
+        # run without libfuse2 (some runner images ship without it).
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SSB64_VERSION: ${{ matrix.version }}
+        run: bash scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-linux-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-x86_64.AppImage
+          if-no-files-found: error
+
+  build-android:
+    # US-only — the Android pipeline (Gradle asset staging, touch overlay,
+    # ROM picker UI) has only ever been tested against the US decomp.
+    # Pinning is also enforced in CMakeLists.txt; setting SSB64_VERSION=jp
+    # on Android would FATAL out at configure time.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Same as the other jobs — fetch-tags-aware history for the
+          # BATTLESHIP_VERSION string the CMake derives from `git describe`.
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        # Gradle's externalNativeBuild invokes the same CMake rules as the
+        # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
+        # + png_to_c_array.py) needs PIL here too.
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          # Match android/app/build.gradle.kts: ndkVersion = "29.0.14206865"
+          # and compileSdk = 34. ssb64-port has confirmed r29 + API 34
+          # build clean against bionic / NDK toolchain; older NDKs trip on
+          # the ptrdiff_t shim in decomp/include/stddef.h.
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
+        # Mirrors the GenerateF3DO2R CMake target. We don't invoke the full
+        # CMake build here because Gradle's externalNativeBuild handles that;
+        # we just need the f3d.o2r file present at repo root so Gradle's
+        # stageGameAssets task picks it up at configure time. The file
+        # contents are just shaders/ packed as a ZIP — no toolchain needed.
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Decode release keystore (if configured via secrets)
+        # If SSB64_ANDROID_KEYSTORE_BASE64 is set in the repo secrets,
+        # decode it to a real .jks file and export the env vars
+        # build.gradle.kts looks for (signingProp() in app/build.gradle.kts).
+        # Otherwise Gradle falls back to debug signing — the APK still
+        # runs, it just isn't certificate-stable across releases.
+        #
+        # Secrets are routed through env: rather than referenced in a
+        # step-level if: expression. GitHub's startup-time workflow parser
+        # rejects `if: ${{ secrets.X != '' }}` because the secrets context
+        # isn't guaranteed available at that point — the workflow run
+        # comes back as "This run likely failed because of a workflow file
+        # issue" with no jobs ever scheduled. Doing the check inside the
+        # shell against an env-mapped value is the documented safe pattern.
+        env:
+          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::No release keystore secret configured; falling back to debug signing"
+            exit 0
+          fi
+          echo "$SSB64_ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+          {
+            echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"
+            echo "SSB64_RELEASE_KEYSTORE_PASSWORD=$SSB64_ANDROID_KEYSTORE_PASSWORD"
+            echo "SSB64_RELEASE_KEY_ALIAS=$SSB64_ANDROID_KEY_ALIAS"
+            echo "SSB64_RELEASE_KEY_PASSWORD=$SSB64_ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - name: Build APK
+        # assembleRelease produces the sideload APK that users install
+        # directly. We intentionally do NOT run bundleRelease — the AAB
+        # is Play-Store-only (needs Google's bundletool to install on
+        # a device), and this project isn't distributed through Play.
+        # Skipping it also keeps the GitHub Release page uncluttered.
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Stage release APK under a stable name
+        # Gradle drops the file at app/build/outputs/apk/release/ with
+        # a name like app-release.apk or app-release-unsigned.apk
+        # depending on signing config. Normalize to BattleShip-android.apk
+        # so the release job's files: list doesn't need a glob.
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          apk=(android/app/build/outputs/apk/release/app-release*.apk)
+          if (( ${#apk[@]} == 0 )); then
+            echo "::error::no APK produced under android/app/build/outputs/apk/release/"
+            ls -la android/app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          cp "${apk[0]}" dist/BattleShip-android.apk
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android
+          path: dist/BattleShip-android.apk
+          if-no-files-found: error
+
+  build-android-netplay:
+    # Sibling of build-android — one APK per job (SSB64_NETMENU=ON via Gradle).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        # Gradle's externalNativeBuild invokes the same CMake rules as the
+        # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
+        # + png_to_c_array.py) needs PIL here too.
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Decode release keystore (if configured via secrets)
+        env:
+          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::No release keystore secret configured; falling back to debug signing"
+            exit 0
+          fi
+          echo "$SSB64_ANDROID_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+          {
+            echo "SSB64_RELEASE_KEYSTORE=$GITHUB_WORKSPACE/release.jks"
+            echo "SSB64_RELEASE_KEYSTORE_PASSWORD=$SSB64_ANDROID_KEYSTORE_PASSWORD"
+            echo "SSB64_RELEASE_KEY_ALIAS=$SSB64_ANDROID_KEY_ALIAS"
+            echo "SSB64_RELEASE_KEY_PASSWORD=$SSB64_ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - name: Clear stale Android CMake/FetchContent cache
+        run: rm -rf android/app/.cxx
+      - name: Build netplay APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true -Pssb64AutomatchStageKindDefault=${{ env.SSB64_ANDROID_AUTOMATCH_STAGE_KIND_DEFAULT }}
+      - name: Verify APK native libraries
+        run: |
+          apk="$(find android/app/build/outputs/apk/release -name 'app-release*.apk' | head -n 1)"
+          test -n "$apk" -a -f "$apk"
+          for lib in libSDL2.so libmain.so libtorch_runner.so libc++_shared.so; do
+            unzip -l "$apk" "lib/arm64-v8a/$lib" >/dev/null || {
+              echo "::error::missing lib/arm64-v8a/$lib in $apk"
+              unzip -l "$apk" 'lib/*/*.so' || true
+              exit 1
+            }
+          done
+          echo "jniLibs OK: libSDL2.so libmain.so libtorch_runner.so libc++_shared.so"
+      - name: Stage release APK under a stable name
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          apk=(android/app/build/outputs/apk/release/app-release*.apk)
+          if (( ${#apk[@]} == 0 )); then
+            echo "::error::no APK produced under android/app/build/outputs/apk/release/"
+            ls -la android/app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          cp "${apk[0]}" dist/BattleShip-android-netplay.apk
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android-netplay
+          path: dist/BattleShip-android-netplay.apk
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # fetch-depth: 0 grabs full history + all tags in one operation.
+          # The built-in updater derives the version from `git describe
+          # --tags` at configure time; checkout@v4's default shallow clone
+          # omits tags. This used to be `fetch-tags: true`, but recent
+          # actions/checkout@v4 minor versions regressed on tag-triggered
+          # workflows — the action tries to fetch BOTH the triggering
+          # commit SHA AND refs/tags/<tag> and refuses with "Cannot fetch
+          # both <sha> and refs/tags/<tag> to refs/tags/<tag>". Using
+          # fetch-depth: 0 sidesteps the conflict.
+          fetch-depth: 0
+      - name: Install build deps
+        # Windows runner ships with cmake / Visual Studio Build Tools
+        # already. SDL2 comes from vcpkg, which is integrated by
+        # libultraship/CMakeLists's vcpkg bootstrap.
+        #
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py
+        # (CSS scroll-arrow PNG generation + bake-to-C-header) import PIL.
+        # The arrow rules in CMakeLists.txt are unconditional.
+        run: |
+          choco install ninja -y
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+        shell: pwsh
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+      - name: Package Windows zip
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+        # Step shell is pwsh; msvc-dev-cmd + GITHUB_ENV LIB apply to this step directly.
+        run: ./scripts/package-windows.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-windows-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-windows.zip
+          if-no-files-found: error
+
+  build-windows-netplay:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install build deps
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py import PIL.
+        # The arrow rules in CMakeLists.txt are unconditional.
+        run: |
+          choco install ninja -y
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+        shell: pwsh
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+      - name: Package Windows netplay zip
+        env:
+          SSB64_VERSION: ${{ matrix.version }}
+          SSB64_EXTRA_CMAKE_ARGS: ${{ env.SSB64_EXTRA_CMAKE_ARGS }}
+        run: ./scripts/package-windows.ps1 -Netplay
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-windows-netplay-${{ matrix.version }}
+          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-windows.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release (Alpha)
+    needs: [build-macos, build-macos-netplay, build-linux, build-linux-netplay, build-windows, build-windows-netplay, build-android, build-android-netplay]
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, 'alpha')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Android: sideload APK only (no Play Store distribution, so
+          # the AAB is skipped). Android is US-only so there's no -JP.
+          files: |
+            artifacts/BattleShip.dmg
+            artifacts/BattleShip-JP.dmg
+            artifacts/BattleShip-Netplay.dmg
+            artifacts/BattleShip-JP-Netplay.dmg
+            artifacts/BattleShip-x86_64.AppImage
+            artifacts/BattleShip-JP-x86_64.AppImage
+            artifacts/BattleShip-Netplay-x86_64.AppImage
+            artifacts/BattleShip-JP-Netplay-x86_64.AppImage
+            artifacts/BattleShip-windows.zip
+            artifacts/BattleShip-JP-windows.zip
+            artifacts/BattleShip-Netplay-windows.zip
+            artifacts/BattleShip-JP-Netplay-windows.zip
+            artifacts/BattleShip-android.apk
+            artifacts/BattleShip-android-netplay.apk
+          generate_release_notes: true
+          draft: true   # land as a draft so a human can sanity-check
+                        # before the release is visible to the public.
+          name: Alpha Release
+          body: |
+            Alpha netplay builds force automatch to **Dream Land** (compile-time default).
+            Set `SSB64_NETPLAY_AUTOMATCH_STAGE_KIND` at runtime to override on the automatch host.

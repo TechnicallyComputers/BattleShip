@@ -67,6 +67,8 @@ option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for r
 option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
 option(SSB64_NETPLAY_ICE "Use libjuice ICE for automatch NAT traversal (requires SSB64_NETMENU)" ON)
 option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstrap for debugging" OFF)
+set(SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT "" CACHE STRING
+    "When non-empty, bake automatch host stage GRKind (0-8, e.g. 6=Dream Land). Runtime env overrides.")
 
 # Automatch HTTP (mm_matchmaking) uses libcurl on Linux, Android, and MinGW Windows netmenu builds.
 # Offline builds (SSB64_NETMENU=OFF) do not link curl. MinGW: install mingw-w64-curl and pass
@@ -652,6 +654,26 @@ endif()
 
 if(SSB64_NETPLAY_HARD_LAN_MODE)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
+endif()
+
+if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT STREQUAL "")
+    if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT MATCHES "^[0-9]+$")
+        message(FATAL_ERROR
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be numeric (got '${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}')")
+    endif()
+    math(EXPR _SSB64_AUTOMATCH_STAGE_DEFAULT "${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
+    if(_SSB64_AUTOMATCH_STAGE_DEFAULT LESS 0 OR _SSB64_AUTOMATCH_STAGE_DEFAULT GREATER 8)
+        message(FATAL_ERROR
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be 0..8 (got ${_SSB64_AUTOMATCH_STAGE_DEFAULT})")
+    endif()
+    if(SSB64_NETMENU)
+        list(APPEND SSB64_COMPILE_DEFS
+             SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT})
+        message(STATUS "SSB64 automatch stage default (compile): GRKind ${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
+    else()
+        message(WARNING
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT ignored (requires SSB64_NETMENU=ON)")
+    endif()
 endif()
 
 # Hi-res texture pack support is US-only on desktop and dropped entirely
