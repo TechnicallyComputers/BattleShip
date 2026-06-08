@@ -54,6 +54,8 @@ extern u32 syNetRbSnapshotFrameCommitIntervalCap(u32 default_interval);
 extern void syNetRbSnapshotReconcileLoadedItemsForVerify(u32 tick);
 /* Reconcile trail/shock effects from ring slot when sim core matches but eff hash drifted on verify. */
 extern sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 tick);
+extern void syNetRbSnapshotFinalizeVerifyEffectState(u32 completed_sim_tick);
+extern void syNetRbSnapshotFinalizeEffectsForVerifyHash(u32 completed_sim_tick);
 /* Guard/Yoshi shield bubble ensure/prune/dedupe from ring slot or live (tap-churn orphan cleanup). */
 extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);

@@ -129,3 +129,38 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 | `VerifyLoadedSlot` | Verify-only final fighter pose re-stamp before hash fold |
 
 **Verify:** Re-soak Falcon vs Kirby cross-ISA — expect 0 `SYNCTEST_FAIL` @629; eff-only quake drift at 1124+ class should drop to 0 or repair cleanly.
+
+### Phase 44 (2026-06-08) — slot-authoritative effect enforce + shield verify respawn
+
+**Symptom (6760-tick STABLE soak):** 15 **eff-only** `LOAD_HASH_DRIFT` (all soft-continue, 42/42 `SYNCTEST_OK`). Families: (A) quake triplication on stale ring `gobj_id` respawn (save 1 → verify 3); (B) shield missing at verify hash @3246 (`respawn=2`, verify count 0); (C) under-restore (save N → verify &lt;N); (D) orphan `respawn=0` shells stacked with slot quakes.
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `syNetRbSnapResolveLiveEffectGobjForBlobApply` | Adopt unreconciled live match before `TryRespawn` (prevents stale-id duplicate quakes) |
+| `syNetRbSnapApplyEffectBlobToGObj` | Resolve live effect before respawn for all kinds |
+| `ReconcileSnapshotEffectsBeforeItems` | Pass 1 uses resolve helper; pass 2 falls back to first-unreconciled; **pass 3** respawns unapplied blobs |
+| `syNetRbSnapEnforceSlotAuthoritativeEffectSet` | One canonical live GObj per slot blob; eject slot-matching extras; re-stamp + freeze quakes |
+| `EnsureShieldEffectsFromSlot` (verify-only) | Respawn shield when slot lists blob but live bubble missing (@3246 class) |
+| `TryRepairEffectHashForVerify` | Shield ensure + enforce before hash check |
+| `syNetRbSnapshotFinalizeEffectsForVerifyHash` | Pre-hash enforce hook in `VerifyLoadedSlot` |
+
+**Verify:** Re-soak cross-ISA — expect **0** `LOAD_HASH_DRIFT`, `effect-repair ok` or silent verify; maintain `MATCH: STABLE`.
+
+### Phase 45 (2026-06-08) — single verify enforce pass + idempotent respawn
+
+**Symptom (4397-tick soak post-Phase-44):** Drift **15 → 7** but quake hyper-stacking worsened (save 1 → verify **10** @1924); shield @749 logged drift then `effect-repair ok` after multi-pass respawn spam.
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| Synctest pipeline | **One** `PrepareLoadedSlotForVerify` + `VerifyLoadedSlot` (removed duplicate `TryRepair` + fold diag before hash) |
+| `syNetRbSnapshotFinalizeVerifyEffectState` | Single reconcile → patch → enforce → joint re-stamp path (replaces duplicated TryRepair/Finalize/Prepare enforce) |
+| `TryRespawnEffectFromBlob` | Return existing live via `ResolveLiveEffectGobjForBlobApply` before spawn; quake/shield explicit guards |
+| `EnforceSlotAuthoritativeEffectSet` | Apply-only (no bare `TryRespawn` between resolve and apply) |
+| `EnsureShieldEffectsFromSlot` (verify-only) | Patch-only; respawn deferred to enforce |
+| `ResolveLiveEffectGobjForBlobApply` | Shield + userdata-joint live lookup |
+
+**Verify:** Re-soak — expect **0** `LOAD_HASH_DRIFT`, verify fold `count == save count`, no shield respawn spam.

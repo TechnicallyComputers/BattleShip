@@ -2307,6 +2307,15 @@ static void syNetRbSnapFreezeSlotQuakeEffectsFromSlot(const SYNetRbSnapshotSlot 
 static void syNetRbSnapPruneOrphanQuakeAndDeadEffects(const SYNetRbSnapshotSlot *slot,
                                                       const u32 *reconciled_ids, s32 reconciled_count);
 static void syNetRbSnapPruneDuplicateQuakeEffects(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSlot *slot);
+static GObj *syNetRbSnapFindFirstUnreconciledLiveEffectForBlob(const SYNetRbSnapshotSlot *slot,
+                                                               const SYNetRbSnapEffectBlob *blob,
+                                                               const u32 *reconciled_ids,
+                                                               s32 reconciled_count);
+static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotSlot *slot,
+                                                            const SYNetRbSnapEffectBlob *blob,
+                                                            const u32 *reconciled_ids,
+                                                            s32 reconciled_count);
 static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapApplyEffectBlobAnimFrame(GObj *gobj, f32 anim_frame, EFStruct *ep);
 static void syNetRbSnapApplyEffectBlobTranslate(GObj *gobj, const SYNetRbSnapEffectBlob *blob,
@@ -13561,6 +13570,15 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 	{
 		return NULL;
 	}
+	{
+		GObj *existing;
+
+		existing = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0);
+		if (existing != NULL)
+		{
+			return existing;
+		}
+	}
 	fighter_gobj = NULL;
 	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_FOX_REFLECTOR)
 	{
@@ -13590,14 +13608,30 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 	switch (blob->respawn_kind)
 	{
 	case SYNETRB_EFFECT_RESPAWN_QUAKE:
+	{
+		GObj *existing_quake;
+
+		existing_quake = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+		if (existing_quake != NULL)
+		{
+			return existing_quake;
+		}
 		if (blob->quake_magnitude != 0xFFU)
 		{
 			return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
 		}
 		break;
+	}
 	case SYNETRB_EFFECT_RESPAWN_SHIELD:
 		if (fighter_gobj != NULL)
 		{
+			GObj *existing_shield;
+
+			existing_shield = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
+			if (existing_shield != NULL)
+			{
+				return existing_shield;
+			}
 			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 			{
 				port_log(
@@ -13874,6 +13908,10 @@ static GObj *syNetRbSnapApplyEffectBlobToGObj(const SYNetRbSnapshotSlot *slot, G
 	if ((blob == NULL) || (blob->is_valid == FALSE))
 	{
 		return NULL;
+	}
+	if (gobj == NULL)
+	{
+		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0);
 	}
 	if (gobj == NULL)
 	{
@@ -16520,6 +16558,46 @@ static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slo
 	}
 }
 
+static GObj *syNetRbSnapFindFirstUnreconciledLiveEffectForBlob(const SYNetRbSnapshotSlot *slot,
+                                                               const SYNetRbSnapEffectBlob *blob,
+                                                               const u32 *reconciled_ids,
+                                                               s32 reconciled_count)
+{
+	s32 pass;
+	GObj *gobj;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return NULL;
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *link_head;
+
+		link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = gobj->link_next)
+		{
+			EFStruct *ep;
+
+			if (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) != FALSE)
+			{
+				continue;
+			}
+			ep = efGetStruct(gobj);
+			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) == FALSE)
+			{
+				continue;
+			}
+			return gobj;
+		}
+	}
+	return NULL;
+}
+
 static GObj *syNetRbSnapFindUnreconciledLiveEffectForBlob(const SYNetRbSnapshotSlot *slot,
                                                           const SYNetRbSnapEffectBlob *blob,
                                                           const u32 *reconciled_ids, s32 reconciled_count)
@@ -16562,6 +16640,67 @@ static GObj *syNetRbSnapFindUnreconciledLiveEffectForBlob(const SYNetRbSnapshotS
 		}
 	}
 	return (match_count == 1) ? match : NULL;
+}
+
+static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotSlot *slot,
+                                                            const SYNetRbSnapEffectBlob *blob,
+                                                            const u32 *reconciled_ids,
+                                                            s32 reconciled_count)
+{
+	GObj *gobj;
+	EFStruct *ep;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return NULL;
+	}
+	gobj = gcFindGObjByID(blob->gobj_id);
+	ep = (gobj != NULL) ? efGetStruct(gobj) : NULL;
+	if ((gobj != NULL) && (syNetRbSnapEffectHiddenFromRollback(gobj, ep) == FALSE) &&
+	    (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) != FALSE))
+	{
+		return gobj;
+	}
+	gobj = syNetRbSnapFindFirstUnreconciledLiveEffectForBlob(slot, blob, reconciled_ids, reconciled_count);
+	if (gobj != NULL)
+	{
+		return gobj;
+	}
+	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
+	{
+		gobj = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+		if ((gobj != NULL) &&
+		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+		{
+			return gobj;
+		}
+	}
+	if ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_SHIELD) ||
+	    (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD))
+	{
+		GObj *fighter_gobj;
+
+		fighter_gobj = syNetRbSnapResolveShieldParentGobj(slot, blob);
+		if (fighter_gobj != NULL)
+		{
+			gobj = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
+			if ((gobj != NULL) &&
+			    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+			{
+				return gobj;
+			}
+		}
+	}
+	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT)
+	{
+		gobj = syNetRbSnapFindLiveUserdataJointEffectForBlob(slot, blob);
+		if ((gobj != NULL) &&
+		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+		{
+			return gobj;
+		}
+	}
+	return NULL;
 }
 
 static sb32 syNetRbSnapFighterInFoxReflectorScope(const FTStruct *fp)
@@ -19954,7 +20093,7 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		{
 			continue;
 		}
-		gobj = gcFindGObjByID(blob->gobj_id);
+		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, reconciled_ids, reconciled_count);
 		gobj_before = gobj;
 		gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
 		if (gobj != NULL)
@@ -20001,6 +20140,10 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		gobj = syNetRbSnapFindUnreconciledLiveEffectForBlob(slot, blob, reconciled_ids, reconciled_count);
 		if (gobj == NULL)
 		{
+			gobj = syNetRbSnapFindFirstUnreconciledLiveEffectForBlob(slot, blob, reconciled_ids, reconciled_count);
+		}
+		if (gobj == NULL)
+		{
 			continue;
 		}
 		gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
@@ -20017,6 +20160,43 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			    "fighter_gobj_id=%u respawn_kind=%u\n",
 			    (unsigned int)slot->tick, blob->gobj_id, (unsigned int)gobj->id, (unsigned int)blob->bank_id,
 			    blob->fighter_gobj_id, (unsigned int)blob->respawn_kind);
+		}
+	}
+	/*
+	 * Pass 3: slot blobs still missing after adopt (under-restore) — respawn once per unapplied blob.
+	 * Resolve/adopt above avoids duplicate quake spawns when ring gobj_id is stale but live matches exist.
+	 */
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob;
+
+		if (blob_applied[ei] != FALSE)
+		{
+			continue;
+		}
+		blob = &slot->effects[ei];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		gobj = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
+		if (gobj == NULL)
+		{
+			continue;
+		}
+		gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
+		if (gobj == NULL)
+		{
+			continue;
+		}
+		blob_applied[ei] = TRUE;
+		syNetRbSnapTrackReconciledEffectGobj(reconciled_ids, &reconciled_count, gobj);
+		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetRbSnapshot: effect_reconcile_respawn tick=%u blob_gobj_id=%u live_gobj_id=%u "
+			    "respawn_kind=%u\n",
+			    (unsigned int)slot->tick, blob->gobj_id, (unsigned int)gobj->id, (unsigned int)blob->respawn_kind);
 		}
 	}
 	syNetRbSnapPruneStaleFoxReflectors(slot);
@@ -20072,6 +20252,82 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			}
 		}
 	}
+}
+
+/*
+ * Verify-only: exactly one live effect per slot blob; eject extras that match blob identity but were
+ * stacked by stale-id respawn (save N → verify 3N quake class). Respawn any slot blob still missing.
+ */
+static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSlot *slot)
+{
+	u32 canonical_ids[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	s32 canonical_count;
+	s32 ei;
+	s32 pass;
+	GObj *gobj;
+	GObj *next;
+	s32 ejected;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	canonical_count = 0;
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob;
+		GObj *live;
+
+		blob = &slot->effects[ei];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		live = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, canonical_ids, canonical_count);
+		live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
+		if (live == NULL)
+		{
+			continue;
+		}
+		syNetRbSnapTrackReconciledEffectGobj(canonical_ids, &canonical_count, live);
+	}
+	ejected = 0;
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *link_head;
+
+		link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = next)
+		{
+			EFStruct *ep;
+
+			next = gobj->link_next;
+			ep = efGetStruct(gobj);
+			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapReconciledEffectGobjIdListed(canonical_ids, canonical_count, gobj->id) != FALSE)
+			{
+				continue;
+			}
+			if ((slot != NULL) && (syNetRbSnapLiveEffectMatchesAnyBlobInSlot(slot, gobj, ep) != FALSE))
+			{
+				syNetRbSnapEjectGObj(gobj);
+				ejected++;
+			}
+		}
+	}
+	if ((syNetRbSnapSnapshotEffectDiagEnabled() != FALSE) && (ejected > 0))
+	{
+		port_log("SSB64 NetRbSnapshot: slot_effect_enforce tick=%u ejected=%d canonical=%d slot_count=%d\n",
+		         (unsigned int)slot->tick, ejected, canonical_count, (int)slot->effect_count);
+	}
+	syNetRbSnapPruneDuplicateQuakeEffects(slot);
+	syNetRbSnapPruneDuplicateShieldEffects(slot);
+	syNetRbSnapReapplyEffectBlobsFromSlot(slot);
+	syNetRbSnapFreezeSlotQuakeEffectsFromSlot(slot);
+	syNetRbSnapPruneDuplicateQuakeEffects(slot);
 }
 
 static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
@@ -22456,36 +22712,23 @@ void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick)
 	{
 		syNetRbSnapHealFighterShieldOnApply(slot);
 	}
-	(void)syNetRbSnapshotTryRepairEffectHashForVerify(completed_sim_tick);
-	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
-	if ((slot != NULL) && (slot->is_valid != FALSE) && (slot->tick == completed_sim_tick))
-	{
-		syNetRbSnapFreezeSlotQuakeEffectsFromSlot(slot);
-		syNetRbSnapPruneDuplicateQuakeEffects(slot);
-	}
 	syNetRbSnapshotReapplyJointAnimAtTick(completed_sim_tick);
 }
 
-sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 completed_sim_tick)
+static void syNetRbSnapshotFinalizeVerifyEffectStateInternal(u32 completed_sim_tick)
 {
 	SYNetRbSnapshotSlot *slot;
 	GObj *fighter_gobj_re;
-	u32 live_ef;
 
 	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
 	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != completed_sim_tick))
 	{
-		return FALSE;
+		return;
 	}
 	syNetRbSnapEjectDeadNonRespawnableEffectsFromLive();
-	syNetRbSnapEnsureQuakeEffectsFromSlot(slot);
-	syNetRbSnapEnsureUserdataJointEffectsFromSlot(slot);
+	syNetRbSnapBackfillGuardShieldEffectIdsFromEffects(slot);
 	syNetRbSnapSanitizeCopyCaptainEffectAttach(slot);
 	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
-	syNetRbSnapBackfillGuardShieldEffectIdsFromEffects(slot);
-	syNetRbSnapReconcileGuardShieldEffectsInternal(slot);
-	syNetRbSnapReconcileYoshiEggLayEffectsInternal(slot);
-	syNetRbSnapReapplyEffectBlobsFromSlot(slot);
 	for (fighter_gobj_re = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj_re != NULL;
 	     fighter_gobj_re = fighter_gobj_re->link_next)
 	{
@@ -22505,19 +22748,27 @@ sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 completed_sim_tick)
 	}
 	syNetRbSnapFinalizeFighterEffectAttachFlags(slot);
 	syNetRbSnapPatchAllGuardShieldsFromSlot(slot);
-	syNetRbSnapPruneDuplicateShieldEffects(slot);
-	syNetRbSnapPruneDuplicateQuakeEffects(slot);
-	/*
-	 * Final blob pose stamp after shield patch/prune: reconcile procs may advance anim/translate on
-	 * respawnable effects; re-apply canonical blob anim+translate so verify eff hash matches save.
-	 */
-	syNetRbSnapReapplyEffectBlobsFromSlot(slot);
-	syNetRbSnapFreezeSlotQuakeEffectsFromSlot(slot);
-	syNetRbSnapPruneDuplicateQuakeEffects(slot);
-	syNetRbSnapEjectDeadNonRespawnableEffectsFromLive();
+	syNetRbSnapEnforceSlotAuthoritativeEffectSet(slot);
 	syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
+}
+
+void syNetRbSnapshotFinalizeVerifyEffectState(u32 completed_sim_tick)
+{
+	syNetRbSnapshotFinalizeVerifyEffectStateInternal(completed_sim_tick);
+}
+
+sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 completed_sim_tick)
+{
+	u32 live_ef;
+
+	syNetRbSnapshotFinalizeVerifyEffectStateInternal(completed_sim_tick);
 	live_ef = syNetSyncHashActiveEffectsForRollback();
 	return (live_ef == syNetRbSnapshotGetSlotHashEffect(completed_sim_tick)) ? TRUE : FALSE;
+}
+
+void syNetRbSnapshotFinalizeEffectsForVerifyHash(u32 completed_sim_tick)
+{
+	syNetRbSnapshotFinalizeVerifyEffectStateInternal(completed_sim_tick);
 }
 
 void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 completed_sim_tick)
