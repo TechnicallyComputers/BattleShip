@@ -262,6 +262,7 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_vars.kirby.speciallw.duration);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(fp->is_damage_resist != FALSE));
 	}
 #endif
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -3452,6 +3453,96 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 	}
 	return hash;
+}
+
+static sb32 syNetSyncEffectFoldDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_EFFECT_FOLD_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+/*
+ * Per-effect breakdown of the eff rollback hash fold. Mirrors syNetSyncHashActiveEffectsForRollback
+ * field-for-field so a save vs verify-load comparison pins the exact divergent component
+ * (bank/respawn/parent id/anim_frame/pos/special). Self-gated on SSB64_NETPLAY_EFFECT_FOLD_DIAG.
+ */
+void syNetSyncLogActiveEffectsFoldDiag(const char *tag, u32 tick)
+{
+	GObj *sorted[SYNET_SYNC_EFFECT_HASH_SORT_MAX];
+	s32 count;
+	s32 i;
+	sb32 truncated;
+
+	if (syNetSyncEffectFoldDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	truncated = FALSE;
+	count = syNetRbEnumerateActiveEffectsSorted(sorted, SYNET_SYNC_EFFECT_HASH_SORT_MAX, &truncated);
+	port_log("SSB64 NetSync: eff_fold_diag tag=%s tick=%u count=%d truncated=%d hash=0x%08X\n",
+	         (tag != NULL) ? tag : "?", tick, (int)count, (int)truncated,
+	         syNetSyncHashActiveEffectsForRollback());
+	for (i = 0; i < count; i++)
+	{
+		GObj *gobj = sorted[i];
+		EFStruct *ep;
+		DObj *dobj;
+		Vec3f pos;
+		u32 respawn_kind;
+		u32 parent_id;
+		u32 shield_player;
+		u32 shield_dmg;
+		u32 special_tag;
+
+		pos.x = 0.0F;
+		pos.y = 0.0F;
+		pos.z = 0.0F;
+		ep = efGetStruct(gobj);
+		dobj = DObjGetStruct(gobj);
+		if (dobj != NULL)
+		{
+			pos = dobj->translate.vec.f;
+		}
+		if (ep == NULL)
+		{
+			port_log("SSB64 NetSync: eff_fold_diag tag=%s tick=%u idx=%d gobj_id=%u no_struct link_id=%u "
+			         "obj_kind=%u anim_frame=0x%08X pos=(0x%08X,0x%08X,0x%08X)\n",
+			         (tag != NULL) ? tag : "?", tick, (int)i, (unsigned int)gobj->id, (u32)gobj->link_id,
+			         (u32)gobj->obj_kind, syNetSyncHashF32(gobj->anim_frame), syNetSyncHashF32(pos.x),
+			         syNetSyncHashF32(pos.y), syNetSyncHashF32(pos.z));
+			continue;
+		}
+		respawn_kind = (u32)syNetRbSnapEffectRespawnKindFromLive(gobj, ep);
+		parent_id = (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U;
+		shield_player = 0xFFFFFFFFU;
+		shield_dmg = 0U;
+		special_tag = 0U;
+		if (ep->proc_update == efManagerShieldProcUpdate)
+		{
+			shield_player = (u32)ep->effect_vars.shield.player;
+			shield_dmg = (u32)(ep->effect_vars.shield.is_damage_shield != FALSE);
+			special_tag = 1U;
+		}
+		else if (ep->proc_update == efManagerFoxReflectorProcUpdate)
+		{
+			special_tag = 2U;
+		}
+		port_log("SSB64 NetSync: eff_fold_diag tag=%s tick=%u idx=%d gobj_id=%u bank=%u respawn=%u parent_id=%u "
+		         "is_pause=%u anim_frame=0x%08X quake_pri=%u shield_player=%d shield_dmg=%u special=%u "
+		         "pos=(0x%08X,0x%08X,0x%08X)\n",
+		         (tag != NULL) ? tag : "?", tick, (int)i, (unsigned int)gobj->id, (u32)ep->bank_id, respawn_kind,
+		         parent_id, (ep->is_pause_effect != FALSE) ? 1U : 0U, syNetSyncHashF32(gobj->anim_frame),
+		         (u32)ep->effect_vars.quake.priority, (s32)shield_player, shield_dmg, special_tag,
+		         syNetSyncHashF32(pos.x), syNetSyncHashF32(pos.y), syNetSyncHashF32(pos.z));
+	}
 }
 #endif
 

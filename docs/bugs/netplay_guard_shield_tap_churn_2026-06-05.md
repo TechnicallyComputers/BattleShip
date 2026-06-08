@@ -127,6 +127,62 @@ Spam-tap shield under rollback (local player). Bubble should track body on/off.
 
 **Verify:** Synctest soak with `SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`: zero eff-only `LOAD_HASH_DRIFT` during shield hold/re-tap windows; expect `SYNCTEST_OK` at shield ticks; `effect-repair ok` rare/absent if load path converges on first apply.
 
+### Phase 32 (2026-06-07) — dual-shield id aliasing + verify orphan rebind
+
+**Symptom:** Post-Phase-31 soak: 4 eff-only `LOAD_HASH_DRIFT` at synctest ticks 2075/2195/2316/3270 (down from 7). Tick **2195**: both players' blobs showed `guard_effect_id=1011`; `effect_count=7` sustained ~200 ticks; `no_fighter` eject on bubble 1011 during verify; repair respawn parented both shields to P0 (`resolved_parent=1000`).
+
+**Cause:** (1) Save path let both fighters snapshot the same `guard_effect_gobj_id` when stale `guard->effect_gobj` aliased across players. (2) Synctest verify `no_fighter` eject when `ep->fighter_gobj` briefly NULL during emergency load, before blob patch. (3) `guard_id_rebind_resim_defer` kept duplicates without applying per-player blob fields during verify-only.
+
+**Fix:**
+| Change | Purpose |
+|--------|---------|
+| Capture rejects coupled shield id when `shield.player != fp->player` | Stop cross-player id aliasing at source |
+| Backfill always sets `guard_effect_gobj_id` from per-player shield effect blob | Authoritative dual-shield identity on save |
+| `TryRebindOrphanShieldEffectForLoad` + slot orphan rebind in prune | Re-parent + patch bubble during GuardOff release lag / verify load |
+| Verify-only `verify_patch` instead of `resim_defer` on duplicate rebind | Apply blob fields immediately during synctest probe |
+| `PatchAllGuardShieldsFromSlot` + dedupe in `TryRepairEffectHashForVerify` | Repair pass converges eff hash after joint anim |
+| Dedupe keep prefers shield effect blob for player when coupled id missing | Keep blob-applied bubble over stale guard pointer |
+
+**Verify:** Re-soak cross-ISA synctest; expect 0 eff-only drift at ticks 2075/2195 class; no shared `guard_effect_id` across players in logs; `effect-repair ok` or clean first-pass verify; `no_fighter` eject absent during synctest shield windows.
+
+### Phase 35 (2026-06-07) — synctest effect-loss on verify load + orphan prune reconciled ids
+
+**Symptom:** Post-Phase-32 soak (1718 ticks): 3× eff-only `LOAD_HASH_DRIFT` at synctest ticks 1179/1299/1420. Ticks **1299** and **1420**: slot eff hash non-empty (`0x67E9654E`, `0x7233FB19`) but live eff **empty** (`0x811C9DC5`) after verify load — all ring-listed effects lost. Tick **1420** sustained `effect_count=9` (~1415–1452) with `effect_probe_mismatch` skip on probe 1419. No `effect-repair ok` lines.
+
+**Cause:** Synctest captures emergency live @ T+1, loads ring slot @ T, verifies, restores emergency. `ReconcileSnapshotEffectsBeforeItems` pass 1 keyed only on `gcFindGObjByID(blob->gobj_id)`; ring ids from tick T are stale vs the emergency pool @ T+1. Generic combat VFX (`respawn_kind=NONE`) cannot respawn from blob. Pass 1 apply fails → `PruneOrphanFighterAttachedEffects` ejects every emergency fighter-attached effect whose **live** id is not in the ring list → **zero** hashed effects despite a nonempty slot. Separately, orphan prune ignored pass-1 **reconciled** ids (respawn mints fresh pool ids), so whitelisted respawns could also be ejected when id ≠ blob id.
+
+**Fix:**
+| Change | Purpose |
+|--------|---------|
+| Pass 2 `FindUnreconciledLiveEffectForBlob` + adopt apply | Match ring blobs to live pool by bank, player parent, proc fingerprint before orphan prune |
+| `PruneOrphanFighterAttachedEffects` honors `reconciled_ids` | Keep respawned/adopted effects whose live id ≠ ring id |
+| `effect_reconcile_adopt` diag | Log adopt path under `SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1` |
+
+**Verify:** Cross-ISA synctest soak: zero eff-only drift with live eff empty (`0x811C9DC5` slot-side mismatch); expect `effect_reconcile_adopt` during combat windows with `effect_count≥3`; ticks 1299/1420 class should show `effect-repair ok` or clean verify without soft-continue eff drift; `effect_probe_mismatch` may still skip when emergency/live count ≠ ring count (orthogonal).
+
+### Phase 36 (2026-06-07) — Kirby Stone blob union stomp (fighter-hash desync, not eff)
+
+**Symptom:** Soak to 4416 ticks flipped to 10× hard `SYNCTEST_FAIL` (first=1458, also 1698/1818/1938/2060/2180/2540/2780) plus eff-only soft-continue drifts. Per-effect `eff_fold_diag` confirmed **effects clean** at every fail (`count=0`, `eff=0x811C9DC5/0x811C9DC5`). The drift is **`figh`**: `LOAD_HASH_DRIFT ... figh=0x92E34593/0x4B472221`, `soft-continue blocked reason=fighter_mismatch`. `ring_save_diag` showed the blob wrong **at capture** (`blob_figh != ring_figh`, `blob_ok=0`) every tick in the state, and `blob_figh` == post-load live figh. All fails were player 0 Kirby (`fkind=8`) `status=266 motion=241` = `SpecialAirLwLanding` (down-B Stone landing). (`tick=3796`, status 154 Guard, `blob_ok=1`, is a separate single shield/anim case.)
+
+**Cause:** `syNetSyncHashBattleFightersFull` folds `status_vars.kirby.speciallw.duration` for Kirby in `[SpecialLwStart(260), SpecialAirLwEnd(268)]` (`netsync.c:261-265`). `duration` is an `s16` at **union offset 0** (`ftKirbySpecialLwStatusVars`). `syNetRbSnapScrubInactiveStatusVarsInBlob` memsets the `common.attackair/dead/rebirth/captureyoshi/tarucann` overlays — all also at offset 0 — to zero when the status isn't one of those. For Stone (status 266) the scrub fired and **clobbered the live `duration`** in the blob (which is nonzero throughout Stone, set to `FTKIRBY_STONE_DURATION_MAX` and counting down). Blob lost `duration` → `blob_figh` diverged from the slot hash → synctest load restored `duration=0` → live figh == blob figh ≠ slot figh → fighter_mismatch → `SYNCTEST_FAIL`. Classic FTStatusVars union stomp: scrubbing one overlay while a different, hash-folded overlay owns the bytes.
+
+**Fix:**
+| Change | Purpose |
+|--------|---------|
+| Early-return guard in `syNetRbSnapScrubInactiveStatusVarsInBlob` for Kirby in `[SpecialLwStart, SpecialAirLwEnd]` | The live `kirby.speciallw` overlay owns offset 0; skip the offset-0 common-overlay scrubs so captured Stone state (`duration`/`unk_0x2`/`colanim_id`) survives into the blob |
+
+**Verify:** Re-soak cross-ISA synctest with a Kirby holding/landing down-B Stone across probe boundaries: `ring_save_diag` shows `blob_ok=1` (was 0) in Stone; no `figh` `LOAD_HASH_DRIFT` / `fighter_mismatch` / `SYNCTEST_FAIL` at Stone ticks. Remaining eff-only soft-continue drifts (e.g. 749/2300/2420/4050/4178 `...C2C4` family) are tracked separately and do not gate stability.
+
+### Phase 37 (2026-06-07) — shield duplicate dedupe identity (solid bubble presentation)
+
+**Symptom:** Shield bubble still **opaque/solid** in both `SYNCTEST=0` and `SYNCTEST=1` after Phase 36 adopt/heal fixes. `eff_fold_diag` at tick 494: `effect_count=4`, three shield rows (`respawn=2`, `shield_player=1`, all `gobj_id=1011`); two `gobj_alloc … id=1011` different pointers same tick. Logs: repeated `guard_shield_prune path=keep reason=guard_id_rebind_live`, zero `reason=duplicate` / `guard_id_rebind_duplicate` eject.
+
+**Cause:** `syNetRbSnapShieldEffectMatchesKeep` treated shared pool id (1011) as identity. Multiple live shield GObjs from ensure/respawn all matched keep → `PruneDuplicateShieldEffects` no-op. Stacked `efManagerShieldProcDisplay` alpha `0xC0` shells composite opaque (render proc present on each).
+
+**Fix:** `MatchesKeep` → pointer equality only (`gobj == keep_gobj`).
+
+**Verify:** Shield spam soak: single shield row per player in `eff_fold_diag`; expect `guard_id_rebind_duplicate` or `reason=duplicate` when extras appear; translucent bubble synctest on/off. Yoshi Z / egg-lay dedupe shares helper — separate soak. See [netplay_guard_shield_presentation_reconcile_2026-06-07.md](netplay_guard_shield_presentation_reconcile_2026-06-07.md).
+
 ### Phase 13 resoak (2026-06-05)
 
 Solo Ness tap-spam ~tick 400–1310, synctest on:

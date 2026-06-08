@@ -54,6 +54,7 @@ extern u32 syNetSyncHashActiveItemsForRollback(void);
 extern u32 syNetSyncHashActiveWeaponsForRollback(void);
 #ifdef PORT
 extern u32 syNetSyncHashActiveEffectsForRollback(void);
+extern void syNetSyncLogActiveEffectsFoldDiag(const char *tag, u32 tick);
 #endif
 extern u32 syNetSyncHashRNGSeed(void);
 extern u32 syNetSyncHashGMCamera(void);

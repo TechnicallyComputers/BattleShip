@@ -5415,6 +5415,7 @@ void syNetRollbackAfterBattleUpdate(void)
 					 * shield translate/anim fields match the slot hash at verify time.
 					 */
 					(void)syNetRbSnapshotTryRepairEffectHashForVerify(probe_tick);
+					syNetSyncLogActiveEffectsFoldDiag("verify", probe_tick);
 					verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 				}
 				syNetRbSnapRepairStageSetVerifyOnly(FALSE);
