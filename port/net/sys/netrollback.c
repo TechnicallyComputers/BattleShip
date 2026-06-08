@@ -5431,6 +5431,7 @@ void syNetRollbackAfterBattleUpdate(void)
 				if (emergency_ok != FALSE)
 				{
 					(void)syNetRbSnapshotRestoreLiveEmergency();
+					syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
 				}
 				if (verify_ok == FALSE)
 				{

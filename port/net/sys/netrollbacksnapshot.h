@@ -59,6 +59,8 @@ extern void syNetRbSnapshotFinalizeEffectsForVerifyHash(u32 completed_sim_tick);
 /* Guard/Yoshi shield bubble ensure/prune/dedupe from ring slot or live (tap-churn orphan cleanup). */
 extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
+/* Live bubble/coupling repair after synctest emergency restore (dual-shield drain stall). */
+extern void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);
