@@ -1,6 +1,6 @@
 # Guard shield tap-churn bubble stick — 2026-06-05
 
-**Status:** FIX SHIPPED (phase 32: Option C — authoritative shield-hold predicate OR-folds the applied input at one chokepoint; fixes GuardOn/GuardOff spam across all release/teardown sites when holding R to grab then shield)  
+**Status:** FIX SHIPPED (phase 34c: authoritative shield-hold predicate returns the fighter's APPLIED input (`z_live`) directly — the offset published/sealed stream read is removed entirely; fixes the sustained-hold spam *and* the tap-spam grab regression)  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netrollback.c`, `port/net/sys/netinput.c`
 
 ## Symptom
@@ -98,6 +98,34 @@ Spam-tap shield under rollback (local player). Bubble should track body on/off.
 **Cause:** Bubble reconcile skips ensure in `GuardSetOff` (`not_active_guard`) and heal was Wait-only. `is_shield=1` + stale `release_lag`/`is_release` could persist outside GuardOn/Guard/GuardOff; next Z/R press re-entered guard (`ftCommonGuardOnCheckInterruptSuccess`) instead of a clean grab window.
 
 **Fix:** Broaden live-forward `syNetRbSnapFighterShieldHealEligible` to clear stale body flag when Z is not held (auth **and** live) in Wait, `GuardSetOff`, or any status outside the active guard window (152–154), with no live bubble. Reset stale `is_release`/`release_lag` on heal. Active guard window and Z-held paths unchanged (vanilla owns those).
+
+### Phase 34 (2026-06-07) — tap-spam grab blocked by the Phase 32 OR-fold
+
+**Symptom:** Netplay only. Spamming R to grab (fast press/release cadence) "throws up a shield after grabbing" and then stops grabbing entirely — the fighter just re-shields. Offline is correct (tap = grab, hold = shield). The user identified the Phase 31/32 "hold R to grab then shield" fix as the regression point.
+
+**Cause:** Phase 32 made `syNetRbSnapFighterShieldInputHeldAuthoritative` return held if **EITHER** the published/sealed stream **OR** the applied input reads held, to mask a false-negative: the lookup used `syNetInputGetTick()`, which is offset from the applied input by the input-delay buffer (the sim tick counter advances inside the battle update before the live-forward reconcile runs), so a continuously-held button read `z_auth=0` while `z_live=1`. The OR killed the spurious release during a sustained hold — but "held if either reads held" is one-directional and also **masks the release edge during fast tap-spam**: in the brief release gap between taps one mis-aligned read still says held, so the predicate reports held, `is_release`/teardown/heal never fire, `is_shield` stays set, the fighter stays in guard scope, and the next R press hits `ftCommonGuardOnCheckInterruptSuccess` (re-shield) instead of opening a clean grab window. Every release/teardown/heal caller keys off this predicate, so the whole grab cadence breaks. (Vanilla is unaffected: `ftMainSetStatus` unconditionally clears `is_shield` on the catch transition, `ftmain.c:4862`.)
+
+**Fix attempt 34a (Option 1 — WRONG SOURCE, reverted):** Swapped the live-forward lookup to `syNetInputGetPublishedFrame(player, &frame)` and dropped the OR-fold, on the assumption that `last_published` equals the fighter's applied `fp->input`. **It does not** — `last_published` carries the *same* input-delay offset as `syNetInputGetTick()`. Result: a sustained R-hold read `z_auth=0` while `z_live=1` (505× `z_auth=0 z_live=1` in the 34a soak), and with the OR-fold gone the false-negative flowed straight to `ScheduleAuthoritativeRelease` → `is_release=TRUE` → vanilla `ftCommonGuardUpdateShieldVars` teardown → `GuardOff(154)` → held R re-enters `GuardOn(152)` → **perfect-timing 152↔154 shield on/off spam under a continuous hold.** Also surfaced a "fully solid" shield: each `GuardOn` re-entry re-spawns the bubble (`guard_shield_prune reason=guard_id_rebind_live` 482×, `effect_count` flapping 0↔3); the rapid respawn/double-draw reads opaque, and it returned to normal `0xC0` translucency only when the peer dropped and the session (rollback) stopped.
+
+**Fix 34c (SHIPPED — applied input only):** `syNetRbSnapFighterShieldInputHeldAuthoritative` now simply `return syNetRbSnapFighterShieldInputHeld(fp)` — the fighter's applied input (`button_hold & button_mask_z`). The offset published/sealed stream read is removed entirely. The applied input is the only edge-faithful source (held exactly while held, released exactly when released), is the synced sim input (deterministic on both peers — `figh` matches; transient prediction-edge drift resim-corrected per Phase 29), and during resim `fp->input` is the replayed sealed input so it equals the sealed authoritative value there too. `is_release` is not hashed, so driving the release/teardown path from `z_live` cannot diverge `figh`. This matches vanilla `ftCommonGuardCheckScheduleRelease` (`ftcommonguard1.c:30`), which already owns `is_release` from the same applied button. Removes the root defect behind **both** the sustained-hold spam (false-negative) **and** the original tap-spam grab block (false-positive at the release edge). The diag `z_auth` now equals `z_live` by construction.
+
+**Verify:** Hold R → fighter reaches and stays in `Guard(153)`, **zero** `152↔154` oscillation and **zero** `z_auth=0 z_live=1` lines during a sustained hold. Spam R to grab → grabs on each tap-with-A, no re-shield in the tap gap (matches offline). `guard_shield_prune reason=guard_id_rebind_live` churn should collapse to a stable single bubble; re-check the "solid shield" — expected to resolve once the bubble stops re-spawning every few frames (if it persists with a stable single bubble, investigate the snapshot/render-state path separately). `figh` matched on every `LOAD_HASH_DRIFT` line. Both `build-netmenu` and `build-offline` link clean.
+
+### Phase 31 (2026-06-07) — synctest eff-only drift: patch adopted bubble, post-blob dedupe
+
+**Symptom:** Cross-ISA synctest soak: 7× `LOAD_HASH_DRIFT` with `figh`/`anim` matched and **eff-only** mismatch (e.g. tick 749, P1 `Guard(153)`, `guard_id_rebind_resim_defer`). No `effect-repair ok` lines — `TryRepairEffectHashForVerify` did not converge.
+
+**Cause:** Synctest captures live @ tick T, loads ring slot T−1, restores emergency. Phase 30 `EnsureShieldEffectsFromSlot` skipped respawn when `FindLiveShieldEffectForFighter` found an emergency bubble but **did not apply slot blob fields** (anim_frame, translate, shield vars) onto it. Pass-1 `PruneDuplicateShieldEffects` ran before blob apply; pass-2 had no dedupe, so duplicate emergency + blob-respawned bubbles could survive with wrong hashed fields. Dedupe keep priority preferred stale `guard->effect_gobj` over canonical live lookup when pool id ≠ blob id.
+
+**Fix:**
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapPatchLiveShieldFromSlot` + `FindShieldEffectBlobForPlayer` | On ensure adopt, apply slot shield blob onto the live bubble (player-keyed blob lookup fallback) |
+| `PruneDuplicateShieldEffects` after blob apply in `ReconcileSnapshotEffectsBeforeItems` | Dedupe after hashed fields are patched |
+| Dedupe keep order (slot apply) | `FindLiveShieldEffectForFighter` before `guard->effect_gobj` fallback |
+| Synctest probe | `TryRepairEffectHashForVerify` after `PrepareLoadedSlotForVerify` (re-apply blobs post joint anim) |
+
+**Verify:** Synctest soak with `SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`: zero eff-only `LOAD_HASH_DRIFT` during shield hold/re-tap windows; expect `SYNCTEST_OK` at shield ticks; `effect-repair ok` rare/absent if load path converges on first apply.
 
 ### Phase 13 resoak (2026-06-05)
 

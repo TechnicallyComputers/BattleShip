@@ -499,6 +499,11 @@ if ($Netplay) {
     # Force OFF — stale CMakeCache from a netplay configure must not pull in mm_matchmaking/curl.
     $CmakeArgs += "-DSSB64_NETMENU=OFF"
 }
+if ($env:SSB64_EXTRA_CMAKE_ARGS) {
+    foreach ($extraArg in ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+')) {
+        if ($extraArg) { $CmakeArgs += $extraArg }
+    }
+}
 Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
 Import-VcVars64IfNeeded
 if ($env:GITHUB_ACTIONS -eq 'true' -and (Test-Path -LiteralPath $BuildDir)) {
@@ -528,11 +533,17 @@ if ($Netplay) {
 # CSS-arrow asset rules then fail with "Pillow is required" mid-build.
 $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
-cmake -B $BuildDir $Root `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DSSB64_VERSION=$Ver" `
-    "-DPython3_EXECUTABLE=$PythonExe" `
-    | Out-Null
+$PythonCmakeArgs = @(
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DSSB64_VERSION=$Ver",
+    "-DPython3_EXECUTABLE=$PythonExe"
+)
+if ($env:SSB64_EXTRA_CMAKE_ARGS) {
+    foreach ($extraArg in ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+')) {
+        if ($extraArg) { $PythonCmakeArgs += $extraArg }
+    }
+}
+cmake -B $BuildDir $Root @PythonCmakeArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 if ($Netplay) {

@@ -23,6 +23,7 @@ Options:
   --collapse-r-stall    Collapse repeated path=R frame_commit_diag and frozen sim_state_tick (default on)
   --no-collapse-r-stall Disable R-stall collapse
   --summary-only      Print summary block only (no merged body)
+  --sync-report       Brief stability report to stdout (hash drift, synctest, resim, pair diff)
   --diff-ticks        Report first sim_state_tick field mismatch between first two inputs
   --diff-death-rebirth  Report death/rebirth sim + gate diag mismatches (implies --diff-ticks extras)
 
@@ -255,6 +256,21 @@ GATE_ANIM_TRA_I_RE = re.compile(r"SSB64: gcPlayDObjAnimJoint - TraI ")
 NESS_PKTHUNDER_GATE_RE = re.compile(
     r"SSB64 Netplay: NESS_PKTHUNDER_GATE tick=(\d+) event=(\S+)"
 )
+SYNCTEST_OK_RE = re.compile(r"SSB64 NetRollback: SYNCTEST_OK tick=(\d+)")
+SYNCTEST_SKIP_ANY_RE = re.compile(r"SSB64 NetRollback: SYNCTEST_SKIP tick=(\d+)")
+LOAD_HASH_DRIFT_ANY_RE = re.compile(r"SSB64 NetRollback: LOAD_HASH_DRIFT tick=(\d+)")
+LOAD_HASH_ABORT_RE = re.compile(
+    r"SSB64 NetRollback: LOAD_HASH_DRIFT — restoring live world"
+)
+PEER_SNAPSHOT_DIVERGE_RE = re.compile(
+    r"SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE — stopping VS session"
+)
+RESIM_SIM_CORE_REJECT_RE = re.compile(
+    r"SSB64 NetRollback: resim-sim-core-reject tick=(\d+)"
+)
+DESYNC_REPORT_RE = re.compile(r"SSB64 DESYNC REPORT")
+CSS_RETURN_RE = re.compile(r"returning to character select", re.I)
+VS_SESSION_STOP_RE = re.compile(r"SSB64 NetPeer: VS session stop ")
 SNAPSHOT_SAVE_DEDUPE_PREFIXES = (
     "SSB64 NetRbSnapshot: effect save tick=",
     "SSB64 NetRbSnapshot: item save tick=",
@@ -1995,6 +2011,301 @@ def diff_rebirth_gate(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
     return out
 
 
+@dataclass
+class SyncReportMetrics:
+    label: str
+    path: Path
+    lines_total: int = 0
+    max_sim_tick: int | None = None
+    synctest_ok: int = 0
+    synctest_fail: int = 0
+    first_synctest_fail_tick: int | None = None
+    synctest_skip: int = 0
+    load_hash_drift: int = 0
+    load_hash_item_mismatch: int = 0
+    first_item_drift_tick: int | None = None
+    load_hash_abort: int = 0
+    resim_complete: int = 0
+    resim_sim_core_ok: int = 0
+    resim_sim_core_reject: int = 0
+    frame_commit_item_diverge: int = 0
+    peer_snapshot_diverge: int = 0
+    session_stop: int = 0
+    css_return: int = 0
+    sigsegv: int = 0
+    desync_report: int = 0
+    ring_save_figh_bad: int = 0
+    ring_save_anim_bad: int = 0
+
+
+def _sync_report_bump_tick(current: int | None, tick_s: str) -> int | None:
+    try:
+        tick = int(tick_s)
+    except ValueError:
+        return current
+    if current is None or tick > current:
+        return tick
+    return current
+
+
+def read_raw_log_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> SyncReportMetrics:
+    """Scan raw log lines for rollback/sync stability signals (unfiltered)."""
+    m = SyncReportMetrics(label=label, path=path, lines_total=len(lines))
+    for ln in lines:
+        sim_m = SIM_STATE_TICK_RE.search(ln)
+        if sim_m is not None:
+            m.max_sim_tick = _sync_report_bump_tick(m.max_sim_tick, sim_m.group(1))
+
+        ok_m = SYNCTEST_OK_RE.search(ln)
+        if ok_m is not None:
+            m.synctest_ok += 1
+            continue
+
+        fail_m = SYNCTEST_FAIL_RE.search(ln)
+        if fail_m is not None:
+            m.synctest_fail += 1
+            if m.first_synctest_fail_tick is None:
+                m.first_synctest_fail_tick = int(fail_m.group(1))
+            continue
+
+        skip_m = SYNCTEST_SKIP_ANY_RE.search(ln)
+        if skip_m is not None:
+            m.synctest_skip += 1
+            continue
+
+        drift_m = LOAD_HASH_DRIFT_ANY_RE.search(ln)
+        if drift_m is not None:
+            m.load_hash_drift += 1
+            item_m = LOAD_HASH_DRIFT_RE.search(ln)
+            if item_m is not None and item_m.group(2).lower() != item_m.group(3).lower():
+                m.load_hash_item_mismatch += 1
+                if m.first_item_drift_tick is None:
+                    m.first_item_drift_tick = int(drift_m.group(1))
+            continue
+
+        if LOAD_HASH_ABORT_RE.search(ln) is not None:
+            m.load_hash_abort += 1
+            continue
+
+        if RESIM_COMPLETE_RE.search(ln) is not None:
+            m.resim_complete += 1
+            continue
+
+        if RESIM_SIM_CORE_RE.search(ln) is not None:
+            m.resim_sim_core_ok += 1
+            continue
+
+        reject_m = RESIM_SIM_CORE_REJECT_RE.search(ln)
+        if reject_m is not None:
+            m.resim_sim_core_reject += 1
+            continue
+
+        if FRAME_COMMIT_DIVERGE_RE.search(ln) is not None:
+            m.frame_commit_item_diverge += 1
+            continue
+
+        if PEER_SNAPSHOT_DIVERGE_RE.search(ln) is not None:
+            m.peer_snapshot_diverge += 1
+            continue
+
+        if VS_SESSION_STOP_RE.search(ln) is not None:
+            m.session_stop += 1
+            continue
+
+        if CSS_RETURN_RE.search(ln) is not None:
+            m.css_return += 1
+            continue
+
+        if CRASH_SIGSEGV_RE.search(ln) is not None:
+            m.sigsegv += 1
+            continue
+
+        if DESYNC_REPORT_RE.search(ln) is not None:
+            m.desync_report += 1
+            continue
+
+        ring_m = RING_SAVE_DIAG_RE.search(ln)
+        if ring_m is not None:
+            if ring_m.group(4) == "0":
+                m.ring_save_figh_bad += 1
+            if ring_m.group(5) == "0":
+                m.ring_save_anim_bad += 1
+
+    return m
+
+
+def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
+    """Return (verdict_label, reason_strings) for one peer log."""
+    reasons: list[str] = []
+    if m.sigsegv:
+        reasons.append(f"SIGSEGV x{m.sigsegv}")
+    if m.load_hash_abort:
+        reasons.append(f"LOAD_HASH abort x{m.load_hash_abort}")
+    if m.peer_snapshot_diverge:
+        reasons.append(f"PEER_SNAPSHOT_DIVERGE x{m.peer_snapshot_diverge}")
+    if m.synctest_fail:
+        tick = m.first_synctest_fail_tick
+        reasons.append(
+            f"SYNCTEST_FAIL x{m.synctest_fail}"
+            + (f" first={tick}" if tick is not None else "")
+        )
+    if m.load_hash_item_mismatch:
+        tick = m.first_item_drift_tick
+        suffix = f" first={tick}" if tick is not None else ""
+        if m.resim_sim_core_ok:
+            reasons.append(
+                f"item LOAD_HASH_DRIFT x{m.load_hash_item_mismatch} "
+                f"(soft recovery x{m.resim_sim_core_ok}){suffix}"
+            )
+        else:
+            reasons.append(f"item LOAD_HASH_DRIFT x{m.load_hash_item_mismatch}{suffix}")
+    if m.frame_commit_item_diverge:
+        reasons.append(f"frame_commit_item_diverge x{m.frame_commit_item_diverge}")
+    if m.resim_sim_core_reject:
+        reasons.append(f"resim-sim-core-reject x{m.resim_sim_core_reject}")
+    if m.desync_report:
+        reasons.append(f"DESYNC REPORT x{m.desync_report}")
+
+    hard = bool(
+        m.sigsegv
+        or m.load_hash_abort
+        or m.peer_snapshot_diverge
+        or m.synctest_fail
+        or m.resim_sim_core_reject
+        or m.frame_commit_item_diverge
+        or (m.load_hash_item_mismatch and not m.resim_sim_core_ok)
+    )
+    if hard:
+        return "UNSTABLE", reasons
+
+    soft = bool(
+        m.resim_sim_core_ok
+        or m.resim_complete
+        or m.synctest_skip
+        or m.load_hash_drift
+    )
+    if soft:
+        return ("STABLE (soft recovery)", reasons) if reasons else ("STABLE (soft recovery)", [])
+
+    if m.synctest_ok:
+        return "STABLE", []
+    if m.max_sim_tick is not None:
+        return "STABLE (no synctest signals)", []
+    return "UNKNOWN (no battle sim_state_tick)", []
+
+
+def collect_sim_state_by_tick(lines: list[str]) -> dict[str, dict[str, str]]:
+    by_tick: dict[str, dict[str, str]] = {}
+    for ln in lines:
+        fields = parse_sim_state_fields(ln)
+        if fields and "tick" in fields:
+            by_tick[fields["tick"]] = fields
+    return by_tick
+
+
+def diff_sync_report_pair(
+    metrics_a: SyncReportMetrics,
+    lines_a: list[str],
+    metrics_b: SyncReportMetrics,
+    lines_b: list[str],
+) -> tuple[list[str], bool]:
+    """First sim_state_tick hash skew between host/guest raw logs. Returns (lines, mismatch)."""
+    by_a = collect_sim_state_by_tick(lines_a)
+    by_b = collect_sim_state_by_tick(lines_b)
+    out: list[str] = []
+    common = sorted(set(by_a.keys()) & set(by_b.keys()), key=int)
+    if not common:
+        out.append("  pair: no overlapping sim_state_tick rows")
+        return out, False
+
+    compare_keys = ["figh", "item", "anim", "eff", "world", "wpn"]
+    for tick in common:
+        fa, fb = by_a[tick], by_b[tick]
+        diffs = [k for k in compare_keys if fa.get(k) != fb.get(k) and k in fa and k in fb]
+        if diffs:
+            out.append(f"  pair: first sim_state mismatch tick={tick} fields={','.join(diffs)}")
+            for k in diffs:
+                out.append(f"    {k}: {metrics_a.label}={fa.get(k)} {metrics_b.label}={fb.get(k)}")
+            return out, True
+
+    out.append(f"  pair: sim_state_tick aligned on {len(common)} overlapping ticks")
+    return out, False
+
+
+def pair_sync_verdict(metrics: list[SyncReportMetrics], pair_mismatch: bool) -> str:
+    if pair_mismatch:
+        return "UNSTABLE"
+    verdicts = [sync_report_verdict(m)[0] for m in metrics]
+    if any(v.startswith("UNSTABLE") for v in verdicts):
+        return "UNSTABLE"
+    if any(v.startswith("UNKNOWN") for v in verdicts):
+        return "UNKNOWN"
+    if any(v == "STABLE (soft recovery)" for v in verdicts):
+        return "STABLE (soft recovery)"
+    return "STABLE"
+
+
+def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
+    verdict, reasons = sync_report_verdict(m)
+    tick_s = str(m.max_sim_tick) if m.max_sim_tick is not None else "?"
+    parts = [
+        f"  [{label}] {verdict}  max_sim_tick={tick_s}",
+        (
+            f"    resim={m.resim_complete} synctest_ok={m.synctest_ok} "
+            f"fail={m.synctest_fail} skip={m.synctest_skip}"
+        ),
+        (
+            f"    load_hash_drift={m.load_hash_drift} item_mm={m.load_hash_item_mismatch} "
+            f"fc_item_div={m.frame_commit_item_diverge}"
+        ),
+    ]
+    if m.resim_sim_core_ok or m.resim_sim_core_reject:
+        parts.append(
+            f"    resim_core_ok={m.resim_sim_core_ok} resim_core_reject={m.resim_sim_core_reject}"
+        )
+    if m.session_stop or m.css_return or m.sigsegv:
+        parts.append(
+            f"    session_stop={m.session_stop} css_return={m.css_return} sigsegv={m.sigsegv}"
+        )
+    if m.ring_save_figh_bad or m.ring_save_anim_bad:
+        parts.append(
+            f"    ring_save_bad figh={m.ring_save_figh_bad} anim={m.ring_save_anim_bad}"
+        )
+    if reasons:
+        parts.append(f"    reasons: {'; '.join(reasons)}")
+    return parts
+
+
+def build_sync_report(
+    metrics: list[SyncReportMetrics],
+    raw_lines: list[list[str]],
+) -> tuple[list[str], bool]:
+    """Return (report lines, unstable)."""
+    out: list[str] = ["=== sync-report ==="]
+    unstable = False
+    for m in metrics:
+        verdict, _ = sync_report_verdict(m)
+        if verdict.startswith("UNSTABLE"):
+            unstable = True
+        out.extend(format_sync_report_line(m.label, m))
+
+    pair_mismatch = False
+    if len(metrics) >= 2:
+        pair_lines, pair_mismatch = diff_sync_report_pair(
+            metrics[0], raw_lines[0], metrics[1], raw_lines[1]
+        )
+        out.append(f"  MATCH: {pair_sync_verdict(metrics, pair_mismatch)}")
+        out.extend(pair_lines)
+        if pair_mismatch or pair_sync_verdict(metrics, pair_mismatch) == "UNSTABLE":
+            unstable = True
+    out.append("")
+    return out, unstable
+
+
 def build_summary(logs: list[LabeledLog]) -> list[str]:
     out: list[str] = []
     out.append("=== netplay-trim-logs summary ===")
@@ -2318,6 +2629,11 @@ def main() -> int:
     parser.add_argument("--collapse-r-stall", dest="collapse_r_stall", action="store_true", default=True)
     parser.add_argument("--no-collapse-r-stall", dest="collapse_r_stall", action="store_false")
     parser.add_argument("--summary-only", action="store_true")
+    parser.add_argument(
+        "--sync-report",
+        action="store_true",
+        help="Print brief stability report (synctest, hash drift, resim, pair diff) to stdout",
+    )
     parser.add_argument("--diff-ticks", action="store_true")
     parser.add_argument(
         "--diff-death-rebirth",
@@ -2326,6 +2642,31 @@ def main() -> int:
     )
     args = parser.parse_args()
     diff_death_rebirth = args.diff_death_rebirth or args.diff_ticks
+    sync_unstable = False
+
+    if args.sync_report:
+        sync_metrics: list[SyncReportMetrics] = []
+        sync_raw_lines: list[list[str]] = []
+        for label, path_s in args.label:
+            path = Path(path_s)
+            if not path.is_file():
+                print(f"error: not a file: {path}", file=sys.stderr)
+                return 2
+            raw = read_raw_log_lines(path)
+            sync_raw_lines.append(raw)
+            sync_metrics.append(collect_sync_report_metrics(label, path, raw))
+        sync_report_lines, sync_unstable = build_sync_report(sync_metrics, sync_raw_lines)
+        sys.stdout.write("\n".join(sync_report_lines))
+        trim_wanted = bool(
+            args.output
+            or args.tick_min is not None
+            or args.tick_max is not None
+            or args.diff_ticks
+            or diff_death_rebirth
+            or args.summary_only
+        )
+        if not trim_wanted:
+            return 1 if sync_unstable else 0
 
     include_src = ([] if args.no_default_filters else DEFAULT_INCLUDE) + args.include
     exclude_src = ([] if args.no_default_filters else DEFAULT_EXCLUDE) + args.exclude
@@ -2429,6 +2770,8 @@ def main() -> int:
         sys.stdout.write(out_text)
         if not out_text.endswith("\n"):
             sys.stdout.write("\n")
+    if sync_unstable:
+        return 1
     return 0
 
 

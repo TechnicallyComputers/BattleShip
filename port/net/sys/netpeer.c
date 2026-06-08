@@ -3934,34 +3934,52 @@ static void syNetPeerHandleAutomatchOfferPacket(const u8 *buffer, s32 size)
 
 #if defined(SSB64_NETMENU)
 /*
- * Host-only debug: SSB64_NETPLAY_AUTOMATCH_STAGE_KIND=<gkind> forces MATCH_CONFIG stage_kind
- * (numeric GRKind, e.g. 5 = Yoshi's Island). Ignored when unset. Does not bypass guest automatch
- * policy checks (invalid 0xDE still dropped on guest).
+ * Host-only: SSB64_NETPLAY_AUTOMATCH_STAGE_KIND=<gkind> or compile-time
+ * SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT forces MATCH_CONFIG stage_kind (numeric GRKind,
+ * e.g. 6 = Dream Land). Env wins when set. Does not bypass guest automatch policy checks
+ * (invalid 0xDE still dropped on guest).
  */
 static sb32 syNetPeerAutomatchTryForceStageKind(u32 *stage_kind_out)
 {
 	const char *env;
 	s32 gkind;
+	sb32 from_env;
 
 	if (stage_kind_out == NULL)
 	{
 		return FALSE;
 	}
+	from_env = FALSE;
 	env = getenv("SSB64_NETPLAY_AUTOMATCH_STAGE_KIND");
-	if ((env == NULL) || (env[0] == '\0'))
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		gkind = atoi(env);
+		from_env = TRUE;
+	}
+#if defined(SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT)
+	else
+	{
+		gkind = (s32)SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT;
+	}
+#else
+	else
 	{
 		return FALSE;
 	}
-	gkind = atoi(env);
+#endif
 	if ((gkind < (s32)nGRKindBattleStart) || (gkind > (s32)nGRKindBattleEnd) || (gkind == 0xDE))
 	{
-		port_log(
-		    "SSB64 NetPeer: AUTOMATCH_STAGE_KIND=%s ignored (need VS gkind %d..%d, e.g. 0=Castle 1=Sector 5=Yoster)\n",
-		    env, (int)nGRKindBattleStart, (int)nGRKindBattleEnd);
+		if (from_env != FALSE)
+		{
+			port_log(
+			    "SSB64 NetPeer: AUTOMATCH_STAGE_KIND=%s ignored (need VS gkind %d..%d, e.g. 0=Castle 1=Sector 5=Yoster)\n",
+			    env, (int)nGRKindBattleStart, (int)nGRKindBattleEnd);
+		}
 		return FALSE;
 	}
 	*stage_kind_out = (u32)gkind;
-	port_log("SSB64 NetPeer: automatch stage forced by env AUTOMATCH_STAGE_KIND=%u\n", *stage_kind_out);
+	port_log("SSB64 NetPeer: automatch stage forced by %s AUTOMATCH_STAGE_KIND=%u\n",
+	         (from_env != FALSE) ? "env" : "compile default", *stage_kind_out);
 	return TRUE;
 }
 #endif /* SSB64_NETMENU */

@@ -38,6 +38,8 @@ extern sb32 syNetRbSnapshotCaptureLiveEmergency(void);
 extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
 /* Presentation sync + fighter-coupled weapon rebind before load-hash verify. */
 extern void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick);
+/* Finalize + rebind/reapply/coupling/item reconcile — same path production load and synctest use before verify. */
+extern void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */

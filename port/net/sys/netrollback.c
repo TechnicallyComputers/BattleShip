@@ -4899,6 +4899,7 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	}
 #if defined(SSB64_NETMENU)
 	syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
+	syNetplayCanonicalizeGMCameraSimState();
 #endif
 	live_f = syNetSyncHashBattleFightersFull();
 	live_w = syNetSyncHashRollbackWorld();
@@ -5149,16 +5150,7 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 		return FALSE;
 	}
 #ifdef PORT
-	syNetRbSnapshotFinalizeLoad(tick);
-	syNetRbSnapshotRebindAllFighters();
-	syNetRbSnapshotReapplyJointAnimAtTick(tick);
-	syNetRbSnapshotFinalizeLoadCoupling(tick);
-	syNetRbSnapshotReapplyJointAnimAtTick(tick);
-	if (syNetRbSnapshotGetSlotItemCount(tick) > 0U)
-	{
-		syNetRbSnapshotRebindFighterItemHoldCoupling();
-	}
-	syNetRbSnapshotReconcileLoadedItemsForVerify(tick);
+	syNetRbSnapshotPrepareLoadedSlotForVerify(tick);
 #endif
 	if (syNetRollbackVerifyLoadedSlot(tick) == FALSE)
 	{
@@ -5417,7 +5409,12 @@ void syNetRollbackAfterBattleUpdate(void)
 				}
 				if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 				{
-					syNetRbSnapshotFinalizeLoad(probe_tick);
+					syNetRbSnapshotPrepareLoadedSlotForVerify(probe_tick);
+					/*
+					 * Re-run blob apply + shield reconcile after joint anim reapply so parent-attached
+					 * shield translate/anim fields match the slot hash at verify time.
+					 */
+					(void)syNetRbSnapshotTryRepairEffectHashForVerify(probe_tick);
 					verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
 				}
 				syNetRbSnapRepairStageSetVerifyOnly(FALSE);
