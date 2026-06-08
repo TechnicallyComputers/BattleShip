@@ -49,6 +49,16 @@ Synctest-on run: shields still looked correct (translucent) but `SYNCTEST_FAIL` 
 
 7. **`syNetRbSnapShieldEffectMatchesKeep`:** Match **pointer identity only** (`gobj == keep_gobj`); remove `gobj->id == keep_id` branch. Lets `PruneDuplicateShieldEffects` eject extras (`reason=duplicate`) and lets `guard_id_rebind_live` fall through to `guard_id_rebind_duplicate` eject when `guard_eff != gobj` and count > 1.
 
+### Phase 38 (2026-06-08) — shield stamina drain stops during sustained hold
+
+**Symptom:** Offline: holding shield drains `shield_health` every 16 frames (`FTCOMMON_GUARD_DECAY_INT`). Rollback synctest: drain runs a few ticks then stops; logs show `shield_health=55` stuck, ~6-frame GuardOn→GuardOff cycles, double `guard_shield_ensure`, and `guard_ptr_mismatch` eject on every GuardOn.
+
+**Cause:** (1) `EnsureLiveShieldEffectsOnAuthHold` ran twice per live-forward reconcile (before and after prune), minting duplicate id-1011 bubbles when vanilla already owned one. (2) Phase 37 pointer-only `MatchesKeep` left the `guard_eff != gobj` prune branch dead — it always fell through to `guard_ptr_mismatch` eject instead of adopt/rebind. (3) Ensure spawned even when `CountLiveShieldEffectsForPlayer > 0`.
+
+**Fix:** Single post-prune ensure pass; `guard_ptr_adopt` / `guard_ptr_duplicate` replace blind `guard_ptr_mismatch` eject; skip ensure spawn when player slot already has a live shield. **`guard_shield_stamina` diag** logs `shield_health`, `shield_decay_wait`, `is_release`, `release_lag`, `z_live`, bubble presence on change (gated `SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1`).
+
+**Verify:** Sustained hold should show monotonic `shield_decay_wait` countdown and periodic `shield_health` drops in `guard_shield_stamina` lines; zero `guard_ptr_mismatch`; at most one `guard_shield_ensure path=ok` per GuardOn entry; no `player_slot_bubble_exists` spam during hold.
+
 ## Impact
 
 | Area | Before Phase 37 | After Phase 37 |

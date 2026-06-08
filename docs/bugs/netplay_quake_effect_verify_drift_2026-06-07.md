@@ -63,3 +63,38 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 | `TryRepairEffectHashForVerify` / `PrepareLoadedSlotForVerify` | Proactive effect repair + quake freeze + full fighter pose reapply (joint translate/rotate/scale + anim + canonicalize) |
 
 **Verify:** Re-soak Kirby/Pikachu cross-ISA — expect 0 `LOAD_HASH_DRIFT`, 0 `SYNCTEST_FAIL`; quake during shield tap / landing still plays forward after load.
+
+### Phase 40 (2026-06-07) — userdata-joint move FX + dead transient hash exclude
+
+**Symptom (4425-tick Falcon vs Kirby soak):** 15 eff-only `LOAD_HASH_DRIFT` soft-continues, 0 `SYNCTEST_FAIL`. Kirby copied Falcon Punch VFX snapped on X during recovery; dead hit/quake shells and parent-attached move FX (`parent_id=fighter`) dropped from verify fold.
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `syNetRbSnapLiveEffectExcludedFromRollbackHash` | Exclude dead non-respawnable effects (`anim_frame<=0`, `respawn_kind=NONE`) and dead quakes from capture/hash fold |
+| `syNetRbSnapEjectDeadNonRespawnableEffectsFromLive` | Eject dead shells before verify repair and after final blob reapply |
+| `SYNETRB_EFFECT_SNAP_USERDATA_JOINT` | Capture parent joint index for `efManagerNoEjectProcUpdate` userdata-attached FX (Falcon Punch, etc.) |
+| `syNetRbSnapRebindUserdataJointParentEffect` | Rebind `user_data.p` + `is_effect_attach` on snapshot apply/repair |
+| `syNetRbSnapFinalizeFighterEffectAttachFlags` | Whitelist live/slot userdata-joint attach (prevents orphan flame during load) |
+| `syNetRbSnapPruneOrphanQuakeAndDeadEffects` | Also eject dead fighter-attached transient shells |
+
+**Related:** Kirby stone manual B release — `ftKirbySpecialLwIsGenuineButtonTapB` gated to resim-only ([netplay_kirby_stone_rollback_release_2026-06-06.md](netplay_kirby_stone_rollback_release_2026-06-06.md)).
+
+**Verify:** Re-soak Falcon vs Kirby — expect fewer eff-only drifts; Kirby stone B-tap release works in forward netplay; copied Falcon Punch flame tracks joint through load/verify.
+
+### Phase 41 (2026-06-08) — slot-authoritative quake restore + verify shield dedupe
+
+**Symptom (5644-tick Falcon vs Kirby soak):** 13 eff-only `LOAD_HASH_DRIFT` from stacked camera quakes (`respawn=1` save → `respawn=0` verify after proc freeze); 1 `SYNCTEST_FAIL` @2687 from duplicate `SHIELD` respawn during verify repair (`guard_effect_gobj_id` live=0 vs blob).
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `syNetRbSnapLiveEffectIsQuake` | Recognize pending `func_run`, stamped/frozen shells (proc ended, `effect_vars.quake.priority` retained) |
+| `syNetRbSnapEnsureQuakeEffectsFromSlot` | Adopt or respawn every `SYNETRB_EFFECT_RESPAWN_QUAKE` blob; stamp anim+translate via apply path |
+| Load / verify repair | Call quake ensure before effect reconcile; verify repair runs effect reconcile **before** shield reconcile |
+| `syNetRbSnapBackfillGuardShieldEffectIdsFromEffects` | Also on load apply + verify repair so `guard_effect_gobj_id` matches slot shield blobs |
+| `syNetRbSnapEnsureShieldEffectsFromSlot` | Verify-only: skip synth respawn when slot already lists a per-player shield blob |
+
+**Verify:** Re-soak Falcon vs Kirby cross-ISA synctest — expect 0 eff-only quake drift; tick 2687 class should soft-continue without `SYNCTEST_FAIL`.
