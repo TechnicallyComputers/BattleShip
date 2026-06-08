@@ -873,6 +873,8 @@ static u32 sSYNetRbSnapshotRingLen = SYNETRB_SNAPSHOT_RING_DEFAULT;
 #ifdef PORT
 static SYNetRbSnapshotSlot sSYNetRbEmergencySlot;
 static sb32 sSYNetRbEmergencyValid;
+/* Per-player shield_decay_wait stashed at synctest emergency capture (Phase 48 drain stall). */
+static s32 s_syNetRbEmergencyShieldDecayWait[GMCOMMON_PLAYERS_MAX];
 static s32 sSYNetRbSnapshotGuardLogBudget = 16;
 static sb32 sSYNetRbSnapWeaponApplyMatched[SYNETRB_SNAPSHOT_MAX_WEAPONS];
 static u32 sSYNetRbSnapWeaponApplyTick;
@@ -2315,7 +2317,13 @@ static GObj *syNetRbSnapFindFirstUnreconciledLiveEffectForBlob(const SYNetRbSnap
 static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotSlot *slot,
                                                             const SYNetRbSnapEffectBlob *blob,
                                                             const u32 *reconciled_ids,
-                                                            s32 reconciled_count);
+                                                            s32 reconciled_count,
+                                                            u8 *reconciled_shield_mask,
+                                                            GObj * const *reconciled_gobj_ptrs,
+                                                            s32 reconciled_gobj_count);
+static sb32 syNetRbSnapEffectBlobIsShieldKind(const SYNetRbSnapEffectBlob *blob);
+static GObj *syNetRbSnapFindLiveShieldEffectForPlayer(s32 player);
+static void syNetRbSnapNormalizeCapturedShieldIdentity(SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapApplyEffectBlobAnimFrame(GObj *gobj, f32 anim_frame, EFStruct *ep);
 static void syNetRbSnapApplyEffectBlobTranslate(GObj *gobj, const SYNetRbSnapEffectBlob *blob,
@@ -2395,12 +2403,16 @@ static void syNetRbSnapDiagGuardWaitShieldHeld(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapDiagGuardShieldWithoutBubbleGap(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapDiagGuardShieldBubbleLinger(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapDiagGuardShieldStaminaDrain(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapStashEmergencyGuardShieldDecayWait(void);
+static void syNetRbSnapRestoreGuardShieldDecayWaitAfterSynctest(void);
 static void syNetRbSnapPruneStaleShields(const SYNetRbSnapshotSlot *slot, sb32 live_forward_policy);
 static void syNetRbSnapReconcileFighterShieldCoupling(sb32 live_forward_policy);
 static u32 syNetRbSnapGuardShieldDiagTick(const SYNetRbSnapshotSlot *slot);
 static u32 syNetRbSnapGuardEffectIdFromBlob(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapLiveEffectIsShield(const GObj *gobj, const EFStruct *ep);
 static GObj *syNetRbSnapFindLiveShieldEffectForFighter(const GObj *fighter_gobj);
+static GObj *syNetRbSnapFindLiveShieldEffectForPlayer(s32 player);
+static sb32 syNetRbSnapEffectBlobIsShieldKind(const SYNetRbSnapEffectBlob *blob);
 static GObj *syNetRbSnapResolveCoupledGobj(GObj *coupled_gobj);
 static sb32 syNetRbSnapLiveEffectIsYoshiEggLay(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapYoshiEggLayEffectOwnedByFighter(const GObj *effect_gobj, const GObj *fighter_gobj);
@@ -12889,6 +12901,22 @@ static GObj *syNetRbSnapTryEnsureLiveShieldEffectForFighter(GObj *fighter_gobj, 
 			EFStruct *guard_ep = efGetStruct(guard_coupled);
 
 			if ((guard_ep != NULL) &&
+			    (syNetRbSnapShieldPlayerFromEffectVars(guard_ep) != fp->player))
+			{
+				/*
+				 * Stale guard->effect_gobj can alias another player's bubble when pool ids collide
+				 * (dual-shield / 4p). Clear and spawn a per-player bubble below.
+				 */
+				ftStatusVarsGuard(fp)->effect_gobj = NULL;
+				guard_coupled = NULL;
+			}
+		}
+		if ((guard_coupled != NULL) &&
+		    (syNetRbSnapLiveEffectIsShield(guard_coupled, efGetStruct(guard_coupled)) != FALSE))
+		{
+			EFStruct *guard_ep = efGetStruct(guard_coupled);
+
+			if ((guard_ep != NULL) &&
 			    (syNetRbSnapLiveShieldEffectOwnedByFighter(guard_ep, fighter_gobj, fp->player) != FALSE))
 			{
 				syNetRbSnapAuditLiveShieldEffectOwner(guard_coupled, fp);
@@ -13355,6 +13383,65 @@ static s32 syNetRbSnapShieldPlayerFromEffectBlob(const SYNetRbSnapEffectBlob *bl
 	return syNetRbSnapShieldPlayerFromEffectVars(&scratch);
 }
 
+static sb32 syNetRbSnapEffectBlobIsShieldKind(const SYNetRbSnapEffectBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_SHIELD) ||
+	        (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD)) ? TRUE
+	                                                                     : FALSE;
+}
+
+/*
+ * Idempotent shield respawn: one live bubble per player slot. Dual-shield synctest verify used to stack
+ * 2 slot blobs × 4 respawn passes → count=8 and post-probe bubble=0 drain stall (Phase 47).
+ */
+static GObj *syNetRbSnapAdoptLiveShieldForBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	s32 shield_player;
+	GObj *live_shield;
+
+	if (syNetRbSnapEffectBlobIsShieldKind(blob) == FALSE)
+	{
+		return NULL;
+	}
+	shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+	if (shield_player < 0)
+	{
+		return NULL;
+	}
+	live_shield = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+	if (live_shield != NULL)
+	{
+		return live_shield;
+	}
+	if (syNetRbSnapCountLiveShieldEffectsForPlayer(shield_player) > 0)
+	{
+		return syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+	}
+	return NULL;
+}
+
+static sb32 syNetRbSnapShieldPlayerReconcileTaken(u8 player_mask, s32 player)
+{
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return FALSE;
+	}
+	return ((player_mask & (1U << player)) != 0U) ? TRUE : FALSE;
+}
+
+static u8 syNetRbSnapShieldReconcileMarkPlayer(u8 player_mask, s32 player)
+{
+	if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
+	{
+		player_mask |= (1U << player);
+	}
+	return player_mask;
+}
+
 /* Fighter GObjs share kind id nGCCommonKindFighter (1000); shield parent must restore by sim slot. */
 static GObj *syNetRbSnapResolveShieldParentFromEffectBlob(const SYNetRbSnapEffectBlob *blob)
 {
@@ -13459,18 +13546,29 @@ static GObj *syNetRbSnapResolveShieldParentGobj(const SYNetRbSnapshotSlot *slot,
 	{
 		return NULL;
 	}
-	if (slot != NULL)
-	{
-		fighter_gobj = syNetRbSnapFindShieldOwnerGobjFromSlot(slot, blob->gobj_id);
-		if (fighter_gobj != NULL)
-		{
-			return fighter_gobj;
-		}
-	}
+	/*
+	 * Per-player shield identity: shield.player in the effect blob is authoritative for all player slots
+	 * (0..GMCOMMON_PLAYERS_MAX-1). Never resolve parent via shared pool gobj_id — dual-shield windows alias
+	 * the same ring id on every blob (synctest tick 509 class).
+	 */
 	fighter_gobj = syNetRbSnapResolveShieldParentFromEffectBlob(blob);
 	if (fighter_gobj != NULL)
 	{
 		return fighter_gobj;
+	}
+	if (slot != NULL)
+	{
+		s32 shield_player;
+
+		shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+		if ((shield_player >= 0) && (shield_player < GMCOMMON_PLAYERS_MAX))
+		{
+			fighter_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)shield_player);
+			if ((fighter_gobj != NULL) && (ftGetStruct(fighter_gobj) != NULL))
+			{
+				return fighter_gobj;
+			}
+		}
 	}
 	/*
 	 * Do not fall back to gcFindGObjByID(blob->fighter_gobj_id): fighter GObjs share kind id 1000 and
@@ -13573,10 +13671,30 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 	{
 		GObj *existing;
 
-		existing = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0);
+		existing = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0, NULL, NULL, 0);
 		if (existing != NULL)
 		{
 			return existing;
+		}
+	}
+	{
+		GObj *adopt_shield;
+
+		adopt_shield = syNetRbSnapAdoptLiveShieldForBlob(blob);
+		if (adopt_shield != NULL)
+		{
+			return adopt_shield;
+		}
+		if ((syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE) &&
+		    (syNetRbSnapRepairStageIsVerifyOnly() != FALSE))
+		{
+			s32 shield_player;
+
+			shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+			if ((shield_player >= 0) && (syNetRbSnapCountLiveShieldEffectsForPlayer(shield_player) > 0))
+			{
+				return NULL;
+			}
 		}
 	}
 	fighter_gobj = NULL;
@@ -13626,11 +13744,25 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 		if (fighter_gobj != NULL)
 		{
 			GObj *existing_shield;
+			s32 shield_player;
 
 			existing_shield = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
 			if (existing_shield != NULL)
 			{
 				return existing_shield;
+			}
+			shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+			if (shield_player >= 0)
+			{
+				existing_shield = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+				if (existing_shield != NULL)
+				{
+					return existing_shield;
+				}
+				if (syNetRbSnapCountLiveShieldEffectsForPlayer(shield_player) > 0)
+				{
+					return NULL;
+				}
 			}
 			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 			{
@@ -13659,6 +13791,27 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 	case SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD:
 		if (fighter_gobj != NULL)
 		{
+			GObj *existing_shield;
+			s32 shield_player;
+
+			existing_shield = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
+			if (existing_shield != NULL)
+			{
+				return existing_shield;
+			}
+			shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+			if (shield_player >= 0)
+			{
+				existing_shield = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+				if (existing_shield != NULL)
+				{
+					return existing_shield;
+				}
+				if (syNetRbSnapCountLiveShieldEffectsForPlayer(shield_player) > 0)
+				{
+					return NULL;
+				}
+			}
 			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 			{
 				port_log(
@@ -13911,7 +14064,11 @@ static GObj *syNetRbSnapApplyEffectBlobToGObj(const SYNetRbSnapshotSlot *slot, G
 	}
 	if (gobj == NULL)
 	{
-		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0);
+		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, NULL, 0, NULL, NULL, 0);
+	}
+	if (gobj == NULL)
+	{
+		gobj = syNetRbSnapAdoptLiveShieldForBlob(blob);
 	}
 	if (gobj == NULL)
 	{
@@ -14116,6 +14273,18 @@ static GObj *syNetRbSnapFindLiveShieldEffectForFighter(const GObj *fighter_gobj)
 		}
 	}
 	return NULL;
+}
+
+static GObj *syNetRbSnapFindLiveShieldEffectForPlayer(s32 player)
+{
+	GObj *fighter_gobj;
+
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return NULL;
+	}
+	fighter_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)player);
+	return syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
 }
 
 static sb32 syNetRbSnapShieldEffectMatchesKeep(const GObj *gobj, const GObj *keep_gobj)
@@ -16276,6 +16445,57 @@ static void syNetRbSnapTrackReconciledEffectGobj(u32 *reconciled_ids, s32 *recon
 	*reconciled_count = count + 1;
 }
 
+static sb32 syNetRbSnapReconciledEffectGobjPtrListed(GObj * const *reconciled_gobj_ptrs, s32 reconciled_gobj_count,
+                                                     const GObj *gobj)
+{
+	s32 i;
+
+	if ((reconciled_gobj_ptrs == NULL) || (gobj == NULL))
+	{
+		return FALSE;
+	}
+	for (i = 0; i < reconciled_gobj_count; i++)
+	{
+		if (reconciled_gobj_ptrs[i] == gobj)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static void syNetRbSnapTrackReconciledEffectGobjShieldAware(u32 *reconciled_ids, s32 *reconciled_count,
+                                                            u8 *reconciled_shield_mask,
+                                                            GObj **reconciled_gobj_ptrs, s32 *reconciled_gobj_count,
+                                                            GObj *gobj, const SYNetRbSnapEffectBlob *blob)
+{
+	s32 ptr_count;
+
+	if (gobj == NULL)
+	{
+		return;
+	}
+	syNetRbSnapTrackReconciledEffectGobj(reconciled_ids, reconciled_count, gobj);
+	if ((reconciled_gobj_ptrs != NULL) && (reconciled_gobj_count != NULL))
+	{
+		ptr_count = *reconciled_gobj_count;
+		if ((ptr_count < SYNETRB_SNAPSHOT_MAX_EFFECTS) &&
+		    (syNetRbSnapReconciledEffectGobjPtrListed(reconciled_gobj_ptrs, ptr_count, gobj) == FALSE))
+		{
+			reconciled_gobj_ptrs[ptr_count] = gobj;
+			*reconciled_gobj_count = ptr_count + 1;
+		}
+	}
+	if ((reconciled_shield_mask != NULL) && (blob != NULL) &&
+	    (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE))
+	{
+		s32 shield_player;
+
+		shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+		*reconciled_shield_mask = syNetRbSnapShieldReconcileMarkPlayer(*reconciled_shield_mask, shield_player);
+	}
+}
+
 static s32 syNetRbSnapPlayerForFighterGobjId(const SYNetRbSnapshotSlot *slot, u32 fighter_gobj_id)
 {
 	s32 pi;
@@ -16356,6 +16576,27 @@ static sb32 syNetRbSnapLiveEffectMatchesBlob(const SYNetRbSnapshotSlot *slot, co
 		}
 		if ((blob->proc_update_fingerprint != 0U) &&
 		    (syNetRbSnapGObjFuncProcFingerprint(gobj) != blob->proc_update_fingerprint))
+		{
+			return FALSE;
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
+	{
+		s32 blob_player;
+		s32 live_player;
+
+		if (syNetRbSnapLiveEffectIsShield(gobj, ep) == FALSE)
+		{
+			return FALSE;
+		}
+		blob_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+		live_player = syNetRbSnapShieldPlayerFromEffectVars(ep);
+		if ((blob_player < 0) || (live_player < 0) || (blob_player != live_player))
+		{
+			return FALSE;
+		}
+		if (blob->respawn_kind != syNetRbSnapEffectRespawnKindFromLive(gobj, ep))
 		{
 			return FALSE;
 		}
@@ -16518,6 +16759,18 @@ static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slo
 		{
 			continue;
 		}
+		if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
+		{
+			s32 shield_player;
+
+			shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+			match = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+			if (match != NULL)
+			{
+				(void)syNetRbSnapApplyEffectBlobToGObj(slot, match, blob);
+			}
+			continue;
+		}
 		gobj = gcFindGObjByID(blob->gobj_id);
 		if ((gobj != NULL) && (syNetRbSnapEffectHiddenFromRollback(gobj, efGetStruct(gobj)) == FALSE))
 		{
@@ -16645,13 +16898,45 @@ static GObj *syNetRbSnapFindUnreconciledLiveEffectForBlob(const SYNetRbSnapshotS
 static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotSlot *slot,
                                                             const SYNetRbSnapEffectBlob *blob,
                                                             const u32 *reconciled_ids,
-                                                            s32 reconciled_count)
+                                                            s32 reconciled_count,
+                                                            u8 *reconciled_shield_mask,
+                                                            GObj * const *reconciled_gobj_ptrs,
+                                                            s32 reconciled_gobj_count)
 {
 	GObj *gobj;
 	EFStruct *ep;
+	s32 shield_player;
 
 	if ((blob == NULL) || (blob->is_valid == FALSE))
 	{
+		return NULL;
+	}
+	if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
+	{
+		shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+		if (shield_player < 0)
+		{
+			return NULL;
+		}
+		if ((reconciled_shield_mask != NULL) &&
+		    (syNetRbSnapShieldPlayerReconcileTaken(*reconciled_shield_mask, shield_player) != FALSE))
+		{
+			return NULL;
+		}
+		gobj = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+		if (gobj != NULL)
+		{
+			if (syNetRbSnapReconciledEffectGobjPtrListed(reconciled_gobj_ptrs, reconciled_gobj_count, gobj) !=
+			    FALSE)
+			{
+				return NULL;
+			}
+			ep = efGetStruct(gobj);
+			if (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) != FALSE)
+			{
+				return gobj;
+			}
+		}
 		return NULL;
 	}
 	gobj = gcFindGObjByID(blob->gobj_id);
@@ -16673,22 +16958,6 @@ static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotS
 		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
 		{
 			return gobj;
-		}
-	}
-	if ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_SHIELD) ||
-	    (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD))
-	{
-		GObj *fighter_gobj;
-
-		fighter_gobj = syNetRbSnapResolveShieldParentGobj(slot, blob);
-		if (fighter_gobj != NULL)
-		{
-			gobj = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
-			if ((gobj != NULL) &&
-			    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
-			{
-				return gobj;
-			}
 		}
 	}
 	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT)
@@ -18084,6 +18353,10 @@ static void syNetRbSnapEnsureShieldEffectsFromSlot(const SYNetRbSnapshotSlot *sl
 				GObj *live_shield;
 
 				live_shield = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
+				if (live_shield == NULL)
+				{
+					live_shield = syNetRbSnapFindLiveShieldEffectForPlayer(pi);
+				}
 				if (live_shield != NULL)
 				{
 					syNetRbSnapPatchLiveShieldFromSlot(slot, fighter_gobj, fp, shield_blob->gobj_id,
@@ -18643,6 +18916,29 @@ static void syNetRbSnapPruneDuplicateShieldEffects(const SYNetRbSnapshotSlot *sl
 		keep_gobj = NULL;
 		if ((slot != NULL) && (fp->player >= 0) && (fp->player < GMCOMMON_PLAYERS_MAX))
 		{
+			keep_gobj = syNetRbSnapFindLiveShieldEffectForPlayer(fp->player);
+		}
+		if (keep_gobj == NULL)
+		{
+			keep_gobj = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
+		}
+		if ((keep_gobj == NULL) && (slot != NULL) && (fp->player >= 0) && (fp->player < GMCOMMON_PLAYERS_MAX))
+		{
+			const SYNetRbSnapFighterBlob *fb = &slot->fighters[fp->player];
+
+			if ((fb->is_valid != FALSE) && (syNetRbSnapBlobInGuardScope(fb) != FALSE))
+			{
+				const SYNetRbSnapEffectBlob *shield_blob;
+
+				shield_blob = syNetRbSnapFindShieldEffectBlobForPlayer(slot, fp->player);
+				if (shield_blob != NULL)
+				{
+					keep_gobj = syNetRbSnapFindLiveShieldEffectForPlayer(fp->player);
+				}
+			}
+		}
+		if ((keep_gobj == NULL) && (slot != NULL) && (fp->player >= 0) && (fp->player < GMCOMMON_PLAYERS_MAX))
+		{
 			const SYNetRbSnapFighterBlob *fb = &slot->fighters[fp->player];
 			u32 expected_id;
 
@@ -18651,23 +18947,18 @@ static void syNetRbSnapPruneDuplicateShieldEffects(const SYNetRbSnapshotSlot *sl
 				expected_id = syNetRbSnapGuardEffectIdFromBlob(fb);
 				if (expected_id != 0U)
 				{
-					keep_gobj = gcFindGObjByID(expected_id);
-				}
-				if (keep_gobj == NULL)
-				{
-					const SYNetRbSnapEffectBlob *shield_blob;
+					GObj *expected_gobj = gcFindGObjByID(expected_id);
+					EFStruct *expected_ep;
 
-					shield_blob = syNetRbSnapFindShieldEffectBlobForPlayer(slot, fp->player);
-					if (shield_blob != NULL)
+					expected_ep = (expected_gobj != NULL) ? efGetStruct(expected_gobj) : NULL;
+					if ((expected_ep != NULL) &&
+					    (syNetRbSnapLiveShieldEffectOwnedByFighter(expected_ep, fighter_gobj, fp->player) !=
+					     FALSE))
 					{
-						keep_gobj = gcFindGObjByID(shield_blob->gobj_id);
+						keep_gobj = expected_gobj;
 					}
 				}
 			}
-		}
-		if (keep_gobj == NULL)
-		{
-			keep_gobj = syNetRbSnapFindLiveShieldEffectForFighter(fighter_gobj);
 		}
 		if ((keep_gobj == NULL) && (slot != NULL) && (syNetRbSnapFighterInGuardScope(fp) != FALSE) &&
 		    (syNetRbSnapFighterGuardEffectUnionOwned(fp) != FALSE))
@@ -19389,6 +19680,111 @@ static void syNetRbSnapDiagGuardShieldStaminaDrain(const SYNetRbSnapshotSlot *sl
 	(void)slot;
 }
 
+static s32 syNetRbSnapShieldDecayWaitFromFighterBlob(const SYNetRbSnapFighterBlob *blob)
+{
+	union FTStatusVars status_vars;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return -1;
+	}
+	memcpy(&status_vars, blob->status_vars, sizeof(status_vars));
+	return status_vars.common.guard.shield_decay_wait;
+}
+
+static void syNetRbSnapStashEmergencyGuardShieldDecayWait(void)
+{
+	GObj *fighter_gobj;
+	s32 pi;
+
+	for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+	{
+		s_syNetRbEmergencyShieldDecayWait[pi] = -1;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		pi = fp->player;
+		if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		if ((fp->is_shield == FALSE) || (syNetRbSnapFighterInActiveGuardStatus(fp) == FALSE))
+		{
+			continue;
+		}
+		s_syNetRbEmergencyShieldDecayWait[pi] = ftStatusVarsGuard(fp)->shield_decay_wait;
+	}
+}
+
+/*
+ * Vanilla ftCommonGuardUpdateShieldVars only drains when shield_decay_wait != 0; stuck at 0 freezes
+ * stamina until release/re-guard. Single-shield synctest probes leave decay_wait=0 after emergency
+ * restore even when bubble=1 (Phase 47); dual-shield avoided this via probe skip.
+ */
+static void syNetRbSnapRestoreGuardShieldDecayWaitAfterSynctest(void)
+{
+	GObj *fighter_gobj;
+	s32 player;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 emergency_wait;
+		s32 restored_wait;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		if ((fp->is_shield == FALSE) || (syNetRbSnapFighterInActiveGuardStatus(fp) == FALSE))
+		{
+			continue;
+		}
+		if (fp->shield_health <= 0)
+		{
+			continue;
+		}
+		if (ftStatusVarsGuard(fp)->shield_decay_wait != 0)
+		{
+			continue;
+		}
+		player = fp->player;
+		emergency_wait = -1;
+		if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
+		{
+			emergency_wait = s_syNetRbEmergencyShieldDecayWait[player];
+			if (emergency_wait <= 0)
+			{
+				emergency_wait = syNetRbSnapShieldDecayWaitFromFighterBlob(&sSYNetRbEmergencySlot.fighters[player]);
+			}
+		}
+		restored_wait = (emergency_wait > 0) ? emergency_wait : (s32)FTCOMMON_GUARD_DECAY_INT;
+		ftStatusVarsGuard(fp)->shield_decay_wait = restored_wait;
+		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetRbSnapshot: guard_shield_decay_restore tick=%u player=%d status=%d "
+			    "shield_health=%d restored_decay_wait=%d emergency_stash=%d\n",
+			    (unsigned int)syNetRbSnapGuardShieldDiagTick(NULL), player, (int)fp->status_id,
+			    (int)fp->shield_health, restored_wait, emergency_wait);
+		}
+	}
+	for (player = 0; player < GMCOMMON_PLAYERS_MAX; player++)
+	{
+		s_syNetRbEmergencyShieldDecayWait[player] = -1;
+	}
+}
+
 static void syNetRbSnapDiagGuardShieldWithoutBubbleGap(const SYNetRbSnapshotSlot *slot)
 {
 #if defined(SSB64_NETMENU)
@@ -20072,6 +20468,9 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 	s32 ei;
 	u32 reconciled_ids[SYNETRB_SNAPSHOT_MAX_EFFECTS];
 	s32 reconciled_count;
+	u8 reconciled_shield_mask;
+	GObj *reconciled_gobj_ptrs[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	s32 reconciled_gobj_count;
 	sb32 blob_applied[SYNETRB_SNAPSHOT_MAX_EFFECTS];
 
 	if (slot == NULL)
@@ -20079,6 +20478,8 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		return;
 	}
 	reconciled_count = 0;
+	reconciled_shield_mask = 0U;
+	reconciled_gobj_count = 0;
 	for (ei = 0; ei < SYNETRB_SNAPSHOT_MAX_EFFECTS; ei++)
 	{
 		blob_applied[ei] = FALSE;
@@ -20093,7 +20494,9 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		{
 			continue;
 		}
-		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, reconciled_ids, reconciled_count);
+		gobj = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, reconciled_ids, reconciled_count,
+		                                                    &reconciled_shield_mask, reconciled_gobj_ptrs,
+		                                                    reconciled_gobj_count);
 		gobj_before = gobj;
 		gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
 		if (gobj != NULL)
@@ -20116,7 +20519,8 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			    (gobj_before != NULL) ? 1 : 0, ((gobj_before == NULL) && (gobj != NULL)) ? 1 : 0,
 			    (gobj != NULL) ? syNetRbSnapGobjId(gobj) : 0U);
 		}
-		syNetRbSnapTrackReconciledEffectGobj(reconciled_ids, &reconciled_count, gobj);
+		syNetRbSnapTrackReconciledEffectGobjShieldAware(reconciled_ids, &reconciled_count, &reconciled_shield_mask,
+		                                                reconciled_gobj_ptrs, &reconciled_gobj_count, gobj, blob);
 	}
 	/*
 	 * Pass 2: ring gobj ids are often stale during synctest verify (emergency live @ T+1 loaded over
@@ -20152,7 +20556,8 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			continue;
 		}
 		blob_applied[ei] = TRUE;
-		syNetRbSnapTrackReconciledEffectGobj(reconciled_ids, &reconciled_count, gobj);
+		syNetRbSnapTrackReconciledEffectGobjShieldAware(reconciled_ids, &reconciled_count, &reconciled_shield_mask,
+		                                                reconciled_gobj_ptrs, &reconciled_gobj_count, gobj, blob);
 		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 		{
 			port_log(
@@ -20179,6 +20584,40 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 		{
 			continue;
 		}
+		if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
+		{
+			s32 shield_player;
+
+			shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+			if (shield_player >= 0)
+			{
+				gobj = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+				if (gobj != NULL)
+				{
+					gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
+					if (gobj != NULL)
+					{
+						blob_applied[ei] = TRUE;
+						syNetRbSnapTrackReconciledEffectGobjShieldAware(
+						    reconciled_ids, &reconciled_count, &reconciled_shield_mask, reconciled_gobj_ptrs,
+						    &reconciled_gobj_count, gobj, blob);
+						if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+						{
+							port_log(
+							    "SSB64 NetRbSnapshot: effect_reconcile_shield_adopt tick=%u "
+							    "blob_gobj_id=%u live_gobj_id=%u player=%d\n",
+							    (unsigned int)slot->tick, blob->gobj_id, (unsigned int)gobj->id,
+							    shield_player);
+						}
+					}
+					continue;
+				}
+				if (syNetRbSnapCountLiveShieldEffectsForPlayer(shield_player) > 0)
+				{
+					continue;
+				}
+			}
+		}
 		gobj = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
 		if (gobj == NULL)
 		{
@@ -20190,7 +20629,8 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 			continue;
 		}
 		blob_applied[ei] = TRUE;
-		syNetRbSnapTrackReconciledEffectGobj(reconciled_ids, &reconciled_count, gobj);
+		syNetRbSnapTrackReconciledEffectGobjShieldAware(reconciled_ids, &reconciled_count, &reconciled_shield_mask,
+		                                                reconciled_gobj_ptrs, &reconciled_gobj_count, gobj, blob);
 		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 		{
 			port_log(
@@ -20262,6 +20702,9 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSl
 {
 	u32 canonical_ids[SYNETRB_SNAPSHOT_MAX_EFFECTS];
 	s32 canonical_count;
+	u8 canonical_shield_mask;
+	GObj *canonical_gobj_ptrs[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	s32 canonical_gobj_count;
 	s32 ei;
 	s32 pass;
 	GObj *gobj;
@@ -20273,6 +20716,8 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSl
 		return;
 	}
 	canonical_count = 0;
+	canonical_shield_mask = 0U;
+	canonical_gobj_count = 0;
 	for (ei = 0; ei < slot->effect_count; ei++)
 	{
 		const SYNetRbSnapEffectBlob *blob;
@@ -20283,13 +20728,16 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSl
 		{
 			continue;
 		}
-		live = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, canonical_ids, canonical_count);
+		live = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, canonical_ids, canonical_count,
+		                                                    &canonical_shield_mask, canonical_gobj_ptrs,
+		                                                    canonical_gobj_count);
 		live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
 		if (live == NULL)
 		{
 			continue;
 		}
-		syNetRbSnapTrackReconciledEffectGobj(canonical_ids, &canonical_count, live);
+		syNetRbSnapTrackReconciledEffectGobjShieldAware(canonical_ids, &canonical_count, &canonical_shield_mask,
+		                                                canonical_gobj_ptrs, &canonical_gobj_count, live, blob);
 	}
 	ejected = 0;
 	for (pass = 0; pass < 2; pass++)
@@ -20304,6 +20752,10 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(const SYNetRbSnapshotSl
 			next = gobj->link_next;
 			ep = efGetStruct(gobj);
 			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapReconciledEffectGobjPtrListed(canonical_gobj_ptrs, canonical_gobj_count, gobj) != FALSE)
 			{
 				continue;
 			}
@@ -20422,6 +20874,18 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 			if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
 			{
 				blob->quake_magnitude = (u8)(3 - ep->effect_vars.quake.priority);
+			}
+			else if ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_SHIELD) ||
+			         (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_YOSHI_SHIELD))
+			{
+				s32 cap_player;
+
+				cap_player = syNetRbSnapShieldPlayerFromEffectVars(ep);
+				if ((cap_player >= 0) && (cap_player < GMCOMMON_PLAYERS_MAX) &&
+				    (slot->fighters[cap_player].is_valid != FALSE))
+				{
+					blob->fighter_gobj_id = slot->fighters[cap_player].gobj_id;
+				}
 			}
 			else if ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_PIKACHU_THUNDER_SHOCK) &&
 			         (ep->fighter_gobj != NULL))
@@ -21498,6 +21962,46 @@ sb32 syNetRbSnapshotSynctestProbeEffectMismatch(u32 probe_tick)
 	return ((truncated != FALSE) || (live_count != slot->effect_count)) ? TRUE : FALSE;
 }
 
+static sb32 syNetRbSnapshotSlotDualActiveShieldHold(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pidx;
+	s32 active_count;
+
+	if (slot == NULL)
+	{
+		return FALSE;
+	}
+	active_count = 0;
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		const SYNetRbSnapFighterBlob *fb;
+
+		fb = &slot->fighters[pidx];
+		if (fb->is_valid == FALSE)
+		{
+			continue;
+		}
+		if (fb->is_shield == FALSE)
+		{
+			continue;
+		}
+		if (syNetRbSnapBlobInGuardScope(fb) == FALSE)
+		{
+			continue;
+		}
+		if ((fb->status_id < nFTCommonStatusGuardStart) || (fb->status_id > nFTCommonStatusGuardEnd))
+		{
+			continue;
+		}
+		active_count++;
+		if (active_count >= 2)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **reason_out)
 {
 	SYNetRbSnapshotSlot *slot;
@@ -21561,6 +22065,14 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 		if (reason_out != NULL)
 		{
 			*reason_out = "yoshi_egg_lay_probe";
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapshotSlotDualActiveShieldHold(slot) != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "dual_active_shield_probe";
 		}
 		return TRUE;
 	}
@@ -21855,6 +22367,81 @@ u32 syNetRbSnapshotRingCapacity(void)
 }
 
 /*
+ * Post-capture: one shield blob per player slot (0..GMCOMMON_PLAYERS_MAX-1), canonical parent ids from
+ * fighter blobs (not shared kind id 1000), and guard_effect_gobj_id from live per-player bubbles.
+ */
+#ifdef PORT
+static void syNetRbSnapNormalizeCapturedShieldIdentity(SYNetRbSnapshotSlot *slot)
+{
+	s32 ei;
+	u8 player_blob_mask;
+	s32 pi;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	player_blob_mask = 0U;
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		SYNetRbSnapEffectBlob *blob;
+		s32 shield_player;
+
+		blob = &slot->effects[ei];
+		if ((blob->is_valid == FALSE) || (syNetRbSnapEffectBlobIsShieldKind(blob) == FALSE))
+		{
+			continue;
+		}
+		shield_player = syNetRbSnapShieldPlayerFromEffectBlob(blob);
+		if ((shield_player < 0) || (shield_player >= GMCOMMON_PLAYERS_MAX))
+		{
+			blob->is_valid = FALSE;
+			continue;
+		}
+		if (syNetRbSnapShieldPlayerReconcileTaken(player_blob_mask, shield_player) != FALSE)
+		{
+			blob->is_valid = FALSE;
+			continue;
+		}
+		player_blob_mask = syNetRbSnapShieldReconcileMarkPlayer(player_blob_mask, shield_player);
+		if (slot->fighters[shield_player].is_valid != FALSE)
+		{
+			blob->fighter_gobj_id = slot->fighters[shield_player].gobj_id;
+		}
+		{
+			GObj *live_shield;
+
+			live_shield = syNetRbSnapFindLiveShieldEffectForPlayer(shield_player);
+			if (live_shield != NULL)
+			{
+				blob->gobj_id = live_shield->id;
+			}
+		}
+	}
+	for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+	{
+		SYNetRbSnapFighterBlob *fb;
+		GObj *live_shield;
+
+		fb = &slot->fighters[pi];
+		if ((fb->is_valid == FALSE) || (syNetRbSnapBlobInGuardScope(fb) == FALSE))
+		{
+			continue;
+		}
+		if ((fb->fkind == nFTKindYoshi) && (fb->is_shield == FALSE))
+		{
+			continue;
+		}
+		live_shield = syNetRbSnapFindLiveShieldEffectForPlayer(pi);
+		if (live_shield != NULL)
+		{
+			fb->guard_effect_gobj_id = syNetRbSnapGobjId(live_shield);
+		}
+	}
+}
+#endif
+
+/*
  * Recover guard_effect_gobj_id from the just-captured effect blobs when the live fighter capture missed it.
  * syNetRbSnapCaptureFighterCoupledIds reads ftStatusVarsGuard(fp)->effect_gobj (with a FindLiveShieldEffect
  * fallback), but on the GuardOn entry frame the coupling can still be unbound while the bubble is already on
@@ -21891,13 +22478,21 @@ static void syNetRbSnapBackfillGuardShieldEffectIdsFromEffects(const SYNetRbSnap
 
 			/*
 			 * Effect blobs are authoritative per-player shield identity (shield.player). Always
-			 * prefer them over guard->effect_gobj coupling so dual-shield windows never snapshot
-			 * the same pool id on both fighters (synctest tick 2195 class).
+			 * prefer live per-player bubble over shared pool gobj_id (dual-shield / 4p windows).
 			 */
 			eb = syNetRbSnapFindShieldEffectBlobForPlayer(slot, pi);
-			if (eb != NULL)
 			{
-				blob->guard_effect_gobj_id = eb->gobj_id;
+				GObj *live_shield;
+
+				live_shield = syNetRbSnapFindLiveShieldEffectForPlayer(pi);
+				if (live_shield != NULL)
+				{
+					blob->guard_effect_gobj_id = syNetRbSnapGobjId(live_shield);
+				}
+				else if (eb != NULL)
+				{
+					blob->guard_effect_gobj_id = eb->gobj_id;
+				}
 			}
 		}
 	}
@@ -21964,6 +22559,7 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 		slot->is_valid = FALSE;
 		return FALSE;
 	}
+	syNetRbSnapNormalizeCapturedShieldIdentity(slot);
 #endif
 	syNetRbSnapBackfillFighterCoupledIdsFromWeapons(slot);
 #ifdef PORT
@@ -22124,6 +22720,7 @@ sb32 syNetRbSnapshotCaptureLiveEmergency(void)
 		sSYNetRbEmergencyValid = FALSE;
 		return FALSE;
 	}
+	syNetRbSnapStashEmergencyGuardShieldDecayWait();
 	sSYNetRbEmergencyValid = TRUE;
 	return TRUE;
 }
@@ -22798,6 +23395,23 @@ void syNetRbSnapReconcileGuardShieldEffectsLive(void)
 	}
 #endif
 	syNetRbSnapReconcileGuardShieldEffectsInternal(NULL);
+}
+
+void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void)
+{
+#ifdef PORT
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+#endif
+	/*
+	 * Emergency restore runs snapshot-apply reconcile (slot != NULL) without live-forward bubble ensure.
+	 * Re-run live-forward guard/shield coupling, then restore shield_decay_wait when synctest left it at 0
+	 * (vanilla drain requires decay_wait != 0; dual-shield avoided via probe skip).
+	 */
+	syNetRbSnapReconcileGuardShieldEffectsLive();
+	syNetRbSnapRestoreGuardShieldDecayWaitAfterSynctest();
 }
 
 void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 completed_sim_tick)
