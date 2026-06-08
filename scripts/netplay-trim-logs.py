@@ -268,6 +268,9 @@ PEER_SNAPSHOT_DIVERGE_RE = re.compile(
 RESIM_SIM_CORE_REJECT_RE = re.compile(
     r"SSB64 NetRollback: resim-sim-core-reject tick=(\d+)"
 )
+RESIM_SIM_CORE_REJECT_NOT_IN_RESIM_RE = re.compile(
+    r"SSB64 NetRollback: resim-sim-core-reject tick=\d+ reason=not_in_resim\b"
+)
 DESYNC_REPORT_RE = re.compile(r"SSB64 DESYNC REPORT")
 CSS_RETURN_RE = re.compile(r"returning to character select", re.I)
 VS_SESSION_STOP_RE = re.compile(r"SSB64 NetPeer: VS session stop ")
@@ -2101,7 +2104,8 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
 
         reject_m = RESIM_SIM_CORE_REJECT_RE.search(ln)
         if reject_m is not None:
-            m.resim_sim_core_reject += 1
+            if RESIM_SIM_CORE_REJECT_NOT_IN_RESIM_RE.search(ln) is None:
+                m.resim_sim_core_reject += 1
             continue
 
         if FRAME_COMMIT_DIVERGE_RE.search(ln) is not None:

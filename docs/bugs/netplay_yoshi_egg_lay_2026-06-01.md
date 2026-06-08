@@ -30,3 +30,9 @@ Distinct from existing **`yoshi_egg`** defer (SpecialHi throwable egg weapon / c
 1. Cross-ISA Yoshi vs Kirby: neutral B egg lay during rollback — Kirby stays in egg for normal duration on both peers; log shows `SYNCTEST_SKIP reason=yoshi_egg_lay`.
 2. FC recovery load mid-egg: no instant pop; `captureyoshi_effect_gobj` rebound; breakout timers match.
 3. Sector Z: jump on Arwing deck during near pass — `SYNCTEST_SKIP reason=sector_arwing_deck` while airborne in jump arc; no figh-only diverge ~3240.
+
+## Phase 37 dedupe impact (2026-06-07)
+
+Neutral-B egg shell reconcile uses `syNetRbSnapYoshiEggLayEffectMatchesKeep`, which delegates to `syNetRbSnapShieldEffectMatchesKeep`. **Before Phase 37:** id-equality (`gobj_id` match) treated every duplicate shell with the same pool id as "keep" — `yoshi_egg_lay_prune` could fail to eject stacked shells after rollback respawn (same failure mode as generic shield solid bubble). **After Phase 37:** pointer-identity only — extras should eject with `yoshi_egg_lay_prune … reason=duplicate` or `owner_duplicate` when multiple live shells exist for one capture victim.
+
+**Yoshi soak pending:** Confirm single egg shell during CaptureYoshi/YoshiEgg; no double-shell VFX; hatch/escape timing unchanged. Z egg shield is a separate path — see [netplay_yoshi_egg_shield_rollback_2026-06-06.md](netplay_yoshi_egg_shield_rollback_2026-06-06.md). Shield dedupe doc: [netplay_guard_shield_presentation_reconcile_2026-06-07.md](netplay_guard_shield_presentation_reconcile_2026-06-07.md).
