@@ -4898,6 +4898,16 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		return TRUE;
 	}
 #if defined(SSB64_NETMENU)
+	/*
+	 * Synctest verify-only: effect/shield repair and figatree finalize can clobber fighter physics /
+	 * joint anim after the slot blob was applied. Re-stamp canonical pose immediately before hashing.
+	 */
+	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	{
+		syNetRbSnapshotReapplyJointAnimAtTick(tick);
+	}
+#endif
+#if defined(SSB64_NETMENU)
 	syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
 	syNetplayCanonicalizeGMCameraSimState();
 #endif

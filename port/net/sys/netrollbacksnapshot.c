@@ -27,6 +27,7 @@
 #include <ft/ftchar/ftsamus/ftsamus.h>
 #include <ft/ftchar/ftsamus/ftsamusfunctions.h>
 #include <ft/ftchar/ftfox/ftfox.h>
+#include <ft/ftchar/ftcaptain/ftcaptain.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftchar/ftyoshi/ftyoshifunctions.h>
 #include <ft/ftdef.h>
@@ -586,6 +587,7 @@ typedef struct SYNetRbSnapWeaponBlob
 #define SYNETRB_EFFECT_RESPAWN_PIKACHU_THUNDER_SHOCK 7U
 #define SYNETRB_EFFECT_RESPAWN_YOSHI_EGG_LAY         8U
 #define SYNETRB_EFFECT_RESPAWN_NESS_PSYCHIC_MAGNET   9U
+#define SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT       10U
 
 #define SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX 128U
 
@@ -2299,9 +2301,12 @@ static void syNetRbSnapRebindUserdataJointParentEffect(GObj *effect_gobj, GObj *
                                                        const SYNetRbSnapEffectBlob *blob);
 static void syNetRbSnapEjectDeadNonRespawnableEffectsFromLive(void);
 static void syNetRbSnapEnsureQuakeEffectsFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapEnsureUserdataJointEffectsFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapSanitizeCopyCaptainEffectAttach(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapFreezeSlotQuakeEffectsFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapPruneOrphanQuakeAndDeadEffects(const SYNetRbSnapshotSlot *slot,
                                                       const u32 *reconciled_ids, s32 reconciled_count);
+static void syNetRbSnapPruneDuplicateQuakeEffects(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapApplyEffectBlobAnimFrame(GObj *gobj, f32 anim_frame, EFStruct *ep);
 static void syNetRbSnapApplyEffectBlobTranslate(GObj *gobj, const SYNetRbSnapEffectBlob *blob,
@@ -9153,6 +9158,97 @@ static s32 syNetRbSnapFindFighterJointIndex(const FTStruct *fp, const DObj *join
 	return -1;
 }
 
+/* efManagerCaptainFalconPunchMakeEffect joint indices (see decomp/src/ef/efmanager.c). */
+static s32 syNetRbSnapInferCaptainFalconPunchJointIndex(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return -1;
+	}
+	if (fp->fkind == nFTKindKirby)
+	{
+		return 30;
+	}
+	if ((fp->fkind == nFTKindCaptain) || (fp->fkind == nFTKindNCaptain))
+	{
+		return 16;
+	}
+	return -1;
+}
+
+static sb32 syNetRbSnapFighterInCaptainFalconPunchEffectScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	if (fp->status_id == nFTKirbyStatusCopyCaptainSpecialN)
+	{
+		return TRUE;
+	}
+	if (((fp->fkind == nFTKindCaptain) || (fp->fkind == nFTKindNCaptain)) &&
+	    (fp->status_id == nFTCaptainStatusSpecialN))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapEffectBlobIsUserdataJoint(const SYNetRbSnapEffectBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) ||
+	        ((blob->snap_flags & SYNETRB_EFFECT_SNAP_USERDATA_JOINT) != 0U)) ?
+	           TRUE :
+	           FALSE;
+}
+
+static GObj *syNetRbSnapFindLiveUserdataJointEffectForFighter(const GObj *fighter_gobj)
+{
+	s32 pass;
+
+	if (fighter_gobj == NULL)
+	{
+		return NULL;
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *gobj;
+
+		for (gobj = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		     gobj != NULL; gobj = gobj->link_next)
+		{
+			EFStruct *ep = efGetStruct(gobj);
+
+			if ((syNetRbSnapLiveEffectIsUserdataJointAttach(gobj, ep) != FALSE) &&
+			    (ep->fighter_gobj == fighter_gobj))
+			{
+				return gobj;
+			}
+		}
+	}
+	return NULL;
+}
+
+static GObj *syNetRbSnapMakeUserdataJointEffectForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (fighter_gobj == NULL)
+	{
+		return NULL;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp != NULL) && (syNetRbSnapFighterInCaptainFalconPunchEffectScope(fp) != FALSE))
+	{
+		return efManagerCaptainFalconPunchMakeEffect(fighter_gobj);
+	}
+	return NULL;
+}
+
 static sb32 syNetRbSnapLiveEffectExcludedFromRollbackHash(const GObj *gobj, const EFStruct *ep)
 {
 	u8 respawn_kind;
@@ -9223,7 +9319,7 @@ static sb32 syNetRbSnapSlotListsUserdataJointAttachForFighterPlayer(const SYNetR
 		const SYNetRbSnapEffectBlob *blob = &slot->effects[ei];
 		s32 blob_player;
 
-		if ((blob->is_valid == FALSE) || ((blob->snap_flags & SYNETRB_EFFECT_SNAP_USERDATA_JOINT) == 0U))
+		if (syNetRbSnapEffectBlobIsUserdataJoint(blob) == FALSE)
 		{
 			continue;
 		}
@@ -9260,6 +9356,10 @@ static void syNetRbSnapRebindUserdataJointParentEffect(GObj *effect_gobj, GObj *
 		return;
 	}
 	joint_idx = (s32)blob->quake_magnitude;
+	if ((joint_idx < 0) || (joint_idx >= FTPARTS_JOINT_NUM_MAX) || (fp->joints[joint_idx] == NULL))
+	{
+		joint_idx = syNetRbSnapInferCaptainFalconPunchJointIndex(fp);
+	}
 	if ((joint_idx < 0) || (joint_idx >= FTPARTS_JOINT_NUM_MAX) || (fp->joints[joint_idx] == NULL))
 	{
 		return;
@@ -9458,6 +9558,151 @@ static void syNetRbSnapEnsureQuakeEffectsFromSlot(const SYNetRbSnapshotSlot *slo
 	}
 }
 
+static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlob(const SYNetRbSnapshotSlot *slot,
+                                                           const SYNetRbSnapEffectBlob *blob)
+{
+	s32 pass;
+	GObj *gobj;
+
+	if ((slot == NULL) || (syNetRbSnapEffectBlobIsUserdataJoint(blob) == FALSE))
+	{
+		return NULL;
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *link_head;
+
+		link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		for (gobj = link_head; gobj != NULL; gobj = gobj->link_next)
+		{
+			EFStruct *ep;
+
+			ep = efGetStruct(gobj);
+			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) != FALSE)
+			{
+				return gobj;
+			}
+		}
+	}
+	return NULL;
+}
+
+static GObj *syNetRbSnapResolveUserdataJointParentGobj(const SYNetRbSnapshotSlot *slot,
+                                                       const SYNetRbSnapEffectBlob *blob)
+{
+	GObj *fighter_gobj;
+	s32 pi;
+
+	if (blob == NULL)
+	{
+		return NULL;
+	}
+	if (slot != NULL)
+	{
+		if (blob->fighter_gobj_id != 0U)
+		{
+			pi = syNetRbSnapPlayerForFighterGobjId(slot, blob->fighter_gobj_id);
+			if (pi >= 0)
+			{
+				fighter_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)pi);
+				if (fighter_gobj != NULL)
+				{
+					return fighter_gobj;
+				}
+			}
+		}
+	}
+	if (blob->fighter_gobj_id != 0U)
+	{
+		fighter_gobj = gcFindGObjByID(blob->fighter_gobj_id);
+		if ((fighter_gobj != NULL) && (ftGetStruct(fighter_gobj) != NULL))
+		{
+			return fighter_gobj;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * Slot-authoritative userdata-joint restore (Kirby CopyCaptain Falcon Punch flame, etc.): adopt or
+ * respawn every captured joint-attached FX, rebind user_data.p, and stamp blob pose. Without a
+ * respawn kind, particle reset + orphan prune leave is_effect_attach stuck and the vanilla one-shot
+ * flag0 gate cannot re-fire the flame mid-punch.
+ */
+static void syNetRbSnapEnsureUserdataJointEffectsFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	s32 ei;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob;
+		GObj *gobj;
+
+		blob = &slot->effects[ei];
+		if (syNetRbSnapEffectBlobIsUserdataJoint(blob) == FALSE)
+		{
+			continue;
+		}
+		gobj = gcFindGObjByID(blob->gobj_id);
+		if ((gobj == NULL) || (efGetStruct(gobj) == NULL))
+		{
+			gobj = syNetRbSnapFindLiveUserdataJointEffectForBlob(slot, blob);
+		}
+		(void)syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
+	}
+}
+
+/*
+ * Unstick Kirby CopyCaptain when the slot expects a joint-attached flame but live reconcile did not
+ * restore one — otherwise is_effect_attach blocks ftKirbyCopyCaptainSpecialNUpdateEffect forever.
+ */
+static void syNetRbSnapSanitizeCopyCaptainEffectAttach(const SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 pi;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (fp->status_id != nFTKirbyStatusCopyCaptainSpecialN))
+		{
+			continue;
+		}
+		pi = fp->player;
+		if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		if (syNetRbSnapLiveFighterHasUserdataJointAttachEffect(fighter_gobj) != FALSE)
+		{
+			continue;
+		}
+		if (syNetRbSnapSlotListsUserdataJointAttachForFighterPlayer(slot, pi) != FALSE)
+		{
+			fp->is_effect_attach = FALSE;
+		}
+		else if (fp->is_effect_attach != FALSE)
+		{
+			fp->is_effect_attach = FALSE;
+		}
+	}
+}
+
 static sb32 syNetRbSnapLiveHasNessShockFxScope(void)
 {
 	GObj *fighter_gobj;
@@ -9502,6 +9747,76 @@ static void syNetRbSnapPruneStaleShockSmallEffects(const SYNetRbSnapshotSlot *sl
 				continue;
 			}
 			syNetRbSnapEjectGObj(gobj);
+		}
+	}
+}
+
+/*
+ * Slot lists at most one quake per blob, but verify-only repair passes (EnsureQuake + reconcile +
+ * TryRepair twice) can stack live quakes that all match the same blob identity. Keep one canonical
+ * GObj per slot quake blob (prefer ring gobj_id, else first live match) and eject the rest.
+ */
+static void syNetRbSnapPruneDuplicateQuakeEffects(const SYNetRbSnapshotSlot *slot)
+{
+	s32 ei;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob;
+		GObj *keep_gobj;
+		s32 pass;
+
+		blob = &slot->effects[ei];
+		if ((blob->is_valid == FALSE) || (blob->respawn_kind != SYNETRB_EFFECT_RESPAWN_QUAKE))
+		{
+			continue;
+		}
+		keep_gobj = gcFindGObjByID(blob->gobj_id);
+		if ((keep_gobj == NULL) || (efGetStruct(keep_gobj) == NULL) ||
+		    (syNetRbSnapLiveEffectMatchesBlob(slot, blob, keep_gobj, efGetStruct(keep_gobj)) == FALSE))
+		{
+			keep_gobj = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+		}
+		for (pass = 0; pass < 2; pass++)
+		{
+			GObj *link_head;
+			GObj *gobj;
+			GObj *next;
+
+			link_head = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+			for (gobj = link_head; gobj != NULL; gobj = next)
+			{
+				EFStruct *ep;
+
+				next = gobj->link_next;
+				ep = efGetStruct(gobj);
+				if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
+				{
+					continue;
+				}
+				if (syNetRbSnapLiveEffectIsQuake(gobj, ep) == FALSE)
+				{
+					continue;
+				}
+				if (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) == FALSE)
+				{
+					continue;
+				}
+				if (keep_gobj == gobj)
+				{
+					continue;
+				}
+				if (keep_gobj == NULL)
+				{
+					keep_gobj = gobj;
+					continue;
+				}
+				syNetRbSnapEjectGObj(gobj);
+			}
 		}
 	}
 }
@@ -10677,6 +10992,10 @@ u8 syNetRbSnapEffectRespawnKindFromLive(const GObj *gobj, const EFStruct *ep)
 				return SYNETRB_EFFECT_RESPAWN_PIKACHU_THUNDER_SHOCK;
 			}
 		}
+	}
+	if (syNetRbSnapLiveEffectIsUserdataJointAttach(gobj, ep) != FALSE)
+	{
+		return SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT;
 	}
 	return SYNETRB_EFFECT_RESPAWN_NONE;
 }
@@ -13256,6 +13575,10 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 	{
 		fighter_gobj = syNetRbSnapResolveYoshiEggLayParentGobj(slot, blob);
 	}
+	else if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT)
+	{
+		fighter_gobj = syNetRbSnapResolveUserdataJointParentGobj(slot, blob);
+	}
 	else if (blob->fighter_gobj_id != 0U)
 	{
 		fighter_gobj = gcFindGObjByID(blob->fighter_gobj_id);
@@ -13468,6 +13791,27 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 			return effect_gobj;
 		}
 		break;
+	case SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT:
+		if (fighter_gobj != NULL)
+		{
+			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRbSnapshot: effect_respawn kind=USERDATA_JOINT blob_gobj_id=%u fighter_gobj_id=%u "
+				    "resolved_parent=%u joint_idx=%u\n",
+				    blob->gobj_id, blob->fighter_gobj_id, (unsigned int)fighter_gobj->id,
+				    (unsigned int)blob->quake_magnitude);
+			}
+			effect_gobj = syNetRbSnapMakeUserdataJointEffectForFighter(fighter_gobj);
+			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+			{
+				port_log("SSB64 NetRbSnapshot: effect_respawn kind=USERDATA_JOINT result=%s new_gobj_id=%u\n",
+				         (effect_gobj != NULL) ? "ok" : "fail",
+				         (effect_gobj != NULL) ? syNetRbSnapGobjId(effect_gobj) : 0U);
+			}
+			return effect_gobj;
+		}
+		break;
 	default:
 		break;
 	}
@@ -13572,6 +13916,10 @@ static GObj *syNetRbSnapApplyEffectBlobToGObj(const SYNetRbSnapshotSlot *slot, G
 	else if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_YOSHI_EGG_LAY)
 	{
 		fighter_gobj = syNetRbSnapResolveYoshiEggLayParentGobj(slot, blob);
+	}
+	else if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT)
+	{
+		fighter_gobj = syNetRbSnapResolveUserdataJointParentGobj(slot, blob);
 	}
 	else if (blob->fighter_gobj_id != 0U)
 	{
@@ -13901,6 +14249,11 @@ static sb32 syNetRbSnapHyruleTwisterStatusNeedsGObj(u8 twister_status)
 void syNetRbSnapRepairStageSetVerifyOnly(sb32 verify_only)
 {
 	s_syNetRbSnapRepairStageVerifyOnly = (verify_only != FALSE) ? TRUE : FALSE;
+}
+
+sb32 syNetRbSnapRepairStageIsVerifyOnly(void)
+{
+	return s_syNetRbSnapRepairStageVerifyOnly;
 }
 #endif
 
@@ -15965,6 +16318,72 @@ static sb32 syNetRbSnapLiveEffectMatchesBlob(const SYNetRbSnapshotSlot *slot, co
 		}
 		if ((blob->proc_update_fingerprint != 0U) &&
 		    (syNetRbSnapGObjFuncProcFingerprint(gobj) != blob->proc_update_fingerprint))
+		{
+			return FALSE;
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapEffectBlobIsUserdataJoint(blob) != FALSE)
+	{
+		DObj *dobj_uj;
+
+		if (syNetRbSnapLiveEffectIsUserdataJointAttach(gobj, ep) == FALSE)
+		{
+			return FALSE;
+		}
+		if (blob->fighter_gobj_id == 0U)
+		{
+			if (ep->fighter_gobj != NULL)
+			{
+				return FALSE;
+			}
+		}
+		else
+		{
+			if (ep->fighter_gobj == NULL)
+			{
+				return FALSE;
+			}
+			fp_live = ftGetStruct(ep->fighter_gobj);
+			if (fp_live == NULL)
+			{
+				return FALSE;
+			}
+			blob_player = syNetRbSnapPlayerForFighterGobjId(slot, blob->fighter_gobj_id);
+			if ((blob_player >= 0) && (fp_live->player == blob_player))
+			{
+				; /* player slot match */
+			}
+			else if (ep->fighter_gobj->id == blob->fighter_gobj_id)
+			{
+				; /* captured parent id still live */
+			}
+			else
+			{
+				return FALSE;
+			}
+		}
+		fp_live = (ep->fighter_gobj != NULL) ? ftGetStruct(ep->fighter_gobj) : NULL;
+		if (blob->quake_magnitude != 0xFFU)
+		{
+			s32 live_joint;
+
+			dobj_uj = DObjGetStruct(gobj);
+			if ((fp_live == NULL) || (dobj_uj == NULL))
+			{
+				return FALSE;
+			}
+			live_joint = syNetRbSnapFindFighterJointIndex(fp_live, dobj_uj->user_data.p);
+			if (live_joint < 0)
+			{
+				live_joint = syNetRbSnapInferCaptainFalconPunchJointIndex(fp_live);
+			}
+			if (live_joint != (s32)blob->quake_magnitude)
+			{
+				return FALSE;
+			}
+		}
+		if (ep->bank_id != blob->bank_id)
 		{
 			return FALSE;
 		}
@@ -19609,6 +20028,7 @@ static void syNetRbSnapReconcileSnapshotEffectsBeforeItems(const SYNetRbSnapshot
 	syNetRbSnapPruneStaleNessPsychicMagnetEffects(slot);
 	syNetRbSnapPruneStalePikachuThunderShockEffects(slot);
 	syNetRbSnapPruneStaleKirbyInhaleWindEffects(slot);
+	syNetRbSnapPruneDuplicateQuakeEffects(slot);
 	syNetRbSnapPruneOrphanQuakeAndDeadEffects(slot, reconciled_ids, reconciled_count);
 	syNetRbSnapPruneOrphanFighterAttachedEffects(slot, reconciled_ids, reconciled_count);
 	for (pass = 0; pass < 2; pass++)
@@ -19767,10 +20187,22 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 				fp_joint = ftGetStruct(ep->fighter_gobj);
 				dobj_joint = DObjGetStruct(gobj_iter);
 				joint_idx = syNetRbSnapFindFighterJointIndex(fp_joint, dobj_joint->user_data.p);
+				if (joint_idx < 0)
+				{
+					joint_idx = syNetRbSnapInferCaptainFalconPunchJointIndex(fp_joint);
+				}
 				if (joint_idx >= 0)
 				{
 					blob->snap_flags |= SYNETRB_EFFECT_SNAP_USERDATA_JOINT;
 					blob->quake_magnitude = (u8)joint_idx;
+					blob->respawn_kind = SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT;
+				}
+				else if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+				{
+					port_log(
+					    "SSB64 NetRbSnapshot: effect save userdata_joint_skip tick=%u gobj_id=%u "
+					    "fighter_gobj_id=%u reason=joint_idx_unresolved\n",
+					    (unsigned int)slot->tick, (unsigned int)gobj_iter->id, blob->fighter_gobj_id);
 				}
 			}
 			syNetRbSnapSanitizeEffectVarsBlob(blob->effect_vars, ep);
@@ -21365,6 +21797,8 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapEnsureNessPsychicMagnetEffectsFromSlot(slot);
 	syNetRbSnapEnsurePikachuThunderShockEffectsFromSlot(slot);
 	syNetRbSnapEnsureQuakeEffectsFromSlot(slot);
+	syNetRbSnapEnsureUserdataJointEffectsFromSlot(slot);
+	syNetRbSnapSanitizeCopyCaptainEffectAttach(slot);
 	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
 	syNetRbSnapPruneStaleRebirthHalos(slot);
 	syNetRbSnapPruneStaleFoxReflectors(slot);
@@ -21650,8 +22084,8 @@ static void syNetRbSnapInvalidateFighterPartTransformCaches(GObj *fighter_gobj)
 
 /*
  * lbCommonAddFighterPartsFigatree (via ftMainRefreshFigatreeVisual) installs figatree anim joints and
- * clobbers per-joint AObj chains restored from the snapshot blob. Re-apply blob joint anim before load-hash
- * verify so anim/wpn partitions match ring slot digests.
+ * clobbers per-joint AObj chains restored from the snapshot blob. Re-apply blob physics, MPColl, root
+ * pose, and joint anim before load-hash verify so figh/anim partitions match ring slot digests.
  */
 static void syNetRbSnapReapplyFighterJointAnimFromSlot(const SYNetRbSnapshotSlot *slot)
 {
@@ -21684,6 +22118,21 @@ static void syNetRbSnapReapplyFighterJointAnimFromSlot(const SYNetRbSnapshotSlot
 		{
 			continue;
 		}
+		fp->physics = blob->physics;
+#if defined(SSB64_NETMENU)
+		syNetplayQuantizeFighterPhysics(&fp->physics);
+#endif
+		{
+			Vec3f *topn;
+
+			topn = NULL;
+			if (fp->joints[nFTPartsJointTopN] != NULL)
+			{
+				topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+			}
+			syNetRbSnapApplyMPColl(&fp->coll_data, &blob->coll, topn, &fp->lr);
+		}
+		syNetRbSnapApplyFighterGobjPose(blob, fp, fighter_gobj);
 		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
 		{
 			if (fp->joints[ji] != NULL)
@@ -22012,6 +22461,7 @@ void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick)
 	if ((slot != NULL) && (slot->is_valid != FALSE) && (slot->tick == completed_sim_tick))
 	{
 		syNetRbSnapFreezeSlotQuakeEffectsFromSlot(slot);
+		syNetRbSnapPruneDuplicateQuakeEffects(slot);
 	}
 	syNetRbSnapshotReapplyJointAnimAtTick(completed_sim_tick);
 }
@@ -22029,6 +22479,8 @@ sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 completed_sim_tick)
 	}
 	syNetRbSnapEjectDeadNonRespawnableEffectsFromLive();
 	syNetRbSnapEnsureQuakeEffectsFromSlot(slot);
+	syNetRbSnapEnsureUserdataJointEffectsFromSlot(slot);
+	syNetRbSnapSanitizeCopyCaptainEffectAttach(slot);
 	syNetRbSnapReconcileSnapshotEffectsBeforeItems(slot);
 	syNetRbSnapBackfillGuardShieldEffectIdsFromEffects(slot);
 	syNetRbSnapReconcileGuardShieldEffectsInternal(slot);
@@ -22054,13 +22506,16 @@ sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 completed_sim_tick)
 	syNetRbSnapFinalizeFighterEffectAttachFlags(slot);
 	syNetRbSnapPatchAllGuardShieldsFromSlot(slot);
 	syNetRbSnapPruneDuplicateShieldEffects(slot);
+	syNetRbSnapPruneDuplicateQuakeEffects(slot);
 	/*
 	 * Final blob pose stamp after shield patch/prune: reconcile procs may advance anim/translate on
 	 * respawnable effects; re-apply canonical blob anim+translate so verify eff hash matches save.
 	 */
 	syNetRbSnapReapplyEffectBlobsFromSlot(slot);
 	syNetRbSnapFreezeSlotQuakeEffectsFromSlot(slot);
+	syNetRbSnapPruneDuplicateQuakeEffects(slot);
 	syNetRbSnapEjectDeadNonRespawnableEffectsFromLive();
+	syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
 	live_ef = syNetSyncHashActiveEffectsForRollback();
 	return (live_ef == syNetRbSnapshotGetSlotHashEffect(completed_sim_tick)) ? TRUE : FALSE;
 }

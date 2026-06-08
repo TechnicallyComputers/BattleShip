@@ -98,3 +98,34 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 | `syNetRbSnapEnsureShieldEffectsFromSlot` | Verify-only: skip synth respawn when slot already lists a per-player shield blob |
 
 **Verify:** Re-soak Falcon vs Kirby cross-ISA synctest — expect 0 eff-only quake drift; tick 2687 class should soft-continue without `SYNCTEST_FAIL`.
+
+### Phase 42 (2026-06-08) — userdata-joint respawn + CopyCaptain attach unstick
+
+**Symptom:** Kirby copied Falcon Punch flame still snapped back intermittently — Phase 40 rebind-only fix worked when the blob survived load, but particle reset + orphan prune left `is_effect_attach` stuck with no respawn path (`respawn_kind=NONE`).
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT` | New respawn kind; `EffectRespawnKindFromLive` classifies userdata-joint attach |
+| `syNetRbSnapEnsureUserdataJointEffectsFromSlot` | Slot-authoritative restore via `efManagerCaptainFalconPunchMakeEffect` + blob apply/rebind |
+| Capture | Kirby joint **30** / Captain joint **16** fallback when pointer match fails; set respawn kind on capture |
+| `syNetRbSnapSanitizeCopyCaptainEffectAttach` | Clear stale `is_effect_attach` when slot expects flame but live reconcile did not restore it |
+| Load / verify repair | Run userdata-joint ensure + sanitize before effect reconcile (with quake ensure) |
+
+**Verify:** Re-soak Falcon vs Kirby — Falcon Punch flame should track joint consistently through rollback load and synctest verify during CopyCaptain (`status=295`).
+
+### Phase 43 (2026-06-08) — quake dedupe + verify fighter pose re-stamp
+
+**Symptom (post-Phase-42 soak):** Behaviors good, but tick **629** `SYNCTEST_FAIL` (`figh`+`anim` drift during early combat / Kirby `DamageHi1`); ticks 1124/2231/2351/2471/2718 had **eff-only** drift from stacked quake duplicates (save N → verify 3N identical `respawn=1` quakes).
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `syNetRbSnapPruneDuplicateQuakeEffects` | One live quake per slot blob (prefer ring `gobj_id`); eject extras after reconcile/repair |
+| `syNetRbSnapReapplyFighterJointAnimFromSlot` | Also re-stamp `physics`, MPColl, root GObj pose from blob before canonicalize |
+| `TryRepairEffectHashForVerify` | Quake dedupe + fighter pose reapply after effect repair |
+| `VerifyLoadedSlot` | Verify-only final fighter pose re-stamp before hash fold |
+
+**Verify:** Re-soak Falcon vs Kirby cross-ISA — expect 0 `SYNCTEST_FAIL` @629; eff-only quake drift at 1124+ class should drop to 0 or repair cleanly.
