@@ -1,6 +1,6 @@
 # Kirby down-B stone premature release — rollback — 2026-06-06
 
-**Status:** FIX SHIPPED (soak pending — 2026-06-06 follow-up for orphan B tap)  
+**Status:** FIX SHIPPED (2026-06-07 resim-only tap filter regression)  
 **Scope:** `decomp/src/ft/ftchar/ftkirby/ftkirbyspeciallw.c`, `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netsync.c`
 
 ## Symptom
@@ -24,7 +24,7 @@ Netplay soak: Kirby down-B stone (SpecialLw) releases back to normal shortly aft
 
 | Change | Purpose |
 |--------|---------|
-| `ftKirbySpecialLwIsGenuineButtonTapB` | During rollback VS/resim, ignore B tap when B is still held (matches vanilla edge semantics; blocks entry bleed without changing release rules) |
+| `ftKirbySpecialLwIsGenuineButtonTapB` | During **resim only** (`syNetRollbackIsResimulating`), ignore B tap when B is still held (blocks entry bleed). Forward netplay accepts tap+hold on the first frame of a fresh B press so manual stone release works. |
 | `speciallw.unk_0x2` release suppress | After snapshot apply in stone scope, arm 4-tick B-tap release block (netplay only; cleared on fresh `SetDamageResist`) |
 | Vanilla `CheckRelease` paths restored | Ground Hold keeps immediate B release; air Unk keeps min-hold gate |
 | `ftKirbySpecialLwReconcileStoneAfterRollback` | After snapshot apply, if live `duration<=0` but blob `duration>0`, restore blob value; sync `is_damage_resist` from blob; arm release suppress |
