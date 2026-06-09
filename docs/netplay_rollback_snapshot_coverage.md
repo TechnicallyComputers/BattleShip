@@ -51,7 +51,7 @@ Hash walks use the same caps as snapshot enumeration (`SYNET_SYNC_*_HASH_SORT_MA
 | Stage | Repair |
 |-------|--------|
 | Hyrule | Twister gobj pose, xf recreate, obstacle clear/re-add |
-| Pupupu | Whispy `leaves_xf` / `dust_xf` when blowing |
+| Pupupu | Whispy `leaves_xf` / `dust_xf` when blowing; `efDisplayEnsureParticleDrawInfrastructure` after particle reset / synctest verify (dl 10/15/18/25 particle draw hooks not snapshotted). See [`bugs/netplay_whispy_lbparticle_synctest_spawn_2026-06-09.md`](bugs/netplay_whispy_lbparticle_synctest_spawn_2026-06-09.md). |
 | Yoster | Cloud `dobj[]` rebind + yakumono pos |
 | Castle | Bumper DObj translate from blob |
 | Yamabuki | Tower gate DObj repair/finalize after item apply; yakumono id 3 collision sync; Open-state minimum egress timer in `gate_wait` plus tracked-edge clearance hold |

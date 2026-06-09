@@ -1,6 +1,6 @@
 # Yoshi neutral-B egg hatch animation — rollback lifecycle — 2026-06-05
 
-**Status:** FIX SHIPPED (soak pending — phase 9: vanilla hatch sequencing — shell vs particles-only)  
+**Status:** FIX SHIPPED (soak pending — phase 10: capture mash escape + id-1011 intruder eject)  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netrollback.c`
 
 ## Symptom
@@ -17,6 +17,7 @@ Logs showed `effect_apply kind=YOSHI_EGG_LAY fighter_gobj_id=0` (parent not reso
 4. **SIGSEGV in `ftCommonYoshiEggProcInterrupt`** — `no_fighter` prune ejected egg-lay GObj without clearing `captureyoshi.effect_gobj` on victim; next tick wiggled `->child == NULL` (`fault_addr=0x20`).
 5. **Replay-before-render + root mutation** — hatch replay fired during rollback load/resim, so the shell/particles could be advanced or reset before any rendered frame. Generic effect save quantization also touched the fighter-attached Yoshi egg root DObj; vanilla wiggle belongs to the child DObj, while the root must stay parent-derived from victim TopN.
 6. **Post-escape ghost shell** — live escape always queued a cosmetic shell + immediate particles on flush, even when the capture egg had already finished break anim index 1 on a visible frame. Fighter popped to Fall first, then a second full break anim replayed from frame 0.
+7. **Capture mash escape (phase 10)** — Z-shield / up-special tests left Yoshi-shield or mis-parented effects on shared GObj id 1011 while Kirby was in `YoshiEgg`, crowding out the victim egg-lay shell. Escape sim ran but hatch cosmetic could not start; deferred flush alone missed particles. Snapshot save deduped `EGG_ESCAPE` after `EGG_LAY` per victim so synctest logs showed `yoshi_egg_escape_duplicate` while two live effects remained.
 
 ## Fix
 
@@ -39,6 +40,11 @@ Logs showed `effect_apply kind=YOSHI_EGG_LAY fighter_gobj_id=0` (parent not reso
 | Hidden cosmetic marker | Keep the replay shell out of effect snapshot/hash/reconcile coupling so it never becomes `captureyoshi.effect_gobj` or causes `eff` drift |
 | Yoshi egg root quantize skip | Preserve the fighter-attached egg root DObj while still quantizing free-floating effects; captured-player stick input only wiggles the child shell |
 | Effect diag | `resolved_parent=` on apply; `yoshi_egg_lay_hatch_replay ... shell_gobj_id=` lines |
+| **Phase 10: intruder eject** | On escape queue only: eject shield / egg-escape intruders on victim; whitelist egg-lay by coupled pointer, `proc_update`, or respawn=8 (not `HasUpdateProc`) |
+| **Phase 10b: reconcile regression** | Removed per-tick `EjectIntrudingEffectsOnAllYoshiEggVictims` from reconcile — it ejected respawn=8 shells and blocked escape; flag0 countdown runs when shell present but break incomplete |
+| **Phase 10: hatch rewind** | `PrepareYoshiEggLayHatchCosmeticShell` sets break anim frame to ~24 so hatch proc can play visibly after escape-at-index-1 |
+| **Phase 10: immediate particles** | `QueueYoshiEggLayHatchCosmeticsLive` fires `ReplayCosmeticYoshiEggExplode` before deferred shell-only queue when shell replay cannot start |
+| **Phase 10: snapshot dedup** | Separate per-victim dedup lists for `EGG_LAY` vs `EGG_ESCAPE` saves |
 
 ## Verify
 
