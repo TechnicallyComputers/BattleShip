@@ -122,6 +122,11 @@
 #define SYNETRB_YOSHI_EGG_LAY_HATCH_COSMETIC_BANK_ID ((u16)0xFFFFU)
 /* Egg-lay break anim index 1 length observed in netplay logs (~24.0f); start above 0 for hatch proc. */
 #define SYNETRB_YOSHI_EGG_LAY_HATCH_BREAK_START_FRAME 24.0F
+/* Live tail after mash escape: synctest fragile skips / emergency restore may drop hidden hatch shell. */
+#define SYNETRB_YOSHI_EGG_LAY_HATCH_ENSURE_WINDOW 32U
+
+static void syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate(GObj *effect_gobj);
+static void syNetRbSnapBindYoshiEggLayHatchCosmeticGObjProc(GObj *effect_gobj);
 #endif
 
 extern ITDesc dItLinkBombItemDesc;
@@ -19952,7 +19957,6 @@ static void syNetRbSnapEjectNonHatchYoshiEggLayEffectsForFighterExcept(GObj *fig
 			}
 			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
 			{
-				gcEjectGObj(gobj);
 				continue;
 			}
 			if (syNetRbSnapLiveEffectIsYoshiEggLay(gobj, ep) == FALSE)
@@ -19967,6 +19971,35 @@ static void syNetRbSnapEjectNonHatchYoshiEggLayEffectsForFighterExcept(GObj *fig
 static void syNetRbSnapEjectNonHatchYoshiEggLayEffectsForFighter(GObj *fighter_gobj)
 {
 	syNetRbSnapEjectNonHatchYoshiEggLayEffectsForFighterExcept(fighter_gobj, NULL);
+}
+
+static void syNetRbSnapBindYoshiEggLayHatchCosmeticGObjProc(GObj *effect_gobj)
+{
+	GObjProcess *gobjproc;
+	GObjProcess *next;
+
+	if (effect_gobj == NULL)
+	{
+		return;
+	}
+	for (gobjproc = effect_gobj->gobjproc_head; gobjproc != NULL; gobjproc = next)
+	{
+		next = gobjproc->link_next;
+		if (gobjproc->kind != nGCProcessKindFunc)
+		{
+			continue;
+		}
+		if ((gobjproc->exec.func == efManagerYoshiEggLayProcUpdate) ||
+		    (gobjproc->exec.func == syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate))
+		{
+			gcEndGObjProcess(gobjproc);
+		}
+	}
+	if (syNetRbSnapEffectGObjHasUpdateProc(effect_gobj, syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate) == FALSE)
+	{
+		gcAddGObjProcess(effect_gobj, syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate, nGCProcessKindFunc, 3);
+	}
+	effect_gobj->func_run = NULL;
 }
 
 static void syNetRbSnapPrepareYoshiEggLayHatchCosmeticShell(GObj *fighter_gobj, GObj *effect_gobj)
@@ -20012,6 +20045,7 @@ static void syNetRbSnapPrepareYoshiEggLayHatchCosmeticShell(GObj *fighter_gobj, 
 	{
 		dobj->child->anim_frame = SYNETRB_YOSHI_EGG_LAY_HATCH_BREAK_START_FRAME;
 	}
+	syNetRbSnapBindYoshiEggLayHatchCosmeticGObjProc(effect_gobj);
 #endif
 }
 
@@ -20140,6 +20174,15 @@ static sb32 syNetRbSnapStartYoshiEggLayHatchCosmeticLive(GObj *fighter_gobj, con
 	syNetRbSnapEjectNonHatchYoshiEggLayEffectsForFighterExcept(fighter_gobj, effect_gobj);
 	syNetRbSnapPrepareYoshiEggLayHatchCosmeticShell(fighter_gobj, effect_gobj);
 	syNetRbSnapArmYoshiEggLayHatchShellParticles(player, pos);
+	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRbSnapshot: yoshi_egg_lay_hatch_start_live tick=%u player=%d fighter_gobj_id=%u "
+		    "effect_gobj_id=%u anim_frame=%.2f proc_hatch=%d\n",
+		    (unsigned int)syNetInputGetTick(), (int)player, (unsigned int)fighter_gobj->id,
+		    (unsigned int)effect_gobj->id, effect_gobj->anim_frame,
+		    (int)(ep->proc_update == syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate));
+	}
 	return TRUE;
 }
 
@@ -23104,9 +23147,23 @@ void syNetRbSnapQueueYoshiEggLayHatchCosmeticsLive(GObj *fighter_gobj)
 		return;
 	}
 	syNetRbSnapYoshiEggLayHatchPosFromCapture(fighter_gobj, fp, &pos);
+	s_syNetRbSnapYoshiEggLayHatchReplayTick[player] = syNetInputGetTick();
+	s_syNetRbSnapYoshiEggLayHatchShellParticlePos[player] = pos;
 	syNetRbSnapEjectIntrudingEffectsOnYoshiEggVictim(fighter_gobj, fp);
+	/* Resim escape is invisible — defer shell/particles to first post-resim flush (synctest loads). */
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		syNetRbSnapQueueYoshiEggLayHatchCosmetics(player, syNetInputGetTick(), &pos, TRUE, FALSE);
+		return;
+	}
 	if (syNetRbSnapStartYoshiEggLayHatchCosmeticLive(fighter_gobj, &pos) != FALSE)
 	{
+		/* Mash escape: particles must not wait on hatch proc / deferred flush (vanilla fires explode on escape). */
+		syNetRbSnapReplayCosmeticYoshiEggExplode(&pos);
+		if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
+		{
+			s_syNetRbSnapYoshiEggLayHatchShellParticlePending[player] = FALSE;
+		}
 		return;
 	}
 	if (syNetRbSnapReplayYoshiEggLayHatchShell(fighter_gobj, &pos) != NULL)
@@ -23164,6 +23221,11 @@ void syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics(void)
 			    (syNetRbSnapStartYoshiEggLayHatchCosmeticLive(fighter_gobj, pos) != FALSE))
 			{
 				hatch_shell_gobj = syNetRbSnapFindYoshiEggLayHatchCosmeticForFighter(fighter_gobj);
+				if (s_syNetRbSnapYoshiEggLayHatchReplay[pi].defer_particles == FALSE)
+				{
+					syNetRbSnapReplayCosmeticYoshiEggExplode(pos);
+					s_syNetRbSnapYoshiEggLayHatchShellParticlePending[pi] = FALSE;
+				}
 			}
 			else
 			{
@@ -23318,6 +23380,11 @@ static void syNetRbSnapTryReplayYoshiEggLayHatchCosmeticsForPlayer(const SYNetRb
 	{
 		deferred_replay = FALSE;
 		syNetRbSnapMarkYoshiEggLayHatchReplayDone(pi, slot->tick);
+		if (yoshi_egg_shell_break == FALSE)
+		{
+			syNetRbSnapReplayCosmeticYoshiEggExplode(&pos);
+			s_syNetRbSnapYoshiEggLayHatchShellParticlePending[pi] = FALSE;
+		}
 	}
 	else if ((syNetRollbackIsResimulating() == FALSE) &&
 	         (syNetRbSnapReplayYoshiEggLayHatchShell(fighter_gobj, &pos) != NULL))
@@ -23376,7 +23443,18 @@ static void syNetRbSnapReplayYoshiEggLayHatchCosmeticsFromSlot(const SYNetRbSnap
 #ifdef PORT
 		if ((s_syNetRbSnapRepairStageVerifyOnly != FALSE) && (yoshi_egg_shell_break == FALSE))
 		{
-			continue;
+			f32 vel_y = fb->physics.vel_air.y;
+
+			/*
+			 * Synctest verify-only loads skip most presentation repairs, but Fall escape hatch
+			 * is a hidden cosmetic (excluded from eff hash) — safe to replay for visible shell.
+			 */
+			if ((fb->status_id != nFTCommonStatusFall) ||
+			    (vel_y < (FTCOMMON_YOSHIEGG_ESCAPE_VEL_Y - 4.0F)) ||
+			    (vel_y > (FTCOMMON_YOSHIEGG_ESCAPE_VEL_Y + 4.0F)))
+			{
+				continue;
+			}
 		}
 #endif
 		if (yoshi_egg_shell_break != FALSE)
@@ -23384,12 +23462,6 @@ static void syNetRbSnapReplayYoshiEggLayHatchCosmeticsFromSlot(const SYNetRbSnap
 			syNetRbSnapTryReplayYoshiEggLayHatchCosmeticsForPlayer(slot, pi, TRUE);
 			continue;
 		}
-#ifdef PORT
-		if (s_syNetRbSnapRepairStageVerifyOnly != FALSE)
-		{
-			continue;
-		}
-#endif
 		syNetRbSnapTryReplayYoshiEggLayHatchCosmeticsForPlayer(slot, pi, FALSE);
 #else
 		if (fb->status_id != nFTCommonStatusFall)
@@ -27296,6 +27368,130 @@ void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void)
 	 */
 	syNetRbSnapReconcileGuardShieldEffectsLive();
 	syNetRbSnapRestoreGuardShieldDecayWaitAfterSynctest();
+}
+
+#if defined(SSB64_NETMENU)
+static sb32 syNetRbSnapLiveYoshiEggLayHatchShellPlaying(GObj *fighter_gobj)
+{
+	GObj *effect_gobj;
+	EFStruct *ep;
+
+	effect_gobj = syNetRbSnapFindYoshiEggLayHatchCosmeticForFighter(fighter_gobj);
+	if (effect_gobj == NULL)
+	{
+		return FALSE;
+	}
+	ep = efGetStruct(effect_gobj);
+	if ((ep == NULL) || (ep->proc_update != syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate))
+	{
+		return FALSE;
+	}
+	return (effect_gobj->anim_frame > 0.0F) ? TRUE : FALSE;
+}
+
+static void syNetRbSnapTryEnsureLiveYoshiEggLayHatchCosmeticsInternal(u32 completed_sim_tick, const char *reason)
+{
+	s32 pi;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	for (pi = 0; pi < GMCOMMON_PLAYERS_MAX; pi++)
+	{
+		u32 escape_tick;
+		GObj *fighter_gobj;
+		FTStruct *fp;
+		Vec3f pos;
+		GObj *shell_gobj;
+
+		escape_tick = s_syNetRbSnapYoshiEggLayHatchReplayTick[pi];
+		if (escape_tick == 0U)
+		{
+			continue;
+		}
+		if (completed_sim_tick < escape_tick)
+		{
+			continue;
+		}
+		if ((completed_sim_tick - escape_tick) > SYNETRB_YOSHI_EGG_LAY_HATCH_ENSURE_WINDOW)
+		{
+			continue;
+		}
+		fighter_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)pi);
+		if (fighter_gobj == NULL)
+		{
+			continue;
+		}
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (fp->status_id != nFTCommonStatusFall))
+		{
+			continue;
+		}
+		if (syNetRbSnapLiveYoshiEggLayHatchShellPlaying(fighter_gobj) != FALSE)
+		{
+			continue;
+		}
+		pos = s_syNetRbSnapYoshiEggLayHatchShellParticlePos[pi];
+		shell_gobj = NULL;
+		if (syNetRbSnapStartYoshiEggLayHatchCosmeticLive(fighter_gobj, &pos) != FALSE)
+		{
+			syNetRbSnapReplayCosmeticYoshiEggExplode(&pos);
+			s_syNetRbSnapYoshiEggLayHatchShellParticlePending[pi] = FALSE;
+			shell_gobj = syNetRbSnapFindYoshiEggLayHatchCosmeticForFighter(fighter_gobj);
+		}
+		else
+		{
+			shell_gobj = syNetRbSnapReplayYoshiEggLayHatchShell(fighter_gobj, &pos);
+			if (shell_gobj == NULL)
+			{
+				syNetRbSnapQueueYoshiEggLayHatchCosmetics(pi, escape_tick, &pos, TRUE, FALSE);
+			}
+		}
+		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetRbSnapshot: yoshi_egg_lay_hatch_ensure tick=%u player=%d escape_tick=%u "
+			    "reason=%s fighter_gobj_id=%u shell_gobj_id=%u vel_y=%.2f\n",
+			    (unsigned int)completed_sim_tick, (int)pi, (unsigned int)escape_tick,
+			    (reason != NULL) ? reason : "unknown",
+			    (unsigned int)fighter_gobj->id,
+			    (shell_gobj != NULL) ? (unsigned int)shell_gobj->id : 0U, fp->physics.vel_air.y);
+		}
+	}
+}
+#endif
+
+void syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest(void)
+{
+#if defined(SSB64_NETMENU)
+	syNetRbSnapTryEnsureLiveYoshiEggLayHatchCosmeticsInternal(syNetInputGetTick(), "synctest_restore");
+#else
+	/* Offline / non-netmenu: no hatch cosmetic pipeline. */
+#endif
+}
+
+void syNetRbSnapTryEnsureLiveYoshiEggLayHatchAfterSynctestFragileSkip(const char *skip_reason, u32 completed_sim_tick)
+{
+#if defined(SSB64_NETMENU)
+	if (skip_reason == NULL)
+	{
+		return;
+	}
+	if ((strcmp(skip_reason, "effect_count_transition_probe") != 0) &&
+	    (strcmp(skip_reason, "yoshi_egg_lay_probe") != 0))
+	{
+		return;
+	}
+	syNetRbSnapTryEnsureLiveYoshiEggLayHatchCosmeticsInternal(completed_sim_tick, skip_reason);
+#else
+	(void)skip_reason;
+	(void)completed_sim_tick;
+#endif
 }
 
 void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 completed_sim_tick)

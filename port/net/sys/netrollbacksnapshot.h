@@ -61,6 +61,11 @@ extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
 /* Live bubble/coupling repair after synctest emergency restore (dual-shield drain stall). */
 extern void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void);
+/* Hidden hatch shell repair after synctest emergency restore (hash-excluded cosmetic). */
+extern void syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest(void);
+/* Fragile synctest probe skip on escape boundary — replay hatch on live tail when shell missing. */
+extern void syNetRbSnapTryEnsureLiveYoshiEggLayHatchAfterSynctestFragileSkip(const char *skip_reason,
+                                                                             u32 completed_sim_tick);
 /* Pupupu Whispy mouth/eyes textures + LBParticles — hash-safe; run after load verify commits. */
 extern void syNetRbSnapRepairPupupuWhispyPresentationAfterLoad(u32 tick, const char *reason);
 #if defined(SSB64_NETMENU)

@@ -1,6 +1,6 @@
 # Yoshi neutral-B egg hatch animation — rollback lifecycle — 2026-06-05
 
-**Status:** FIX SHIPPED (soak pending — phase 10: capture mash escape + id-1011 intruder eject)  
+**Status:** FIX SHIPPED (soak pending — phase 13: synctest live-tail hatch ensure + hidden-shell eject fix)  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`, `port/net/sys/netrollback.c`
 
 ## Symptom
@@ -45,6 +45,13 @@ Logs showed `effect_apply kind=YOSHI_EGG_LAY fighter_gobj_id=0` (parent not reso
 | **Phase 10: hatch rewind** | `PrepareYoshiEggLayHatchCosmeticShell` sets break anim frame to ~24 so hatch proc can play visibly after escape-at-index-1 |
 | **Phase 10: immediate particles** | `QueueYoshiEggLayHatchCosmeticsLive` fires `ReplayCosmeticYoshiEggExplode` before deferred shell-only queue when shell replay cannot start |
 | **Phase 10: snapshot dedup** | Separate per-victim dedup lists for `EGG_LAY` vs `EGG_ESCAPE` saves |
+| **Phase 11: hatch GObj proc bind** | `Prepare` ends egg-lay `proc_update` on the GObj and registers `syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate` (pointer-only `ep->proc_update` swap was never scheduled) |
+| **Phase 11: immediate escape particles** | `QueueYoshiEggLayHatchCosmeticsLive` always fires `ReplayCosmeticYoshiEggExplode` when hatch shell start succeeds; clears deferred particle pending to avoid double burst |
+| **Phase 12: resim defer** | `QueueYoshiEggLayHatchCosmeticsLive` defers shell+particles during `syNetRollbackIsResimulating()`; `FlushDeferred` replays on first live frame |
+| **Phase 12: synctest verify Fall replay** | `ReplayYoshiEggLayHatchCosmeticsFromSlot` replays Fall escape hatch during `verify_only` loads (hidden cosmetic, hash-safe); slot apply + flush fire particles when `defer_particles=0` |
+| **Phase 13: synctest live-tail ensure** | Record escape tick/pos on every live queue; `TryEnsureLive` replays missing hatch shell within 32 ticks after `yoshi_egg_lay_probe` / `effect_count_transition_probe` skips and after `synctest_restore` |
+| **Phase 13: hidden hatch preserve** | `EjectNonHatchYoshiEggLayEffectsForFighterExcept` no longer ejects rollback-hidden hatch cosmetics (only skips them) |
+| **Phase 13: live start diag** | `yoshi_egg_lay_hatch_start_live` + `yoshi_egg_lay_hatch_ensure` under `SNAPSHOT_EFFECT_DIAG=1` |
 
 ## Verify
 
@@ -56,5 +63,6 @@ Yoshi neutral B egg lay → mash escape under rollback. Both peers should show h
 - Visible live escape before break completes (resim-hidden break): `replay_shell=1`; particles appear when cosmetic shell break anim ends, not at flush start.
 - Captured-player stick input moves the egg child DObj only: the shell wiggles/squishes in place and no longer walks across the stage.
 - No eff-only `LOAD_HASH_DRIFT` soft-continues with frozen egg effect hash during status 178.
+- `synctest=1`: after escape, expect `yoshi_egg_lay_hatch_start_live` on escape tick and/or `yoshi_egg_lay_hatch_ensure reason=effect_count_transition_probe|yoshi_egg_lay_probe|synctest_restore` when fragile probe skips restore wiped the hidden shell.
 
 Related: [netplay_yoshi_egg_lay_2026-06-01.md](netplay_yoshi_egg_lay_2026-06-01.md), [netplay_yoshi_egg_explode_particles_2026-06-01.md](netplay_yoshi_egg_explode_particles_2026-06-01.md).

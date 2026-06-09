@@ -5451,6 +5451,9 @@ void syNetRollbackAfterBattleUpdate(void)
 				         completed_tick,
 				         (skip_reason != NULL) ? skip_reason : "probe_skip",
 				         probe_tick);
+#if defined(SSB64_NETMENU)
+				syNetRbSnapTryEnsureLiveYoshiEggLayHatchAfterSynctestFragileSkip(skip_reason, completed_tick);
+#endif
 				sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
 			}
 			else
@@ -5493,6 +5496,7 @@ void syNetRollbackAfterBattleUpdate(void)
 					{
 						(void)syNetRbSnapshotRestoreLiveEmergency();
 						syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
+						syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
 #if defined(SSB64_NETMENU)
 						syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
 #endif
