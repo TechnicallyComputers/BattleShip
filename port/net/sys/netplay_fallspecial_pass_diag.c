@@ -10,6 +10,7 @@
 #include <mp/map.h>
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netplay_fallspecial_pass_gate.h>
 #include <sys/netplay_sim_quantize.h>
 #include <sys/netrollback.h>
 
@@ -192,6 +193,27 @@ static const char *syNetplayFallSpecialPassDiagDenyReason(const FTStruct *fp, sb
 	return "blocked";
 }
 
+static sb32 syNetplayFallSpecialPassDiagComputeProcPassBlock(GObj *fighter_gobj, const FTStruct *fp, sb32 use_fallspecial_allow)
+{
+	if (use_fallspecial_allow != FALSE)
+	{
+		syNetplayFallSpecialPassGateHardenAllowPass(fighter_gobj);
+		if ((ftStatusVarsFallSpecial(fp)->is_allow_pass == FALSE) ||
+		    !(fp->coll_data.floor_flags & MAP_VERTEX_COLL_PASS) ||
+		    (fp->input.pl.stick_range.y >= FTCOMMON_FALLSPECIAL_PASS_STICK_RANGE_MIN))
+		{
+			return TRUE;
+		}
+		return FALSE;
+	}
+	if (!(fp->coll_data.floor_flags & MAP_VERTEX_COLL_PASS) ||
+	    (fp->input.pl.stick_range.y >= FTSAMUS_SCREWATTACK_PASS_STICK_RANGE_MIN))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static void syNetplayFallSpecialPassDiagLogCore(GObj *fighter_gobj, const char *event, const char *site, sb32 proc_pass_block,
                                                 sb32 use_fallspecial_allow, sb32 force)
 {
@@ -284,7 +306,26 @@ void syNetplayFallSpecialPassDiagLogFallSpecialEnter(GObj *fighter_gobj, const c
 
 void syNetplayFallSpecialPassDiagLogPassCliff(GObj *fighter_gobj, const char *site)
 {
-	syNetplayFallSpecialPassDiagLogCore(fighter_gobj, "pass_cliff", site, FALSE, FALSE, TRUE);
+	FTStruct *fp;
+	sb32 use_fallspecial_allow;
+	sb32 proc_pass_block;
+
+	if (syNetplayFallSpecialPassDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayFallSpecialPassDiagStatusInScope(fp) == FALSE))
+	{
+		return;
+	}
+	use_fallspecial_allow = (fp->status_id == nFTCommonStatusFallSpecial) ? TRUE : FALSE;
+	proc_pass_block = syNetplayFallSpecialPassDiagComputeProcPassBlock(fighter_gobj, fp, use_fallspecial_allow);
+	syNetplayFallSpecialPassDiagLogCore(fighter_gobj, "pass_cliff", site, proc_pass_block, use_fallspecial_allow, TRUE);
 }
 
 #else /* !(PORT && SSB64_NETMENU) */

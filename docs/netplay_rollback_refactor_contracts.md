@@ -12,6 +12,7 @@ This note tracks the **target** rollback architecture during the GGPO-style refa
 **Rule:** rollback/netplay policy must not mutate live forward sim outside an active netplay VS session.
 
 - **`syNetplayRollbackSemanticsActive()`** — TRUE when `syNetPeerIsVSSessionActive()` or `syNetRollbackIsResimulating()`.
+- **`syNetplayRollbackLiveForwardSimEligible()`** — semantics active **and** not an offline battle mode (e.g. Training). Use for per-tick live reconcile, grab refresh, and catch-up hooks in `syNetRollbackAfterBattleUpdate`.
 - **`syNetplaySimQuantizeActive()`** — defers to rollback semantics (F32 grid + canonicalize paths).
 - **Port safety** (stale GObj guards, LP64 fixes) may stay under `#ifdef PORT` without the session gate.
 - **Rollback policy** (spawn/cull/reacquire helpers, delay re-arm, collide guards, sanitize-on-forward-tick) must gate on `syNetplayRollbackSemanticsActive()` in decomp procs, or no-op inside `port/net/sys/netrollbacksnapshot.c` mutators.
@@ -28,6 +29,9 @@ Offline VS, 1P, Training, and netmenu offline classic VS (no active peer session
 | Port | `#ifdef PORT` | LP64, null guards, reloc — not netplay |
 | Compile | `#if defined(PORT) && defined(SSB64_NETMENU)` | Net headers/calls absent from `SSB64_NETMENU=OFF` binary |
 | Runtime | `syNetplayRollbackSemanticsActive()` | Policy only during active VS / resim inside netmenu binary |
+| Runtime (live forward) | `syNetplayRollbackLiveForwardSimEligible()` | Per-tick reconcile/catch-up; excludes Training |
+
+CI: `scripts/check_netplay_rollback_gates.sh` verifies key live-forward entry points.
 
 ```c
 #if defined(PORT) && defined(SSB64_NETMENU)

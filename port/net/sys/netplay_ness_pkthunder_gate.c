@@ -2529,6 +2529,10 @@ void syNetplayNessRunLiveJibakuCatchUpAll(void)
 	s32 weapons_before;
 	sb32 defer_active;
 
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
 	now_tick = syNetInputGetTick();
 	weapons_before = syNetplayNessCountLivePKThunderWeapons();
 	defer_active =

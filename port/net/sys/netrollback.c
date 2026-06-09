@@ -5373,15 +5373,15 @@ void syNetRollbackAfterBattleUpdate(void)
 	}
 	completed_tick = syNetInputGetTick();
 #ifdef PORT
-	if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
-	{
-		syNetRbSnapshotRefreshGrabCouplingGeometry();
-	}
 #if defined(SSB64_NETMENU)
-	syNetplayNessRunLiveJibakuCatchUpAll();
-	syNetplayRebirthCatchUpFightersTick();
-	if (syNetplayRollbackSemanticsActive() != FALSE)
+	if (syNetplayRollbackLiveForwardSimEligible() != FALSE)
 	{
+		if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
+		{
+			syNetRbSnapshotRefreshGrabCouplingGeometry();
+		}
+		syNetplayNessRunLiveJibakuCatchUpAll();
+		syNetplayRebirthCatchUpFightersTick();
 		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
 		{
 			syNetRbSnapReconcileYoshiEggLayEffectsLive();
@@ -5401,7 +5401,10 @@ void syNetRollbackAfterBattleUpdate(void)
 	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) && (completed_tick <= sSYNetRollbackEpisodeResolvedThrough))
 	{
 #if defined(SSB64_NETMENU)
-		syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics();
+		if (syNetplayRollbackLiveForwardSimEligible() != FALSE)
+		{
+			syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics();
+		}
 #endif
 		return;
 	}
@@ -6118,7 +6121,7 @@ static void syNetRollbackFinishForwardResim(void)
 	syNetRollbackEpisodeReset();
 	sSYNetRollbackResimPending = FALSE;
 #if defined(SSB64_NETMENU)
-	if (syNetplayRollbackSemanticsActive() != FALSE)
+	if (syNetplayRollbackLiveForwardSimEligible() != FALSE)
 	{
 		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
 		{

@@ -30,6 +30,12 @@ extern sb32 syNetplaySimQuantizeActive(void);
  */
 extern sb32 syNetplayRollbackSemanticsActive(void);
 
+/*
+ * TRUE when live forward-sim rollback policy may run (reconcile, grab refresh, catch-up).
+ * Requires syNetplayRollbackSemanticsActive() and excludes offline battle modes (Training, etc.).
+ */
+extern sb32 syNetplayRollbackLiveForwardSimEligible(void);
+
 /* Round to a shared 1/65536 grid (double intermediate) on all peers. */
 extern f32 syNetplayQuantizeF32(f32 value);
 /*
