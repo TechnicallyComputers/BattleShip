@@ -6,6 +6,7 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-06-09 | [netplay_whispy_lbparticle_synctest_spawn](netplay_whispy_lbparticle_synctest_spawn_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Synctest: Whispy leaves/dust LBParticles not spawned/warmed after periodic particle reset; guard→GuardOff probe skip @1085 class. |
 | 2026-06-08 | [netplay_dual_shield_player_identity](netplay_dual_shield_player_identity_2026-06-08.md) | **FIX SHIPPED (soak pending)** — Dual-shield / 4p: shared pool `gobj_id` collapsed two bubbles to one; per-player `shield.player` identity for capture, reconcile, enforce, ensure. |
 | 2026-06-07 | [netplay_quake_effect_verify_drift](netplay_quake_effect_verify_drift_2026-06-07.md) | **FIX SHIPPED (Phase 39 soak pending)** — eff-only synctest drift: quake proc on GObj not EFStruct; Phase 39: proc freeze + dead-shell hash exclude + load-verify fighter pose reapply; Phase 38 transient probe skip + blob pose stamp. |
 | 2026-06-07 | [netplay_kirby_inhale_wind_orphan_effect](netplay_kirby_inhale_wind_orphan_effect_2026-06-07.md) | **FIX SHIPPED (soak pending)** — Post-synctest SIGSEGV in `efManagerKirbyInhaleWindProcUpdate`: orphan inhale-wind GObj proc with NULL `EFStruct`; prune/sweep + PORT proc guard + synctest defer. |

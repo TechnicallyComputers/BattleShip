@@ -164,3 +164,19 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 | `ResolveLiveEffectGobjForBlobApply` | Shield + userdata-joint live lookup |
 
 **Verify:** Re-soak — expect **0** `LOAD_HASH_DRIFT`, verify fold `count == save count`, no shield respawn spam.
+
+### Phase 46 (2026-06-08) — verify reconcile dedupe + quake quota cap
+
+**Symptom (4392-tick Falcon vs Kirby soak):** 5 eff-only `LOAD_HASH_DRIFT` soft-continues (ticks 2055/2175/2533/3185/4377). Pattern: save `count=2` (shield+quake) → verify `count=6` (1 shield + 5 identical quake folds); `gobj_link_audit ef6` inflated. Triple `ReconcileSnapshotEffectsBeforeItems` on verify path (apply + finalize load + finalize verify) with pass-3 respawn stacking duplicates.
+
+**Fix:**
+
+| Area | Change |
+|------|--------|
+| `syNetRbEnumerateActiveEffectsSorted` | Dedupe by GObj pointer before hash/capture fold |
+| `syNetRbSnapPruneExcessSlotMatchedQuakes` | Global cap: keep first N slot-matched quakes (N = quake blob count) |
+| `FinalizeLoadFromSlot` / `FinalizeVerifyEffectState` | Verify-only: skip full reconcile; enforce-only path with quake/userdata ensure |
+| `ReconcileSnapshotEffectsBeforeItems` | Verify-only: skip pass-3 `TryRespawn` (enforce handles under-restore) |
+| Kirby stone diag | `port_log` instead of capped `syDebugPrintf`; trim script keeps `SSB64 KirbyStone:` |
+
+**Verify:** Re-soak cross-ISA synctest — expect **0** eff-only `LOAD_HASH_DRIFT`, verify fold `count == save count`; Kirby stone soak shows `KirbyStone: hit` lines when `SSB64_NETPLAY_KIRBY_STONE_DAMAGE_DIAG=1`.
