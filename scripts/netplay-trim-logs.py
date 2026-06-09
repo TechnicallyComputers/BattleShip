@@ -78,6 +78,8 @@ DEFAULT_INCLUDE = [
     r"SSB64 Netplay: NESS_PKTHUNDER_GATE ",
     # FTStatusVars overlay witness (SSB64_NETPLAY_STATUSVARS_WITNESS=1).
     r"SSB64 NetStatusVars:",
+    # Samus screw / FallSpecial soft-platform pass (SSB64_NETPLAY_FALLSPECIAL_PASS_DIAG=1).
+    r"SSB64 FallSpecialPassDiag:",
     r"SSB64 Netplay:",
     # Kirby stone armor hits (SSB64_NETPLAY_KIRBY_STONE_DAMAGE_DIAG=1).
     r"SSB64 KirbyStone:",

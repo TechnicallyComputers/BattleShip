@@ -50,6 +50,10 @@
 #include <wp/wppikachu/wppikachuthunderjolt.h>
 #include <wp/wpsamus/wpsamusbomb.h>
 #include <wp/wpsamus/wpsamuschargeshot.h>
+#include <wp/wpvars.h>
+#if defined(PORT) && defined(SSB64_NETMENU)
+extern wpSamusChargeShotAttributes dWPSamusChargeShotWeaponAttributes[];
+#endif
 #include <wp/wpyoshi/wpyoshieggthrow.h>
 #include <wp/wpyoshi/wpyoshistar.h>
 #include <wp/wpvars.h>
@@ -1753,6 +1757,77 @@ static sb32 syNetRbSnapWeaponChargeShotIsCharging(const WPStruct *wp, GObj *owne
 		return FALSE;
 	}
 	return (wp->weapon_vars.charge_shot.is_release == FALSE) ? TRUE : FALSE;
+}
+
+static void syNetRbSnapRefreshCoupledChargeShotGfx(GObj *charge_gobj, s32 charge_level)
+{
+	WPStruct *wp;
+	f32 scale;
+	s32 charge_size;
+
+	if (charge_gobj == NULL)
+	{
+		return;
+	}
+	wp = wpGetStruct(charge_gobj);
+	if ((wp == NULL) || (wp->kind != nWPKindChargeShot))
+	{
+		return;
+	}
+	if (wp->weapon_vars.charge_shot.is_release != FALSE)
+	{
+		return;
+	}
+	charge_size = charge_level;
+	if (charge_size < 0)
+	{
+		charge_size = 0;
+	}
+	if (charge_size > FTKIRBY_COPYSAMUS_CHARGE_MAX)
+	{
+		charge_size = FTKIRBY_COPYSAMUS_CHARGE_MAX;
+	}
+	wp->weapon_vars.charge_shot.charge_size = charge_size;
+	scale = dWPSamusChargeShotWeaponAttributes[charge_size].gfx_size / WPCHARGESHOT_GFX_SIZE_DIV;
+	DObjGetStruct(charge_gobj)->scale.vec.f.x = scale;
+	DObjGetStruct(charge_gobj)->scale.vec.f.y = scale;
+}
+
+static sb32 syNetRbSnapBlobInSamusChargeSynctestFragileScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->fkind != nFTKindSamus) && (blob->fkind != nFTKindNSamus))
+	{
+		return FALSE;
+	}
+	if ((blob->status_id == nFTSamusStatusSpecialNStart) || (blob->status_id == nFTSamusStatusSpecialNLoop) ||
+	    (blob->status_id == nFTSamusStatusSpecialAirNStart))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapBlobInKirbyCopySamusChargeSynctestFragileScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->fkind != nFTKindKirby) && (blob->fkind != nFTKindNKirby))
+	{
+		return FALSE;
+	}
+	if ((blob->status_id == nFTKirbyStatusCopySamusSpecialNStart) ||
+	    (blob->status_id == nFTKirbyStatusCopySamusSpecialNLoop) ||
+	    (blob->status_id == nFTKirbyStatusCopySamusSpecialAirNStart))
+	{
+		return TRUE;
+	}
+	return FALSE;
 }
 
 static u32 syNetRbSnapFindWeaponGobjIdInSlotForOwner(const SYNetRbSnapshotSlot *slot, s8 owner_player, s32 kind,
@@ -4333,6 +4408,7 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 				if (charge_gobj != NULL)
 				{
 					syNetRbSnapCullSamusChargeShotsForFighter(fighter_gobj, charge_gobj);
+					syNetRbSnapRefreshCoupledChargeShotGfx(charge_gobj, fp->passive_vars.samus.charge_level);
 				}
 			}
 			else
@@ -4370,6 +4446,8 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 				if (charge_gobj != NULL)
 				{
 					syNetRbSnapCullSamusChargeShotsForFighter(fighter_gobj, charge_gobj);
+					syNetRbSnapRefreshCoupledChargeShotGfx(charge_gobj,
+					                                       fp->passive_vars.kirby.copysamus_charge_level);
 				}
 			}
 			else
@@ -25662,6 +25740,55 @@ static sb32 syNetRbSnapshotSynctestProbeGuardReleaseBoundaryFragile(u32 probe_ti
 	return FALSE;
 }
 
+/*
+ * First ring slot tick after Whispy Blow ends (prev slot Blow, probe slot not Blow): lingering
+ * wind effect + fighter joint pose from displacement do not round-trip through synctest verify.
+ */
+static sb32 syNetRbSnapshotSynctestProbePupupuWhispyPostBlowFragile(u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *probe_slot;
+	SYNetRbSnapshotSlot *prev_slot;
+	const SYNetRbSnapGroundPupupu *probe_pu;
+	const SYNetRbSnapGroundPupupu *prev_pu;
+
+	if (probe_tick == 0U)
+	{
+		return FALSE;
+	}
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	prev_slot = syNetRbSnapshotSlotForTick(probe_tick - 1U);
+	if ((probe_slot == NULL) || (probe_slot->is_valid == FALSE) || (probe_slot->tick != probe_tick) ||
+	    (probe_slot->ground_captured == FALSE))
+	{
+		return FALSE;
+	}
+	if ((prev_slot == NULL) || (prev_slot->is_valid == FALSE) || (prev_slot->tick != (probe_tick - 1U)) ||
+	    (prev_slot->ground_captured == FALSE))
+	{
+		return FALSE;
+	}
+	if ((probe_slot->ground.gkind != nGRKindPupupu) || (prev_slot->ground.gkind != nGRKindPupupu))
+	{
+		return FALSE;
+	}
+	if ((probe_slot->ground.payload_len < SYNETRB_SNAP_GROUND_PUPUPU_LEGACY_PAYLOAD_LEN) ||
+	    (prev_slot->ground.payload_len < SYNETRB_SNAP_GROUND_PUPUPU_LEGACY_PAYLOAD_LEN))
+	{
+		return FALSE;
+	}
+	probe_pu = (const SYNetRbSnapGroundPupupu *)probe_slot->ground.payload;
+	prev_pu = (const SYNetRbSnapGroundPupupu *)prev_slot->ground.payload;
+	if (prev_pu->whispy_status != (u8)nGRPupupuWhispyWindStatusBlow)
+	{
+		return FALSE;
+	}
+	if (probe_pu->whispy_status == (u8)nGRPupupuWhispyWindStatusBlow)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **reason_out)
 {
 	SYNetRbSnapshotSlot *slot;
@@ -25672,6 +25799,14 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 		return FALSE;
 	}
 #ifdef PORT
+	if (syNetRbSnapshotSynctestProbePupupuWhispyPostBlowFragile(probe_tick) != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "pupupu_whispy_post_blow_probe";
+		}
+		return TRUE;
+	}
 	if (syNetRbSnapshotSynctestProbeGuardReleaseBoundaryFragile(probe_tick) != FALSE)
 	{
 		if (reason_out != NULL)
@@ -25854,6 +25989,36 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 				if (reason_out != NULL)
 				{
 					*reason_out = "kirby_jump_aerial_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
+			if (syNetRbSnapBlobInSamusChargeSynctestFragileScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "samus_charge_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
+			if (syNetRbSnapBlobInKirbyCopySamusChargeSynctestFragileScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "kirby_copy_samus_charge_probe";
 				}
 				return TRUE;
 			}

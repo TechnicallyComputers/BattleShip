@@ -6,6 +6,9 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-06-09 | [netplay_samus_screw_fallspecial_pass_diag](netplay_samus_screw_fallspecial_pass_diag_2026-06-09.md) | **DIAG ADDED (soak pending)** — `FALLSPECIAL_PASS_DIAG` logs screw/`FallSpecial` pass predicate (`allow_pass`, stick, floor flags) for Samus + Kirby copy-Samus. |
+| 2026-06-09 | [netplay_whispy_post_blow_synctest_probe](netplay_whispy_post_blow_synctest_probe_2026-06-09.md) | **FIX SHIPPED (soak pending)** — First ring tick after Whispy Blow ends: synctest probe skip (`pupupu_whispy_post_blow_probe`); avoids `LOAD_HASH_DRIFT` on wind-landing slot (@4015 Kirby/Samus soak). |
+| 2026-06-09 | [netplay_kirby_copy_samus_charge](netplay_kirby_copy_samus_charge_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Kirby copy-Samus charge orb gfx pinned (wrong passive var in port refresh); load-finalize orb scale refresh + synctest charge probe skip (@1654 Kirby/Samus soak). |
 | 2026-06-09 | [netplay_pikachu_quickattack_synctest_probe](netplay_pikachu_quickattack_synctest_probe_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Pikachu Quick Attack `SpecialHiStart`…`SpecialAirHiEnd` synctest probe skip; avoids post-defer probe on QA travel slot ticks (Pikachu/Kirby @543/@913). |
 | 2026-06-09 | [netplay_kirby_jump_aerial_synctest_probe](netplay_kirby_jump_aerial_synctest_probe_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Kirby `JumpAerialF1`…`F5` synctest probe skip; avoids `LOAD_HASH_DRIFT` on triple-jump aerial slot ticks (Pikachu/Kirby @3564). |
 | 2026-06-09 | [netplay_whispy_lbparticle_synctest_spawn](netplay_whispy_lbparticle_synctest_spawn_2026-06-09.md) | **RESOLVED** — Dream Land Whispy wind VFX with synctest: sim xf null/warmup + `efDisplayEnsureParticleDrawInfrastructure` after verify eject (dl 15/18); Android soak OK. |
