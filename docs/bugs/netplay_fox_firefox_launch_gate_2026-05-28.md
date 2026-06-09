@@ -23,7 +23,7 @@ Synctest defer originally covered only `SpecialHiStart` … `SpecialAirHiHold`, 
 
 ## Fix
 
-1. **Synctest defer** — `reason=fox_firefox` while any live Fox is in `SpecialHiStart` … `SpecialAirHiBound` (full Up+B sequence).
+1. **Synctest defer** — `reason=fox_firefox` while any live Fox is in `SpecialHiStart` … `SpecialAirHiBound` (full Up+B sequence). **Probe defer** — `reason=fox_firefox_probe` when the historical slot tick is still in that scope (avoids first post-defer probe on fragile `SpecialAirHiEnd` load/verify, e.g. Kirby/Fox Dream Land synctest @762).
 2. **Launch catch-up** — `syNetplayFoxCatchUpFirefoxLaunchIfDue` when hold + `launch_delay <= 0`.
 3. **End catch-up** — `syNetplayFoxCatchUpFirefoxEndIfDue` when travel + `anim_frames <= 0` → vanilla `ftFoxSpecialHiEndSetStatus` / `ftFoxSpecialAirHiEndSetStatus`.
 4. **Proc rebind** — After apply when Fox is in defer scope (includes travel/end/bound).
