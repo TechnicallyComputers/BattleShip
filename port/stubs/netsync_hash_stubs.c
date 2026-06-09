@@ -94,6 +94,28 @@ u32 syNetSyncHashRNGSeed(void)
 	return 0U;
 }
 
+void syNetSyncRngTraceBeforeGameSeedStep(void)
+{
+}
+
+void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after)
+{
+	(void)seed_after;
+}
+
+void syNetSyncLogRngHashWalkTrace(u32 sim_tick)
+{
+	(void)sim_tick;
+}
+
+void syNetSyncLogRngHashDriftDiag(u32 sim_tick, u32 local_rng, u32 peer_rng, const char *reason)
+{
+	(void)sim_tick;
+	(void)local_rng;
+	(void)peer_rng;
+	(void)reason;
+}
+
 u32 syNetSyncHashGMCamera(void)
 {
 	return 0U;

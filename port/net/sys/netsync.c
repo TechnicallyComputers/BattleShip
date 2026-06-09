@@ -263,6 +263,7 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	{
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_vars.kirby.speciallw.duration);
 		h = syNetSyncFnvAccumulateU32(h, (u32)(fp->is_damage_resist != FALSE));
+		h = syNetSyncFnvAccumulateU32(h, (u32)fp->damage_resist);
 	}
 #endif
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -3308,6 +3309,130 @@ static sb32 syNetSyncEffectIsRebirthHaloCoupling(const GObj *effect_gobj, const 
 	return ((dobj != NULL) && (dobj->user_data.p == fp->joints[nFTPartsJointTopN])) ? TRUE : FALSE;
 }
 
+sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
+{
+	EFStruct *ep;
+	DObj *dobj;
+	u32 fold;
+	sb32 rebirth_halo_effect;
+	sb32 ness_pkwave_effect;
+	sb32 ness_psychic_magnet_effect;
+	sb32 ness_shock_effect;
+
+	if ((gobj == NULL) || (fold_out == NULL))
+	{
+		return FALSE;
+	}
+	ep = efGetStruct(gobj);
+	rebirth_halo_effect = FALSE;
+	ness_pkwave_effect = FALSE;
+	ness_psychic_magnet_effect = FALSE;
+	ness_shock_effect = FALSE;
+	if (ep == NULL)
+	{
+		if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect))
+		{
+			fold = 2166136261U;
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->link_id);
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->obj_kind);
+			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
+			dobj = DObjGetStruct(gobj);
+			if (dobj != NULL)
+			{
+				Vec3f pos = dobj->translate.vec.f;
+
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+			}
+			*fold_out = fold;
+			return TRUE;
+		}
+		return FALSE;
+	}
+	fold = 2166136261U;
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->bank_id);
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)syNetRbSnapEffectRespawnKindFromLive(gobj, ep));
+	fold = syNetSyncFnvAccumulateU32(fold, (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, (ep->is_pause_effect != FALSE) ? 1U : 0U);
+	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
+	if (ep->proc_update == efManagerFoxReflectorProcUpdate)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.index);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.status);
+	}
+	if (ep->proc_update == efManagerShieldProcUpdate)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.shield.player);
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)(ep->effect_vars.shield.is_damage_shield != FALSE));
+	}
+	if ((ep->proc_update == gcPlayAnimAll) && (ep->fighter_gobj != NULL))
+	{
+		FTStruct *fp_halo;
+
+		fp_halo = ftGetStruct(ep->fighter_gobj);
+		if (fp_halo != NULL)
+		{
+			rebirth_halo_effect = syNetSyncEffectIsRebirthHaloCoupling(gobj, ep, fp_halo);
+			if (rebirth_halo_effect != FALSE)
+			{
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+				fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_rebirth != FALSE) ? 1U : 0U);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_despawn_wait);
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_lower_wait);
+			}
+			else if (((fp_halo->fkind == nFTKindNess) || (fp_halo->fkind == nFTKindNNess)) &&
+			         (DObjGetStruct(gobj) != NULL) &&
+			         (DObjGetStruct(gobj)->user_data.p == fp_halo->joints[5]))
+			{
+				switch (fp_halo->status_id)
+				{
+				case nFTNessStatusSpecialHiStart:
+				case nFTNessStatusSpecialHiHold:
+				case nFTNessStatusSpecialHiEnd:
+				case nFTNessStatusSpecialHiJibaku:
+				case nFTNessStatusSpecialAirHiStart:
+				case nFTNessStatusSpecialAirHiHold:
+				case nFTNessStatusSpecialAirHiEnd:
+				case nFTNessStatusSpecialAirHiBound:
+				case nFTNessStatusSpecialAirHiJibaku:
+					ness_pkwave_effect = TRUE;
+					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
+					break;
+
+				default:
+					break;
+				}
+			}
+			else if (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE)
+			{
+				ness_psychic_magnet_effect = TRUE;
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+				fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
+				fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_absorb != FALSE) ? 1U : 0U);
+			}
+		}
+	}
+	if (ep->proc_update == efManagerVelAddDestroyAnimEnd)
+	{
+		ness_shock_effect = TRUE;
+	}
+	fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
+	dobj = DObjGetStruct(gobj);
+	if ((dobj != NULL) && (rebirth_halo_effect == FALSE) && (ness_pkwave_effect == FALSE) &&
+	    (ness_psychic_magnet_effect == FALSE) && (ness_shock_effect == FALSE))
+	{
+		Vec3f pos = dobj->translate.vec.f;
+
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
+	}
+	*fold_out = fold;
+	return TRUE;
+}
+
 u32 syNetSyncHashActiveEffectsForRollback(void)
 {
 	GObj *sorted[SYNET_SYNC_EFFECT_HASH_SORT_MAX];
@@ -3331,126 +3456,13 @@ u32 syNetSyncHashActiveEffectsForRollback(void)
 	hash = 2166136261U;
 	for (i = 0; i < count; i++)
 	{
-		GObj *gobj = sorted[i];
-		EFStruct *ep;
-		DObj *dobj;
 		u32 fold;
-		sb32 rebirth_halo_effect;
-		sb32 ness_pkwave_effect;
-		sb32 ness_psychic_magnet_effect;
-		sb32 ness_shock_effect;
 
-		ep = efGetStruct(gobj);
-		rebirth_halo_effect = FALSE;
-		ness_pkwave_effect = FALSE;
-		ness_psychic_magnet_effect = FALSE;
-		ness_shock_effect = FALSE;
-		if (ep == NULL)
+		if (syNetSyncFoldSingleEffectGObj(sorted[i], &fold) != FALSE)
 		{
-			if ((gobj->user_data.p == NULL) && (gobj->obj_kind == nGCCommonKindEffect))
-			{
-				fold = 2166136261U;
-				fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->link_id);
-				fold = syNetSyncFnvAccumulateU32(fold, (u32)gobj->obj_kind);
-				fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
-				dobj = DObjGetStruct(gobj);
-				if (dobj != NULL)
-				{
-					Vec3f pos = dobj->translate.vec.f;
-
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
-					fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
-				}
-				hash ^= fold;
-				hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
-			}
-			continue;
+			hash ^= fold;
+			hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 		}
-		fold = 2166136261U;
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->bank_id);
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)syNetRbSnapEffectRespawnKindFromLive(gobj, ep));
-		fold = syNetSyncFnvAccumulateU32(fold,
-		                                 (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U);
-		fold = syNetSyncFnvAccumulateU32(fold, (ep->is_pause_effect != FALSE) ? 1U : 0U);
-		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
-		if (ep->proc_update == efManagerFoxReflectorProcUpdate)
-		{
-			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.index);
-			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.status);
-		}
-		if (ep->proc_update == efManagerShieldProcUpdate)
-		{
-			fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.shield.player);
-			fold = syNetSyncFnvAccumulateU32(fold, (u32)(ep->effect_vars.shield.is_damage_shield != FALSE));
-		}
-		if ((ep->proc_update == gcPlayAnimAll) && (ep->fighter_gobj != NULL))
-		{
-			FTStruct *fp_halo;
-
-			fp_halo = ftGetStruct(ep->fighter_gobj);
-			if (fp_halo != NULL)
-			{
-				rebirth_halo_effect = syNetSyncEffectIsRebirthHaloCoupling(gobj, ep, fp_halo);
-				if (rebirth_halo_effect != FALSE)
-				{
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
-					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_rebirth != FALSE) ? 1U : 0U);
-					fold = syNetSyncFnvAccumulateU32(
-					    fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_despawn_wait);
-					fold = syNetSyncFnvAccumulateU32(
-					    fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_lower_wait);
-				}
-				else if (((fp_halo->fkind == nFTKindNess) || (fp_halo->fkind == nFTKindNNess)) &&
-				         (DObjGetStruct(gobj) != NULL) &&
-				         (DObjGetStruct(gobj)->user_data.p == fp_halo->joints[5]))
-				{
-					switch (fp_halo->status_id)
-					{
-					case nFTNessStatusSpecialHiStart:
-					case nFTNessStatusSpecialHiHold:
-					case nFTNessStatusSpecialHiEnd:
-					case nFTNessStatusSpecialHiJibaku:
-					case nFTNessStatusSpecialAirHiStart:
-					case nFTNessStatusSpecialAirHiHold:
-					case nFTNessStatusSpecialAirHiEnd:
-					case nFTNessStatusSpecialAirHiBound:
-					case nFTNessStatusSpecialAirHiJibaku:
-						ness_pkwave_effect = TRUE;
-						fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
-						fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
-						break;
-
-					default:
-						break;
-					}
-				}
-				else if (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE)
-				{
-					ness_psychic_magnet_effect = TRUE;
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
-					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
-					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_absorb != FALSE) ? 1U : 0U);
-				}
-			}
-		}
-		if (ep->proc_update == efManagerVelAddDestroyAnimEnd)
-		{
-			ness_shock_effect = TRUE;
-		}
-		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
-		dobj = DObjGetStruct(gobj);
-		if ((dobj != NULL) && (rebirth_halo_effect == FALSE) && (ness_pkwave_effect == FALSE) &&
-		    (ness_psychic_magnet_effect == FALSE) && (ness_shock_effect == FALSE))
-		{
-			Vec3f pos = dobj->translate.vec.f;
-
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
-			fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
-		}
-		hash ^= fold;
-		hash = syNetSyncFnvAccumulateU32(hash, 0xA5A5A5A5U);
 	}
 	return hash;
 }

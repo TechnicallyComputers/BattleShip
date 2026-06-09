@@ -61,6 +61,16 @@ extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
 /* Live bubble/coupling repair after synctest emergency restore (dual-shield drain stall). */
 extern void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void);
+/* Pupupu Whispy mouth/eyes textures + LBParticles — hash-safe; run after load verify commits. */
+extern void syNetRbSnapRepairPupupuWhispyPresentationAfterLoad(u32 tick, const char *reason);
+#if defined(SSB64_NETMENU)
+/* Ring slot ground blob: whispy_status == Blow (synctest stale-slot guard). */
+extern sb32 syNetRbSnapPupupuWhispySlotIsBlow(u32 tick);
+#endif
+/* Guard+shield load-hash drift bisect (fighter/anim mismatch while shield active). */
+extern void syNetRbSnapshotLogGuardShieldLoadDriftDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
+/* Eject hollow/dead quake shells after synctest emergency restore (efManagerQuakeProcUpdate crash guard). */
+extern void syNetRbSnapshotSanitizeLiveQuakeEffectsAfterEmergencyRestore(void);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);
@@ -128,6 +138,11 @@ extern void syNetRbSnapshotCancelDeferredWeaponEject(void);
 extern void syNetRbSnapshotSyncFighterPresentation(void);
 /* Re-apply blob joint anim after post-verify rebind (figatree attach can clobber AObj chains). */
 extern void syNetRbSnapshotReapplyJointAnimAtTick(u32 completed_sim_tick);
+extern sb32 syNetRbSnapshotSlotAnyFighterInYoshiShieldEscapeScopeAtTick(u32 completed_sim_tick);
+/* Escape-roll or sustained guard: skip verify-only joint/figatree re-stamp (figh/anim fragile). */
+extern sb32 syNetRbSnapshotSlotVerifyPresentationFragileAtTick(u32 completed_sim_tick);
+/* Block eff-only LOAD_HASH_DRIFT soft-continue when guard shield coupling is unresolved. */
+extern sb32 syNetRbSnapshotLoadHashEffSoftContinueBlocked(u32 tick);
 
 /*
  * Collect active item GObjs (valid ITStruct), insertion-sorted by semantic rollback-hash key
@@ -197,6 +212,8 @@ extern u32 syNetRbSnapHashCaptureYoshiEffectGobjId(const struct FTStruct *fp);
 extern void syNetRbSnapSanitizeCaptureYoshiEffectGobj(struct FTStruct *fp);
 extern void syNetRbSnapSanitizeAllFightersCaptureYoshiEffectGobjs(void);
 #if defined(SSB64_NETMENU)
+extern struct GObj *syNetRbSnapTryAdoptLiveYoshiShieldForEscapeEnd(struct GObj *fighter_gobj);
+extern sb32 syNetRbSnapTryAdoptLiveYoshiEggLayEffectForFighter(struct GObj *fighter_gobj);
 extern void syNetRbSnapQueueYoshiEggLayHatchCosmeticsLive(struct GObj *fighter_gobj);
 extern void syNetRbSnapshotFlushDeferredYoshiEggLayHatchCosmetics(void);
 #endif

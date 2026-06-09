@@ -53,6 +53,7 @@ extern u32 syNetSyncHashActiveWeapons(void);
 extern u32 syNetSyncHashActiveItemsForRollback(void);
 extern u32 syNetSyncHashActiveWeaponsForRollback(void);
 #ifdef PORT
+extern sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out);
 extern u32 syNetSyncHashActiveEffectsForRollback(void);
 extern void syNetSyncLogActiveEffectsFoldDiag(const char *tag, u32 tick);
 #endif
@@ -132,6 +133,7 @@ extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
 extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
 /* Always-on ordered item walk when item hash drift is detected (load verify / frame commit). */
 extern void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
+#include <sys/netsync_rng_trace.h>
 /* Per-item pos/vel/status rows when item hash drifts (`SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1`). */
 extern void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
 /*

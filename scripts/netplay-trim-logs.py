@@ -28,8 +28,11 @@ Options:
   --diff-death-rebirth  Report death/rebirth sim + gate diag mismatches (implies --diff-ticks extras)
 
 Keeps effect_xf_stale rows (always-on rate-limited + SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1 verbose), fireball_spawn paths/skips
-(WEAPON_DIAG=1), SIGSEGV/crash backtraces, and GFX stale-DL diag from the crash handler.
-Summarizes stale-xf ejects, fireball spawn/latch/retry, orphan guard_shield no_fighter prune spam.
+(WEAPON_DIAG=1), Dream Land Whispy presentation repair rows (SSB64_NETPLAY_WHISPY_REPAIR_DIAG=1),
+SIGSEGV/crash backtraces, and GFX stale-DL diag from the crash handler.
+Summarizes stale-xf ejects, fireball spawn/latch/retry, orphan guard_shield no_fighter prune spam,
+Whispy particle/texture repair (post_verify, forward_texture, xf_alias), guard_shield_load_drift
+bisect rows, and LOAD_HASH_DRIFT partition mismatches (figh/anim/map/rng).
 """
 
 from __future__ import annotations
@@ -58,6 +61,8 @@ DEFAULT_INCLUDE = [
     # Per-node gate DObj tree dump (which node carries the DL/material and whether it animates).
     r"SSB64 NetSync: yamabuki_gate_node ",
     r"SSB64 NetSync: yamabuki_hitokage ",
+    # Dream Land Whispy particle + flower presentation repair (SSB64_NETPLAY_WHISPY_REPAIR_DIAG=1).
+    r"SSB64 WhispyRepair:",
     # Hyrule Castle tornado / twister rollback diagnostics.
     r"SSB64 NetRbSnapshot: hyrule_twister",
     r"SSB64 NetSync: hyrule_twister",
@@ -74,6 +79,8 @@ DEFAULT_INCLUDE = [
     # FTStatusVars overlay witness (SSB64_NETPLAY_STATUSVARS_WITNESS=1).
     r"SSB64 NetStatusVars:",
     r"SSB64 Netplay:",
+    # Kirby stone armor hits (SSB64_NETPLAY_KIRBY_STONE_DAMAGE_DIAG=1).
+    r"SSB64 KirbyStone:",
     r"SSB64 Automatch:",
     r"SSB64 ICE:",
     r"SSB64 Matchmaking:",
@@ -154,6 +161,12 @@ YOSTER_CLOUD_FIGHTER_RE = re.compile(
 ITEM_HASH_WALK_BEGIN_RE = re.compile(
     r"SSB64 NetSync: item_hash_walk begin sim_tick=(\d+) .+ reason=(\S+)"
 )
+RNG_HASH_WALK_BEGIN_RE = re.compile(
+    r"SSB64 NetSync: rng_hash_walk begin sim_tick=(\d+) .+ reason=(\S+)"
+)
+FRAME_COMMIT_RNG_DIVERGE_RE = re.compile(
+    r"SSB64 NetRollback: FRAME_COMMIT_STATE_DIVERGE validation=(\d+) .+ rng=0x([0-9A-Fa-f]+) .+ rng=0x([0-9A-Fa-f]+)"
+)
 DEATH_REBIRTH_SIM_RE = re.compile(r"SSB64 Netplay: death_rebirth_sim tick=(\d+) player=(\d+) (.+)")
 REBIRTH_GATE_RE = re.compile(
     r"SSB64 Netplay: REBIRTH_GATE tick=(\d+) event=(\S+) player=(\d+) (.+)"
@@ -203,6 +216,29 @@ SYNCTEST_YAMABUKI_SKIP_RE = re.compile(
     r"SSB64 NetRollback: SYNCTEST_SKIP tick=(\d+) reason=(yamabuki[^\s]*)(?: probe=(\d+))?"
 )
 HYRULE_TWISTER_RE = re.compile(r"SSB64 NetRbSnapshot: hyrule_twister")
+WHISPY_REPAIR_RE = re.compile(r"SSB64 WhispyRepair:")
+WHISPY_POST_VERIFY_RE = re.compile(
+    r"SSB64 WhispyRepair: post_verify tick=(\d+) reason=(\S+)"
+)
+WHISPY_FORWARD_TEXTURE_RE = re.compile(r"SSB64 WhispyRepair: forward_texture ")
+WHISPY_XF_ALIAS_RE = re.compile(r"SSB64 WhispyRepair: xf_alias tick=(\d+)")
+GUARD_SHIELD_LOAD_DRIFT_RE = re.compile(
+    r"SSB64 NetRbSnapshot: guard_shield_load_drift tick=(\d+) player=(\d+) fkind=(\d+) status=(\d+)"
+)
+QUAKE_SANITIZE_RE = re.compile(
+    r"SSB64 NetRbSnapshot: quake_sanitize ejected=(\d+) tick=(\d+)"
+)
+LOAD_HASH_DRIFT_PARTITION_RE = re.compile(
+    r"SSB64 NetRollback: LOAD_HASH_DRIFT tick=(\d+) figh=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) "
+    r"world=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) item=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) "
+    r"wpn=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) map=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) "
+    r"rng=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) cam=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) "
+    r"anim=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+) eff=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+)"
+)
+FIGHTER_LOAD_VERIFY_RE = re.compile(
+    r"SSB64 NetRbSnapshot: fighter_load_verify tick=(\d+) figh_live=0x([0-9A-Fa-f]+) figh_slot=0x([0-9A-Fa-f]+) "
+    r"anim_live=0x([0-9A-Fa-f]+) anim_slot=0x([0-9A-Fa-f]+)"
+)
 GOBJ_LINK_AUDIT_RE = re.compile(
     r"SSB64 NetRbSnapshot: gobj_link_audit tick=(\d+) f=(\d+) i=(\d+) w=(\d+) ef6=(\d+) ef8=(\d+)"
 )
@@ -730,6 +766,158 @@ def collect_hyrule_twister_summary(lines: list[str]) -> list[str]:
         else:
             tags["other"] = tags.get("other", 0) + 1
     return [f"    hyrule_twister rows: {len(rows)} by_kind={tags}"]
+
+
+def collect_whispy_repair_summary(lines: list[str]) -> list[str]:
+    """Summarize Dream Land Whispy rollback presentation repair (SSB64_NETPLAY_WHISPY_REPAIR_DIAG=1)."""
+    rows = [ln for ln in lines if WHISPY_REPAIR_RE.search(ln)]
+    if not rows:
+        return []
+    tags: dict[str, int] = {}
+    spawned_leaves = 0
+    spawned_dust = 0
+    zero_drawable = 0
+    post_verify_reasons: dict[str, int] = {}
+    xf_alias_ticks: list[str] = []
+    for ln in rows:
+        if "post_verify" in ln:
+            tags["post_verify"] = tags.get("post_verify", 0) + 1
+            m = WHISPY_POST_VERIFY_RE.search(ln)
+            if m is not None:
+                post_verify_reasons[m.group(2)] = post_verify_reasons.get(m.group(2), 0) + 1
+        elif "forward_texture" in ln:
+            tags["forward_texture"] = tags.get("forward_texture", 0) + 1
+        elif "xf_alias" in ln:
+            tags["xf_alias"] = tags.get("xf_alias", 0) + 1
+            m = WHISPY_XF_ALIAS_RE.search(ln)
+            if m is not None:
+                xf_alias_ticks.append(m.group(1))
+        elif "forward_tick" in ln:
+            tags["forward_tick"] = tags.get("forward_tick", 0) + 1
+        elif "flower_reseed" in ln:
+            tags["flower_reseed"] = tags.get("flower_reseed", 0) + 1
+        elif "presentation" in ln:
+            tags["presentation"] = tags.get("presentation", 0) + 1
+        else:
+            tags["rollback_repair"] = tags.get("rollback_repair", 0) + 1
+        if "spawned_leaves=1" in ln:
+            spawned_leaves += 1
+        if "spawned_dust=1" in ln:
+            spawned_dust += 1
+        if "leaves_drawable=0" in ln or "dust_drawable=0" in ln:
+            zero_drawable += 1
+    out = [
+        f"    whispy_repair rows: {len(rows)} by_kind={tags} "
+        f"spawned_leaves={spawned_leaves} spawned_dust={spawned_dust}"
+    ]
+    if post_verify_reasons:
+        out.append(f"    whispy_repair post_verify by_reason={post_verify_reasons}")
+    if xf_alias_ticks:
+        ticks = sorted(set(xf_alias_ticks), key=int)
+        out.append(
+            f"    whispy_repair xf_alias ticks: {','.join(ticks[:8])}"
+            + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+        )
+    if zero_drawable:
+        out.append(f"    whispy_repair zero_drawable rows: {zero_drawable}")
+    return out
+
+
+def collect_quake_sanitize_summary(lines: list[str]) -> list[str]:
+    """Summarize hollow quake ejects after synctest emergency restore."""
+    rows = [ln for ln in lines if QUAKE_SANITIZE_RE.search(ln)]
+    if not rows:
+        return []
+    total_ejected = 0
+    ticks: list[str] = []
+    for ln in rows:
+        m = QUAKE_SANITIZE_RE.search(ln)
+        if m is not None:
+            total_ejected += int(m.group(1))
+            ticks.append(m.group(2))
+    tick_s = ",".join(sorted(set(ticks), key=int)[:8])
+    extra = f" (+{len(set(ticks)) - 8} more ticks)" if len(set(ticks)) > 8 else ""
+    return [f"    quake_sanitize rows: {len(rows)} total_ejected={total_ejected} ticks={tick_s}{extra}"]
+
+
+def collect_guard_shield_load_drift_summary(lines: list[str]) -> list[str]:
+    """Summarize guard+shield load-hash drift rows (always logged on figh/anim verify mismatch)."""
+    rows: list[tuple[str, str, str, str]] = []
+    for ln in lines:
+        m = GUARD_SHIELD_LOAD_DRIFT_RE.search(ln)
+        if m is not None:
+            rows.append((m.group(1), m.group(2), m.group(3), m.group(4)))
+    if not rows:
+        return []
+    ticks = sorted({r[0] for r in rows}, key=int)
+    players = sorted({r[1] for r in rows}, key=int)
+    statuses = sorted({r[3] for r in rows}, key=int)
+    return [
+        f"    guard_shield_load_drift rows: {len(rows)} ticks={','.join(ticks[:8])}"
+        + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+        + f" players={','.join(players)} statuses={','.join(statuses)}"
+    ]
+
+
+def collect_load_hash_partition_summary(lines: list[str]) -> list[str]:
+    """Classify which hash partitions mismatch on each LOAD_HASH_DRIFT line."""
+    episodes: list[tuple[str, list[str]]] = []
+    for ln in lines:
+        m = LOAD_HASH_DRIFT_PARTITION_RE.search(ln)
+        if m is None:
+            continue
+        tick = m.group(1)
+        parts = [
+            ("figh", m.group(2), m.group(3)),
+            ("world", m.group(4), m.group(5)),
+            ("item", m.group(6), m.group(7)),
+            ("wpn", m.group(8), m.group(9)),
+            ("map", m.group(10), m.group(11)),
+            ("rng", m.group(12), m.group(13)),
+            ("cam", m.group(14), m.group(15)),
+            ("anim", m.group(16), m.group(17)),
+            ("eff", m.group(18), m.group(19)),
+        ]
+        mismatches = [name for name, slot, live in parts if slot.lower() != live.lower()]
+        if mismatches:
+            episodes.append((tick, mismatches))
+    if not episodes:
+        return []
+    by_combo: dict[str, int] = {}
+    for _, mismatches in episodes:
+        key = "+".join(mismatches)
+        by_combo[key] = by_combo.get(key, 0) + 1
+    ticks = sorted({t for t, _ in episodes}, key=int)
+    out = [
+        f"    load_hash_partition mismatches: {len(episodes)} by_combo={by_combo}",
+        f"    load_hash_partition first_ticks: {','.join(ticks[:8])}"
+        + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else ""),
+    ]
+    return out
+
+
+def collect_fighter_anim_drift_summary(lines: list[str]) -> list[str]:
+    """Summarize fighter_load_verify rows where anim or figh slot/live diverge."""
+    rows: list[tuple[str, bool, bool]] = []
+    for ln in lines:
+        m = FIGHTER_LOAD_VERIFY_RE.search(ln)
+        if m is None:
+            continue
+        tick = m.group(1)
+        figh_mm = m.group(2).lower() != m.group(3).lower()
+        anim_mm = m.group(4).lower() != m.group(5).lower()
+        if figh_mm or anim_mm:
+            rows.append((tick, figh_mm, anim_mm))
+    if not rows:
+        return []
+    figh_only = sum(1 for _, f, a in rows if f and not a)
+    anim_only = sum(1 for _, f, a in rows if a and not f)
+    both = sum(1 for _, f, a in rows if f and a)
+    ticks = sorted({t for t, _, _ in rows}, key=int)
+    return [
+        f"    fighter_load_verify drift: {len(rows)} figh_only={figh_only} anim_only={anim_only} both={both} "
+        f"ticks={','.join(ticks[:8])}" + (f" (+{len(ticks) - 8} more)" if len(ticks) > 8 else "")
+    ]
 
 
 def parse_netstatusvars_line(line: str) -> tuple[str, str, dict[str, str]] | None:
@@ -1581,6 +1769,7 @@ def collect_hash_drift_summary(lines: list[str]) -> list[str]:
     out: list[str] = []
     load_drifts: list[tuple[str, str, str, str]] = []
     item_walks: list[tuple[str, str]] = []
+    rng_walks: list[tuple[str, str]] = []
     for ln in lines:
         m = LOAD_HASH_DRIFT_RE.search(ln)
         if m is not None:
@@ -1598,9 +1787,22 @@ def collect_hash_drift_summary(lines: list[str]) -> list[str]:
                 f"local_item=0x{m.group(2)} peer_item=0x{m.group(3)}"
             )
             continue
+        m = FRAME_COMMIT_RNG_DIVERGE_RE.search(ln)
+        if m is not None:
+            local_rng, peer_rng = m.group(2), m.group(3)
+            if local_rng.lower() != peer_rng.lower():
+                out.append(
+                    f"    frame_commit_rng_diverge: validation={m.group(1)} "
+                    f"local_rng=0x{local_rng} peer_rng=0x{peer_rng}"
+                )
+            continue
         m = ITEM_HASH_WALK_BEGIN_RE.search(ln)
         if m is not None:
             item_walks.append((m.group(1), m.group(2)))
+            continue
+        m = RNG_HASH_WALK_BEGIN_RE.search(ln)
+        if m is not None:
+            rng_walks.append((m.group(1), m.group(2)))
     if load_drifts:
         item_mm = [d for d in load_drifts if d[3] == "item_mismatch"]
         synctest = [d for d in load_drifts if d[3] == "synctest_fail"]
@@ -1620,6 +1822,11 @@ def collect_hash_drift_summary(lines: list[str]) -> list[str]:
         for _, reason in item_walks:
             reasons[reason] = reasons.get(reason, 0) + 1
         out.append(f"    item_hash_walk episodes: {len(item_walks)} by_reason={reasons}")
+    if rng_walks:
+        reasons: dict[str, int] = {}
+        for _, reason in rng_walks:
+            reasons[reason] = reasons.get(reason, 0) + 1
+        out.append(f"    rng_hash_walk episodes: {len(rng_walks)} by_reason={reasons}")
     throw_windows: list[tuple[str, str, str]] = []
     for ln in lines:
         m = ITEM_THROW_WINDOW_RE.search(ln)
@@ -2032,6 +2239,7 @@ class SyncReportMetrics:
     resim_sim_core_ok: int = 0
     resim_sim_core_reject: int = 0
     frame_commit_item_diverge: int = 0
+    frame_commit_rng_diverge: int = 0
     peer_snapshot_diverge: int = 0
     session_stop: int = 0
     css_return: int = 0
@@ -2108,6 +2316,12 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
                 m.resim_sim_core_reject += 1
             continue
 
+        fc_rng_m = FRAME_COMMIT_RNG_DIVERGE_RE.search(ln)
+        if fc_rng_m is not None:
+            if fc_rng_m.group(2).lower() != fc_rng_m.group(3).lower():
+                m.frame_commit_rng_diverge += 1
+            continue
+
         if FRAME_COMMIT_DIVERGE_RE.search(ln) is not None:
             m.frame_commit_item_diverge += 1
             continue
@@ -2169,6 +2383,8 @@ def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
             reasons.append(f"item LOAD_HASH_DRIFT x{m.load_hash_item_mismatch}{suffix}")
     if m.frame_commit_item_diverge:
         reasons.append(f"frame_commit_item_diverge x{m.frame_commit_item_diverge}")
+    if m.frame_commit_rng_diverge:
+        reasons.append(f"frame_commit_rng_diverge x{m.frame_commit_rng_diverge}")
     if m.resim_sim_core_reject:
         reasons.append(f"resim-sim-core-reject x{m.resim_sim_core_reject}")
     if m.desync_report:
@@ -2181,6 +2397,7 @@ def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
         or m.synctest_fail
         or m.resim_sim_core_reject
         or m.frame_commit_item_diverge
+        or m.frame_commit_rng_diverge
         or (m.load_hash_item_mismatch and not m.resim_sim_core_ok)
     )
     if hard:
@@ -2264,7 +2481,7 @@ def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
         ),
         (
             f"    load_hash_drift={m.load_hash_drift} item_mm={m.load_hash_item_mismatch} "
-            f"fc_item_div={m.frame_commit_item_diverge}"
+            f"fc_item_div={m.frame_commit_item_diverge} fc_rng_div={m.frame_commit_rng_diverge}"
         ),
     ]
     if m.resim_sim_core_ok or m.resim_sim_core_reject:
@@ -2378,6 +2595,11 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
         out.extend(hitokage_summary)
         out.extend(collect_yamabuki_synctest_skip_summary(lg.kept))
         out.extend(collect_hyrule_twister_summary(lg.kept))
+        out.extend(collect_whispy_repair_summary(lg.kept))
+        out.extend(collect_quake_sanitize_summary(lg.kept))
+        out.extend(collect_guard_shield_load_drift_summary(lg.kept))
+        out.extend(collect_load_hash_partition_summary(lg.kept))
+        out.extend(collect_fighter_anim_drift_summary(lg.kept))
         out.extend(collect_ness_pkthunder_summary(lg.kept))
         out.extend(collect_gobj_link_audit_summary(lg.kept))
         out.extend(collect_effect_xf_stale_summary(lg.kept))
