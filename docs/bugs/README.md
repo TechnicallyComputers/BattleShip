@@ -6,6 +6,8 @@ This directory documents significant bugs encountered during the port, their sym
 
 | Date | Slug | Summary |
 |------|------|---------|
+| 2026-06-09 | [netplay_pikachu_quickattack_synctest_probe](netplay_pikachu_quickattack_synctest_probe_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Pikachu Quick Attack `SpecialHiStart`…`SpecialAirHiEnd` synctest probe skip; avoids post-defer probe on QA travel slot ticks (Pikachu/Kirby @543/@913). |
+| 2026-06-09 | [netplay_kirby_jump_aerial_synctest_probe](netplay_kirby_jump_aerial_synctest_probe_2026-06-09.md) | **FIX SHIPPED (soak pending)** — Kirby `JumpAerialF1`…`F5` synctest probe skip; avoids `LOAD_HASH_DRIFT` on triple-jump aerial slot ticks (Pikachu/Kirby @3564). |
 | 2026-06-09 | [netplay_whispy_lbparticle_synctest_spawn](netplay_whispy_lbparticle_synctest_spawn_2026-06-09.md) | **RESOLVED** — Dream Land Whispy wind VFX with synctest: sim xf null/warmup + `efDisplayEnsureParticleDrawInfrastructure` after verify eject (dl 15/18); Android soak OK. |
 | 2026-06-08 | [netplay_dual_shield_player_identity](netplay_dual_shield_player_identity_2026-06-08.md) | **FIX SHIPPED (soak pending)** — Dual-shield / 4p: shared pool `gobj_id` collapsed two bubbles to one; per-player `shield.player` identity for capture, reconcile, enforce, ensure. |
 | 2026-06-07 | [netplay_quake_effect_verify_drift](netplay_quake_effect_verify_drift_2026-06-07.md) | **FIX SHIPPED (Phase 39 soak pending)** — eff-only synctest drift: quake proc on GObj not EFStruct; Phase 39: proc freeze + dead-shell hash exclude + load-verify fighter pose reapply; Phase 38 transient probe skip + blob pose stamp. |

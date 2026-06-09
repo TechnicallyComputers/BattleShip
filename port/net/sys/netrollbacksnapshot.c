@@ -2390,6 +2390,9 @@ static void syNetRbSnapPruneStalePikachuThunderShockEffects(const SYNetRbSnapsho
 static sb32 syNetRbSnapFighterInKirbySpecialNInhaleScope(const FTStruct *fp);
 static sb32 syNetRbSnapFighterInKirbySpecialNInhaleDeferScope(const FTStruct *fp);
 static sb32 syNetRbSnapBlobInKirbySpecialNInhaleDeferScope(const SYNetRbSnapFighterBlob *blob);
+static sb32 syNetRbSnapBlobInFoxFirefoxSynctestDeferScope(const SYNetRbSnapFighterBlob *blob);
+static sb32 syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope(const SYNetRbSnapFighterBlob *blob);
+static sb32 syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapshotAnyFighterKirbySpecialNInhaleDeferActive(void);
 static sb32 syNetRbSnapLiveHasKirbyInhaleWindEffect(void);
 static void syNetRbSnapEndKirbyInhaleWindProc(GObj *gobj);
@@ -10952,6 +10955,49 @@ static sb32 syNetRbSnapBlobInKirbySpecialNInhaleDeferScope(const SYNetRbSnapFigh
 		return TRUE;
 	}
 	return FALSE;
+}
+
+static sb32 syNetRbSnapBlobInFoxFirefoxSynctestDeferScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if (blob->fkind != nFTKindFox)
+	{
+		return FALSE;
+	}
+	return syNetplayFoxFighterInFirefoxSynctestDeferScope(blob->status_id);
+}
+
+static sb32 syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->fkind != nFTKindKirby) && (blob->fkind != nFTKindNKirby))
+	{
+		return FALSE;
+	}
+	if ((blob->status_id >= nFTKirbyStatusJumpAerialF1) && (blob->status_id <= nFTKirbyStatusJumpAerialF5))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->fkind != nFTKindPikachu) && (blob->fkind != nFTKindNPikachu))
+	{
+		return FALSE;
+	}
+	return syNetplayPikachuFighterInQuickAttackScope(blob->status_id);
 }
 
 static sb32 syNetRbSnapLiveHasKirbyInhaleWindEffect(void)
@@ -25758,6 +25804,21 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 
 		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
 		{
+			if (syNetRbSnapBlobInFoxFirefoxSynctestDeferScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "fox_firefox_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
 			if (syNetRbSnapBlobInYoshiEggLayAttackScope(&slot->fighters[pidx]) != FALSE)
 			{
 				if (reason_out != NULL)
@@ -25778,6 +25839,36 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 				if (reason_out != NULL)
 				{
 					*reason_out = "kirby_specialn_inhale_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
+			if (syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "kirby_jump_aerial_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
+			if (syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "pikachu_quickattack_probe";
 				}
 				return TRUE;
 			}
