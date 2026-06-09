@@ -1,6 +1,6 @@
 # Netplay Samus screw FallSpecial pass diagnostics — 2026-06-09
 
-**Status:** DIAG ADDED (soak pending)
+**Status:** Fix shipped — see [`netplay_fallspecial_pass_allow_stomp_2026-06-09.md`](netplay_fallspecial_pass_allow_stomp_2026-06-09.md)
 
 ## Symptom
 

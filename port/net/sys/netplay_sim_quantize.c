@@ -19,6 +19,7 @@
 #include <wp/wpvars.h>
 #include <wp/wpness/wpnesspkthunder.h>
 
+#include <sc/scdef.h>
 #include <sc/scmanager.h>
 #include <sc/sctypes.h>
 
@@ -71,6 +72,26 @@ sb32 syNetplayRollbackSemanticsActive(void)
 		return TRUE;
 	}
 	return FALSE;
+#else
+	return FALSE;
+#endif
+}
+
+sb32 syNetplayRollbackLiveForwardSimEligible(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	SCBattleState *battle;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return FALSE;
+	}
+	battle = gSCManagerBattleState;
+	if ((battle != NULL) && (battle->game_type == nSCBattleGameTypeTraining))
+	{
+		return FALSE;
+	}
+	return TRUE;
 #else
 	return FALSE;
 #endif

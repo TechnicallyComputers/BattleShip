@@ -180,3 +180,9 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 | Kirby stone diag | `port_log` instead of capped `syDebugPrintf`; trim script keeps `SSB64 KirbyStone:` |
 
 **Verify:** Re-soak cross-ISA synctest — expect **0** eff-only `LOAD_HASH_DRIFT`, verify fold `count == save count`; Kirby stone soak shows `KirbyStone: hit` lines when `SSB64_NETPLAY_KIRBY_STONE_DAMAGE_DIAG=1`.
+
+### Phase 47 (2026-06-09) — quake + shield gobj_id coexist + GuardOff release-lag probe
+
+**Symptom (5096-tick soak):** `SYNCTEST_FAIL` @3602 eff-only; Whispy quake + Ness shield shared id 1011 → `effect_count=1` vs live fold `count=2`; verify eff hash empty + `guard_escape_eff_coupling` block.
+
+**Fix:** `syNetRbSnapEffectGobjIdCollisionAllowsCoexist` for quake+shield; `guard_release_boundary_probe` extended to `GuardOff` + `release_lag>0`; verify-only shield respawn in `EnsureShieldEffectsFromSlot` / `PatchAllGuardShieldsFromSlot`. See [netplay_guard_quake_synctest_2026-06-09.md](netplay_guard_quake_synctest_2026-06-09.md).

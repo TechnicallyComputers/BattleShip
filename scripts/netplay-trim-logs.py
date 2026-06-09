@@ -25,6 +25,9 @@ Options:
   --summary-only      Print summary block only (no merged body)
   --sync-report       Brief stability report to stdout (hash drift, synctest, resim, pair diff)
   --diff-ticks        Report first sim_state_tick field mismatch between first two inputs
+
+Summary and --sync-report include a pair session check (session_id + bootstrap rng_seed) so
+mis-paired host.log/guest.log files from different automatch sessions are obvious before submit.
   --diff-death-rebirth  Report death/rebirth sim + gate diag mismatches (implies --diff-ticks extras)
 
 Keeps effect_xf_stale rows (always-on rate-limited + SSB64_NETPLAY_SNAPSHOT_EFFECT_DIAG=1 verbose), fireball_spawn paths/skips
@@ -133,6 +136,24 @@ DEFAULT_EXCLUDE = [
 
 TICK_RE = re.compile(r"\btick=(\d+)\b")
 SIM_STATE_TICK_RE = re.compile(r"SSB64 NetSync: sim_state_tick tick=(\d+)\b")
+MM_POLL_MATCHED_RE = re.compile(
+    r"SSB64 Automatch: MM_POLL_MATCHED .+ session=(\d+) host=(\d+) ticket=([^\s]+)"
+)
+INPUT_BIND_ACK_RE = re.compile(
+    r"SSB64 NetPeer: input_bind_ack session=(\d+) .+ role=(\w+)"
+)
+BOOTSTRAP_APPLIED_RE = re.compile(
+    r"SSB64 NetPeer: bootstrap metadata applied host=\d+ stage=\d+ seed=(\d+)"
+)
+MATCH_CONFIG_STAGED_RE = re.compile(
+    r"SSB64 NetPeer: automatch MATCH_CONFIG staged stage=\d+ seed=(\d+)"
+)
+METADATA_COMPOSED_RE = re.compile(
+    r"SSB64 NetPeer: automatch metadata composed stage=\d+ seed=(\d+)"
+)
+HOST_START_RE = re.compile(
+    r"SSB64 NetPeer: bootstrap host sent START stage=\d+ seed=(\d+)"
+)
 FIELD_RE = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)=([^\s]+)")
 EFFECT_SAVE_RE = re.compile(
     r"SSB64 NetRbSnapshot: effect save tick=(\d+) effect_count=(\d+)"
@@ -2053,6 +2074,37 @@ def collect_rollback_stall_summary(lines: list[str]) -> list[str]:
 
 
 @dataclass
+class SessionRecord:
+    session_id: str
+    automatch_ticket: str | None = None
+    netplay_role: str | None = None
+    match_config_staged_seed: int | None = None
+    metadata_composed_seed: int | None = None
+    host_start_seed: int | None = None
+    bootstrap_applied_seed: int | None = None
+    sim_tick1_rng: str | None = None
+    sim_tick1_cseed: str | None = None
+    max_sim_tick: int | None = None
+
+
+@dataclass
+class NetplaySessionIdentity:
+    label: str
+    session_id: str | None = None
+    automatch_ticket: str | None = None
+    netplay_role: str | None = None
+    match_config_staged_seed: int | None = None
+    metadata_composed_seed: int | None = None
+    host_start_seed: int | None = None
+    bootstrap_applied_seed: int | None = None
+    sim_tick1_rng: str | None = None
+    sim_tick1_cseed: str | None = None
+    max_sim_tick: int | None = None
+    session_count: int = 0
+    all_session_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class LabeledLog:
     label: str
     path: Path
@@ -2061,6 +2113,7 @@ class LabeledLog:
     kept: list[str] = field(default_factory=list)
     collapse_stats: dict[str, int] = field(default_factory=dict)
     stall_summary_lines: list[str] = field(default_factory=list)
+    session_identity: NetplaySessionIdentity | None = None
 
 
 def compile_patterns(patterns: list[str]) -> list[re.Pattern[str]]:
@@ -2358,6 +2411,222 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
     return m
 
 
+def _session_record(records: dict[str, SessionRecord], order: list[str], session_id: str) -> SessionRecord:
+    if session_id not in records:
+        records[session_id] = SessionRecord(session_id=session_id)
+        order.append(session_id)
+    return records[session_id]
+
+
+def _pick_primary_session(records: dict[str, SessionRecord], order: list[str]) -> SessionRecord | None:
+    if not records:
+        return None
+
+    def score(rec: SessionRecord) -> tuple[int, int, int]:
+        has_sim = 1 if rec.max_sim_tick is not None else 0
+        max_tick = rec.max_sim_tick or 0
+        idx = order.index(rec.session_id) if rec.session_id in order else 0
+        return (has_sim, max_tick, idx)
+
+    return max(records.values(), key=score)
+
+
+def collect_session_identity(label: str, lines: list[str]) -> NetplaySessionIdentity:
+    """Extract automatch session id and RNG seeds from raw log lines."""
+    records: dict[str, SessionRecord] = {}
+    order: list[str] = []
+    current_session: str | None = None
+
+    for ln in lines:
+        mm = MM_POLL_MATCHED_RE.search(ln)
+        if mm is not None:
+            rec = _session_record(records, order, mm.group(1))
+            rec.automatch_ticket = mm.group(3)
+            current_session = rec.session_id
+            continue
+
+        ack = INPUT_BIND_ACK_RE.search(ln)
+        if ack is not None:
+            rec = _session_record(records, order, ack.group(1))
+            rec.netplay_role = ack.group(2)
+            current_session = rec.session_id
+            continue
+
+        if current_session is None:
+            continue
+        rec = records[current_session]
+
+        staged = MATCH_CONFIG_STAGED_RE.search(ln)
+        if staged is not None:
+            rec.match_config_staged_seed = int(staged.group(1))
+            continue
+
+        composed = METADATA_COMPOSED_RE.search(ln)
+        if composed is not None:
+            rec.metadata_composed_seed = int(composed.group(1))
+            continue
+
+        start = HOST_START_RE.search(ln)
+        if start is not None:
+            rec.host_start_seed = int(start.group(1))
+            continue
+
+        applied = BOOTSTRAP_APPLIED_RE.search(ln)
+        if applied is not None:
+            rec.bootstrap_applied_seed = int(applied.group(1))
+            continue
+
+        fields = parse_sim_state_fields(ln)
+        if fields is None or "tick" not in fields:
+            continue
+        try:
+            tick = int(fields["tick"])
+        except ValueError:
+            continue
+        if rec.max_sim_tick is None or tick > rec.max_sim_tick:
+            rec.max_sim_tick = tick
+        if tick == 1:
+            rec.sim_tick1_rng = fields.get("rng")
+            rec.sim_tick1_cseed = fields.get("cseed")
+
+    primary = _pick_primary_session(records, order)
+    if primary is None:
+        return NetplaySessionIdentity(label=label)
+
+    return NetplaySessionIdentity(
+        label=label,
+        session_id=primary.session_id,
+        automatch_ticket=primary.automatch_ticket,
+        netplay_role=primary.netplay_role,
+        match_config_staged_seed=primary.match_config_staged_seed,
+        metadata_composed_seed=primary.metadata_composed_seed,
+        host_start_seed=primary.host_start_seed,
+        bootstrap_applied_seed=primary.bootstrap_applied_seed,
+        sim_tick1_rng=primary.sim_tick1_rng,
+        sim_tick1_cseed=primary.sim_tick1_cseed,
+        max_sim_tick=primary.max_sim_tick,
+        session_count=len(records),
+        all_session_ids=list(order),
+    )
+
+
+def format_session_identity_lines(identity: NetplaySessionIdentity) -> list[str]:
+    out: list[str] = []
+    if identity.session_count > 1:
+        out.append(
+            f"    WARNING: {identity.session_count} automatch sessions in log "
+            f"(ids={','.join(identity.all_session_ids)}); primary below"
+        )
+    if identity.session_id is None:
+        out.append("    session: (none found — missing automatch / VS bootstrap lines?)")
+        return out
+
+    role_s = identity.netplay_role or "?"
+    ticket_s = identity.automatch_ticket or "?"
+    out.append(
+        f"    [{identity.label}] session: id={identity.session_id} role={role_s} ticket={ticket_s}"
+    )
+
+    seed_parts: list[str] = []
+    if identity.bootstrap_applied_seed is not None:
+        seed_parts.append(f"bootstrap_applied={identity.bootstrap_applied_seed}")
+    if identity.match_config_staged_seed is not None:
+        seed_parts.append(f"match_config_staged={identity.match_config_staged_seed}")
+    if identity.metadata_composed_seed is not None:
+        seed_parts.append(f"metadata_composed={identity.metadata_composed_seed}")
+    if identity.host_start_seed is not None:
+        seed_parts.append(f"host_start={identity.host_start_seed}")
+    if seed_parts:
+        out.append(f"    [{identity.label}] rng_seed: {' '.join(seed_parts)}")
+    else:
+        out.append(f"    [{identity.label}] rng_seed: (none found)")
+
+    tick1_parts: list[str] = []
+    if identity.sim_tick1_rng is not None:
+        tick1_parts.append(f"rng={identity.sim_tick1_rng}")
+    if identity.sim_tick1_cseed is not None:
+        tick1_parts.append(f"cseed={identity.sim_tick1_cseed}")
+    if identity.max_sim_tick is not None:
+        tick1_parts.append(f"max_sim_tick={identity.max_sim_tick}")
+    if tick1_parts:
+        out.append(f"    [{identity.label}] sim_tick1: {' '.join(tick1_parts)}")
+    return out
+
+
+def evaluate_pair_session(
+    identity_a: NetplaySessionIdentity,
+    identity_b: NetplaySessionIdentity,
+) -> tuple[bool, list[str]]:
+    """Return (is_paired, report lines)."""
+    out: list[str] = ["=== pair session check ==="]
+    ok = True
+
+    if identity_a.session_id is None or identity_b.session_id is None:
+        out.append("  verdict: UNKNOWN (session id missing in one or both logs)")
+        return False, out
+
+    if identity_a.session_id != identity_b.session_id:
+        ok = False
+        out.append(
+            f"  session_id: MISMATCH {identity_a.label}={identity_a.session_id} "
+            f"{identity_b.label}={identity_b.session_id}"
+        )
+    else:
+        out.append(f"  session_id: OK ({identity_a.session_id})")
+
+    seed_a = identity_a.bootstrap_applied_seed
+    seed_b = identity_b.bootstrap_applied_seed
+    if seed_a is None or seed_b is None:
+        out.append(
+            f"  bootstrap_seed: incomplete ({identity_a.label}={seed_a} {identity_b.label}={seed_b})"
+        )
+        ok = False
+    elif seed_a != seed_b:
+        ok = False
+        out.append(
+            f"  bootstrap_seed: MISMATCH {identity_a.label}={seed_a} {identity_b.label}={seed_b}"
+        )
+    else:
+        out.append(f"  bootstrap_seed: OK ({seed_a})")
+
+    roles = {identity_a.netplay_role, identity_b.netplay_role}
+    if roles <= {"host", "client"} and len(roles) == 2:
+        out.append(f"  netplay_roles: {identity_a.label}={identity_a.netplay_role} "
+                   f"{identity_b.label}={identity_b.netplay_role}")
+        host_id = identity_a if identity_a.netplay_role == "host" else identity_b
+        client_id = identity_b if identity_a.netplay_role == "host" else identity_a
+        host_authoritative = host_id.metadata_composed_seed or host_id.host_start_seed
+        client_staged = client_id.match_config_staged_seed
+        if host_authoritative is not None and client_staged is not None:
+            if host_authoritative != client_staged:
+                ok = False
+                out.append(
+                    f"  wire_seed: MISMATCH host_sent={host_authoritative} "
+                    f"client_staged={client_staged}"
+                )
+            else:
+                out.append(f"  wire_seed: OK ({host_authoritative})")
+
+    tick1_rng_a = identity_a.sim_tick1_rng
+    tick1_rng_b = identity_b.sim_tick1_rng
+    if tick1_rng_a is not None and tick1_rng_b is not None:
+        if tick1_rng_a == tick1_rng_b:
+            out.append(f"  sim_tick1_rng_hash: OK ({tick1_rng_a})")
+        else:
+            out.append(
+                f"  sim_tick1_rng_hash: differ {identity_a.label}={tick1_rng_a} "
+                f"{identity_b.label}={tick1_rng_b} "
+                "(expected when bootstrap_seed mismatches or intro RNG consumption diverged)"
+            )
+
+    if ok:
+        out.append("  verdict: PAIRED (same session_id + bootstrap rng_seed)")
+    else:
+        out.append("  verdict: UNPAIRED — logs may be from different automatch sessions")
+    out.append("")
+    return ok, out
+
+
 def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
     """Return (verdict_label, reason_strings) for one peer log."""
     reasons: list[str] = []
@@ -2506,10 +2775,20 @@ def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
 def build_sync_report(
     metrics: list[SyncReportMetrics],
     raw_lines: list[list[str]],
+    identities: list[NetplaySessionIdentity] | None = None,
 ) -> tuple[list[str], bool]:
     """Return (report lines, unstable)."""
     out: list[str] = ["=== sync-report ==="]
     unstable = False
+
+    if identities is not None and len(identities) >= 2:
+        paired, pair_session_lines = evaluate_pair_session(identities[0], identities[1])
+        out.extend(pair_session_lines)
+        if not paired:
+            unstable = True
+        for ident in identities:
+            out.extend(format_session_identity_lines(ident))
+
     for m in metrics:
         verdict, _ = sync_report_verdict(m)
         if verdict.startswith("UNSTABLE"):
@@ -2539,6 +2818,8 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
         banners = [ln for ln in lg.kept if "cross_isa_session" in ln]
         for ln in banners[:2]:
             out.append(f"    banner: {ln.strip()}")
+        if lg.session_identity is not None:
+            out.extend(format_session_identity_lines(lg.session_identity))
         prev_eff: str | None = None
         for ln in lg.kept:
             fields = parse_sim_state_fields(ln)
@@ -2635,6 +2916,12 @@ def build_summary(logs: list[LabeledLog]) -> list[str]:
                 f"effect_xf_stale={lg.collapse_stats.get('effect_xf_stale_collapsed', 0)} "
                 f"guard_shield_no_fighter={lg.collapse_stats.get('guard_shield_no_fighter_collapsed', 0)}"
             )
+    if len(logs) >= 2:
+        id_a = logs[0].session_identity
+        id_b = logs[1].session_identity
+        if id_a is not None and id_b is not None:
+            _, pair_lines = evaluate_pair_session(id_a, id_b)
+            out.extend(pair_lines)
     out.append("")
     return out
 
@@ -2783,11 +3070,13 @@ def process_file(
     dedupe_snapshot_save: bool,
 ) -> LabeledLog:
     lg = LabeledLog(label=label, path=path)
+    all_lines: list[str] = []
     prev_snapshot_save: dict[str, str | None] = {p: None for p in SNAPSHOT_SAVE_DEDUPE_PREFIXES}
     with path.open(encoding="utf-8", errors="replace") as f:
         for line in f:
             lg.lines_read += 1
             raw = line.rstrip("\n")
+            all_lines.append(raw)
             if not should_keep(raw, include, exclude, tick_min, tick_max):
                 continue
             if dedupe_snapshot_save:
@@ -2803,6 +3092,7 @@ def process_file(
                     continue
             lg.kept.append(raw)
             lg.lines_kept += 1
+    lg.session_identity = collect_session_identity(label, all_lines)
     return lg
 
 
@@ -2871,10 +3161,12 @@ def main() -> int:
     args = parser.parse_args()
     diff_death_rebirth = args.diff_death_rebirth or args.diff_ticks
     sync_unstable = False
+    pair_session_ok = True
 
     if args.sync_report:
         sync_metrics: list[SyncReportMetrics] = []
         sync_raw_lines: list[list[str]] = []
+        sync_identities: list[NetplaySessionIdentity] = []
         for label, path_s in args.label:
             path = Path(path_s)
             if not path.is_file():
@@ -2883,7 +3175,12 @@ def main() -> int:
             raw = read_raw_log_lines(path)
             sync_raw_lines.append(raw)
             sync_metrics.append(collect_sync_report_metrics(label, path, raw))
-        sync_report_lines, sync_unstable = build_sync_report(sync_metrics, sync_raw_lines)
+            sync_identities.append(collect_session_identity(label, raw))
+        if len(sync_identities) >= 2:
+            pair_session_ok, _ = evaluate_pair_session(sync_identities[0], sync_identities[1])
+        sync_report_lines, sync_unstable = build_sync_report(
+            sync_metrics, sync_raw_lines, sync_identities
+        )
         sys.stdout.write("\n".join(sync_report_lines))
         trim_wanted = bool(
             args.output
@@ -2976,6 +3273,13 @@ def main() -> int:
         lg.lines_kept = len(lg.kept)
 
     summary = build_summary(logs)
+    if len(logs) >= 2:
+        id_a = logs[0].session_identity
+        id_b = logs[1].session_identity
+        if id_a is not None and id_b is not None:
+            pair_session_ok, _ = evaluate_pair_session(id_a, id_b)
+    elif not args.sync_report:
+        pair_session_ok = True
     if args.diff_ticks and len(logs) >= 2:
         summary.extend(diff_sim_state_ticks(logs[0], logs[1]))
         summary.extend(diff_netstatusvars_nan(logs[0], logs[1]))
@@ -2998,7 +3302,7 @@ def main() -> int:
         sys.stdout.write(out_text)
         if not out_text.endswith("\n"):
             sys.stdout.write("\n")
-    if sync_unstable:
+    if sync_unstable or not pair_session_ok:
         return 1
     return 0
 
