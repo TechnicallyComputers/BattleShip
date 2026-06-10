@@ -59,6 +59,15 @@ extern sb32 syNetRollbackIsResimulating(void); /* TRUE while nested `syNetRollba
 extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source);
 /* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
 extern sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick);
+/* TRUE after resim load-fail abort: blocks sim advance, snapshot load/save, and baseline negotiation. */
+extern sb32 syNetRollbackIsBattleSimHoldActive(void);
+extern void syNetRollbackClearLoadFailBattleHold(void);
+/* Guest symmetric abort when peer sends VS_SESSION_END load_fail payload. */
+extern void syNetRollbackOnPeerLoadFailAbort(u32 load_tick);
+/* After hold + VS stop, return to automatch/CSS (call from battle update while frozen). */
+extern void syNetRollbackPumpLoadFailBattleExit(void);
+/* TRUE once after load_fail exit retargeted scene; clears hold. Call from scVSBattleStartScene tail. */
+extern sb32 syNetRollbackConsumeLoadFailBattleSceneRetarget(void);
 extern u32 syNetRollbackGetEpochId(void);
 /* Unified rollback episode FSM (default on; `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=0` disables; see netrollback_episode.h). */
 extern sb32 syNetRollbackEpisodeFsmEnabled(void);
