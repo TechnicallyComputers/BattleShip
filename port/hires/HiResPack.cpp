@@ -74,7 +74,7 @@ struct DumpHeader {
 static_assert(sizeof(DumpHeader) == 36, "DumpHeader must be 36 bytes");
 
 uint64_t SourceDumpDedupId(uint8_t fmt, uint8_t siz, uint32_t texelCrc, uint32_t palCrc) noexcept {
-    return ((uint64_t)texelCrc) | ((uint64_t)palCrc << 32) ^ ((uint64_t)fmt << 8) ^ ((uint64_t)siz << 16);
+    return (((uint64_t)texelCrc) | ((uint64_t)palCrc << 32)) ^ ((uint64_t)fmt << 8) ^ ((uint64_t)siz << 16);
 }
 
 // CRC32-IEEE 802.3 (poly 0xEDB88320) — public-domain table-driven impl.

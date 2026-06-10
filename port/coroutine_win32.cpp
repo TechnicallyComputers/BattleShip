@@ -36,7 +36,7 @@ struct PortCoroutine {
 static void *sMainFiber = NULL;
 
 /* The coroutine currently being executed (NULL if on main fiber). */
-static PortCoroutine *sCurrentCoroutine = NULL;
+static thread_local PortCoroutine *sCurrentCoroutine = NULL;
 
 /* ========================================================================= */
 /*  Internal: fiber entry point wrapper                                      */
@@ -154,6 +154,10 @@ void port_coroutine_destroy(PortCoroutine *co)
 	}
 	if (!validate_coroutine(co, "destroy")) {
 		return;
+	}
+	if (co == sCurrentCoroutine) {
+		fprintf(stderr, "SSB64: port_coroutine_destroy on current coroutine\n");
+		abort();
 	}
 	if (co->fiber != NULL) {
 		DeleteFiber(co->fiber);

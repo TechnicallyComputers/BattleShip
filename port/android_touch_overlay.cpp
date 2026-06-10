@@ -97,6 +97,22 @@ bool ensureAttached() {
 
 extern "C" {
 
+// Called from PortShutdown. These statics outlive SDL_Quit — Android keeps
+// the process (and its globals) alive across Activity relaunches, so a
+// stale sJoystick from the previous SDL session would be a use-after-free
+// on the first touch after relaunch.
+void port_touch_overlay_shutdown(void) {
+    if (sJoystick != nullptr) {
+        SDL_JoystickClose(sJoystick);
+        sJoystick = nullptr;
+    }
+    if (sDeviceIndex >= 0) {
+        SDL_JoystickDetachVirtual(sDeviceIndex);
+        sDeviceIndex = -1;
+    }
+    sAttachAttempted.store(false);
+}
+
 JNIEXPORT void JNICALL
 Java_com_jrickey_battleship_TouchOverlay_setButton(
     JNIEnv * /*env*/, jclass /*clazz*/, jint btn, jboolean down) {

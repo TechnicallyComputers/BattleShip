@@ -228,11 +228,12 @@ static uint8_t *convertAlphaToIA4(const uint8_t *rgba8, int w, int h) {
 }
 
 static uint8_t *convertToRGBA16BE(const uint8_t *rgba8, int w, int h) {
-    const int npixels = w * h;
-    uint8_t *out = static_cast<uint8_t *>(std::malloc((size_t)npixels * 2));
+    if (w <= 0 || h <= 0) return nullptr;
+    const size_t npixels = (size_t)w * (size_t)h;
+    uint8_t *out = static_cast<uint8_t *>(std::malloc(npixels * 2));
     if (!out) return nullptr;
 
-    for (int i = 0; i < npixels; ++i) {
+    for (size_t i = 0; i < npixels; ++i) {
         uint8_t r = rgba8[i * 4 + 0];
         uint8_t g = rgba8[i * 4 + 1];
         uint8_t b = rgba8[i * 4 + 2];

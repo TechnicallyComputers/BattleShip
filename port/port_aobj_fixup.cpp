@@ -333,6 +333,16 @@ extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long s
     evict(sUnhalfswappedVisited);
     evict(sUnswappedHeads);
     evict(sRejectedHeads);
+    /* Heaps are bump-reset and reloaded at the same base across status
+     * changes, so the same {b,e} arrives repeatedly — update in place
+     * instead of letting the vector (linearly scanned on the per-joint
+     * hot path) accumulate duplicates over a long session. */
+    for (auto &range : sHalfswappedRanges) {
+        if (range.base == b) {
+            range.end = e;
+            return;
+        }
+    }
     sHalfswappedRanges.push_back({b, e});
 }
 

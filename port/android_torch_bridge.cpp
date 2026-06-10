@@ -84,9 +84,12 @@ int torch_extract_o2r(const char *rom_path, const char *src_dir, const char *dst
         instance->Init(ExportType::Binary);
 
         LOGI("torch_extract_o2r: extraction completed");
-        // Companion owns its lifetime via the singleton; matching the
-        // pattern in main.cpp's o2r subcommand. Deleting here would
-        // dangle Companion::Instance for any later use.
+        // Unlike main.cpp's o2r subcommand (where the process exits right
+        // after), the game Activity runs in this same process — leaving the
+        // singleton alive would leak the full ROM copy (~64 MB on a phone)
+        // into the game's heap. Extraction is one-shot, so tear it down.
+        Companion::Instance = nullptr;
+        delete instance;
         return 0;
     } catch (const std::exception &e) {
         LOGE("torch_extract_o2r: std::exception: %s", e.what());

@@ -6,6 +6,7 @@
 #include <libultraship/libultraship.h>
 #include <fast/interpreter.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -36,16 +37,15 @@ std::string gMissDumpDir;
 bool gMissDumpDirReady = false;
 
 uint32_t MissDumpCrc32(const uint8_t* p, size_t n) {
-    static uint32_t tbl[256];
-    static bool init = false;
-    if (!init) {
+    static const auto tbl = [] {
+        std::array<uint32_t, 256> t{};
         for (uint32_t i = 0; i < 256; i++) {
             uint32_t c = i;
             for (int j = 0; j < 8; j++) c = (c >> 1) ^ (0xEDB88320u & -(c & 1u));
-            tbl[i] = c;
+            t[i] = c;
         }
-        init = true;
-    }
+        return t;
+    }();
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < n; i++) crc = tbl[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
     return crc ^ 0xFFFFFFFFu;
