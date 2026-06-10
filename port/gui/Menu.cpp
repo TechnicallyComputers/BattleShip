@@ -173,10 +173,14 @@ void Menu::RemoveSidebarSearch() {
                                          CVarGetString(menuEntries["Settings"].sidebarCvar, "General"));
     menuEntries["Settings"].sidebars.erase("Search");
     std::erase_if(menuEntries["Settings"].sidebarOrder, [](std::string& name) { return name == "Search"; });
+    if (menuEntries["Settings"].sidebarOrder.empty()) {
+        return;
+    }
     if (curIndex > searchSidebarIndex) {
         curIndex--;
-    } else if (curIndex >= menuEntries["Settings"].sidebarOrder.size()) {
-        curIndex = menuEntries["Settings"].sidebarOrder.size() - 1;
+    }
+    if (curIndex >= menuEntries["Settings"].sidebarOrder.size()) {
+        curIndex = (uint32_t)menuEntries["Settings"].sidebarOrder.size() - 1;
     }
     CVarSetString(menuEntries["Settings"].sidebarCvar, menuEntries["Settings"].sidebarOrder.at(curIndex).c_str());
 }
@@ -332,8 +336,9 @@ uint32_t Menu::DrawSearchResults(std::string& menuSearchText) {
                 entry.info.type == WIDGET_SEPARATOR_TEXT || entry.info.isHidden || entry.info.hideInSearch) {
                 continue;
             }
-            std::string widgetStr =
-                entry.info.name + entry.info.options->tooltip + entry.extraTerms + entry.sidebarName;
+            const char* extraTooltip = entry.info.options->tooltip;
+            std::string widgetStr = entry.info.name + std::string(extraTooltip != NULL ? extraTooltip : "") +
+                                    entry.extraTerms + entry.sidebarName;
             std::transform(widgetStr.begin(), widgetStr.end(), widgetStr.begin(), ::tolower);
             widgetStr.erase(std::remove(widgetStr.begin(), widgetStr.end(), ' '), widgetStr.end());
             if (widgetStr.find(menuSearchText) != std::string::npos) {
