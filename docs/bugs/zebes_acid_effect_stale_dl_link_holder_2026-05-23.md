@@ -48,6 +48,19 @@ post-fix (was 28/run on triggered runs pre-fix, with ~40% trigger rate). No swee
 no double-eject. The diagnostic instrumentation in `objdisplay.c` + `objman.c` stays in place so
 any future regression of this class trips the same in-log signal.
 
+**Re-verification 2026-06-09 (user report: "~30% particle corruption might still exist"):**
+25-minute unattended soak on macOS (the in-log oracle is platform-independent post-arena-recycle;
+only the SIGSEGV-vs-silent-corruption consequence differed by platform): **190 scene transitions,
+8 complete attract cycles including the Zebes-containing opening chain — 0 bails, 0 stale tokens,
+0 sweep-guard trips, 0 crashes, clean shutdown.** At the pre-fix ~40%/cycle trigger rate, 8 clean
+cycles ⇒ P(bug present but silent) ≈ 1.7%. A parallel exhaustive audit of the "need to enumerate"
+BSS-holder list (gEFManager pools, gFT/gWP/gIT allocators, camera, wallpaper, particle globals,
+gFTData* file pointers) found **no remaining unmitigated holders** — every arena-backed pointer
+is reset per scene, swept at the boundary, or guarded. Verdict: fixed with high confidence; the
+residual tail closes with one Linux attract run using the same `grep -c 'stale dl_link bail'`
+oracle. A user-supplied ssb64.log from any corrupted run would confirm/deny instantly via the
+same grep.
+
 ## Symptom
 
 Particle and stage-geometry rendering corruption observable in attract-mode fighter intros and

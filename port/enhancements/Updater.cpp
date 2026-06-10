@@ -198,6 +198,18 @@ std::string BuildDownloadCommand(const std::string& destPath, const std::string&
 #endif
 }
 
+// The URL is spliced into a curl command line, so reject anything that
+// could escape the quoting or smuggle extra arguments. Release asset URLs
+// are plain https://github.com/... paths — no quotes, spaces, or control
+// characters.
+bool IsSafeDownloadUrl(const std::string& url) {
+    if (url.rfind("https://", 0) != 0) return false;
+    for (char c : url) {
+        if (c == '"' || c == '\'' || c == '\\' || c <= 0x20 || c == 0x7F) return false;
+    }
+    return true;
+}
+
 bool FindPlatformAssetUrl(const nlohmann::json& release, std::string* outUrl) {
     if (!release.contains("assets") || !release["assets"].is_array()) return false;
 
@@ -205,7 +217,12 @@ bool FindPlatformAssetUrl(const nlohmann::json& release, std::string* outUrl) {
         if (!asset.contains("name") || !asset.contains("browser_download_url")) continue;
         if (!asset["name"].is_string() || !asset["browser_download_url"].is_string()) continue;
         if (asset["name"].get<std::string>() == kPlatformAssetName) {
-            *outUrl = asset["browser_download_url"].get<std::string>();
+            std::string url = asset["browser_download_url"].get<std::string>();
+            if (!IsSafeDownloadUrl(url)) {
+                port_log("Updater: rejecting unsafe download URL\n");
+                return false;
+            }
+            *outUrl = url;
             return true;
         }
     }
@@ -322,7 +339,30 @@ void StartGameUpdate() {
         std::string cmd = BuildDownloadCommand(tempPath, url);
 
         #elif defined(_WIN32)
-        std::string tempZip = "update_temp.zip";
+        // Anchor everything to the install directory — CWD can be anywhere
+        // (Start Menu launches use the user profile), and the .bat extracts
+        // over the game files, so it must run where BattleShip.exe lives.
+        std::string exeDir;
+        {
+            char exePath[MAX_PATH];
+            DWORD n = GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) {
+                std::string p(exePath, n);
+                size_t slash = p.find_last_of("\\/");
+                if (slash != std::string::npos) {
+                    exeDir = p.substr(0, slash);
+                }
+            }
+        }
+        if (exeDir.empty()) {
+            {
+                std::lock_guard<std::mutex> lock(s_stringMutex);
+                s_downloadStatus = "Error: Could not locate install directory.";
+            }
+            s_isDownloading.store(false);
+            return;
+        }
+        std::string tempZip = exeDir + "\\update_temp.zip";
         std::string cmd = BuildDownloadCommand(tempZip, url);
 
         #elif defined(__APPLE__)
@@ -359,9 +399,11 @@ void StartGameUpdate() {
                 s_downloadStatus = "Error: Failed to replace AppImage.";
             }
             #elif defined(_WIN32)
-            FILE* bat = fopen("update_game.bat", "w");
+            std::string batPath = exeDir + "\\update_game.bat";
+            FILE* bat = fopen(batPath.c_str(), "w");
             if (bat) {
                 fprintf(bat, "@echo off\n");
+                fprintf(bat, "cd /d \"%s\"\n", exeDir.c_str());
                 fprintf(bat, "echo Update downloaded! Waiting for BattleShip to close before applying...\n");
                 fprintf(bat, ":wait\n");
                 fprintf(bat, "tasklist /FI \"IMAGENAME eq BattleShip.exe\" 2>NUL | find /I /N \"BattleShip.exe\">NUL\n");
@@ -381,7 +423,7 @@ void StartGameUpdate() {
                     s_downloadStatus = "Update ready! Close the game to apply.";
                 }
                 s_downloadComplete.store(true);
-                ShellExecuteA(nullptr, "open", "update_game.bat", nullptr, nullptr, SW_SHOWNORMAL);
+                ShellExecuteA(nullptr, "open", batPath.c_str(), nullptr, exeDir.c_str(), SW_SHOWNORMAL);
             } else {
                 std::lock_guard<std::mutex> lock(s_stringMutex);
                 s_downloadStatus = "Error: Failed to create updater script.";

@@ -105,9 +105,18 @@ public final class AnalogStickView extends View {
                 invalidate();
                 return true;
             }
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL: {
+                // CANCEL applies to the whole gesture and getActionIndex()
+                // is always 0 here — if we were tracking a secondary
+                // pointer, an ID check would skip the reset and leave the
+                // stick stuck at its last deflection. Reset unconditionally.
+                mActivePointerId = -1;
+                emitAxis(0f, 0f);
+                invalidate();
+                return true;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP: {
                 int upId = ev.getPointerId(ev.getActionIndex());
                 if (upId != mActivePointerId) {
                     return true;

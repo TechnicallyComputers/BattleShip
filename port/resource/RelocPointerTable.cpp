@@ -72,7 +72,12 @@ static void ensureCapacity(void)
         }
         spdlog::info("RelocPointerTable: growing {} -> {} entries",
                      sCapacity, newCapacity);
-        sSlots = (Slot *)realloc(sSlots, newCapacity * sizeof(Slot));
+        Slot *grown = (Slot *)realloc(sSlots, newCapacity * sizeof(Slot));
+        if (grown == nullptr) {
+            spdlog::error("RelocPointerTable: out of memory growing to {} entries", newCapacity);
+            abort();
+        }
+        sSlots = grown;
         memset(sSlots + sCapacity, 0, (newCapacity - sCapacity) * sizeof(Slot));
         sCapacity = newCapacity;
     }

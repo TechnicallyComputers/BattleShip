@@ -19,6 +19,9 @@
  */
 #if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
 #define _XOPEN_SOURCE 600
+/* _XOPEN_SOURCE puts Darwin headers in strict-POSIX mode, which hides BSD
+ * extensions like MAP_ANON(YMOUS); _DARWIN_C_SOURCE re-exposes them. */
+#define _DARWIN_C_SOURCE 1
 #endif
 
 #include "coroutine.h"
@@ -29,6 +32,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 
 #define MIN_STACK_SIZE 32768
 
@@ -38,11 +47,21 @@ struct PortCoroutine {
 	void (*entry)(void *);
 	void *arg;
 	int finished;
-	char *stack_mem;
-	size_t stack_size;
+	char *stack_mem;   /* mmap base (guard page at the bottom) */
+	size_t stack_total; /* full mapping length incl. guard page */
 };
 
-static PortCoroutine *sCurrentCoroutine = NULL;
+static thread_local PortCoroutine *sCurrentCoroutine = NULL;
+
+static size_t port_page_size(void)
+{
+	static size_t ps = 0;
+	if (ps == 0) {
+		long v = sysconf(_SC_PAGESIZE);
+		ps = (v > 0) ? (size_t)v : 4096;
+	}
+	return ps;
+}
 
 /* ========================================================================= */
 /*  Internal: ucontext entry wrapper                                         */
@@ -89,24 +108,33 @@ PortCoroutine *port_coroutine_create(void (*entry)(void *), void *arg,
 		return NULL;
 	}
 
-	co->stack_mem = (char *)malloc(stack_size);
-	if (co->stack_mem == NULL) {
+	/* mmap the stack with a PROT_NONE guard page at the low end so a
+	 * coroutine stack overflow faults immediately (caught by the crash
+	 * handler with a useful fault_addr) instead of silently corrupting
+	 * adjacent heap allocations. Stacks grow down toward the guard. */
+	size_t ps = port_page_size();
+	stack_size = (stack_size + ps - 1) & ~(ps - 1);
+	co->stack_total = stack_size + ps;
+	void *mem = mmap(NULL, co->stack_total, PROT_READ | PROT_WRITE,
+	                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (mem == MAP_FAILED) {
 		free(co);
 		return NULL;
 	}
+	mprotect(mem, ps, PROT_NONE);
+	co->stack_mem = (char *)mem;
 
-	co->stack_size = stack_size;
 	co->entry = entry;
 	co->arg = arg;
 	co->finished = 0;
 
 	if (getcontext(&co->ctx) == -1) {
-		free(co->stack_mem);
+		munmap(co->stack_mem, co->stack_total);
 		free(co);
 		return NULL;
 	}
 
-	co->ctx.uc_stack.ss_sp = co->stack_mem;
+	co->ctx.uc_stack.ss_sp = co->stack_mem + ps;
 	co->ctx.uc_stack.ss_size = stack_size;
 	co->ctx.uc_link = &co->caller_ctx; /* return to caller when entry returns */
 
@@ -123,8 +151,12 @@ void port_coroutine_destroy(PortCoroutine *co)
 	if (co == NULL) {
 		return;
 	}
+	if (co == sCurrentCoroutine) {
+		fprintf(stderr, "SSB64: port_coroutine_destroy on current coroutine\n");
+		abort();
+	}
 	if (co->stack_mem != NULL) {
-		free(co->stack_mem);
+		munmap(co->stack_mem, co->stack_total);
 		co->stack_mem = NULL;
 	}
 	free(co);

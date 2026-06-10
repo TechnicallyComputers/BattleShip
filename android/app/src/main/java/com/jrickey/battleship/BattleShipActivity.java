@@ -51,4 +51,13 @@ public class BattleShipActivity extends SDLActivity {
         }
         super.onActivityResult(requestCode, resultCode, data);
     }
+
+    @Override
+    protected void onDestroy() {
+        // Unregister the InputManager listener and stop the menu poller —
+        // both hold strong references into this Activity's view hierarchy
+        // and would leak it (and keep ticking) across recreations.
+        TouchOverlay.uninstall();
+        super.onDestroy();
+    }
 }

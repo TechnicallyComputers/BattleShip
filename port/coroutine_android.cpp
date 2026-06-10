@@ -28,6 +28,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #define MIN_STACK_SIZE 32768
 
@@ -56,8 +58,8 @@ struct PortCoroutine {
     void  (*entry)(void *); /* user entry */
     void   *arg;            /* arg passed to entry */
     int     finished;       /* 1 once entry returns */
-    void   *stack_mem;      /* aligned_alloc'd by posix_memalign */
-    size_t  stack_size;
+    void   *stack_mem;      /* mmap base (guard page at the bottom) */
+    size_t  stack_total;    /* full mapping length incl. guard page */
 };
 
 /* Implemented in port/coroutine_aarch64.S */
@@ -97,24 +99,27 @@ PortCoroutine *port_coroutine_create(void (*entry)(void *), void *arg, size_t st
     if (stack_size < MIN_STACK_SIZE) {
         stack_size = MIN_STACK_SIZE;
     }
-    /* Round stack up to 16 bytes. AAPCS64 requires sp to be 16-aligned
-     * at all public entry points. */
-    stack_size = (stack_size + 15) & ~size_t{15};
-
     PortCoroutine *co = (PortCoroutine *)calloc(1, sizeof(PortCoroutine));
     if (!co) {
         return nullptr;
     }
 
-    /* posix_memalign over aligned_alloc — the latter only landed in bionic
-     * at API 28; we target 26. */
-    void *stk = nullptr;
-    if (posix_memalign(&stk, 16, stack_size) != 0) {
+    /* mmap the stack with a PROT_NONE guard page at the low end so a
+     * coroutine stack overflow faults immediately instead of silently
+     * corrupting adjacent heap. mmap returns page-aligned memory, which
+     * satisfies AAPCS64's 16-byte sp alignment requirement. */
+    long ps_v = sysconf(_SC_PAGESIZE);
+    size_t ps = (ps_v > 0) ? (size_t)ps_v : 4096;
+    stack_size = (stack_size + ps - 1) & ~(ps - 1);
+    co->stack_total = stack_size + ps;
+    void *stk = mmap(nullptr, co->stack_total, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (stk == MAP_FAILED) {
         free(co);
         return nullptr;
     }
+    mprotect(stk, ps, PROT_NONE);
     co->stack_mem  = stk;
-    co->stack_size = stack_size;
     co->entry      = entry;
     co->arg        = arg;
     co->finished   = 0;
@@ -124,7 +129,7 @@ PortCoroutine *port_coroutine_create(void (*entry)(void *), void *arg, size_t st
      *   x19 := PortCoroutine* (read by the asm trampoline -> mov x0, x19)
      *   x30 := trampoline entry (lr, popped by `ret` at end of swap)
      * All other regs are zero-init via calloc. */
-    char *stack_top = (char *)co->stack_mem + stack_size;
+    char *stack_top = (char *)co->stack_mem + co->stack_total;
     co->ctx.sp  = (uint64_t)stack_top;
     co->ctx.x19 = (uint64_t)co;
     co->ctx.x30 = (uint64_t)&port_coroutine_trampoline_aarch64;
@@ -139,7 +144,7 @@ void port_coroutine_destroy(PortCoroutine *co) {
         abort();
     }
     if (co->stack_mem) {
-        free(co->stack_mem);
+        munmap(co->stack_mem, co->stack_total);
     }
     free(co);
 }

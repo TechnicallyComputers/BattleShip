@@ -123,7 +123,12 @@ extern "C" int port_save_write(uintptr_t offset, const void *src, size_t size)
             long need = (long)offset - cur;
             while (need > 0) {
                 size_t chunk = need > (long)sizeof(zeros) ? sizeof(zeros) : (size_t)need;
-                std::fwrite(zeros, 1, chunk, f);
+                if (std::fwrite(zeros, 1, chunk, f) != chunk) {
+                    port_log("SSB64 Save: zero-pad write failed at offset 0x%lx\n",
+                             (unsigned long)offset);
+                    std::fclose(f);
+                    return -1;
+                }
                 need -= chunk;
             }
         }
