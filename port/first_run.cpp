@@ -47,6 +47,38 @@ namespace ssb64 {
 
 namespace {
 
+/* Asset-recipe fingerprint baked in by CMake (torch submodule SHA +
+ * config.yml + yamls/<region> hashes). A BattleShip.o2r extracted by a
+ * different pipeline version is format-incompatible with this binary —
+ * symptoms range from reloc-token storms to menu crashes (issues #217,
+ * #221) — and users had to discover "delete everything and re-extract"
+ * by hand. The sidecar written next to the archive records which recipe
+ * produced it so a binary update can re-extract automatically. */
+#ifndef SSB64_ASSET_RECIPE_HASH
+#define SSB64_ASSET_RECIPE_HASH "unversioned"
+#endif
+
+std::string ReadRecipeSidecar(const fs::path& o2rPath) {
+    std::ifstream f(o2rPath.string() + ".recipe");
+    std::string line;
+    if (f) {
+        std::getline(f, line);
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
+            line.pop_back();
+        }
+    }
+    return line;
+}
+
+void WriteRecipeSidecar(const fs::path& o2rPath) {
+    std::ofstream f(o2rPath.string() + ".recipe", std::ios::trunc);
+    if (f) {
+        f << SSB64_ASSET_RECIPE_HASH << "\n";
+    } else {
+        port_log("first_run: WARNING could not write %s.recipe\n", o2rPath.string().c_str());
+    }
+}
+
 // Search candidates in order; return the first that exists.
 std::string FindExisting(const std::vector<std::string>& candidates) {
     for (const auto& c : candidates) {
@@ -333,15 +365,42 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     std::error_code ec;
     const fs::path absoluteTargetPath = fs::absolute(fs::path(target_o2r_path), ec);
     const fs::path targetPath = ec ? fs::path(target_o2r_path) : absoluteTargetPath;
+    bool staleRecipe = false;
     if (fs::exists(targetPath)) {
+#if defined(__ANDROID__)
+        /* Android extraction goes through the Java RomImporter flow (which
+         * has its own asset sentinel) and the staged ROM is deleted after
+         * extraction, so a recipe re-extract could never succeed here. */
         return { true, targetPath.string(), {}, {} };
+#else
+        const std::string have = ReadRecipeSidecar(targetPath);
+        if (have == SSB64_ASSET_RECIPE_HASH) {
+            return { true, targetPath.string(), {}, {} };
+        }
+        staleRecipe = true;
+        port_log("first_run: %s was extracted by a different asset pipeline "
+                 "(recipe '%s', this build wants '%s') — re-extracting\n",
+                 targetPath.string().c_str(),
+                 have.empty() ? "<none>" : have.c_str(), SSB64_ASSET_RECIPE_HASH);
+#endif
     }
 
-    port_log("first_run: %s missing — running asset extraction\n",
-             target_o2r_path.c_str());
+    if (!staleRecipe) {
+        port_log("first_run: %s missing — running asset extraction\n",
+                 target_o2r_path.c_str());
+    }
 
     std::string rom = romOverridePath.empty() ? FindBaseRom() : romOverridePath;
     if (rom.empty()) {
+        if (staleRecipe) {
+            /* No ROM to re-extract from. Keep running on the old archive —
+             * mostly-working assets beat blocking the user. The log line
+             * above is the breadcrumb if rendering misbehaves. */
+            port_log("first_run: no ROM available for recipe re-extraction; "
+                     "continuing with the existing (possibly stale) %s\n",
+                     SSB64_O2R_NAME);
+            return { true, targetPath.string(), {}, {} };
+        }
         const std::string appData = Ship::Context::GetAppDirectoryPath();
         port_log("first_run: ERROR no ROM found.\n"
                  "  Drop a %s.{z64,n64,v64} into %s\n",
@@ -420,6 +479,13 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     std::string commandError;
     if (!RunTorchCommand(commandLine, runDir, logPath, commandError)) {
         port_log("first_run: ERROR extractor failed: %s\n", commandError.c_str());
+        if (staleRecipe) {
+            /* Re-extraction failed but the previous archive is untouched —
+             * keep running on it rather than blocking the user. */
+            port_log("first_run: recipe re-extraction failed; continuing with "
+                     "the existing (possibly stale) %s\n", SSB64_O2R_NAME);
+            return { true, targetPath.string(), {}, logPath };
+        }
         const std::string msg =
             "BattleShip failed to extract assets from your ROM.\n\n"
             "Error:\n  " + commandError +
@@ -440,6 +506,11 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     if (!fs::exists(emitted)) {
         port_log("first_run: ERROR extractor reported success but %s is missing\n",
                  emitted.c_str());
+        if (staleRecipe) {
+            port_log("first_run: recipe re-extraction produced no archive; continuing "
+                     "with the existing (possibly stale) %s\n", SSB64_O2R_NAME);
+            return { true, targetPath.string(), {}, logPath };
+        }
         return { false, {}, "Torch reported success but " SSB64_O2R_NAME " is missing", logPath };
     }
 
@@ -455,6 +526,8 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
     }
 
     fs::remove_all(workDir, ec);
+
+    WriteRecipeSidecar(targetPath);
 
     port_log("first_run: extracted %s -> %s\n", SSB64_O2R_NAME, targetPath.string().c_str());
     return { true, targetPath.string(), {}, logPath };

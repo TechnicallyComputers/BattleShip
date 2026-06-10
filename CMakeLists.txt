@@ -457,6 +457,31 @@ else()
 endif()
 message(STATUS "SSB64 app identity: ${SSB64_APP_NAME}")
 
+# Asset-recipe fingerprint: identifies the extraction pipeline (torch +
+# config.yml + recipe yamls) that a BattleShip.o2r was produced by. The
+# port stamps it into a "<o2r>.recipe" sidecar after extraction and
+# re-extracts automatically when a binary update changes the recipe —
+# stale archives from older builds caused reloc-token storms and menu
+# crashes (issues #217/#221) until users manually re-extracted.
+execute_process(
+    COMMAND git -C ${CMAKE_CURRENT_SOURCE_DIR}/torch rev-parse HEAD
+    OUTPUT_VARIABLE SSB64_TORCH_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT SSB64_TORCH_SHA)
+    set(SSB64_TORCH_SHA "unknown-torch")
+endif()
+file(SHA1 ${CMAKE_CURRENT_SOURCE_DIR}/config.yml SSB64_RECIPE_CONFIG_SHA1)
+set(SSB64_RECIPE_CONCAT "${SSB64_TORCH_SHA}:${SSB64_RECIPE_CONFIG_SHA1}")
+file(GLOB SSB64_RECIPE_YAMLS ${CMAKE_CURRENT_SOURCE_DIR}/yamls/${SSB64_VERSION}/*.yml)
+list(SORT SSB64_RECIPE_YAMLS)
+foreach(_recipe_yaml ${SSB64_RECIPE_YAMLS})
+    file(SHA1 ${_recipe_yaml} _recipe_yaml_sha1)
+    string(APPEND SSB64_RECIPE_CONCAT ":${_recipe_yaml_sha1}")
+endforeach()
+string(SHA1 SSB64_ASSET_RECIPE_HASH "${SSB64_RECIPE_CONCAT}")
+message(STATUS "SSB64 asset recipe hash: ${SSB64_ASSET_RECIPE_HASH}")
+
 # Shared compile definitions used by both the decomp object library and the
 # main executable.
 set(SSB64_COMPILE_DEFS
@@ -496,6 +521,9 @@ set(SSB64_COMPILE_DEFS
 
     # Updater
     BATTLESHIP_CURRENT_VERSION=\"${BATTLESHIP_VERSION}\"
+
+    # Asset-recipe fingerprint (see the computation above SSB64_COMPILE_DEFS)
+    SSB64_ASSET_RECIPE_HASH=\"${SSB64_ASSET_RECIPE_HASH}\"
 )
 
 if(SSB64_STAGE_CYCLE_DEMO)
