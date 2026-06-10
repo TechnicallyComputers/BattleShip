@@ -58,6 +58,19 @@ reload)"** — default **ON**, latched once at boot
   have `stock_count == -1` (or time out). A continue revives both.
   The end-of-stage announcement (`sc1PGameSetPlayerDefeatStats`) fires only
   when the second human falls.
+- **Polish (2026-06-10)**: CSS slots 3/4 are locked closed in classic
+  context (forced `Not`, kind button inert — max two players). On
+  shared-spawn stages P2 starts 120 units from P1 (bonus stages keep a
+  30-unit offset; narrow start platforms). The 1P intro screen shows P2
+  beside P1 on every battle stage by reusing the Mario Bros. two-card
+  layout for stages that normally pose P1 alone (one extra fighter
+  alloc/figatree heap appended at the last index; Mario/DK show P2
+  natively, bonus intros have no fighters). **Friendly fire between the
+  partners is OFF by default** — "Co-op Friendly Fire" checkbox under the
+  Classic Co-op toggle (live, applies from the next stage); stage setup
+  overrides `is_team_attack`, and bonus stages get team-battle wiring
+  (both humans team 0, `is_not_teamshadows` kept) so the setting governs
+  there too.
 - **Score/records**: run score sums both players' KO scores; bonus stats,
   No-Miss/Total falls, hi-score records, and challenger unlock criteria
   stay keyed to P1 (records save under P1's character). The
