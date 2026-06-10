@@ -1038,6 +1038,14 @@ void PortMenu::AddMenuSettings() {
                               "one player picks a character, the run plays as normal solo "
                               "Classic. Restart required for the toggle to take effect.")
                      .DefaultValue(true));
+    AddWidget(path, "Co-op Friendly Fire", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ClassicCoopFriendlyFireCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip("Lets the two Classic Co-op players hit each other, like the "
+                              "original 1P mode's CPU ally could. Off by default; takes effect "
+                              "from the next stage.")
+                     .DefaultValue(false));
     AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::SkipResultsScreenCVarName())
         .RaceDisable(false)

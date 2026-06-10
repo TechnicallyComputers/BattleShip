@@ -8,6 +8,10 @@ namespace ssb64 {
             return "gEnhancements.ClassicCoop";
         }
 
+        const char* ClassicCoopFriendlyFireCVarName() {
+            return "gEnhancements.ClassicCoopFriendlyFire";
+        }
+
     } // namespace enhancements
 } // namespace ssb64
 
@@ -35,6 +39,12 @@ extern "C" int port_enhancement_classic_coop(void) {
 
 extern "C" int port_classic_coop_context(void) {
     return sClassicCoopContext;
+}
+
+// Live read (no latch): consumed once per stage setup, so a mid-run toggle
+// simply applies from the next stage.
+extern "C" int port_classic_coop_friendly_fire(void) {
+    return CVarGetInteger(ssb64::enhancements::ClassicCoopFriendlyFireCVarName(), 0) != 0;
 }
 
 extern "C" void port_classic_coop_set_context(int active) {

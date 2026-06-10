@@ -74,6 +74,7 @@ void port_classic_coop_latch(void);
 int port_enhancement_classic_coop(void);
 int port_classic_coop_context(void);
 void port_classic_coop_set_context(int active);
+int port_classic_coop_friendly_fire(void);
 
 #ifdef __cplusplus
 }
@@ -95,6 +96,7 @@ const char* BootToVSCSSCVarName();
 const char* SkipResultsScreenCVarName();
 const char* CpuLevel9CVarName();
 const char* ClassicCoopCVarName();
+const char* ClassicCoopFriendlyFireCVarName();
 
 // Discord Rich Presence
 void UpdateDiscordPresence(const char* gameState, const char* matchDetails);
