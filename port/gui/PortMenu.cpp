@@ -1029,6 +1029,15 @@ void PortMenu::AddMenuSettings() {
         .CVar(ssb64::enhancements::BootToVSCSSCVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Skips the intro sequences and boots directly to the VS Mode Character Select Screen."));
+    AddWidget(path, "Classic Co-op (Needs reload)", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ClassicCoopCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip("Classic (1P) mode uses the VS Mode Character Select Screen so a "
+                              "second player can join the whole run as a co-op partner. If only "
+                              "one player picks a character, the run plays as normal solo "
+                              "Classic. Restart required for the toggle to take effect.")
+                     .DefaultValue(true));
     AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::SkipResultsScreenCVarName())
         .RaceDisable(false)

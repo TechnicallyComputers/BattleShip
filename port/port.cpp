@@ -424,6 +424,11 @@ static int PortInitImpl(int argc, char* argv[]) {
 	if (!sContext->InitConsoleVariables()) { port_log("SSB64: InitConsoleVariables failed\n"); return 1; }
 	port_log("SSB64: Config + CVars OK\n");
 
+	/* Latch the Classic Co-op menu choice for this launch — the toggle
+	 * swaps which CSS overlay Classic mode enters, so it only applies on
+	 * the next boot ("(Needs reload)" on the menu widget). */
+	port_classic_coop_latch();
+
 #ifdef PORT_HIRES_ENABLED
 	// Hi-res texture pack: scan <app-data>/mods/ for GLideN64-named PNGs
 	// and register the Fast3D substitution hook. Master enable lives in
