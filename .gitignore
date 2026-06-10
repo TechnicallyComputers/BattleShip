@@ -34,6 +34,7 @@ CONTROLS.md
 torch.hash.yml
 tex_dump/
 ssb64_save.bin
+ssb64_netplaysave.bin
 
 # yamls/us/reloc_*.yml are now COMMITTED. They're regenerated from
 # tools/reloc_data_symbols.us.txt + ROM by tools/generate_yamls.py;

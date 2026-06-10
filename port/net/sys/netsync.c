@@ -241,6 +241,11 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 			h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(tornado_dobj->translate.vec.f.z));
 		}
 	}
+	if (fp->status_id == nFTCommonStatusTaruCann)
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTaruCann(fp)->release_wait);
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTaruCann(fp)->shoot_wait);
+	}
 	if ((fp->status_id == nFTCommonStatusCaptureYoshi) || (fp->status_id == nFTCommonStatusYoshiEgg))
 	{
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->breakout_wait);
@@ -2725,14 +2730,7 @@ static sb32 syNetSyncItemThrowWindowDiagEnabled(void)
 	}
 #if defined(SSB64_NETMENU)
 	e = getenv("SSB64_NETPLAY_ITEM_THROW_WINDOW_DIAG");
-	if (e == NULL)
-	{
-		s_env_cache = (syNetPeerIsVSSessionActive() != FALSE) ? 1 : 0;
-	}
-	else
-	{
-		s_env_cache = ((e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
-	}
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 #else
 	s_env_cache = 0;
 #endif

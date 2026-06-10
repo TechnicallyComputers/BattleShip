@@ -31,6 +31,7 @@ public final class UserStoragePaths {
 
     private static final String[] MIGRATE_FILES = {
         "ssb64_save.bin",
+        "ssb64_netplaysave.bin",
         "ssb64.log",
         "ssb64-debug.log",
         "matchmaking.cred",

@@ -645,6 +645,7 @@ typedef struct SYNetRbSnapGroundJungle
 
 #define SYNETRB_SNAP_GROUND_JUNGLE_LEGACY_PAYLOAD_LEN offsetof(SYNetRbSnapGroundJungle, tarucann_translate)
 #define SYNETRB_SNAP_GROUND_JUNGLE_V1_PAYLOAD_LEN offsetof(SYNetRbSnapGroundJungle, root_anim_wait_bits)
+#define SYNETRB_SNAP_GROUND_JUNGLE_V3_RIDER_TAIL_OFFSET offsetof(SYNetRbSnapGroundJungle, tarucann_rider_count)
 #define SYNETRB_SNAP_GROUND_JUNGLE_V3_PAYLOAD_LEN sizeof(SYNetRbSnapGroundJungle)
 #define SYNETRB_SNAP_GROUND_JUNGLE_DOBJ_ROOT_MOBA 1U
 #define SYNETRB_SNAP_GROUND_JUNGLE_DOBJ_CHILD_MOBA 2U
@@ -2467,6 +2468,7 @@ static sb32 syNetRbSnapFighterInKirbySpecialNInhaleDeferScope(const FTStruct *fp
 static sb32 syNetRbSnapBlobInKirbySpecialNInhaleDeferScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapBlobInFoxFirefoxSynctestDeferScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope(const SYNetRbSnapFighterBlob *blob);
+static sb32 syNetRbSnapBlobInDownWaitResidualShieldSynctestFragileScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapshotAnyFighterKirbySpecialNInhaleDeferActive(void);
 static sb32 syNetRbSnapLiveHasKirbyInhaleWindEffect(void);
@@ -11084,6 +11086,27 @@ static sb32 syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(const SYNetRbS
 	return syNetplayPikachuFighterInQuickAttackScope(blob->status_id);
 }
 
+/*
+ * Down-bounce/wait with residual shield stamina (not actively shielding): joint anim and shield
+ * presentation do not round-trip through snapshot apply + verify finalize (Peach's Castle @4650).
+ */
+static sb32 syNetRbSnapBlobInDownWaitResidualShieldSynctestFragileScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->shield_health <= 0) || (blob->is_shield != FALSE))
+	{
+		return FALSE;
+	}
+	if ((blob->status_id >= nFTCommonStatusDownBounceD) && (blob->status_id <= nFTCommonStatusDownWaitU))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static sb32 syNetRbSnapLiveHasKirbyInhaleWindEffect(void)
 {
 	s32 pass;
@@ -11761,6 +11784,28 @@ static u32 syNetRbSnapFoldGroundPayloadHash(const SYNetRbSnapGroundBlob *ground)
 }
 
 /*
+ * Phase 5c barrel partition (slot->barrel) is authoritative for barrel DObj anim runtime. The jungle
+ * ground payload still carries legacy root/child anim_wait_bits for diag, but save vs verify disagree
+ * after syNetRbSnapApplyBarrel — exclude that 8-byte window from map hash; v3 rider tail still folds.
+ */
+static u32 syNetRbSnapFoldJungleGroundPayloadHashBytes(u32 hash, const u8 *payload, u32 payload_len)
+{
+	u32 i;
+	u32 skip_start = (u32)SYNETRB_SNAP_GROUND_JUNGLE_V1_PAYLOAD_LEN;
+	u32 skip_end = (u32)SYNETRB_SNAP_GROUND_JUNGLE_V3_RIDER_TAIL_OFFSET;
+
+	for (i = 0; i < payload_len; i++)
+	{
+		if ((payload_len >= skip_end) && (i >= skip_start) && (i < skip_end))
+		{
+			continue;
+		}
+		hash = syNetRbSnapFnvAccumulateU32(hash, (u32)payload[i]);
+	}
+	return hash;
+}
+
+/*
  * Ground blobs store raw sim scalars. Rollback map hash folds a hash-grid view of known F32 payload fields
  * so save and verify agree without quantizing stored snapshot bytes.
  */
@@ -11822,6 +11867,11 @@ static u32 syNetRbSnapFoldGroundPayloadHashForRollback(const SYNetRbSnapGroundBl
 #endif
 	hash = 2166136261U;
 	hash = syNetRbSnapFnvAccumulateU32(hash, (u32)ground->gkind);
+	if ((ground->gkind == nGRKindJungle) && (n >= (u32)SYNETRB_SNAP_GROUND_JUNGLE_V3_RIDER_TAIL_OFFSET))
+	{
+		hash = syNetRbSnapFoldJungleGroundPayloadHashBytes(hash, payload_scratch, n);
+	}
+	else
 	{
 		u32 i;
 
@@ -12246,7 +12296,7 @@ static void syNetRbSnapHyruleTwisterNormalizeAtCapture(SYNetRbSnapGroundHyrule *
 static void syNetRbSnapHyruleTwisterNormalizeFromBlob(GRCommonGroundVarsHyrule *hy,
 						      const SYNetRbSnapGroundHyrule *src);
 #ifdef PORT
-static void syNetRbSnapResyncFighterTaruCannGobjs(u32 snap_tick);
+static void syNetRbSnapResyncFighterTaruCannGobjs(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapResyncFighterTwisterGobjs(u32 snap_tick);
 static void syNetRbSnapRestoreJungleGround(const SYNetRbSnapGroundJungle *src, u16 payload_len, u32 snap_tick);
 static void syNetRbSnapEnsureJungleTaruCannAfterParticleReset(const SYNetRbSnapshotSlot *slot);
@@ -17672,6 +17722,82 @@ static void syNetRbSnapCaptureJungleTaruCannRiderState(SYNetRbSnapGroundJungle *
 	}
 }
 
+/*
+ * Rider tail is valid when the full v3 jungle ground blob was captured (same threshold as restore diag).
+ */
+static const SYNetRbSnapGroundJungle *syNetRbSnapGroundJungleRiderPayload(const SYNetRbSnapGroundJungle *src,
+                                                                            u16 payload_len)
+{
+	if ((src == NULL) || (payload_len < (u16)SYNETRB_SNAP_GROUND_JUNGLE_V3_PAYLOAD_LEN))
+	{
+		return NULL;
+	}
+	return src;
+}
+
+static const SYNetRbSnapGroundJungle *syNetRbSnapGroundJunglePayloadFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	if ((slot == NULL) || (slot->ground.gkind != nGRKindJungle))
+	{
+		return NULL;
+	}
+	return syNetRbSnapGroundJungleRiderPayload((const SYNetRbSnapGroundJungle *)slot->ground.payload,
+	                                           slot->ground.payload_len);
+}
+
+/*
+ * Ground v3 stores the first rider's shoot/release waits at capture. Re-apply onto the fighter blob
+ * after load so auto-fire and reconcile see the same countdown ProcUpdate had at save time.
+ */
+static void syNetRbSnapHydrateTaruCannRiderWaitsFromGround(FTStruct *fp, const SYNetRbSnapGroundJungle *snap_jungle)
+{
+	u8 player_bit;
+
+	if ((fp == NULL) || (snap_jungle == NULL) || (fp->status_id != nFTCommonStatusTaruCann))
+	{
+		return;
+	}
+	if (snap_jungle->tarucann_rider_count == 0U)
+	{
+		return;
+	}
+	if ((fp->player < 0) || (fp->player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+	player_bit = (u8)(1U << fp->player);
+	if ((snap_jungle->tarucann_rider_player_mask & player_bit) == 0U)
+	{
+		return;
+	}
+	/* v3 only persists waits for the first rider in gobj-list order (single-rider common case). */
+	if (snap_jungle->tarucann_rider_count == 1U)
+	{
+		ftStatusVarsTaruCann(fp)->shoot_wait = (s32)snap_jungle->tarucann_rider_shoot_wait;
+		ftStatusVarsTaruCann(fp)->release_wait = (s32)snap_jungle->tarucann_rider_release_wait;
+	}
+}
+
+static void syNetRbSnapHydrateAllTaruCannRidersFromGround(const SYNetRbSnapGroundJungle *snap_jungle)
+{
+	GObj *fighter_gobj;
+
+	if (snap_jungle == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if (fp != NULL)
+		{
+			syNetRbSnapHydrateTaruCannRiderWaitsFromGround(fp, snap_jungle);
+		}
+	}
+}
+
 static void syNetRbSnapLogJungleTaruCannOccupancy(u32 tick, const char *context, s32 live_rider_count,
                                                   u8 live_rider_mask, sb32 live_shoot_anim,
                                                   const SYNetRbSnapGroundJungle *snap_jungle)
@@ -17699,7 +17825,7 @@ static void syNetRbSnapLogJungleTaruCannOccupancy(u32 tick, const char *context,
 	    (unsigned int)snap_rider_mask, snap_shoot_wait, snap_release_wait, (int)snap_shoot_anim);
 }
 
-static void syNetRbSnapResyncFighterTaruCannGobjs(u32 snap_tick)
+static void syNetRbSnapResyncFighterTaruCannGobjs(const SYNetRbSnapshotSlot *slot)
 {
 	GObj *fighter_gobj;
 	GObj *tarucann_gobj;
@@ -17707,18 +17833,23 @@ static void syNetRbSnapResyncFighterTaruCannGobjs(u32 snap_tick)
 	u8 live_rider_mask;
 	s32 live_rider_count;
 	sb32 live_shoot_anim;
+	u32 snap_tick;
+	const SYNetRbSnapGroundJungle *snap_jungle;
 
 	tarucann_gobj = grJungleGetTaruCannGobj();
 	if (tarucann_gobj == NULL)
 	{
 		return;
 	}
+	snap_tick = (slot != NULL) ? slot->tick : 0U;
+	/* Use the slot being applied (incl. emergency sentinel 0xFFFFFFFF) — not ring tick lookup. */
+	snap_jungle = syNetRbSnapGroundJunglePayloadFromSlot(slot);
 	live_rider_count = syNetRbSnapCountTaruCannRiders(&live_rider_mask);
 	live_shoot_anim = grJungleTaruCannIsChildShootAnimActive(tarucann_gobj);
 	if (syNetRbSnapJungleTaruCannDiagEnabled() != FALSE)
 	{
 		syNetRbSnapLogJungleTaruCannOccupancy(snap_tick, "resync_pre", live_rider_count, live_rider_mask,
-		                                      live_shoot_anim, NULL);
+		                                      live_shoot_anim, snap_jungle);
 	}
 	if (live_rider_count == 0)
 	{
@@ -17752,6 +17883,7 @@ static void syNetRbSnapResyncFighterTaruCannGobjs(u32 snap_tick)
 					fighter_root->translate.vec.f = barrel_root->translate.vec.f;
 				}
 			}
+			syNetRbSnapHydrateTaruCannRiderWaitsFromGround(fp, snap_jungle);
 			ftCommonTaruCannReconcileShootStateAfterRollback(fighter_gobj, snap_tick);
 #if defined(SSB64_NETMENU)
 			if (barrel_root != NULL)
@@ -17828,8 +17960,7 @@ static void syNetRbSnapRestoreJungleGround(const SYNetRbSnapGroundJungle *src, u
 		s32 live_rider_count = syNetRbSnapCountTaruCannRiders(&live_rider_mask);
 		sb32 live_shoot_anim =
 		    (root != NULL) ? grJungleTaruCannIsChildShootAnimActive(dst->tarucann_gobj) : FALSE;
-		const SYNetRbSnapGroundJungle *snap_jungle =
-		    (payload_len >= (u16)SYNETRB_SNAP_GROUND_JUNGLE_V3_PAYLOAD_LEN) ? src : NULL;
+		const SYNetRbSnapGroundJungle *snap_jungle = syNetRbSnapGroundJungleRiderPayload(src, payload_len);
 
 		port_log(
 		    "SSB64 NetRbSnapshot: jungle_tarucann_restore status=%u wait=%u mask=0x%02X root=%p child=%p tx=%f ty=%f rot=%f\n",
@@ -17854,6 +17985,7 @@ static void syNetRbSnapRestoreJungleGround(const SYNetRbSnapGroundJungle *src, u
 static void syNetRbSnapEnsureJungleTaruCannAfterParticleReset(const SYNetRbSnapshotSlot *slot)
 {
 	const SYNetRbSnapGroundJungle *src;
+	const SYNetRbSnapGroundJungle *snap_jungle;
 
 	if ((slot == NULL) || (slot->ground_captured == FALSE) || (slot->ground.gkind != nGRKindJungle))
 	{
@@ -17865,6 +17997,13 @@ static void syNetRbSnapEnsureJungleTaruCannAfterParticleReset(const SYNetRbSnaps
 	}
 	src = (const SYNetRbSnapGroundJungle *)slot->ground.payload;
 	syNetRbSnapRestoreJungleGround(src, slot->ground.payload_len, slot->tick);
+	/*
+	 * Hydrate from the same src/payload_len as restore diag (not a second slot-metadata lookup).
+	 * Synctest emergency restore (tick 0xFFFFFFFF) must preserve release_wait before ApplyBarrel +
+	 * reconcile even when resync_pre slot lookup would otherwise skip the rider tail.
+	 */
+	snap_jungle = syNetRbSnapGroundJungleRiderPayload(src, slot->ground.payload_len);
+	syNetRbSnapHydrateAllTaruCannRidersFromGround(snap_jungle);
 }
 
 /*
@@ -18672,7 +18811,7 @@ static void syNetRbSnapRepairStageAfterParticleResetInternal(const SYNetRbSnapsh
 	case nGRKindJungle:
 		syNetRbSnapEnsureJungleTaruCannAfterParticleReset(slot);
 		syNetRbSnapApplyBarrel(slot);
-		syNetRbSnapResyncFighterTaruCannGobjs(slot->tick);
+		syNetRbSnapResyncFighterTaruCannGobjs(slot);
 		break;
 #endif
 	case nGRKindCastle:
@@ -26228,6 +26367,21 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 	{
 		s32 pidx;
 
+		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+		{
+			if (syNetRbSnapBlobInDownWaitResidualShieldSynctestFragileScope(&slot->fighters[pidx]) != FALSE)
+			{
+				if (reason_out != NULL)
+				{
+					*reason_out = "down_wait_residual_shield_probe";
+				}
+				return TRUE;
+			}
+		}
+	}
+	{
+		s32 pidx;
+
 		/*
 		 * Live grab_coupling skip uses current fighters; probe loads a historical slot that can
 		 * still be Catch/Throw while live has moved on — avoid finalize/verify on those ticks.
@@ -30239,5 +30393,87 @@ void syNetRbSnapshotPinLoadSafeAtTick(u32 tick)
 	{
 		sSYNetRbSnapshotLastLoadSafeTick = tick;
 	}
+}
+
+sb32 syNetRbSnapshotIsLoadAnchorFragile(u32 load_tick, const char **reason_out)
+{
+	const char *local_reason;
+
+	if (load_tick == 0U)
+	{
+		return FALSE;
+	}
+	local_reason = NULL;
+	/*
+	 * Synctest probes load (probe_tick - 1) and compare live to slot[probe_tick]; resim loads load_tick
+	 * then forward-sims from load_tick + 1 — same fragile boundary.
+	 */
+	if (syNetRbSnapshotSynctestShouldSkipProbeTick(load_tick + 1U, &local_reason) != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = local_reason;
+		}
+		return TRUE;
+	}
+	if (syNetRbSnapshotSynctestShouldSkipProbeTick(load_tick, &local_reason) != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = local_reason;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+sb32 syNetRbSnapshotResolveLoadAnchorAvoidingFragile(u32 *io_load_tick, u32 min_load, u32 max_rewind,
+                                                     const char **reason_out)
+{
+	u32 load_tick;
+	u32 steps;
+	const char *fragile_reason;
+
+	if ((io_load_tick == NULL) || (*io_load_tick == 0U) || (max_rewind == 0U))
+	{
+		return FALSE;
+	}
+	load_tick = *io_load_tick;
+	steps = 0U;
+	while ((steps < max_rewind) && (syNetRbSnapshotIsLoadAnchorFragile(load_tick, &fragile_reason) != FALSE))
+	{
+		u32 probe;
+		u32 resolved;
+
+		if ((steps == 0U) && (reason_out != NULL))
+		{
+			*reason_out = fragile_reason;
+		}
+		syNetRbSnapshotMarkLoadUnsafe(load_tick);
+		if ((load_tick == 0U) || (load_tick <= min_load))
+		{
+			break;
+		}
+		probe = load_tick - 1U;
+		resolved = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(probe, min_load);
+		if (resolved == ~(u32)0)
+		{
+			resolved = syNetRbSnapshotFindLatestValidTickAtOrBefore(probe, min_load);
+		}
+		if ((resolved == ~(u32)0) || (resolved >= load_tick))
+		{
+			break;
+		}
+		port_log(
+		    "SSB64 NetRollback: RESIM_ANCHOR_FRAGILE_WALKBACK from=%u to=%u reason=%s step=%u\n",
+		    load_tick,
+		    resolved,
+		    (fragile_reason != NULL) ? fragile_reason : "fragile",
+		    steps + 1U);
+		load_tick = resolved;
+		steps++;
+	}
+	*io_load_tick = load_tick;
+	return (syNetRbSnapshotIsLoadAnchorFragile(load_tick, NULL) == FALSE) ? TRUE : FALSE;
 }
 #endif

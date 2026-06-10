@@ -34,7 +34,7 @@ If **skew** (`tick - HighestRemoteTick`) exceeds the **lead cap**, `syNetInputFu
 
 | Setting | Meaning |
 |---------|---------|
-| **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** | Max allowed **positive** skew before holding tick advance. **`0`** disables skew pacing. **Unset** uses compile-time default (**4** — `SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT` in [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c)). Parsed once per `syNetPeerStartVSSession` (including idempotent VS activation). Values above **10000** are clamped. |
+| **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** | Max allowed **positive** skew before holding tick advance. **`0`** disables skew pacing. **Unset** uses compile-time default (**8** — `SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT` in [`port/net/sys/netpeer.c`](../port/net/sys/netpeer.c)); auto session params apply the same when env is unset. Parsed once per `syNetPeerStartVSSession` (including idempotent VS activation). Values above **10000** are clamped. |
 
 **Optional debug logging:** `SSB64_NETPLAY_PACING_LOG=1` enables rate-limited lines when a hold occurs (logs effective **`lead_max`**, and when gap EWMA is on: **`eff_lead`** + **`ewma`**).
 
@@ -167,8 +167,8 @@ Optional template: [`scripts/netplay-pacing-baseline.env.example`](../scripts/ne
 
 **Goal:** Tighten how far local **`tick`** may lead **`hr`**.
 
-- Adjust **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** (e.g. **4 → 2**) — **no rebuild required**; takes effect on next VS session start (or idempotent `syNetPeerStartVSSession`).
-- **`0`** disables skew pacing entirely.
+- Adjust **`SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS`** (e.g. **8 → 4** or **8 → 2** for tighter pacing) — **no rebuild required**; takes effect on next VS session start (or idempotent `syNetPeerStartVSSession`).
+- **`0`** disables skew pacing entirely (not recommended for rollback VS — tends to resim/desync quickly).
 
 Rebuild only if you change **`SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT`** in source.
 
