@@ -12,7 +12,9 @@
 #include <mp/map.h>
 #include <mp/mpdef.h>
 
+#include <ft/ftchar/ftkirby/ftkirby.h>
 #include <ft/ftchar/ftness/ftness.h>
+#include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftdef.h>
 #include <wp/weapon.h>
 #include <wp/wpdef.h>
@@ -240,6 +242,26 @@ sb32 syNetplayFighterInIntroSimScope(const FTStruct *fp)
 	       (fp->status_id == nFTCommonStatusWait) ? TRUE : FALSE;
 }
 
+static sb32 syNetplayFighterInAppearSimScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	switch (fp->fkind)
+	{
+	case nFTKindKirby:
+	case nFTKindNKirby:
+		return ((fp->status_id == nFTKirbyStatusAppearR) || (fp->status_id == nFTKirbyStatusAppearL)) ? TRUE
+		                                                                                              : FALSE;
+	case nFTKindYoshi:
+		return ((fp->status_id == nFTYoshiStatusAppearR) || (fp->status_id == nFTYoshiStatusAppearL)) ? TRUE
+		                                                                                              : FALSE;
+	default:
+		return FALSE;
+	}
+}
+
 static void syNetplayCanonicalizeFighterIntroJointPose(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -255,7 +277,8 @@ static void syNetplayCanonicalizeFighterIntroJointPose(GObj *fighter_gobj)
 		return;
 	}
 	fp = ftGetStruct(fighter_gobj);
-	if ((fp == NULL) || (syNetplayFighterInIntroSimScope(fp) == FALSE))
+	if ((fp == NULL) || ((syNetplayFighterInIntroSimScope(fp) == FALSE) &&
+	                     (syNetplayFighterInAppearSimScope(fp) == FALSE)))
 	{
 		return;
 	}
@@ -952,17 +975,34 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	root_dobj = DObjGetStruct(fighter_gobj);
 	if (root_dobj != NULL)
 	{
+		f32 gobj_anim_preserved;
+
 		syNetplayQuantizeDObjTranslate(root_dobj);
 		syNetplayQuantizeVec3f(&root_dobj->rotate.vec.f);
+		gobj_anim_preserved = fighter_gobj->anim_frame;
 		fighter_gobj->anim_frame = syNetplayQuantizeAnimScalar(fighter_gobj->anim_frame);
 		root_dobj->anim_frame = fighter_gobj->anim_frame;
-	}
-	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
-	{
-		if (fp->joints[ji] != NULL)
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
 		{
-			syNetplayQuantizeDObjTranslate(fp->joints[ji]);
-			syNetplayQuantizeDObjAnimScalars(fp->joints[ji]);
+			if (fp->joints[ji] != NULL)
+			{
+				syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+				syNetplayQuantizeDObjAnimScalars(fp->joints[ji]);
+			}
+		}
+		/* Joint loop propagates last joint anim_frame to parent_gobj; restore independent gobj cursor. */
+		fighter_gobj->anim_frame = syNetplayQuantizeAnimScalar(gobj_anim_preserved);
+		root_dobj->anim_frame = fighter_gobj->anim_frame;
+	}
+	else
+	{
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+		{
+			if (fp->joints[ji] != NULL)
+			{
+				syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+				syNetplayQuantizeDObjAnimScalars(fp->joints[ji]);
+			}
 		}
 	}
 	syNetplayCanonicalizeFighterAttackCollPositions(fighter_gobj);

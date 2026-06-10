@@ -245,6 +245,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_METADATA_BYTES (11 * 4 + 8 + (MAXCONTROLLERS * 7) + 2)
 #define SYNETPEER_BOOTSTRAP_PACKET_BYTES (4 + 2 + 2 + 4 + SYNETPEER_METADATA_BYTES + 4)
 #define SYNETPEER_CONTROL_PACKET_BYTES (4 + 2 + 2 + 4 + 4)
+/* VS_SESSION_END with load-fail payload: session_id + load_tick + flags before checksum. */
+#define SYNETPEER_VS_SESSION_END_EXT_BYTES (SYNETPEER_CONTROL_PACKET_BYTES + 8)
+#define SYNETPEER_VS_SESSION_END_FLAG_LOAD_FAIL 0x00000001U
 #define SYNETPEER_TIME_PING_BYTES (4 + 2 + 2 + 4 + 4 + 8 + 4)
 #define SYNETPEER_TIME_PONG_BYTES (4 + 2 + 2 + 4 + 4 + 8 + 8 + 8 + 4)
 /* Host wall-clock start + median offset; extended adds authoritative VI grid (Hz + align flag). */
@@ -890,6 +893,10 @@ static u64 sSYNetPeerBattleStartUnixMs;
 static s64 sSYNetPeerBattleStartOffsetMs;
 static sb32 sSYNetPeerBattleStartTimeSent;
 static sb32 sSYNetPeerBattleStartTimeReceived;
+/* Guest barrier=0: host VI phase epoch + monotonic elapsed (no BATTLE_START_TIME offset). */
+static u64 sSYNetPeerExecSyncLocalMonotonicMsLatch;
+static u32 sSYNetPeerExecSyncGuestViPhaseEpoch;
+static sb32 sSYNetPeerExecSyncGuestViPhaseEpochValid;
 static sb32 sSYNetPeerBarrierDeadlineValid;
 static u64 sSYNetPeerBarrierDeadlineUnixMs;
 static sb32 sSYNetPeerInputBindSent;
@@ -1850,6 +1857,7 @@ static u32 syNetPeerCurrentViPhaseBucketNow(void)
 {
 	u32 gran;
 	u64 now_ms;
+	u64 bucket_ms;
 
 	gran = syNetPeerBarrierFrameGranularityMs();
 	if (gran == 0U)
@@ -1857,7 +1865,41 @@ static u32 syNetPeerCurrentViPhaseBucketNow(void)
 		return 0U;
 	}
 	now_ms = syNetPeerNowUnixMs();
-	return (u32)(now_ms / (u64)gran);
+	/*
+	 * Guest peers map local wall clock into the host VI phase grid via clock-sync offset
+	 * (host_unix ≈ guest_local - offset). Comparing raw local buckets against host wire
+	 * phases spuriously produced multi-second decouple_vi_phase_bias at latch (e.g. -162).
+	 */
+	if ((sSYNetPeerBootstrapIsHost == FALSE) && (sSYNetPeerBattleStartTimeReceived != FALSE))
+	{
+		s64 peer_aligned_ms;
+
+		peer_aligned_ms = (s64)now_ms - sSYNetPeerBattleStartOffsetMs;
+		bucket_ms = (peer_aligned_ms > 0LL) ? (u64)peer_aligned_ms : 0ULL;
+	}
+	else if ((sSYNetPeerBootstrapIsHost == FALSE) && (sSYNetPeerExecSyncGuestViPhaseEpochValid != FALSE))
+	{
+		u64 now_mono;
+		u64 elapsed_ms;
+		u32 buckets_elapsed;
+
+		now_mono = syNetPeerOsMonotonicMs();
+		if (now_mono >= sSYNetPeerExecSyncLocalMonotonicMsLatch)
+		{
+			elapsed_ms = now_mono - sSYNetPeerExecSyncLocalMonotonicMsLatch;
+		}
+		else
+		{
+			elapsed_ms = 0ULL;
+		}
+		buckets_elapsed = (u32)(elapsed_ms / (u64)gran);
+		return sSYNetPeerExecSyncGuestViPhaseEpoch + buckets_elapsed;
+	}
+	else
+	{
+		bucket_ms = now_ms;
+	}
+	return (u32)(bucket_ms / (u64)gran);
 }
 
 /* Drops ping/pong progress and start-time/barrier bookkeeping (VS session start). */
@@ -3811,6 +3853,27 @@ void syNetPeerSendVsSessionEndNotifyPeer(void)
 	syNetPeerSendBytes(buffer, SYNETPEER_CONTROL_PACKET_BYTES);
 }
 
+void syNetPeerSendVsSessionEndLoadFailNotifyPeer(u32 load_tick)
+{
+	u8 buffer[SYNETPEER_VS_SESSION_END_EXT_BYTES];
+	u8 *cursor = buffer;
+	u32 checksum;
+
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_VS_SESSION_END);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, load_tick);
+	syNetPeerWriteU32(&cursor, SYNETPEER_VS_SESSION_END_FLAG_LOAD_FAIL);
+	checksum = syNetPeerChecksumBytes(buffer, SYNETPEER_VS_SESSION_END_EXT_BYTES - 4U);
+	syNetPeerWriteU32(&cursor, checksum);
+	syNetPeerSendBytes(buffer, SYNETPEER_VS_SESSION_END_EXT_BYTES);
+}
+
 void syNetPeerEndVSSessionLocally(void)
 {
 	if (syNetPeerIsVSSessionActive() == FALSE)
@@ -4138,6 +4201,31 @@ static sb32 syNetPeerAutomatchExchangeOffers(void)
 #endif /* defined(PORT) && defined(SSB64_NETMENU) */
 
 #if defined(PORT)
+static void syNetPeerHandleVsSessionEndIngress(u32 load_tick, u32 end_flags)
+{
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	if ((end_flags & SYNETPEER_VS_SESSION_END_FLAG_LOAD_FAIL) != 0U)
+	{
+		port_log(
+		    "SSB64 NetPeer: received VS_SESSION_END load_fail role=%s tick=%u load_tick=%u — symmetric abort\n",
+		    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+		    (unsigned int)syNetInputGetTick(),
+		    load_tick);
+		syNetRollbackOnPeerLoadFailAbort(load_tick);
+	}
+	else
+	{
+		port_log("SSB64 NetPeer: received VS_SESSION_END role=%s tick=%u — stopping session\n",
+		         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+		         (unsigned int)syNetInputGetTick());
+	}
+	sSYNetPeerVsSessionEndReceived = TRUE;
+	syNetPeerStopVSSession();
+}
+
 void syNetPeerHandleControlPacket(const u8 *buffer, s32 size)
 {
 	const u8 *cursor = buffer;
@@ -4145,23 +4233,32 @@ void syNetPeerHandleControlPacket(const u8 *buffer, s32 size)
 	u32 session_id;
 	u32 checksum;
 	u32 expected_checksum;
+	u32 load_tick;
+	u32 end_flags;
 	u16 version;
 	u16 packet_type;
 
-	if (size != SYNETPEER_CONTROL_PACKET_BYTES)
+	if ((size != (s32)SYNETPEER_CONTROL_PACKET_BYTES) && (size != (s32)SYNETPEER_VS_SESSION_END_EXT_BYTES))
 	{
 		return;
 	}
-	expected_checksum = syNetPeerChecksumBytes(buffer, SYNETPEER_CONTROL_PACKET_BYTES - 4);
+	expected_checksum = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
 
 	magic = syNetPeerReadU32(&cursor);
 	version = syNetPeerReadU16(&cursor);
 	packet_type = syNetPeerReadU16(&cursor);
 	session_id = syNetPeerReadU32(&cursor);
+	load_tick = 0U;
+	end_flags = 0U;
+	if (size == (s32)SYNETPEER_VS_SESSION_END_EXT_BYTES)
+	{
+		load_tick = syNetPeerReadU32(&cursor);
+		end_flags = syNetPeerReadU32(&cursor);
+	}
 	checksum = syNetPeerReadU32(&cursor);
 
 	if ((magic != SYNETPEER_MAGIC) || (version != SYNETPEER_VERSION) ||
-		(session_id != sSYNetPeerSessionID) || (checksum != expected_checksum))
+	    (session_id != sSYNetPeerSessionID) || (checksum != expected_checksum))
 	{
 		sSYNetPeerPacketsDropped++;
 		return;
@@ -4227,14 +4324,7 @@ void syNetPeerHandleControlPacket(const u8 *buffer, s32 size)
 	}
 	else if (packet_type == SYNETPEER_PACKET_VS_SESSION_END)
 	{
-		if (sSYNetPeerIsActive != FALSE)
-		{
-			sSYNetPeerVsSessionEndReceived = TRUE;
-			port_log("SSB64 NetPeer: received VS_SESSION_END role=%s tick=%u — stopping session\n",
-			         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
-			         (unsigned int)syNetInputGetTick());
-			syNetPeerStopVSSession();
-		}
+		syNetPeerHandleVsSessionEndIngress(load_tick, end_flags);
 	}
 	syNetPeerNoteBootstrapPeerActivity();
 }
@@ -4771,6 +4861,9 @@ static void syNetPeerBattleExecSyncReset(void)
 	sSYNetPeerExecSyncPumpCount = 0U;
 	sSYNetPeerExecSyncHostViPhase = 0U;
 	sSYNetPeerExecSyncPeerViPhaseLatch = 0U;
+	sSYNetPeerExecSyncLocalMonotonicMsLatch = 0ULL;
+	sSYNetPeerExecSyncGuestViPhaseEpoch = 0U;
+	sSYNetPeerExecSyncGuestViPhaseEpochValid = FALSE;
 	sSYNetPeerBothSidesLatchedStartup = FALSE;
 	sSYNetPeerLatchedStartupTick = ~(u32)0;
 }
@@ -4862,7 +4955,15 @@ static void syNetPeerMaybeLatchBothSidesStartupAfterExecSync(void)
 		agreed_phase = (sSYNetPeerBootstrapIsHost != FALSE) ? sSYNetPeerExecSyncHostViPhase
 		                                                    : sSYNetPeerExecSyncPeerViPhaseLatch;
 		local_vi_phase = syNetPeerCurrentViPhaseBucketNow();
-		if ((agreed_phase != 0U) && (local_vi_phase != 0U))
+		if (sSYNetPeerExecSyncLocalMonotonicMsLatch != 0ULL)
+		{
+			port_set_vs_decouple_exec_sync_monotonic_anchor((unsigned long long)sSYNetPeerExecSyncLocalMonotonicMsLatch);
+			port_log(
+			    "SSB64 NetPeer: both_sides_latched_startup decouple_exec_sync_anchor_ms=%llu agreed_phase=%u local_phase=%u role=%s\n",
+			    (unsigned long long)sSYNetPeerExecSyncLocalMonotonicMsLatch, (unsigned int)agreed_phase,
+			    (unsigned int)local_vi_phase, (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client");
+		}
+		else if ((agreed_phase != 0U) && (local_vi_phase != 0U))
 		{
 			phase_delta = (s32)local_vi_phase - (s32)agreed_phase;
 			bias_ns = syNetPeerViPhaseBucketDeltaToBiasNs(phase_delta);
@@ -5548,6 +5649,17 @@ static void syNetPeerHandleBattleExecSyncPacket(const u8 *buffer, s32 size)
 			}
 			sSYNetPeerExecSyncAgreedTick = agreed_tick;
 			sSYNetPeerExecSyncPeerViPhaseLatch = vi_phase_wire;
+			if (vi_phase_wire != 0U)
+			{
+				sSYNetPeerExecSyncLocalMonotonicMsLatch = syNetPeerOsMonotonicMs();
+				sSYNetPeerExecSyncGuestViPhaseEpoch = vi_phase_wire;
+				sSYNetPeerExecSyncGuestViPhaseEpochValid = TRUE;
+			}
+			else
+			{
+				sSYNetPeerExecSyncGuestViPhaseEpochValid = FALSE;
+			}
+			local_vi_phase = syNetPeerExecSyncComputeViPhaseBucket();
 			if ((vi_phase_wire != 0U) && (local_vi_phase != 0U) && (vi_phase_wire != local_vi_phase))
 			{
 				port_log(
@@ -5625,6 +5737,10 @@ static void syNetPeerBattleExecSyncServiceTransport(void)
 
 			vi_ph = syNetPeerExecSyncComputeViPhaseBucket();
 			sSYNetPeerExecSyncHostViPhase = vi_ph;
+			if (vi_ph != 0U)
+			{
+				sSYNetPeerExecSyncLocalMonotonicMsLatch = syNetPeerOsMonotonicMs();
+			}
 			syNetPeerSendBattleExecSyncPacket(tick_now, vi_ph);
 			sSYNetPeerExecSyncHostProposedTick = tick_now;
 			sSYNetPeerExecSyncHostSent = TRUE;
@@ -8475,7 +8591,8 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 			case SYNETPEER_PACKET_STAGE_SCENE_READY:
 			case SYNETPEER_PACKET_STAGE_SCENE_GO:
 			case SYNETPEER_PACKET_VS_SESSION_END:
-				if (size == SYNETPEER_CONTROL_PACKET_BYTES)
+				if ((size == (s32)SYNETPEER_CONTROL_PACKET_BYTES) ||
+				    (size == (s32)SYNETPEER_VS_SESSION_END_EXT_BYTES))
 				{
 					syNetPeerHandleControlPacket(buffer, size);
 					return;

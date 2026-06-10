@@ -37,7 +37,9 @@ void syNetPeerPumpBattleGateOnHostFrame(void);
 void syNetPeerPumpIngressTransport(const char *caller_tag);
 int syNetPeerWantsSyncPresentHold(void);
 int syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
+unsigned long long syNetPeerOsMonotonicMs(void);
 #endif
+unsigned int syNetInputGetTick(void);
 extern unsigned int dSYTaskmanUpdateCount;
 extern unsigned int dSYTaskmanFrameCount;
 }
@@ -516,10 +518,12 @@ static bool sVsDecouplePrevSessionActive = false;
 static bool sVsDecouplePacingInit = false;
 static std::chrono::steady_clock::time_point sVsNextSimStepDeadline{};
 static std::chrono::nanoseconds sVsDecoupleBarrierLatchBiasNs{};
+static bool sVsDecoupleExecSyncAnchorValid = false;
+static unsigned long long sVsDecoupleExecSyncAnchorMonotonicMs = 0ULL;
+static bool sVsDecoupleExecSyncGridDiagLogged = false;
+static bool sVsDecoupleSimLedActive = false;
 
-/* VS decouple display wall-clock cap (one PortPushFrame completion per contract VI period). */
-static bool sVsPushWallThrottleInit = false;
-static std::chrono::steady_clock::time_point sVsNextPushWallDeadline{};
+/* Unified decouple grid: sim-led (exec-sync anchor + syNetInputGetTick) or legacy steady_clock deadline. */
 
 static unsigned int port_clamp_vs_hz(unsigned int hz)
 {
@@ -544,7 +548,8 @@ static unsigned int port_get_vs_contract_hz(void)
 
 /*
  * Wall-clock cap for PortPushFrame during decoupled VS netplay.
- * Unset: contract VI Hz (typically 60). SSB64_NETPLAY_VS_PUSH_FRAME_HZ=0 disables the cap (legacy spin).
+ * Default ON at negotiated contract VI Hz (typically 60) on every OS for cross-OS pacing parity.
+ * SSB64_NETPLAY_VS_PUSH_FRAME_HZ overrides; =0 disables the cap (lab only).
  */
 static unsigned int port_get_vs_push_frame_throttle_hz(bool decouple_vs_sim)
 {
@@ -567,28 +572,101 @@ static unsigned int port_get_vs_push_frame_throttle_hz(bool decouple_vs_sim)
 	return port_get_vs_contract_hz();
 }
 
-static void port_throttle_vs_push_frame_wall_clock(unsigned int throttle_hz)
+static unsigned int port_get_vs_contract_granularity_ms(unsigned int contract_hz)
 {
-	std::chrono::steady_clock::time_point now;
-	const auto period = std::chrono::microseconds(1000000 / static_cast<int>(throttle_hz));
+	if (contract_hz < 1U) {
+		contract_hz = 60U;
+	}
+	return (1000U + contract_hz - 1U) / contract_hz;
+}
 
-	if (!sVsPushWallThrottleInit) {
-		if (sVsDecouplePacingInit) {
-			sVsNextPushWallDeadline = sVsNextSimStepDeadline;
-		} else {
-			now = std::chrono::steady_clock::now();
-			sVsNextPushWallDeadline = now + sVsDecoupleBarrierLatchBiasNs;
-		}
-		sVsPushWallThrottleInit = true;
+/*
+ * Slip until the next contract-VI grid line measured from exec-sync monotonic origin.
+ * Matches netpeer VI bucket cadence (ceil(1000/hz) ms).
+ */
+static std::chrono::nanoseconds port_decouple_slip_to_exec_sync_grid_ns(unsigned int contract_hz,
+                                                                        unsigned long long anchor_mono_ms)
+{
+	unsigned long long gran_ms;
+	unsigned long long now_mono;
+	unsigned long long elapsed_ms;
+	unsigned long long into_gran_ms;
+	unsigned long long remain_ms;
+
+	if ((anchor_mono_ms == 0ULL) || (contract_hz < 1U)) {
+		return std::chrono::nanoseconds{0};
 	}
-	sVsNextPushWallDeadline += period;
-	now = std::chrono::steady_clock::now();
-	if (now < sVsNextPushWallDeadline) {
-		std::this_thread::sleep_for(sVsNextPushWallDeadline - now);
-		return;
+	gran_ms = (unsigned long long)port_get_vs_contract_granularity_ms(contract_hz);
+	if (gran_ms == 0ULL) {
+		return std::chrono::nanoseconds{0};
 	}
-	while (sVsNextPushWallDeadline <= now) {
-		sVsNextPushWallDeadline += period;
+	now_mono = syNetPeerOsMonotonicMs();
+	elapsed_ms = (now_mono >= anchor_mono_ms) ? (now_mono - anchor_mono_ms) : 0ULL;
+	into_gran_ms = elapsed_ms % gran_ms;
+	if (into_gran_ms == 0ULL) {
+		return std::chrono::nanoseconds{0};
+	}
+	remain_ms = gran_ms - into_gran_ms;
+	return std::chrono::nanoseconds(static_cast<long long>(remain_ms) * 1000000LL);
+}
+
+static unsigned long long port_decouple_sim_led_slot_mono_ms(unsigned int contract_hz, unsigned int sim_tick)
+{
+	unsigned long long gran_ms;
+
+	if (!sVsDecoupleExecSyncAnchorValid) {
+		return 0ULL;
+	}
+	gran_ms = (unsigned long long)port_get_vs_contract_granularity_ms(contract_hz);
+	return sVsDecoupleExecSyncAnchorMonotonicMs + (unsigned long long)sim_tick * gran_ms;
+}
+
+/*
+ * Sim-led wall slot: sleep toward anchor + syNetInputGetTick() * gran_ms (monotonic).
+ * Authoritative sim index owns slot placement; wall follows tick cadence from exec-sync latch.
+ */
+static void port_vs_decouple_finish_wall_slot_sim_led(unsigned int contract_hz, bool run_game_sim_tick)
+{
+	unsigned long long gran_ms;
+	unsigned long long target_ms;
+	unsigned long long now_mono;
+
+	gran_ms = (unsigned long long)port_get_vs_contract_granularity_ms(contract_hz);
+	target_ms = port_decouple_sim_led_slot_mono_ms(contract_hz, syNetInputGetTick());
+	now_mono = syNetPeerOsMonotonicMs();
+	if (now_mono < target_ms) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(target_ms - now_mono));
+	} else if (!run_game_sim_tick) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(gran_ms));
+	}
+}
+
+/*
+ * Legacy steady_clock grid (no exec-sync anchor): skip frames advance deadline at end;
+ * skip-late slips one period from completion (sim-late does not re-anchor).
+ */
+static void port_vs_decouple_finish_wall_slot_legacy(unsigned int contract_hz, bool run_game_sim_tick)
+{
+	const auto period = std::chrono::microseconds(1000000 / static_cast<int>(contract_hz));
+
+	if (!run_game_sim_tick) {
+		sVsNextSimStepDeadline += period;
+	}
+
+	auto now = std::chrono::steady_clock::now();
+	if (now < sVsNextSimStepDeadline) {
+		std::this_thread::sleep_for(sVsNextSimStepDeadline - now);
+	} else if (!run_game_sim_tick) {
+		sVsNextSimStepDeadline = now + period;
+	}
+}
+
+static void port_vs_decouple_finish_wall_slot(unsigned int contract_hz, bool run_game_sim_tick)
+{
+	if (sVsDecoupleSimLedActive) {
+		port_vs_decouple_finish_wall_slot_sim_led(contract_hz, run_game_sim_tick);
+	} else {
+		port_vs_decouple_finish_wall_slot_legacy(contract_hz, run_game_sim_tick);
 	}
 }
 
@@ -611,8 +689,22 @@ extern "C" void port_reset_push_frame_count_for_net_barrier(void)
 extern "C" void port_reset_vs_decouple_pacing_for_net_barrier(void)
 {
 	sVsDecouplePacingInit = false;
-	sVsPushWallThrottleInit = false;
 	sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
+	sVsDecoupleExecSyncAnchorValid = false;
+	sVsDecoupleExecSyncAnchorMonotonicMs = 0ULL;
+	sVsDecoupleExecSyncGridDiagLogged = false;
+	sVsDecoupleSimLedActive = false;
+}
+
+extern "C" void port_set_vs_decouple_exec_sync_monotonic_anchor(unsigned long long anchor_monotonic_ms)
+{
+	if (anchor_monotonic_ms == 0ULL) {
+		sVsDecoupleExecSyncAnchorValid = false;
+		sVsDecoupleExecSyncAnchorMonotonicMs = 0ULL;
+		return;
+	}
+	sVsDecoupleExecSyncAnchorMonotonicMs = anchor_monotonic_ms;
+	sVsDecoupleExecSyncAnchorValid = true;
 }
 
 extern "C" void port_add_vs_decouple_barrier_latch_bias_ns(long long delta_ns)
@@ -800,28 +892,54 @@ void PortPushFrame(void)
 	if (decouple_vs_sim && !bypass_decouple_tick_grid) {
 		if (!sVsDecouplePrevSessionActive) {
 			sVsDecouplePacingInit = false;
-			sVsPushWallThrottleInit = false;
 		}
 		const unsigned int contract_hz = port_get_vs_contract_hz();
 
-		auto now = std::chrono::steady_clock::now();
 		if (!sVsDecouplePacingInit) {
-			sVsNextSimStepDeadline = now + sVsDecoupleBarrierLatchBiasNs;
-			sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
+			sVsDecoupleSimLedActive = sVsDecoupleExecSyncAnchorValid;
+			if (sVsDecoupleSimLedActive) {
+				if (!sVsDecoupleExecSyncGridDiagLogged) {
+					port_log(
+					    "SSB64 NetPeer: decouple_sim_led_init anchor_mono_ms=%llu contract_hz=%u agreed_tick_path=exec_sync\n",
+					    sVsDecoupleExecSyncAnchorMonotonicMs,
+					    contract_hz);
+					sVsDecoupleExecSyncGridDiagLogged = true;
+				}
+			} else {
+				std::chrono::nanoseconds init_offset = sVsDecoupleBarrierLatchBiasNs;
+				auto now = std::chrono::steady_clock::now();
+				sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
+				sVsNextSimStepDeadline = now + init_offset;
+				if (!sVsDecoupleExecSyncGridDiagLogged) {
+					port_log(
+					    "SSB64 NetPeer: decouple_legacy_grid_init slip_ns=%lld contract_hz=%u\n",
+					    (long long)init_offset.count(),
+					    contract_hz);
+					sVsDecoupleExecSyncGridDiagLogged = true;
+				}
+			}
 			sVsDecouplePacingInit = true;
 		}
-		if (now < sVsNextSimStepDeadline) {
-			run_game_sim_tick = false;
+		if (sVsDecoupleSimLedActive) {
+			const unsigned int sim_tick = syNetInputGetTick();
+			const unsigned long long slot_ms = port_decouple_sim_led_slot_mono_ms(contract_hz, sim_tick);
+			const unsigned long long now_mono = syNetPeerOsMonotonicMs();
+
+			run_game_sim_tick = (now_mono >= slot_ms);
 		} else {
-			const auto period = std::chrono::microseconds(1000000 / static_cast<int>(contract_hz));
-			while (sVsNextSimStepDeadline <= now) {
-				sVsNextSimStepDeadline += period;
+			auto now = std::chrono::steady_clock::now();
+			if (now < sVsNextSimStepDeadline) {
+				run_game_sim_tick = false;
+			} else {
+				const auto period = std::chrono::microseconds(1000000 / static_cast<int>(contract_hz));
+				while (sVsNextSimStepDeadline <= now) {
+					sVsNextSimStepDeadline += period;
+				}
 			}
 		}
 	}
 	if (sVsDecouplePrevSessionActive && !vs_active) {
 		sVsDecouplePacingInit = false;
-		sVsPushWallThrottleInit = false;
 	}
 	sVsDecouplePrevSessionActive = vs_active;
 
@@ -1038,12 +1156,22 @@ void PortPushFrame(void)
 		}
 	}
 
-	/* Cap host PortPushFrame cadence during decoupled VS so push_wall tracks contract VI Hz cross-OS. */
+	/* Wall-slot sleep on the unified decouple grid (same deadline as sim stepping). */
 	if (vs_active && decouple_vs_sim) {
 		const unsigned int push_throttle_hz = port_get_vs_push_frame_throttle_hz(decouple_vs_sim);
 
-		if (push_throttle_hz > 0U) {
-			port_throttle_vs_push_frame_wall_clock(push_throttle_hz);
+		if (push_throttle_hz > 0U && sVsDecouplePacingInit) {
+			static bool sVsPushThrottleDiagLogged = false;
+			if (!sVsPushThrottleDiagLogged) {
+				const char *hz_env = std::getenv("SSB64_NETPLAY_VS_PUSH_FRAME_HZ");
+				port_log(
+				    "SSB64 NetPeer: vs_decouple_wall_cap wall_hz=%u sim_led=%d env=%s contract_hz=%u\n",
+				    push_throttle_hz, sVsDecoupleSimLedActive ? 1 : 0,
+				    (hz_env != nullptr && hz_env[0] != '\0') ? hz_env : "(contract)",
+				    port_get_vs_contract_hz());
+				sVsPushThrottleDiagLogged = true;
+			}
+			port_vs_decouple_finish_wall_slot(port_get_vs_contract_hz(), run_game_sim_tick);
 		}
 	}
 }

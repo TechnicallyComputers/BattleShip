@@ -40,6 +40,8 @@ extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
 extern void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick);
 /* Finalize + rebind/reapply/coupling/item reconcile — same path production load and synctest use before verify. */
 extern void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick);
+/* Presentation-only 3-phase refresh + appear diag; world already at completed_sim_tick load. */
+extern void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_tick);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
@@ -125,6 +127,22 @@ extern sb32 syNetRbSnapshotSynctestProbeMapMismatch(u32 probe_tick);
 extern void syNetRbSnapshotGObjLinkAudit(u32 tick);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_DIAG=1`: per-slot lines when load verify logs drift. */
 extern void syNetRbSnapshotLogFighterLoadVerifyDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
+/* Live fighter pointer/proc trail (`SSB64_NETPLAY_FIGHTER_STATUS_TRAIL=1` or fighter diag). */
+extern void syNetRbSnapshotLogFighterStatusTrail(const char *tag, u32 tick);
+extern void syNetRbSnapshotLogFighterBlobStatusTrail(const char *tag, u32 tick, s32 player,
+						     const void *blob);
+/* Ring slot blob status for each valid fighter at tick (anchor probe / load diagnostics). */
+extern void syNetRbSnapshotLogRingBlobStatusTrailAtTick(const char *tag, u32 tick);
+/* FALSE when any live fighter fails attr/data/proc sanity (load verify / post-restore guard). */
+extern sb32 syNetRbSnapshotVerifyLiveFightersSanity(u32 tick, const char *tag);
+/* TRUE when any live fighter is in Entry or Kirby/Yoshi Appear (intro load-fidelity scope). */
+extern sb32 syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope(void);
+/* FALSE when Appear-scope fighters have null TopN or active modelpart joints without FTParts. */
+extern sb32 syNetRbSnapshotVerifyAppearPresentationIntegrity(u32 tick);
+/* Re-pin live fighter pose/anim from ring slot before anchor-probe +1 sim (post-prepare blob contract). */
+extern void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick);
+/* Intro anchor probe: rebind all fighters' coll_data.p_translate to GObj root (vanilla spawn semantics). */
+extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbe(void);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
 extern void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick);
 extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
@@ -175,6 +193,7 @@ extern void syNetRbSnapshotLogMapHashSaveSelfTest(u32 tick);
 #ifdef PORT
 /* Subsystem hashes stored on the slot (for load verify / diagnostics). */
 extern u32 syNetRbSnapshotGetSlotHashFighter(u32 tick);
+extern u32 syNetRbSnapshotGetSlotHashFighterLight(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashItem(u32 tick);
 extern u32 syNetRbSnapshotGetSlotItemCount(u32 tick);

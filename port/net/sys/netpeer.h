@@ -136,6 +136,7 @@ extern void syNetPeerTrySendRollbackSyncNotice(void);
 extern void syNetPeerSendLocalInput(void);
 /* Best-effort notify before local rollback fatal teardown so peer stops without strict-input stall. */
 extern void syNetPeerSendVsSessionEndNotifyPeer(void);
+extern void syNetPeerSendVsSessionEndLoadFailNotifyPeer(u32 load_tick);
 extern sb32 syNetPeerStrictTeardownFastPathActive(void);
 extern void syNetPeerTrySendResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatch_tick, u32 target_tick,
 					    u32 figh, u32 world, u32 item, u32 rng, u32 input_digest);

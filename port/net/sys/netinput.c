@@ -168,6 +168,22 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	u32 hr;
 	u32 cap;
 
+#ifdef PORT
+	if (syNetRollbackIsBattleSimHoldActive() != FALSE)
+	{
+		static u32 sLastHoldBlockedAdvanceLogTick = ~(u32)0;
+
+		if (next_sim_tick != sLastHoldBlockedAdvanceLogTick)
+		{
+			port_log(
+			    "SSB64 NetInput: sim advance blocked (BATTLE_SIM_HOLD) next_sim=%u peer_vs_active=%d\n",
+			    next_sim_tick,
+			    (int)syNetPeerIsVSSessionActive());
+			sLastHoldBlockedAdvanceLogTick = next_sim_tick;
+		}
+		return FALSE;
+	}
+#endif
 	if ((syNetSessionParamsRollbackEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
 	{
 		return TRUE;
@@ -1303,6 +1319,7 @@ void syNetInputStartVSSession(void)
 {
 	syNetInputReset();
 #ifdef PORT
+	syNetRollbackClearLoadFailBattleHold();
 	syNetInputRefreshCachedNetplayEnvForNewMatch();
 #endif
 #ifdef PORT
@@ -5519,6 +5536,31 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 		return;
 	}
 	syNetTickCommitVerdictAllowAll(out);
+#if defined(PORT)
+	if (syNetRollbackShouldBlockLiveBattleAdvance(tick) != FALSE)
+	{
+		static u32 sLastHoldBlockedTickCommitLogTick = ~(u32)0;
+
+		if (tick != sLastHoldBlockedTickCommitLogTick)
+		{
+			port_log(
+			    "SSB64 NetInput: tick_commit blocked (load_fail_hold) tick=%u phase=%d peer_vs_active=%d resim=%d\n",
+			    tick,
+			    (int)phase,
+			    (int)syNetPeerIsVSSessionActive(),
+			    (int)syNetRollbackIsResimulating());
+			sLastHoldBlockedTickCommitLogTick = tick;
+		}
+		out->allow_full_input_publish = FALSE;
+		out->allow_battle_sim_step = FALSE;
+		out->suppress_scene_update = TRUE;
+		if (out->admission_letter == 'P')
+		{
+			out->admission_letter = 'L';
+		}
+		return;
+	}
+#endif
 	if (phase == nSYNetTickCommitPhase_NetSlice)
 	{
 		if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsResimulating() != FALSE))
@@ -5661,6 +5703,10 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 
 sb32 syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate(void)
 {
+	if (syNetRollbackIsBattleSimHoldActive() != FALSE)
+	{
+		return FALSE;
+	}
 	if (syNetPeerIsVSSessionActive() == FALSE)
 	{
 		return TRUE;
