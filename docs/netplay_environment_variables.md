@@ -363,6 +363,7 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 ## Game loop (net-related) ([`port/gameloop.cpp`](port/gameloop.cpp))
 
 - **`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`** — Display vs sim decouple. When on during VS, `PortPushFrame` steps the sim at the negotiated barrier VI Hz and may skip posting VI / taskman for a wall frame; **`syNetPeerPumpIngressTransport("port_push")`** still runs on those skips (and once per push while decoupled) so UDP ingress does not stall with the sim.
+- **`SSB64_NETPLAY_VS_PUSH_FRAME_HZ`** — Wall-clock cap for **`PortPushFrame`** completions during decoupled VS (`port/gameloop.cpp`). **Unset**: throttle to negotiated contract VI Hz (`syNetPeerGetVsContractViHz`, typically **60**). **`0`**: disable cap (legacy fast spin with decouple sim-skips). Positive integer **1–480**: explicit Hz cap (bisect / lab).
 - **`SSB64_NETPLAY_PUSH_FRAME_DIAG_MS`** — Push-frame diagnostic interval.
 - **`SSB64_FREEZE_PACING`** — Pacing freeze hook (affects loop timing; can interact with net sessions).
 

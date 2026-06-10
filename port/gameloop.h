@@ -50,7 +50,8 @@ void port_add_vs_decouple_barrier_latch_bias_ns(long long delta_ns);
 /**
  * Counters for PortPushFrame cadence vs VS decoupled sim stepping (`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`).
  * wall_calls increments once per PortPushFrame; sim_advances when a game sim step runs; sim_skips when VS decouple
- * holds a host refresh frame without advancing the negotiated VI sim step.
+ * holds a host refresh frame without advancing the negotiated VI sim step. With the default
+ * `SSB64_NETPLAY_VS_PUSH_FRAME_HZ` policy (contract VI Hz), wall_calls should track sim_advances during VS.
  */
 void port_get_netplay_push_frame_diag(unsigned long long *out_wall_calls, unsigned long long *out_sim_advances,
                                       unsigned long long *out_sim_skips);

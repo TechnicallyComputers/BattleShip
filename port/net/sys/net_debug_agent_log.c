@@ -6,6 +6,8 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+/* <windows.h> → <stralign.h> needs _wcsicmp from <wchar.h> (MinGW -Werror). */
+#include <wchar.h>
 #include <windows.h>
 #else
 #include <sys/time.h>

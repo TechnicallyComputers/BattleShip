@@ -517,6 +517,81 @@ static bool sVsDecouplePacingInit = false;
 static std::chrono::steady_clock::time_point sVsNextSimStepDeadline{};
 static std::chrono::nanoseconds sVsDecoupleBarrierLatchBiasNs{};
 
+/* VS decouple display wall-clock cap (one PortPushFrame completion per contract VI period). */
+static bool sVsPushWallThrottleInit = false;
+static std::chrono::steady_clock::time_point sVsNextPushWallDeadline{};
+
+static unsigned int port_clamp_vs_hz(unsigned int hz)
+{
+	if (hz == 0U) {
+		hz = 60U;
+	}
+	if (hz < 1U) {
+		hz = 1U;
+	}
+	if (hz > 480U) {
+		hz = 480U;
+	}
+	return hz;
+}
+
+static unsigned int port_get_vs_contract_hz(void)
+{
+	unsigned int contract_hz = syNetPeerGetVsContractViHz();
+
+	return port_clamp_vs_hz(contract_hz);
+}
+
+/*
+ * Wall-clock cap for PortPushFrame during decoupled VS netplay.
+ * Unset: contract VI Hz (typically 60). SSB64_NETPLAY_VS_PUSH_FRAME_HZ=0 disables the cap (legacy spin).
+ */
+static unsigned int port_get_vs_push_frame_throttle_hz(bool decouple_vs_sim)
+{
+	const char *env;
+	int parsed;
+
+	if (!decouple_vs_sim) {
+		return 0U;
+	}
+	env = std::getenv("SSB64_NETPLAY_VS_PUSH_FRAME_HZ");
+	if ((env != nullptr) && (env[0] != '\0')) {
+		parsed = std::atoi(env);
+		if (parsed == 0) {
+			return 0U;
+		}
+		if (parsed > 0) {
+			return port_clamp_vs_hz((unsigned int)parsed);
+		}
+	}
+	return port_get_vs_contract_hz();
+}
+
+static void port_throttle_vs_push_frame_wall_clock(unsigned int throttle_hz)
+{
+	std::chrono::steady_clock::time_point now;
+	const auto period = std::chrono::microseconds(1000000 / static_cast<int>(throttle_hz));
+
+	if (!sVsPushWallThrottleInit) {
+		if (sVsDecouplePacingInit) {
+			sVsNextPushWallDeadline = sVsNextSimStepDeadline;
+		} else {
+			now = std::chrono::steady_clock::now();
+			sVsNextPushWallDeadline = now + sVsDecoupleBarrierLatchBiasNs;
+		}
+		sVsPushWallThrottleInit = true;
+	}
+	sVsNextPushWallDeadline += period;
+	now = std::chrono::steady_clock::now();
+	if (now < sVsNextPushWallDeadline) {
+		std::this_thread::sleep_for(sVsNextPushWallDeadline - now);
+		return;
+	}
+	while (sVsNextPushWallDeadline <= now) {
+		sVsNextPushWallDeadline += period;
+	}
+}
+
 extern "C" int port_get_push_frame_count(void)
 {
 	return sFrameCount;
@@ -536,6 +611,7 @@ extern "C" void port_reset_push_frame_count_for_net_barrier(void)
 extern "C" void port_reset_vs_decouple_pacing_for_net_barrier(void)
 {
 	sVsDecouplePacingInit = false;
+	sVsPushWallThrottleInit = false;
 	sVsDecoupleBarrierLatchBiasNs = std::chrono::nanoseconds{0};
 }
 
@@ -724,17 +800,9 @@ void PortPushFrame(void)
 	if (decouple_vs_sim && !bypass_decouple_tick_grid) {
 		if (!sVsDecouplePrevSessionActive) {
 			sVsDecouplePacingInit = false;
+			sVsPushWallThrottleInit = false;
 		}
-		unsigned int contract_hz = syNetPeerGetVsContractViHz();
-		if (contract_hz == 0U) {
-			contract_hz = 60U;
-		}
-		if (contract_hz < 1U) {
-			contract_hz = 1U;
-		}
-		if (contract_hz > 480U) {
-			contract_hz = 480U;
-		}
+		const unsigned int contract_hz = port_get_vs_contract_hz();
 
 		auto now = std::chrono::steady_clock::now();
 		if (!sVsDecouplePacingInit) {
@@ -753,6 +821,7 @@ void PortPushFrame(void)
 	}
 	if (sVsDecouplePrevSessionActive && !vs_active) {
 		sVsDecouplePacingInit = false;
+		sVsPushWallThrottleInit = false;
 	}
 	sVsDecouplePrevSessionActive = vs_active;
 
@@ -966,6 +1035,15 @@ void PortPushFrame(void)
 		double elapsed = std::chrono::duration<double>(now - sStartTime).count();
 		if (sFrameCount <= 60 || (sFrameCount % 60 == 0)) {
 			port_log("SSB64: Frame %d complete (t=%.2fs)\n", sFrameCount, elapsed);
+		}
+	}
+
+	/* Cap host PortPushFrame cadence during decoupled VS so push_wall tracks contract VI Hz cross-OS. */
+	if (vs_active && decouple_vs_sim) {
+		const unsigned int push_throttle_hz = port_get_vs_push_frame_throttle_hz(decouple_vs_sim);
+
+		if (push_throttle_hz > 0U) {
+			port_throttle_vs_push_frame_wall_clock(push_throttle_hz);
 		}
 	}
 }
