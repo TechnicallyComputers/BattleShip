@@ -155,6 +155,16 @@ public class BootActivity extends ComponentActivity {
 
     /** Common extraction worker, called from both SAF result and dev shortcut. */
     private void extractFromAbsolutePath(File romFile) {
+        extractFromAbsolutePath(romFile, false);
+    }
+
+    /**
+     * @param deleteAfter delete romFile once extraction finishes (used for
+     *        the SAF-staged copy in cacheDir — the picker UI promises the
+     *        ROM is discarded, and cacheDir is otherwise only reclaimed
+     *        under storage pressure). Dev-shortcut ROMs pass false.
+     */
+    private void extractFromAbsolutePath(File romFile, boolean deleteAfter) {
         if (!romFile.canRead()) {
             showError("Can't read ROM at " + romFile + " — check permissions.");
             return;
@@ -168,6 +178,10 @@ public class BootActivity extends ComponentActivity {
                 romFile.getAbsolutePath(),
                 extDir.getAbsolutePath(),
                 extDir.getAbsolutePath());
+
+            if (deleteAfter && !romFile.delete()) {
+                Log.w(TAG, "Could not delete staged ROM " + romFile);
+            }
 
             if (rc != 0) {
                 runOnUi(() -> showError(
@@ -230,7 +244,7 @@ public class BootActivity extends ComponentActivity {
             }
             // Hand off to the shared extraction worker. It posts to the UI
             // thread itself, so we can safely call from this background.
-            runOnUi(() -> extractFromAbsolutePath(staged));
+            runOnUi(() -> extractFromAbsolutePath(staged, true));
         }, "ssb64-rom-stage").start();
     }
 

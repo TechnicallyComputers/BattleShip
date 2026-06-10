@@ -766,6 +766,13 @@ void PortShutdown(void) {
 			cd->StopAllRumble();
 		}
 	}
+#if defined(__ANDROID__)
+	// Detach the touch-overlay virtual joystick and reset its statics while
+	// SDL is still up. The process survives Activity relaunches on Android,
+	// so stale handles here become use-after-free in the next SDL session.
+	extern void port_touch_overlay_shutdown(void);
+	port_touch_overlay_shutdown();
+#endif
 	sContext.reset();
 	port_log_close();
 }
@@ -864,11 +871,22 @@ int main(int argc, char* argv[]) {
 	//
 	//    Setting the hint here populates SDL2's per-program hint store;
 	//    SDL_GetHint then returns from the local cache without env
-	//    lookup, never re-entering JNI from the coroutine. The value
-	//    matches the typical full-screen mobile area; ImGui only uses
-	//    it as the upper bound for floating-window placement, which is
-	//    inert on a touch-only build (we suppress menu rendering anyway).
-	SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080");
+	//    lookup, never re-entering JNI from the coroutine. Query the real
+	//    display bounds while we're still on the JVM-attached SDL_main
+	//    thread (the hint is unset yet, so this hits the actual display,
+	//    not the hint) — a hardcoded 1080p clamp misplaces floating ImGui
+	//    windows on ultrawide/high-res devices. Fall back to 1080p only
+	//    if the query fails.
+	{
+		char bounds[64] = "0,0,1920,1080";
+		if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+			SDL_Rect r;
+			if (SDL_GetDisplayUsableBounds(0, &r) == 0 && r.w > 0 && r.h > 0) {
+				SDL_snprintf(bounds, sizeof(bounds), "%d,%d,%d,%d", r.x, r.y, r.w, r.h);
+			}
+		}
+		SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, bounds);
+	}
 	// Warm bHasEnvironmentVariables so any other SDL_getenv that we
 	// missed is also cached. The SDL_main thread is JVM-attached at
 	// this point, so the JNI roundtrip succeeds.

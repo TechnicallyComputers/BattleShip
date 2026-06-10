@@ -84,6 +84,31 @@ public final class TouchOverlay {
 
     private TouchOverlay() { /* static */ }
 
+    /* Lifecycle handles for uninstall(). The InputManager service and the
+     * main-looper Handler both hold strong references to what we register
+     * with them — without explicit unregistration the whole overlay View
+     * hierarchy leaks on every Activity recreation, and the menu poller
+     * keeps firing forever. */
+    private static InputManager sInputManager;
+    private static InputManager.InputDeviceListener sDeviceListener;
+    private static Handler sUiHandler;
+    private static Runnable sMenuPoller;
+
+    /** Tear down listeners/pollers registered by install(). Call from the
+     *  Activity's onDestroy. */
+    public static void uninstall() {
+        if (sInputManager != null && sDeviceListener != null) {
+            sInputManager.unregisterInputDeviceListener(sDeviceListener);
+        }
+        sInputManager = null;
+        sDeviceListener = null;
+        if (sUiHandler != null && sMenuPoller != null) {
+            sUiHandler.removeCallbacks(sMenuPoller);
+        }
+        sUiHandler = null;
+        sMenuPoller = null;
+    }
+
     /**
      * Build the overlay and addContentView() it onto the Activity. Must
      * be called AFTER super.onCreate so SDLActivity has already installed
@@ -186,7 +211,7 @@ public final class TouchOverlay {
                                                     View gameplayLayer,
                                                     View menuLayer) {
         final Handler ui = new Handler(Looper.getMainLooper());
-        ui.postDelayed(new Runnable() {
+        Runnable poller = new Runnable() {
             boolean lastVisible = false;
             @Override public void run() {
                 boolean nowVisible;
@@ -214,7 +239,10 @@ public final class TouchOverlay {
                 }
                 ui.postDelayed(this, 100);
             }
-        }, 100);
+        };
+        sUiHandler = ui;
+        sMenuPoller = poller;
+        ui.postDelayed(poller, 100);
     }
 
     /**
@@ -253,11 +281,14 @@ public final class TouchOverlay {
 
         ui.post(refresh);
 
-        im.registerInputDeviceListener(new InputManager.InputDeviceListener() {
+        InputManager.InputDeviceListener listener = new InputManager.InputDeviceListener() {
             @Override public void onInputDeviceAdded(int id)   { Log.i(TAG, "input device added id=" + id);   ui.post(refresh); }
             @Override public void onInputDeviceRemoved(int id) { Log.i(TAG, "input device removed id=" + id); ui.post(refresh); }
             @Override public void onInputDeviceChanged(int id) { Log.i(TAG, "input device changed id=" + id); ui.post(refresh); }
-        }, ui);
+        };
+        sInputManager = im;
+        sDeviceListener = listener;
+        im.registerInputDeviceListener(listener, ui);
     }
 
     private static int countGamepads() {
