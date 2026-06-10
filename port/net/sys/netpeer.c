@@ -275,9 +275,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_LOG_INTERVAL 120
 /*
  * Sim skew pacing (lead cap): suppress full `scVSBattleFuncUpdate` while local tick leads `HighestRemoteTick` by more
- * than this many frames — default when `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS` is unset (see docs/netplay_pacing.md).
+ * than this many frames — default **8** when `SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS` is unset (see docs/netplay_pacing.md).
  */
-#define SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT 4U
+#define SYNETPEER_SKEW_PACING_LEAD_MAX_TICKS_DEFAULT 8U
 /*
  * Optional EWMA of (sim_tick - remote_sim_frontier) after first inbound wire (`hr > 0`): tightens skew pacing by
  * lowering the effective lead cap toward `SSB64_NETPLAY_SKEW_GAP_EWMA_MIN_LEAD_TICKS` (see `syNetPeerShouldHoldSimTickForSkewPacing`).

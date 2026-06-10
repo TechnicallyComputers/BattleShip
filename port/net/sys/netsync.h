@@ -138,7 +138,8 @@ extern void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_
 extern void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
 /*
  * Post-tick snapshot when synctest skips during item throw windows (`fighter_throw` / `item_throw`).
- * Default on during VS when unset; emits `item_throw_window` + `item_hold_coupling` rows and optionally
+ * Default off when unset; set `SSB64_NETPLAY_ITEM_THROW_WINDOW_DIAG=1` to emit `item_throw_window` +
+ * `item_hold_coupling` rows and optionally
  * chains `item_field_diff` / `item_hash_walk` when those envs are enabled.
  */
 extern void syNetSyncLogItemThrowWindowDiag(u32 sim_tick, const char *skip_reason);

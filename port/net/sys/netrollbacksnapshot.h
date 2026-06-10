@@ -208,6 +208,14 @@ extern u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotGetLastLoadSafeTick(void);
 extern void syNetRbSnapshotMarkLoadUnsafe(u32 tick);
+/* TRUE when load_tick (or its first forward-sim tick) matches synctest fragile probe scopes. */
+extern sb32 syNetRbSnapshotIsLoadAnchorFragile(u32 load_tick, const char **reason_out);
+/*
+ * Walk load_tick backward (load-safe, then valid) until non-fragile or max_rewind steps;
+ * marks skipped ticks load-unsafe. Returns FALSE if still fragile at floor.
+ */
+extern sb32 syNetRbSnapshotResolveLoadAnchorAvoidingFragile(u32 *io_load_tick, u32 min_load, u32 max_rewind,
+                                                            const char **reason_out);
 /* Keep validation-boundary snapshot eligible for frame-commit reanchor loads. */
 extern void syNetRbSnapshotPinLoadSafeAtTick(u32 tick);
 /* Monotonic counter bumped by syNetRbSnapResetParticlesForRollback (rollback load particle wipe). */

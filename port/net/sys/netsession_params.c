@@ -485,20 +485,8 @@ void syNetSessionParamsApplyNegotiated(const SYNetSessionParams *params, const c
 	}
 	syNetPeerApplyAutoNegotiatedTransportParams((u32)params->phase_lock_ticks, (u32)params->bundle_redundancy,
 	                                           (u32)params->ingress_extra_pumps, (u32)params->strict_ring_fuzz_ticks);
-	{
-		u32 skew_lead;
-
-		skew_lead = (u32)params->input_delay + 1U;
-		if (skew_lead > (u32)params->phase_lock_ticks)
-		{
-			skew_lead = (u32)params->phase_lock_ticks;
-		}
-		if (skew_lead < 2U)
-		{
-			skew_lead = 2U;
-		}
-		syNetPeerApplyAutoNegotiatedSkewLeadMax(skew_lead);
-	}
+	/* Skew lead cap default 8 (LAN-soak sweet spot); override with SSB64_NETPLAY_SKEW_LEAD_MAX_TICKS on both peers. */
+	syNetPeerApplyAutoNegotiatedSkewLeadMax(8U);
 	syNetRollbackApplySessionNegotiated(params);
 	port_log(
 	    "SSB64 NetSession: apply tag=%s tier=%s rtt_ms=%u fc_validation_ticks=%u D=%u phase_lock=%u redundancy=%u "
