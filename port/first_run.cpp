@@ -105,6 +105,8 @@ ExtractionResult BuildFailure(const std::string& error, const std::string& logPa
 }
 
 std::string QuoteCommandArg(const std::string& arg) {
+#ifdef _WIN32
+    /* CreateProcessA argv parsing: double quotes, escape embedded quotes. */
     std::string quoted = "\"";
     for (char c : arg) {
         if (c == '"') {
@@ -115,6 +117,20 @@ std::string QuoteCommandArg(const std::string& arg) {
     }
     quoted += "\"";
     return quoted;
+#else
+    /* POSIX sh: single-quote — double quotes would still expand `$`,
+     * backticks, and backslashes in paths fed to std::system(). */
+    std::string quoted = "'";
+    for (char c : arg) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+#endif
 }
 
 std::string ResolveLogPath(const std::string& preferredLogPath, const std::string& sourceDir,

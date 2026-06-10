@@ -12,6 +12,7 @@
 #include <thread>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ucontext.h>
@@ -197,6 +198,18 @@ void WriteCrashRegs(const CrashRegs &r) {
  *
  * Sanity checks bail out if the chain looks corrupt — no heap, no libc
  * beyond what backtrace_symbols_fd uses. */
+/* Probe that [addr, addr+len) is readable without risking a nested fault:
+ * write(2) to /dev/null returns EFAULT instead of crashing when the source
+ * buffer is unmapped. open/write/close are all async-signal-safe. Returns
+ * false if the probe fd can't be opened (treat as unreadable — the FP walk
+ * falls back to backtrace()). */
+bool ProbeReadable(uintptr_t addr, size_t len) {
+    static int fd = -2; /* -2 = not yet opened */
+    if (fd == -2) fd = open("/dev/null", O_WRONLY);
+    if (fd < 0) return false;
+    return write(fd, reinterpret_cast<const void *>(addr), len) == (ssize_t)len;
+}
+
 int WalkFPChain(const CrashRegs &r, void **frames, int max_frames) {
     if (!r.valid || max_frames <= 0) return 0;
     int n = 0;
@@ -206,8 +219,12 @@ int WalkFPChain(const CrashRegs &r, void **frames, int max_frames) {
 #endif
     uintptr_t fp = r.fp;
     while (n < max_frames && fp != 0) {
-        /* Basic sanity: FP must be aligned and not absurdly small. */
+        /* Basic sanity: FP must be aligned, not absurdly small, and the
+         * two-slot frame record must actually be mapped — a corrupt chain
+         * would otherwise re-fault inside the crash handler (signal is
+         * blocked here, so the kernel would kill us with no log output). */
         if (fp < 0x1000 || (fp & 0x7) != 0) break;
+        if (!ProbeReadable(fp, 2 * sizeof(uintptr_t))) break;
         auto *fp_ptr = reinterpret_cast<uintptr_t *>(fp);
         uintptr_t saved_fp = fp_ptr[0];
         uintptr_t saved_ret = fp_ptr[1];
