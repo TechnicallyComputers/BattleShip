@@ -356,6 +356,12 @@ public:
         const u8* r = ctl + off;
         s32 order = readBE32s(r + 0);
         s32 npred = readBE32s(r + 4);
+        // Legal N64 ADPCM books are order 2, npredictors ≤ 8. Reject corrupt
+        // CTL fields before the multiply can overflow and under-allocate.
+        if (order <= 0 || order > 8 || npred <= 0 || npred > 8) {
+            spdlog::error("audio_bridge: parseBook(0x{:x}) bad order={} npred={}", off, order, npred);
+            return nullptr;
+        }
         s32 bookLen = order * npred * 16; // 8 entries per predictor-order pair, each s16
         size_t totalSize = 8 + bookLen * (s32)sizeof(s16); // 8 for order+npred header
         auto* b = (ALADPCMBook*)alHeapAlloc(heap, 1, (s32)totalSize);
@@ -611,8 +617,12 @@ extern "C" void portAudioLoadAssets(void)
             maxSeqLen = sSYAudioSeqFile->seqArray[i].len;
         }
     }
-    // Allocate BGM sequence data buffers (1 per BGMPLAYER)
-    sSYAudioBGMSequenceDatas[0] = (u8*)alHeapAlloc(&sSYAudioHeap, 1, maxSeqLen);
+    // Allocate BGM sequence data buffers (one per BGM player — mirrors
+    // SYAUDIO_BGMPLAYERS_NUM in decomp sys/audio.h, currently 1; keep the
+    // loop bound in sync if that constant ever grows).
+    for (int i = 0; i < 1 /* SYAUDIO_BGMPLAYERS_NUM */; i++) {
+        sSYAudioBGMSequenceDatas[i] = (u8*)alHeapAlloc(&sSYAudioHeap, 1, maxSeqLen);
+    }
 
     // Allocate Acmd list double buffers
     sSYAudioAcmdListBuffers[0] = alHeapAlloc(&sSYAudioHeap, 1, 0x8000);
