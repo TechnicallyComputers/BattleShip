@@ -115,3 +115,4 @@ test.zip
 *.log
 .cursor/debug-3b7f79.log
 /.cursor
+.cursor/debug-3b7f79.log
