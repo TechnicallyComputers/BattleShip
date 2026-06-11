@@ -9832,12 +9832,13 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	}
 	sSYNetPeerPacketsSent++;
 	port_log(
-	    "SSB64 NetPeer: RESIM_BASELINE_SEND load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X bytes=%u\n",
+	    "SSB64 NetPeer: RESIM_BASELINE_SEND load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X map=0x%08X bytes=%u\n",
 	    load_tick,
 	    figh,
 	    world,
 	    item,
 	    rng,
+	    map,
 	    (unsigned int)sizeof(buf));
 	syNetRollbackNotePeerBaselineDigestSent();
 }
@@ -10073,12 +10074,13 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 	}
 	sSYNetPeerPacketsReceived++;
 	port_log(
-	    "SSB64 NetPeer: RESIM_BASELINE_RECV load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X fighter_slots=%d\n",
+	    "SSB64 NetPeer: RESIM_BASELINE_RECV load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X map=0x%08X fighter_slots=%d\n",
 	    load_tick,
 	    figh,
 	    world,
 	    item,
 	    rng,
+	    map,
 	    (has_fighter_slots != FALSE) ? 1 : 0);
 	syNetRollbackOnPeerBaselineDigest(load_tick, figh, world, item, rng, anim, weapon, map, camera, effect,
 					  has_effect_hash,

@@ -44,6 +44,8 @@ extern void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick);
 extern void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_tick);
 /* Hash-safe Appear cosmetic refresh after replay gate verify (entry yaw + live modelpart DLs). */
 extern void syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(u32 load_tick);
+/* Intro resim burst: cosmetic camera + figatree refresh after each forward-resim tick (no sim revert). */
+extern void syNetRbSnapshotRefreshIntroPresentationAfterForwardResimTick(u32 load_tick);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
@@ -223,6 +225,7 @@ extern void syNetRbSnapshotLogMapHashSaveSelfTest(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashFighter(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashFighterLight(u32 tick);
 #if defined(SSB64_NETMENU)
+extern void syNetRbSnapshotCollectFighterSlotHashesAtTick(u32 tick, u32 *out_slot_hash);
 extern u32 syNetRbSnapshotHashFightersLightFromLive(void);
 #endif
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);

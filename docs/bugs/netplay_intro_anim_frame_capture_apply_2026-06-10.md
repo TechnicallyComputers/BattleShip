@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`  
-**Status:** Phase 38 (save/load spawn_lr symmetry — normalize overlay at capture, drop apply-only TopNYaw) — soak pending
+**Status:** Phase 39 (capture modelpart cursor hygiene + post-scrub spawn_lr re-normalize) — soak pending
 
 ## Symptoms
 
@@ -395,6 +395,15 @@ P37 soak: `entry_lr` repair worked but load verify failed every tick (239→223)
 | `syNetRbSnapRepairFighterEntryLrInOverlay()` | Apply path calls same normalize on live overlay after `status_vars` memcpy |
 | Remove `RestoreFighterTopNYawFromLr` from post-canonicalize | Sim fold round-trip: joint/gobj TRS strictly from blob bytes |
 | `RestoreFighterPostCanonicalizeFromBlob` | Joint pose + gobj transform + entry_pos + anim scalars only |
+
+## Correction (Phase 39 — 2026-06-10): capture modelpart hygiene + post-scrub spawn_lr
+
+P38 soak: sim load/gate/resim pass; post_cosmetic still shows `blob_mp=0` on hidden-root joints with `parts=(nil)` (Yoshi j7/j12/j30–36, Kirby j9/j31–36). Ring saved cursors the load/cosmetic path cannot push DLs onto.
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapPruneUnmaterializableModelpartCursorsInBlob()` | At capture (intro/Appear scope): clear blob cursors when `joint_is_valid==FALSE`, joint NULL, or no FTParts — mirror of load-time prune |
+| `syNetRbSnapReNormalizeSpawnLrInBlobOverlay()` | Re-apply `entry.lr` from `spawn_lr` sidecar after scrub/quantize at end of capture |
 
 ## Diagnostic (Phase 25 — 2026-06-10): intro anchor +1 sim trail
 
