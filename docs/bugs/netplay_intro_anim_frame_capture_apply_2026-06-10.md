@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`  
-**Status:** Phase 14 (post-figatree AObj re-pin + pre-sanity tail) — soak pending (`INJECT_TICK=240`, `RESIM_ANCHOR_PROBE=1`)
+**Status:** Phase 24 (restore probe canonicalize; keep synctest isolation) — soak pending (`INJECT_TICK=240`, `RESIM_ANCHOR_PROBE=1`)
 
 ## Symptoms
 
@@ -216,6 +216,52 @@ Phase 21 soak1: cross-ISA parity restored but walkback still aborted @223. P1 Yo
 |--------|---------|
 | `syNetRbSnapAnchorProbeSimPrepFromSlot` | Prep **all valid fighters** when global intro scope active; entry_pos only for Entry/Appear peers |
 | `syNetRbSnapshotRebindFighterMPCollForAnchorProbe` | Belt-and-suspenders GObj-root `p_translate` rebind immediately before probe +1 sim |
+
+## Correction (Phase 23 — 2026-06-10): anchor-probe sim isolation + light-hash step oracle
+
+Post-Phase-22 soak1 (post-`HashFightersLightFromLive`): `postload_*_fail=0` @239, but `step_figh_fail=1` @240 on every walkback step when Kirby is in AppearL (251/226). Layer-2 lead deltas: `fold_topn_ty`, `fold_coll_pos_diff_y`, `fold_p_translate_y` (live `p_translate` dereferenced TopN Y, not gobj root), then joint TRS cascade. P1 Yoshi `light_ok=1` on probes 240–225. Episode with Kirby AppearR (250/225) cleared first probe (`step_figh_fail=0`).
+
+Root causes:
+
+| Path | Issue |
+|------|--------|
+| Intro anchor `step_figh` compare | Used `syNetSyncHashBattleFighters()` (legacy short fold) vs ring `fhash_light` — per-player `light_ok=1` while aggregate `step_figh_fail=1` |
+| `syNetRollbackAfterBattleUpdate` during probe +1 sim | End-of-tick canonicalize + synctest verify-load ran inside `scVSBattleFuncUpdateBattleSimOnly`; synctest `RestoreLiveEmergency` → `RebindAllFighterMPCollPointers` (TopN) polluted live MPColl pointer before step hash |
+| `syNetRbSnapAnchorProbeSimPrepFromSlot` | Hard pin restored TopN MPColl then Gobj override; reapply canonicalize re-quantized Appear AObj immediately before +1 sim |
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapshotHashFightersLightFromLive()` | Live-side `fhash_light` merge matching `GetSlotHashFighterLight` recipe |
+| Anchor probe `step_figh` compare | Pair `GetSlotHashFighterLight` with `HashFightersLightFromLive()` |
+| `syNetRollbackAfterBattleUpdate` | Skip canonicalize + synctest while `ResimAnchorProbeActive` |
+| `syNetRbSnapshotRebindFighterMPCollForAnchorProbe` | Rebind GObj-root `p_translate` after +1 sim, before step hash collect |
+| `syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(..., anchor_probe_mpcoll)` | Anchor prep hard pin uses GObj MPColl only (no TopN restore) |
+| `syNetRbSnapReapplyFighterJointAnimFromBlobEx(..., skip_canonicalize)` | Anchor prep skips canonicalize between blob apply and hard pin |
+
+## Correction (Phase 24 — 2026-06-10): restore probe canonicalize; narrow Phase 23 skip
+
+Phase 23 soak1: synctest isolation held (`SAVE_SKIPPED`, no `SYNCTEST_*`); `postload_*_fail=0` @239; Kirby AppearR (250/225) still `step_figh_fail=1` @240 with `fold_topn_ty` / `fold_coll_pos_diff_y` cascade. **Regression:** `step_anim_fail=1` on **every** probe step (was `0` pre-Phase-23) — Wait peer `j0_anim_frame` 44.0 vs 45.0 (`0x42300000` vs `0x42340000`) after skipping end-of-tick canonicalize and anchor-prep reapply canonicalize.
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRollbackAfterBattleUpdate` | Restore end-of-tick canonicalize during `ResimAnchorProbeActive` (synctest skip unchanged) |
+| `syNetRbSnapAnchorProbeSimPrepFromSlot` | Restore normal `ReapplyFighterJointAnimFromBlob` (canonicalize + post-canonicalize re-pin) |
+
+**Retained from Phase 23:** `HashFightersLightFromLive` step oracle, synctest skip during probe, pre/post-sim GObj MPColl rebind, anchor-prep GObj hard-pin MPColl.
+
+**Still open:** Kirby Appear +1 sim TopN/`pos_diff` drift (real forward-sim divergence, not load fidelity).
+
+**Phase 24 implemented** (`port/net/sys/netrollback.c`, `port/net/sys/netrollbacksnapshot.c`):
+
+- End-of-tick canonicalize runs during `ResimAnchorProbeActive` (no Phase-23 skip guard on `syNetplayCanonicalizeActiveFightersForNetplay`).
+- `syNetRbSnapAnchorProbeSimPrepFromSlot` calls normal `syNetRbSnapReapplyFighterJointAnimFromBlob` (`skip_canonicalize=FALSE`).
+- Phase 23 retained: `syNetRbSnapshotHashFightersLightFromLive` step oracle, synctest skip during probe, pre/post-sim `syNetRbSnapshotRebindFighterMPCollForAnchorProbe`, `HardPinEx(..., anchor_probe_mpcoll=TRUE)`.
+
+**soak1 cross-ISA validation (2026-06-10):** `step_anim_fail=0` on all anchor-probe walkback steps (Phase-23 regression cleared). `step_figh_fail=1` remains on Kirby AppearL (251/226) with `fold_topn_ty` / `fold_coll_pos_diff_y` / joint TRS cascade — still open per above.
+
+## Diagnostic (Phase 25 — 2026-06-10): intro anchor +1 sim trail
+
+`SSB64_NETPLAY_INTRO_ANCHOR_SIM_TRAIL=1` with `RESIM_ANCHOR_PROBE=1` logs `intro_anchor_sim_trail` per fighter immediately before/after probe +1 sim (`phase=pre` vs ring@`load_tick`, `phase=post` vs ring@`probe_tick`): `entry_pos_y`, TransN/TopN/gobj Y, `p_translate` target (`ptr_gobj`/`ptr_topn`), `pos_diff_y`, `pos_prev_y`, `status_total_tics`, j0/TransN `anim_frame`.
 
 ## Test plan
 
