@@ -45,7 +45,12 @@ extern void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_ti
 /* Hash-safe Appear cosmetic refresh after replay gate verify (entry yaw + live modelpart DLs). */
 extern void syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(u32 load_tick);
 /* Intro resim burst: cosmetic camera + figatree refresh after each forward-resim tick (no sim revert). */
-extern void syNetRbSnapshotRefreshIntroPresentationAfterForwardResimTick(u32 load_tick);
+extern void syNetRbSnapshotRefreshIntroPresentationAfterForwardResimTick(u32 presentation_tick);
+/* Seal-wait / preemptive cap: cosmetic Appear + camera refresh while interface gcRunAll is deferred. */
+extern void syNetRbSnapshotRefreshIntroPresentationForDeferWait(u32 presentation_tick);
+extern void syNetRbSnapshotRefreshDeferredIntroPresentation(u32 sim_tick, u32 anchor_tick);
+/* Intro Wait forward sim: live figatree + camera integrate after gcRunAll (no slot camera re-pin). */
+extern void syNetRbSnapshotRefreshLiveIntroPresentationAfterInterface(void);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
@@ -139,7 +144,9 @@ extern void syNetRbSnapshotLogFighterBlobStatusTrail(const char *tag, u32 tick, 
 extern void syNetRbSnapshotLogRingBlobStatusTrailAtTick(const char *tag, u32 tick);
 /* FALSE when any live fighter fails attr/data/proc sanity (load verify / post-restore guard). */
 extern sb32 syNetRbSnapshotVerifyLiveFightersSanity(u32 tick, const char *tag);
-/* TRUE when any live fighter is in Entry or Kirby/Yoshi Appear (intro load-fidelity scope). */
+/* TRUE for playable AppearR/L (and Captain/Ness/Boss Appear chains) via dFTCommonEntryAppearStatusIDs. */
+extern sb32 syNetRbSnapshotStatusInAppearPresentationScope(s32 fkind, s32 status_id);
+/* TRUE when any live fighter is in Entry or Appear intro load-fidelity scope. */
 extern sb32 syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope(void);
 /* FALSE when Appear-scope fighters have null TopN or active modelpart joints without FTParts. */
 extern sb32 syNetRbSnapshotVerifyAppearPresentationIntegrity(u32 tick);

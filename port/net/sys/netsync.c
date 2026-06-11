@@ -58,6 +58,20 @@ static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
 static sb32 sSYNetSyncItemHashTruncationLogged = FALSE;
 static sb32 sSYNetSyncTimeUpTriggered = FALSE;
 static sb32 sSYNetSyncBattleGoPending = FALSE;
+static sb32 sSYNetSyncBattleGoLogCache = -999;
+
+static sb32 syNetSyncBattleGoLogEnabled(void)
+{
+	const char *e;
+
+	if (sSYNetSyncBattleGoLogCache != -999)
+	{
+		return (sSYNetSyncBattleGoLogCache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_BATTLE_GO_LOG");
+	sSYNetSyncBattleGoLogCache = ((e != NULL) && (e[0] == '1')) ? 1 : 0;
+	return (sSYNetSyncBattleGoLogCache != 0) ? TRUE : FALSE;
+}
 
 #endif
 
@@ -703,6 +717,11 @@ void syNetSyncOnNetplayBattleGo(void)
 	{
 		return;
 	}
+	/* Latch battle clock anchor once — not every live tick while status stays Go. */
+	if (sSYNetSyncBattleGoSimTick != ~(u32)0)
+	{
+		return;
+	}
 	/*
 	 * Defer anchor to reconcile-time so we bind GO to the first accepted live sim step
 	 * (never to a pre-GO / load / staging tick).
@@ -710,6 +729,58 @@ void syNetSyncOnNetplayBattleGo(void)
 	sSYNetSyncBattleGoPending = TRUE;
 	sSYNetSyncItemHashTruncationLogged = FALSE;
 	sSYNetSyncTimeUpTriggered = FALSE;
+}
+
+void syNetSyncLogNetplayBattleGoApply(u32 sim_tick)
+{
+	if (syNetSyncBattleGoLogEnabled() == FALSE)
+	{
+		return;
+	}
+	syNetSyncLogRollbackWorldDetail("battle_go_apply", sim_tick);
+	if (syNetSyncPeerDivergeDetailEnabled() != FALSE)
+	{
+		syNetSyncLogFighterDetail("battle_go_apply", sim_tick);
+	}
+	{
+		GObj *fighter_gobj;
+		s32 logged;
+
+		logged = 0;
+		for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+		     fighter_gobj = fighter_gobj->link_next)
+		{
+			FTStruct *fp;
+			u32 fhash_light;
+
+			fp = ftGetStruct(fighter_gobj);
+			if (fp == NULL)
+			{
+				continue;
+			}
+			fhash_light = syNetSyncHashFighterStructLight(fp);
+			port_log(
+			    "SSB64 NetSync: battle_go_fighter_slot tick=%u player=%d fkind=%d status=%d motion=%d fhash_light=0x%08X camera_mode=%d\n",
+			    sim_tick,
+			    (int)fp->player,
+			    (int)fp->fkind,
+			    (int)fp->status_id,
+			    (int)fp->motion_id,
+			    fhash_light,
+			    (unsigned int)fp->camera_mode);
+			logged++;
+		}
+		if (logged == 0)
+		{
+			port_log("SSB64 NetSync: battle_go_fighter_slot tick=%u (no fighters)\n", sim_tick);
+		}
+	}
+	port_log(
+	    "SSB64 NetSync: battle_go_apply sim_tick=%u latch_tick=%u defer_resim_wait=%d resim=%d\n",
+	    sim_tick,
+	    sSYNetSyncBattleGoSimTick,
+	    (int)syNetRollbackShouldDeferInterfaceDuringResimWait(),
+	    (int)syNetRollbackIsResimulating());
 }
 
 static void syNetSyncReconcileBattleTimePassedCore(u32 sim_tick)

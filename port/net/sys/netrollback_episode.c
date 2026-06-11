@@ -1324,6 +1324,111 @@ sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void)
 #endif
 }
 
+sb32 syNetRollbackEpisodeTrySelfSealMissingPeerRows(void)
+{
+#ifdef PORT
+	s32 slots[MAXCONTROLLERS];
+	s32 count;
+	s32 i;
+	u32 span;
+	u32 j;
+
+	if ((syNetRollbackEpisodeSealRowsExchangeEnabled() == FALSE) ||
+	    (syNetRollbackEpisodeInputsSealed() == FALSE))
+	{
+		return FALSE;
+	}
+	span = syNetRollbackEpisodeSealSpan();
+	if ((span == 0U) || (span > SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackEpisodeEnumerateRequiredPeerSealSlots(slots, MAXCONTROLLERS, &count) == FALSE)
+	{
+		return TRUE;
+	}
+	/*
+	 * Validate first: every missing row of every incomplete slot must resolve from
+	 * wire-CONFIRMED remote input history (never hold-last or predicted). Confirmed wire
+	 * frames are byte-identical to what the remote authority would seal for itself, so
+	 * self-sealing them is sound; anything weaker would fork the replay from the peer.
+	 */
+	for (i = 0; i < count; i++)
+	{
+		s32 player;
+
+		player = slots[i];
+		if (syNetRollbackEpisodePeerSealRowsComplete(player) != FALSE)
+		{
+			continue;
+		}
+		for (j = 0; j < span; j++)
+		{
+			SYNetInputFrame frame;
+
+			if (sSYNetRollbackEpisodeFsm.sealed_valid[j][player] != FALSE)
+			{
+				continue;
+			}
+			if (syNetInputGetRemoteHistoryFrame(player, sSYNetRollbackEpisodeFsm.mismatch_tick + j,
+							    &frame) == FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_SEAL_ROWS_SELF_SEAL_SKIP slot=%d row=%u tick=%u reason=not_wire_confirmed\n",
+				    (int)player,
+				    j,
+				    sSYNetRollbackEpisodeFsm.mismatch_tick + j);
+				return FALSE;
+			}
+		}
+	}
+	for (i = 0; i < count; i++)
+	{
+		s32 player;
+		u32 filled;
+
+		player = slots[i];
+		if (syNetRollbackEpisodePeerSealRowsComplete(player) != FALSE)
+		{
+			continue;
+		}
+		filled = 0U;
+		for (j = 0; j < span; j++)
+		{
+			SYNetInputFrame frame;
+			u32 t;
+
+			t = sSYNetRollbackEpisodeFsm.mismatch_tick + j;
+			if (sSYNetRollbackEpisodeFsm.sealed_valid[j][player] == FALSE)
+			{
+				if (syNetInputGetRemoteHistoryFrame(player, t, &frame) == FALSE)
+				{
+					return FALSE;
+				}
+				syNetRollbackEpisodeNormalizeSealedFrameTick(&frame, t);
+				frame.source = nSYNetInputSourceRemoteConfirmed;
+				frame.is_predicted = FALSE;
+				frame.is_valid = TRUE;
+				sSYNetRollbackEpisodeFsm.sealed[j][player] = frame;
+				sSYNetRollbackEpisodeFsm.sealed_valid[j][player] = TRUE;
+				filled++;
+			}
+			syNetRollbackEpisodeMarkPeerSealTick(player, j);
+		}
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_SELF_SEAL slot=%d filled=%u span=%u slot_span_digest=0x%08X\n",
+		    (int)player,
+		    filled,
+		    span,
+		    syNetRollbackEpisodeComputeSlotSpanInputDigest(player, sSYNetRollbackEpisodeFsm.mismatch_tick,
+								   sSYNetRollbackEpisodeFsm.target_tick));
+	}
+	return syNetRollbackEpisodeAllPeerSealRowsComplete();
+#else
+	return FALSE;
+#endif
+}
+
 sb32 syNetRollbackEpisodeLocalSealRowsSendComplete(void)
 {
 #ifdef PORT
