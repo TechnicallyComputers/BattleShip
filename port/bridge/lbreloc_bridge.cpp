@@ -496,18 +496,46 @@ void lbRelocAddForceStatusBufferFile(u32 id, void *addr)
 // // // // // // // // // // // //
 
 /**
- * Load a file from the .o2r archive, copy into ram_dst, and perform
- * token-based internal + external pointer relocation.
+ * Copy `src_bytes` into `ram_dst` and perform the full reloc-fixup
+ * pipeline against it: cache evictions, byte-swap, status-buffer
+ * registration, internal/external pointer chain walks (token-based),
+ * figatree-specific cleanup, audit emission.
  *
- * Instead of writing 64-bit void* into 4-byte slots (which would corrupt
- * adjacent data), we register each target pointer in the token table and
- * write the 32-bit token into the slot.
+ * Exposed for mod-loader use: a mod that ships its own reloc-format
+ * file bytes (e.g., new-character assets bundled inside a TCC mod)
+ * calls this directly instead of routing through portLoadRelocResource,
+ * which only sees files inside BattleShip.o2r. Mod file_ids may sit
+ * outside the vanilla 0..RELOC_FILE_COUNT-1 range; we gate operations
+ * that need a valid gRelocFileTable[] entry on the usual bounds check.
+ *
+ * Token-based relocation: instead of writing 64-bit void* into 4-byte
+ * slots (which would corrupt adjacent data on LP64), each target
+ * pointer is registered in the token table and the 32-bit token is
+ * written into the 4-byte slot.
  */
-void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
+extern "C" void portRelocLoadFileFromBytes(
+	unsigned int    file_id,
+	void           *ram_dst,
+	unsigned int    bytes_num,
+	int             loc,
+	const void     *src_bytes,
+	unsigned int    src_size,
+	unsigned short  reloc_intern_offset,
+	unsigned short  reloc_extern_offset,
+	const unsigned short *extern_file_ids,
+	unsigned int    extern_count,
+	int             force_figatree_fixup)
 {
-	auto relocFile = portLoadRelocResource(file_id);
-	bool is_fighter_figatree = portRelocIsFighterFigatreeFile(file_id);
+	/* portRelocIsFighterFigatreeFile looks up gRelocFileTable[file_id]
+	 * to match the "reloc_animations/" path prefix. Mod-registered file
+	 * IDs sit outside the vanilla table range so the path lookup fails
+	 * and the halfswap step is skipped, leaving anim-joint tokens in
+	 * chain-entry form. The mod can override via force_figatree_fixup
+	 * for its own animation files. */
+	bool is_fighter_figatree =
+		force_figatree_fixup || portRelocIsFighterFigatreeFile(file_id);
 	std::vector<uint8_t> figatree_reloc_words;
+	const char *table_path = (file_id < RELOC_FILE_COUNT) ? gRelocFileTable[file_id] : nullptr;
 
 	// Gated: SSB64_LOG_LBRELOC_LOAD=1 logs every file load. Helpful when
 	// tracing which reloc files are loaded per scene.
@@ -517,19 +545,19 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 			s_load_log_count++;
 			port_log("SSB64: lbReloc LOAD file_id=%u loc=%d path=%s fig=%d\n",
 				file_id, loc,
-				(file_id < RELOC_FILE_COUNT && gRelocFileTable[file_id]) ? gRelocFileTable[file_id] : "(null)",
+				table_path ? table_path : "(null)",
 				(int)is_fighter_figatree);
 		}
 	}
 
-	if (!relocFile)
+	if (src_bytes == nullptr || src_size == 0)
 	{
-		spdlog::error("lbReloc bridge: cannot load file_id {} — halting", file_id);
+		spdlog::error("portRelocLoadFileFromBytes: NULL/empty src for file_id {}", file_id);
 		return;
 	}
 
 	// Copy decompressed data into the game's heap allocation
-	size_t copySize = relocFile->Data.size();
+	size_t copySize = src_size;
 	if (copySize > bytes_num && bytes_num > 0)
 	{
 		spdlog::warn("lbReloc bridge: file_id {} data ({} bytes) exceeds "
@@ -564,7 +592,24 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 	extern void portPackedDisplayListCacheDeleteRange(const void *base, size_t size);
 	portPackedDisplayListCacheDeleteRange(ram_dst, copySize);
 	portRelocEvictFileRangesInRange(ram_dst, copySize);
-	memcpy(ram_dst, relocFile->Data.data(), copySize);
+	memcpy(ram_dst, src_bytes, copySize);
+
+	/* lbRelocGetExternHeapFile sets sLBRelocExternFileHeap = heap so that
+	 * subsequent dep loads (triggered by the chain walk via
+	 * lbRelocGetExternBufferFile) bump-allocate sequentially past this
+	 * file's buffer. Mod-loaded files bypass that entry point entirely,
+	 * leaving the bump pointer at whatever the last vanilla load left it
+	 * at -- often pointing *into* the buffer we just memcpy'd. When a
+	 * cache-miss dep load fires inside the chain walk it then writes its
+	 * bytes through this file's region, corrupting slots before the walk
+	 * has a chance to tokenize them. Mirror the vanilla setup by
+	 * advancing the bump pointer past this file's end so dep allocations
+	 * land in clean memory. Done for Extern and Force; Default uses the
+	 * intern-buffer bump heap which mod paths never enter. */
+	if (loc == nLBFileLocationExtern || loc == nLBFileLocationForce) {
+		sLBRelocExternFileHeap = (void *)LBRELOC_CACHE_ALIGN(
+			(uintptr_t)ram_dst + copySize);
+	}
 
 	// One-shot raw dump for verification against ROM extraction.
 	// Set SSB64_DUMP_FILE_ID env var to a file_id; this writes the post-memcpy,
@@ -592,7 +637,7 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 				fwrite(ram_dst, 1, copySize, df);
 				fclose(df);
 				spdlog::info("[port-dump] wrote {} bytes for file_id={} ({}) to {}",
-				             copySize, file_id, gRelocFileTable[file_id], path);
+				             copySize, file_id, table_path ? table_path : "(mod)", path);
 			}
 		}
 	}
@@ -612,14 +657,12 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 		lbRelocAddStatusBufferFile(file_id, ram_dst);
 	}
 
-	sPortRelocFileRanges.push_back({ reinterpret_cast<uintptr_t>(ram_dst), copySize, file_id, gRelocFileTable[file_id] });
+	sPortRelocFileRanges.push_back({ reinterpret_cast<uintptr_t>(ram_dst), copySize, file_id, table_path });
 
 	/* Mirror this range into the DL-range registry so gfx_step's bounds
 	 * check accepts DLs resolved through reloc files. Path string from
 	 * gRelocFileTable is static (linker-emitted), safe to retain. */
-	port_dl_range_register(ram_dst, copySize,
-	                       (file_id < RELOC_FILE_COUNT && gRelocFileTable[file_id])
-	                       ? gRelocFileTable[file_id] : "reloc?");
+	port_dl_range_register(ram_dst, copySize, table_path ? table_path : "reloc?");
 
 	// --- Internal pointer relocation (token-based) ---
 	//
@@ -631,7 +674,7 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 	// In the port, we compute the pointer, register it as a token, and
 	// write the 32-bit token into the 4-byte word.
 
-	u16 reloc_intern = relocFile->RelocInternOffset;
+	u16 reloc_intern = reloc_intern_offset;
 
 	while (reloc_intern != 0xFFFF)
 	{
@@ -685,7 +728,7 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 	// The extern file IDs come from the RelocFile metadata (extracted
 	// by Torch at ROM-extraction time), not from ROM DMA.
 
-	u16 reloc_extern = relocFile->RelocExternOffset;
+	u16 reloc_extern = reloc_extern_offset;
 	u32 extern_idx = 0;
 
 	while (reloc_extern != 0xFFFF)
@@ -695,15 +738,15 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 		u16 next_reloc = (u16)(*slot >> 16);
 		u16 words_num  = (u16)(*slot & 0xFFFF);
 
-		if (extern_idx >= relocFile->ExternFileIds.size())
+		if (extern_idx >= extern_count)
 		{
 			spdlog::error("lbReloc bridge: file_id {} extern reloc overrun "
 			              "(idx={}, count={})", file_id, extern_idx,
-			              relocFile->ExternFileIds.size());
+			              extern_count);
 			break;
 		}
 
-		u16 dep_file_id = relocFile->ExternFileIds[extern_idx];
+		u16 dep_file_id = extern_file_ids[extern_idx];
 		void *vaddr_extern;
 
 		// Check if dependency is already loaded
@@ -759,10 +802,135 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 	{
 		extern void portStageAuditEmitLoadSummary(unsigned int file_id, const char *path, size_t size);
 		extern void portStageAuditEmitOpcodeCensus(unsigned int file_id, const char *path, const void *data, size_t size);
-		const char *audit_path = (file_id < RELOC_FILE_COUNT) ? gRelocFileTable[file_id] : nullptr;
-		portStageAuditEmitLoadSummary(file_id, audit_path, copySize);
-		portStageAuditEmitOpcodeCensus(file_id, audit_path, ram_dst, copySize);
+		portStageAuditEmitLoadSummary(file_id, table_path, copySize);
+		portStageAuditEmitOpcodeCensus(file_id, table_path, ram_dst, copySize);
 	}
+}
+
+/**
+ * Mod-private variant of portRelocLoadFileFromBytes: copies src_bytes
+ * into a mod-owned buffer, byte-swaps to native endian, and walks the
+ * intern reloc chain to register pointer tokens. Skips status-buffer
+ * registration, extern chain walks, cache evictions, and audit emission
+ * because the caller's buffer isn't shared with the engine's per-scene
+ * heap (so engine cache invariants don't apply, and consuming a slot in
+ * the per-scene status buffer would steal it from the engine's own
+ * file loads). Used by mods (via ce_load_reloc_blob) to host long-lived
+ * reloc files (e.g., SR-extended menu sprite blobs) that need to flow
+ * through the engine's reloc pipeline so internal pointer tokens
+ * resolve, but don't belong in the engine's per-scene file table.
+ *
+ * Re-entrant safety: callable from inside lbRelocInitSetup's tail (e.g.,
+ * via the CharacterEngine post-reset callback) because nothing here
+ * touches lbRelocInternBuffer or other per-scene engine state.
+ */
+extern "C" void portRelocLoadFileFromBytesPrivate(
+	void           *ram_dst,
+	unsigned int    dst_size,
+	const void     *src_bytes,
+	unsigned int    src_size,
+	unsigned short  reloc_intern_offset)
+{
+	if (src_bytes == nullptr || src_size == 0 || ram_dst == nullptr) {
+		return;
+	}
+
+	size_t copySize = src_size;
+	if (copySize > dst_size && dst_size > 0) {
+		spdlog::warn("portRelocLoadFileFromBytesPrivate: src ({} bytes) > dst ({} bytes), truncating",
+		             copySize, dst_size);
+		copySize = dst_size;
+	}
+
+	// Invalidate any prior fixup state / cached uploads that still reference
+	// the buffer we're about to overwrite. Each call must redo
+	// portFixupSprite / portFixupBitmapArray / portFixupSpriteBitmapData on
+	// the freshly-loaded data; without these evictions the fixup tracker
+	// thinks "already done" and skips the BE-restore + TMEM swizzle, leaving
+	// the texel data in the wrong byte order for the RDP.
+	portEvictStructFixupsInRange(ram_dst, copySize);
+	extern void portTextureCacheDeleteRange(const void *base, size_t size);
+	portTextureCacheDeleteRange(ram_dst, copySize);
+	extern void portPackedDisplayListCacheDeleteRange(const void *base, size_t size);
+	portPackedDisplayListCacheDeleteRange(ram_dst, copySize);
+
+	memcpy(ram_dst, src_bytes, copySize);
+
+	// Byte-swap from N64 BE to native LE; same call portRelocLoadFileFromBytes
+	// makes inside its public path. file_id is unused by the swap logic for
+	// non-figatree files but the API requires a value; pass 0 since this is
+	// a mod-private buffer that has no engine file_id.
+	portRelocByteSwapBlob(ram_dst, copySize, /* file_id = */ 0u);
+
+	// Register the buffer's address range so portRelocFindContainingFile can
+	// see it. Display lists inside a reloc file encode their vertex / matrix /
+	// sub-DL pointers as segment-0x0E offsets (0x0E0xxxxx). Those only get
+	// rewritten to fileBase+offset by portNormalizeDisplayListPointer, which
+	// bails immediately unless the DL pointer resolves to a registered range.
+	// The public loader pushes the range above; the private path used
+	// to skip it, so a mod-private DL (e.g. KirbyHatEngine's 0xA8D custom-hat
+	// models) was never widened — the interpreter read the packed 8-byte
+	// commands as native 16-byte and fed the raw 0x0Exxxxxx vertex pointer to
+	// GfxSpVertex, AV'ing on a garbage host address. Re-loads reuse the same
+	// buffer, so evict any prior range for this region before re-registering.
+	portRelocEvictFileRangesInRange(ram_dst, copySize);
+	sPortRelocFileRanges.push_back({ reinterpret_cast<uintptr_t>(ram_dst),
+	                                 copySize, /* file_id = */ 0xFFFFFFFFu,
+	                                 "(mod-private)" });
+
+	/* Mirror into the DL-range registry as the public path does, so
+	 * gfx_step's runaway-walker bounds check accepts mod-private DLs
+	 * (portRelocEvictFileRangesInRange above also unregisters any prior
+	 * DL range for this buffer, so re-loads must re-register). */
+	port_dl_range_register(ram_dst, copySize, "(mod-private)");
+
+	// Intern chain walk: each chain entry is a u32 holding [next_offset_words][target_offset_words];
+	// register a token for the in-file target pointer and stamp the token
+	// into the slot. Same logic as portRelocLoadFileFromBytes' intern walk
+	// but without texture-fixup (no SETTIMG-driven texture cache for the
+	// mod-private buffer) and without figatree halfswap.
+	u16 reloc_intern = reloc_intern_offset;
+	while (reloc_intern != 0xFFFF) {
+		u32 *slot = (u32 *)((uintptr_t)ram_dst + (reloc_intern * sizeof(u32)));
+		u16 next_reloc = (u16)(*slot >> 16);
+		u16 words_num  = (u16)(*slot & 0xFFFF);
+
+		void *target = (void *)((uintptr_t)ram_dst + (words_num * sizeof(u32)));
+		u32 token = portRelocRegisterPointer(target);
+		*slot = token;
+
+		reloc_intern = next_reloc;
+	}
+}
+
+/**
+ * Load a file from the .o2r archive, copy into ram_dst, and perform
+ * token-based internal + external pointer relocation. Thin wrapper
+ * around portRelocLoadFileFromBytes that sources its bytes via the
+ * libultraship ResourceManager (i.e., the BattleShip.o2r /
+ * BattleShip.fromsource.o2r pipeline).
+ */
+void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
+{
+	auto relocFile = portLoadRelocResource(file_id);
+	if (!relocFile)
+	{
+		spdlog::error("lbReloc bridge: cannot load file_id {} — halting", file_id);
+		return;
+	}
+
+	portRelocLoadFileFromBytes(
+		(unsigned int)file_id,
+		ram_dst,
+		bytes_num,
+		(int)loc,
+		relocFile->Data.data(),
+		(unsigned int)relocFile->Data.size(),
+		relocFile->RelocInternOffset,
+		relocFile->RelocExternOffset,
+		relocFile->ExternFileIds.data(),
+		(unsigned int)relocFile->ExternFileIds.size(),
+		/* force_figatree_fixup = */ 0);
 }
 
 // // // // // // // // // // // //
@@ -897,6 +1065,40 @@ void* lbRelocGetForceExternHeapFile(u32 id, void *heap)
 	sLBRelocExternFileHeap = heap;
 	sLBRelocInternBuffer.force_status_buffer_num = 0;
 	return lbRelocGetForceExternBufferFile(id);
+}
+
+/* Mod helper: same force-status-buffer reset that
+ * lbRelocGetForceExternHeapFile does on entry. Mods that route mod-
+ * registered anim file IDs through portRelocLoadFileFromBytes (skipping
+ * the orig wrapper because the file isn't in the engine's file table)
+ * still need this reset, otherwise the lbRelocAddForceStatusBufferFile
+ * call inside portRelocLoadFileFromBytes accumulates entries across
+ * fighter status changes until the per-scene cap is exceeded and the
+ * engine enters its "Force Status Buffer is full !!" panic loop. */
+extern "C" void portRelocResetForceStatusBuffer(void)
+{
+	sLBRelocInternBuffer.force_status_buffer_num = 0;
+}
+
+/* Accessors for the extern-file bump cursor. portRelocLoadFileFromBytes
+ * resets sLBRelocExternFileHeap to point past the file it just loaded
+ * so that file's own extern deps bump-allocate contiguously
+ * after it. That's correct when the destination is the engine's shared
+ * extern heap, but when a mod loads a file into its own malloc'd buffer
+ * (CharacterEngine's private-buffer hooks) the reset leaves the cursor
+ * pointing *inside* that private buffer. If the OUTER file's chain walk
+ * then loads a later vanilla dep, it bump-allocates into the small
+ * private buffer and overruns it. CharacterEngine brackets each private
+ * mod-file load with get/set so the outer walk's cursor survives the
+ * nested load. */
+extern "C" void *portRelocGetExternFileHeap(void)
+{
+	return sLBRelocExternFileHeap;
+}
+
+extern "C" void portRelocSetExternFileHeap(void *heap)
+{
+	sLBRelocExternFileHeap = heap;
 }
 
 // // // // // // // // // // // //
