@@ -5525,11 +5525,20 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	if (intro_anchor_probe != FALSE)
 	{
 		syNetRbSnapshotRebindFighterMPCollForAnchorProbe();
+		syNetRbSnapshotLogIntroAnchorSimTrail("pre", load_tick, probe_tick);
 	}
 #endif
 	sSYNetRollbackResimAnchorProbeActive = TRUE;
 	scVSBattleFuncUpdateBattleSimOnly();
 	sSYNetRollbackResimAnchorProbeActive = FALSE;
+#if defined(SSB64_NETMENU)
+	if (intro_anchor_probe != FALSE)
+	{
+		/* Ring light fold uses gobj_translate for *p_translate; rebind after +1 sim before hash. */
+		syNetRbSnapshotRebindFighterMPCollForAnchorProbe();
+		syNetRbSnapshotLogIntroAnchorSimTrail("post", load_tick, probe_tick);
+	}
+#endif
 
 	live = syNetRollbackCollectHashes();
 #if defined(SSB64_NETMENU)
@@ -5539,7 +5548,7 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		u32 live_f_light;
 
 		ring_f_light = syNetRbSnapshotGetSlotHashFighterLight(probe_tick);
-		live_f_light = syNetSyncHashBattleFighters();
+		live_f_light = syNetRbSnapshotHashFightersLightFromLive();
 		step_figh_mismatch = (ring_f_light != live_f_light) ? TRUE : FALSE;
 		ring_f = ring_f_light;
 		live.fighter = live_f_light;
@@ -5954,8 +5963,8 @@ void syNetRollbackAfterBattleUpdate(void)
 #ifdef PORT
 	syNetRollbackFlushDeferredPeerSymmetric();
 	syNetRollbackPumpBaselineEchoRetry();
-	if ((sSYNetRollbackSynctestEnabled != FALSE) && (completed_tick >= sSYNetRollbackSynctestNextProbeTick) &&
-	    (completed_tick > 0U))
+	if ((sSYNetRollbackResimAnchorProbeActive == FALSE) && (sSYNetRollbackSynctestEnabled != FALSE) &&
+	    (completed_tick >= sSYNetRollbackSynctestNextProbeTick) && (completed_tick > 0U))
 	{
 		const char *skip_reason;
 		u32 probe_tick;

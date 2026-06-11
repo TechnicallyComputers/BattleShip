@@ -143,6 +143,8 @@ extern sb32 syNetRbSnapshotVerifyAppearPresentationIntegrity(u32 tick);
 extern void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick);
 /* Intro anchor probe: rebind all fighters' coll_data.p_translate to GObj root (vanilla spawn semantics). */
 extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbe(void);
+/* SSB64_NETPLAY_INTRO_ANCHOR_SIM_TRAIL=1: pre/post +1 sim Appear/MPColl scalar trail during anchor probe. */
+extern void syNetRbSnapshotLogIntroAnchorSimTrail(const char *phase, u32 load_tick, u32 probe_tick);
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
 extern void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick);
 extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
@@ -194,6 +196,9 @@ extern void syNetRbSnapshotLogMapHashSaveSelfTest(u32 tick);
 /* Subsystem hashes stored on the slot (for load verify / diagnostics). */
 extern u32 syNetRbSnapshotGetSlotHashFighter(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashFighterLight(u32 tick);
+#if defined(SSB64_NETMENU)
+extern u32 syNetRbSnapshotHashFightersLightFromLive(void);
+#endif
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashItem(u32 tick);
 extern u32 syNetRbSnapshotGetSlotItemCount(u32 tick);

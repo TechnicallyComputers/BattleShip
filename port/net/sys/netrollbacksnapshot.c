@@ -6210,6 +6210,130 @@ static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot
 		}
 	}
 }
+
+static sb32 syNetRbSnapIntroAnchorSimTrailEnabled(void)
+{
+	static int s_cached = -999;
+	const char *env;
+
+	if (s_cached != -999)
+	{
+		return (s_cached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_INTRO_ANCHOR_SIM_TRAIL");
+	s_cached = ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? 1 : 0;
+	return (s_cached != 0) ? TRUE : FALSE;
+}
+
+/*
+ * Anchor-probe +1 sim bisect: log Appear/MPColl scalars live vs ring blob immediately before/after
+ * scVSBattleFuncUpdateBattleSimOnly. phase=pre compares against load_tick; phase=post against probe_tick.
+ */
+void syNetRbSnapshotLogIntroAnchorSimTrail(const char *phase, u32 load_tick, u32 probe_tick)
+{
+	u32 blob_tick;
+	const SYNetRbSnapshotSlot *slot;
+	s32 pidx;
+
+	if ((phase == NULL) || (syNetRbSnapIntroAnchorSimTrailEnabled() == FALSE))
+	{
+		return;
+	}
+	if ((phase[0] == 'p') && (phase[1] == 'r') && (phase[2] == 'e') && (phase[3] == '\0'))
+	{
+		blob_tick = load_tick;
+	}
+	else
+	{
+		blob_tick = probe_tick;
+	}
+	slot = syNetRbSnapshotSlotForTick(blob_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != blob_tick))
+	{
+		port_log(
+		    "SSB64 NetRbSnapshot: intro_anchor_sim_trail phase=%s load=%u probe=%u blob_tick=%u slot_missing=1\n",
+		    phase, load_tick, probe_tick, blob_tick);
+		return;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		const SYNetRbSnapFighterBlob *blob;
+		GObj *fighter_gobj;
+		FTStruct *fp;
+		DObj *topn;
+		DObj *transn;
+		DObj *joint0;
+		Vec3f *gobj_translate_ptr;
+		Vec3f *topn_translate_ptr;
+		f32 gobj_ty_live;
+		f32 ptr_y_live;
+		u32 ptr_gobj;
+		u32 ptr_topn;
+
+		blob = &slot->fighters[pidx];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		fighter_gobj = syNetRbSnapResolveFighterGobjByPlayer((s8)pidx);
+		fp = (fighter_gobj != NULL) ? ftGetStruct(fighter_gobj) : NULL;
+		if (fp == NULL)
+		{
+			continue;
+		}
+		topn = fp->joints[nFTPartsJointTopN];
+		transn = fp->joints[nFTPartsJointTransN];
+		joint0 = fp->joints[0];
+		gobj_translate_ptr = syNetRbSnapFighterMPCollTranslatePtrGobj(fighter_gobj);
+		topn_translate_ptr = syNetRbSnapFighterMPCollTranslatePtrTopN(fp);
+		gobj_ty_live = (gobj_translate_ptr != NULL) ? gobj_translate_ptr->y : 0.0F;
+		ptr_y_live = (fp->coll_data.p_translate != NULL) ? fp->coll_data.p_translate->y : 0.0F;
+		ptr_gobj = (fp->coll_data.p_translate == gobj_translate_ptr) ? 1U : 0U;
+		ptr_topn = (fp->coll_data.p_translate == topn_translate_ptr) ? 1U : 0U;
+		port_log(
+		    "SSB64 NetRbSnapshot: intro_anchor_sim_trail phase=%s load=%u probe=%u blob_tick=%u "
+		    "player=%d fkind=%d status=%d motion=%d "
+		    "entry_pos_y live=0x%08X blob=0x%08X "
+		    "transn_ty live=0x%08X blob=0x%08X "
+		    "topn_ty live=0x%08X blob=0x%08X "
+		    "gobj_ty live=0x%08X blob=0x%08X "
+		    "ptr_gobj=%u ptr_topn=%u ptr_y live=0x%08X "
+		    "pos_diff_y live=0x%08X blob=0x%08X "
+		    "pos_prev_y live=0x%08X blob=0x%08X "
+		    "status_total_tics live=%u blob=%u "
+		    "j0_anim live=0x%08X blob=0x%08X "
+		    "transn_anim live=0x%08X blob=0x%08X\n",
+		    phase,
+		    load_tick,
+		    probe_tick,
+		    blob_tick,
+		    (int)pidx,
+		    (int)fp->fkind,
+		    (int)fp->status_id,
+		    (int)fp->motion_id,
+		    syNetRbSnapF32DiagBits(fp->entry_pos.y),
+		    syNetRbSnapF32DiagBits(blob->entry_pos.y),
+		    syNetRbSnapF32DiagBits((transn != NULL) ? transn->translate.vec.f.y : 0.0F),
+		    syNetRbSnapF32DiagBits(blob->joint_translate[nFTPartsJointTransN].y),
+		    syNetRbSnapF32DiagBits((topn != NULL) ? topn->translate.vec.f.y : 0.0F),
+		    syNetRbSnapF32DiagBits(blob->joint_translate[nFTPartsJointTopN].y),
+		    syNetRbSnapF32DiagBits(gobj_ty_live),
+		    syNetRbSnapF32DiagBits(blob->gobj_translate.y),
+		    ptr_gobj,
+		    ptr_topn,
+		    syNetRbSnapF32DiagBits(ptr_y_live),
+		    syNetRbSnapF32DiagBits(fp->coll_data.pos_diff.y),
+		    syNetRbSnapF32DiagBits(blob->coll.pos_diff.y),
+		    syNetRbSnapF32DiagBits(fp->coll_data.pos_prev.y),
+		    syNetRbSnapF32DiagBits(blob->coll.pos_prev.y),
+		    (unsigned int)fp->status_total_tics,
+		    (unsigned int)blob->status_total_tics,
+		    syNetRbSnapF32DiagBits((joint0 != NULL) ? joint0->anim_frame : 0.0F),
+		    syNetRbSnapF32DiagBits(blob->joint_anim[0].anim_frame),
+		    syNetRbSnapF32DiagBits((transn != NULL) ? transn->anim_frame : 0.0F),
+		    syNetRbSnapF32DiagBits(blob->joint_anim[nFTPartsJointTransN].anim_frame));
+	}
+}
 #endif
 
 /*
@@ -29276,9 +29400,9 @@ static void syNetRbSnapInvalidateFighterPartTransformCaches(GObj *fighter_gobj)
 /*
  * Single-fighter tail of verify prep: re-pin blob physics/pose/AObj after figatree or modelpart work.
  */
-static void syNetRbSnapReapplyFighterJointAnimFromBlob(GObj *fighter_gobj, FTStruct *fp,
-						       const SYNetRbSnapFighterBlob *blob,
-						       sb32 apply_modelparts)
+static void syNetRbSnapReapplyFighterJointAnimFromBlobEx(GObj *fighter_gobj, FTStruct *fp,
+							 const SYNetRbSnapFighterBlob *blob,
+							 sb32 apply_modelparts, sb32 skip_canonicalize)
 {
 	Vec3f *p_translate;
 
@@ -29292,13 +29416,23 @@ static void syNetRbSnapReapplyFighterJointAnimFromBlob(GObj *fighter_gobj, FTStr
 	syNetRbSnapApplyMPColl(&fp->coll_data, &blob->coll, p_translate, &fp->lr);
 	syNetRbSnapApplyFighterGobjPose(blob, fp, fighter_gobj);
 	syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(fp, fighter_gobj, blob);
-	syNetplayCanonicalizeFighterSimState(fighter_gobj);
+	if (skip_canonicalize == FALSE)
+	{
+		syNetplayCanonicalizeFighterSimState(fighter_gobj);
+	}
 	syNetRbSnapRestoreFighterPostCanonicalizeFromBlob(fighter_gobj, fp, blob);
 	if (apply_modelparts != FALSE)
 	{
 		syNetRbSnapApplyFighterModelPartsFromBlob(fighter_gobj, fp, blob);
 	}
 	syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
+}
+
+static void syNetRbSnapReapplyFighterJointAnimFromBlob(GObj *fighter_gobj, FTStruct *fp,
+						       const SYNetRbSnapFighterBlob *blob,
+						       sb32 apply_modelparts)
+{
+	syNetRbSnapReapplyFighterJointAnimFromBlobEx(fighter_gobj, fp, blob, apply_modelparts, FALSE);
 }
 #endif
 
@@ -29563,8 +29697,9 @@ static void syNetRbSnapRestoreFighterMPCollFromBlobForAnchorProbe(GObj *fighter_
  * and MPColl pos_diff/*p_translate are in fhash_light and drift when figatree/SetStatus refresh runs
  * before this pin — re-apply from blob after pose restore so load verify and anchor probe match ring.
  */
-static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj, FTStruct *fp,
-							      const SYNetRbSnapFighterBlob *blob)
+static void syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(GObj *fighter_gobj, FTStruct *fp,
+							      const SYNetRbSnapFighterBlob *blob,
+							      sb32 anchor_probe_mpcoll)
 {
 	if ((fighter_gobj == NULL) || (fp == NULL) || (blob == NULL))
 	{
@@ -29589,8 +29724,21 @@ static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj
 #endif
 	syNetRbSnapRestoreFighterJointPoseFromBlob(fp, blob);
 	syNetRbSnapRestoreFighterGobjTransformFromBlob(fighter_gobj, blob);
-	syNetRbSnapRestoreFighterMPCollFromBlob(fp, blob);
+	if (anchor_probe_mpcoll != FALSE)
+	{
+		syNetRbSnapRestoreFighterMPCollFromBlobForAnchorProbe(fighter_gobj, fp, blob);
+	}
+	else
+	{
+		syNetRbSnapRestoreFighterMPCollFromBlob(fp, blob);
+	}
 	syNetRbSnapRestoreFighterAnimScalarsFromBlob(fighter_gobj, fp, blob);
+}
+
+static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj, FTStruct *fp,
+							      const SYNetRbSnapFighterBlob *blob)
+{
+	syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, FALSE);
 }
 
 static void syNetRbSnapHardPinFighterFoldContributorsFromSlot(const SYNetRbSnapshotSlot *slot)
@@ -29700,8 +29848,7 @@ static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slo
 		{
 			syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
 		}
-		syNetRbSnapHardPinFighterFoldContributorsFromBlob(fighter_gobj, fp, blob);
-		syNetRbSnapRestoreFighterMPCollFromBlobForAnchorProbe(fighter_gobj, fp, blob);
+		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, TRUE);
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
 		ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
 	}
@@ -32678,6 +32825,51 @@ static u32 syNetRbSnapshotHashFightersLightFromSlot(const SYNetRbSnapshotSlot *s
 				slot_hash[player] = syNetRbSnapFnvAccumulateU32(slot_hash[player] ^ contribution,
 									       (u32)player ^ 0x9E3779B9U);
 			}
+		}
+	}
+	merged = 2166136261U;
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		merged = syNetRbSnapFnvAccumulateU32(merged ^ slot_hash[si], (u32)si);
+	}
+	return merged;
+}
+
+/*
+ * Live-side mirror of syNetRbSnapshotHashFightersLightFromSlot: merge per-player
+ * syNetSyncHashFighterStructLight contributions with the same slot XOR/FNV recipe.
+ * Intro anchor probe must pair this with GetSlotHashFighterLight — not
+ * syNetSyncHashBattleFighters(), which folds a legacy short scalar set.
+ */
+u32 syNetRbSnapshotHashFightersLightFromLive(void)
+{
+	GObj *fighter_gobj;
+	u32 slot_hash[GMCOMMON_PLAYERS_MAX];
+	u32 merged;
+	s32 si;
+
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		slot_hash[si] = 2166136261U;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		u32 contribution;
+		s32 player;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		contribution = syNetSyncHashFighterStructLight(fp);
+		player = fp->player;
+		if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
+		{
+			slot_hash[player] = syNetRbSnapFnvAccumulateU32(slot_hash[player] ^ contribution,
+									       (u32)player ^ 0x9E3779B9U);
 		}
 	}
 	merged = 2166136261U;
