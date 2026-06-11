@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`  
-**Status:** Phase 27 (Appear AObj-coherent anchor prep; gobj←TopN post-sim sync) — soak pending (`INJECT_TICK=240`, `RESIM_ANCHOR_PROBE=1`)
+**Status:** Phase 38 (save/load spawn_lr symmetry — normalize overlay at capture, drop apply-only TopNYaw) — soak pending
 
 ## Symptoms
 
@@ -282,6 +282,119 @@ Phase 26 soak (`INJECT=240`): Yoshi AppearL `light_ok=1` @240 (Phase 26 confirme
 | `syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe` | Post +1 sim: copy TopN translate → GObj root before GObj MPColl hash rebind |
 
 **Phase 26 retained:** TopN MPColl pre-sim rebind for Appear; post-sim GObj rebind for hash.
+
+## Correction (Phase 28 — 2026-06-10): Appear entry overlay + status-transition fold reconcile
+
+Phase 27 soak (`INJECT=240`): **@240 probe pass** (both peers `match_f=1 match_a=1 match_cam=1`). Walkback extended to tick 113 (Linux CSS abort) vs 223 pre-Phase-27. Remaining walkback failures:
+
+| Tick | Issue |
+|------|--------|
+| 231→232 | Kirby AppearL→Wait transition: `fold_lr`, joint rotate drift while `anim_ok=1` |
+| ~183+ | Steady AppearL micro joint drift + `fold_status_total_tics` |
+| Android @127 | SIGSEGV during deep walkback Appear prep (platform follow-up) |
+
+Root causes:
+
+| Path | Issue |
+|------|--------|
+| Appear anchor prep | Reapply-only path did not re-pin `status_vars.common.entry` overlay; `ftCommonAppearProcUpdate` reads `ftStatusVarsEntry(fp)->lr` on last Appear tick |
+| Appear→Wait probe +1 sim | Status transition fires but Wait SetStatus joint TRS / lr fold differs from ring@probe |
+| `HardPinFighterFoldContributorsFromBlobEx` | Omitted `fp->lr` and `fp->status_total_tics` (both in `fhash_light`) |
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapRestoreFighterEntryOverlayFromBlob` | Re-pin entry overlay from load blob before Appear +1 sim |
+| Appear branch in `syNetRbSnapAnchorProbeSimPrepFromSlot` | Reapply + entry overlay + `entry_pos` (no joint hard pin) |
+| `syNetRbSnapshotReconcileAnchorProbeTransitionFromProbeSlot` | Post +1 sim: load Appear / probe non-Appear / live status matches probe → hard pin fold from ring@probe |
+| `HardPinFighterFoldContributorsFromBlobEx` | Also restore `fp->lr` and `fp->status_total_tics` |
+
+**Phase 27 retained:** Appear reapply-only prep, TopN pre-sim MPColl, gobj←TopN post-sim sync, light-hash step oracle.
+
+## Correction (Phase 28 soak — 2026-06-10): transition fix validated
+
+Phase 28 cross-ISA soak: **@240**, **@231→232**, **@183→184** all `match_f=1` both peers. Walkback contiguous pass **239→181** (Linux) / **239→180** (Android). Android SIGSEGV @127 gone (peer abort @115 instead). Linux-only steady Appear fail cluster **@179–170** (`live figh=0xEFE0EADE` vs ring `0x7312B0FC`, `fold_status_total_tics` + joint micro-drift while `anim_ok=1`). Final abort unchanged @113.
+
+## Correction (Phase 29 — 2026-06-10): Appear steady fold reconcile
+
+Phase 28 soak: Android passes Appear steady walkback @179+ without transition; Linux joint fold + `status_total_tics` drift after +1 sim while anim hash matches — Appear physics integrates joint TRS into fhash_light fold without a trailing hard pin (by design since Phase 27).
+
+| Change | Purpose |
+|--------|---------|
+| Appear prep | Pin `fp->status_total_tics` from load blob before +1 sim |
+| `syNetRbSnapshotReconcileAnchorProbeAppearSteadyFromProbeSlot` | Post +1 sim: load Appear / probe Appear / live still Appear → hard pin fold from ring@probe |
+
+**Phase 28 retained:** entry overlay pre-sim, transition reconcile, lr/status_total_tics in HardPinEx.
+
+## Correction (Phase 33 — 2026-06-10): replay gate intro repair before appear verify
+
+Phase 32 soak1/soak2: `@240` inject pass, anchor probe pass, baseline digest matched — then `resim_load_fail reason=replay_gate_blocked` @ load=239. `appear_presentation_fail tag=verify reason=appear_null_parts` on Kirby AppearL (soak1 P1) or both AppearR (soak2). `load_post_prepare` logged `sanity=1 fail=ok` because blob-aware sanity skips absent joints when `blob->joint_is_valid==FALSE`; replay gate calls `VerifyAppearPresentationIntegrity` with `blob=NULL` (strict: every active modelpart cursor must have FTParts).
+
+| Path | Issue |
+|------|--------|
+| `PrepareLoadedSlotForVerify` | Runs `RefreshFigatree` + `IntroLoadFidelityPreSanityRepair` |
+| `TryOpenResimReplayGate` | Called only `RefreshPresentationForLoadedTick` (figatree + diag, no repair) |
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapshotRefreshPresentationForLoadedTick` | When intro fidelity scope live: run `IntroLoadFidelityPreSanityRepair` after figatree refresh (mirror load prep) before replay gate verify |
+
+## Correction (Phase 34 — 2026-06-10): replay gate appear cursor prune + rematerialize
+
+Phase 33 soak1: `load_post_prepare` / `replay_gate` blob-aware sanity pass, but strict `VerifyAppearPresentationIntegrity(blob=NULL)` still fails both Appear peers (`appear_null_parts` on Yoshi j7/j9/j30–36, Kirby j9/j31–33). `IntroLoadFidelityPreSanityRepair` ends with `ApplyFighterModelPartsFromSlot` memcpy — restores `modelpart_id_curr` on joints with no `fp->joints[]` stub. Strict verify treats hidden-root cursors as load-blocking even when capture fold skipped the joint (`blob->joint_is_valid==FALSE`).
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapPruneAppearModelpartCursorsWithoutJointOrParts` | After blob modelpart push: clear active cursors on NULL joints; ensure FTParts on live joints or clear cursor |
+| `syNetRbSnapReplayGateAppearPresentationRepair` | Appear-only tail after intro repair: reconcile topology + hidden sync + FTParts + figatree subtree, then prune |
+| `RefreshPresentationForLoadedTick` | Call replay-gate appear repair after `IntroLoadFidelityPreSanityRepair` |
+
+## Correction (Phase 35 — 2026-06-10): replay gate Appear cosmetic after verify
+
+Phase 34 soak: gate open + `resim complete` cross-ISA, but visible joint/facing wrong on Kirby Appear during reload→replay (sim hashes aligned). P34 cursor prune clears modelpart cursors on absent joints for strict verify; figatree DLs stale. `entry_lr`/`TopN` yaw not re-pinned on gate path (only anchor-probe Appear prep).
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapApplyLiveFighterModelPartsCosmetic` | Push DLs from **live** cursors on materialized joints only — no blob modelpart memcpy |
+| `syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate` | After gate verify: entry overlay + entry_pos + TopN yaw + live modelparts + figatree refresh + anim re-pin |
+| `syNetRollbackTryOpenResimReplayGate` | Call cosmetic pass only after `VerifyResimReplayLoadSafe` passes |
+
+## Correction (Phase 36 — 2026-06-10): Appear cosmetic spawn lr + blob modelparts + camera
+
+P35 soak: gate open + `resim complete`, but presentation still wrong. Logs show `entry_lr=0` (Appear physics stomp) so TopN yaw no-op; `topn_ry`/`joint1_ry` match blob (0) — facing/mesh from figatree/modelparts; anchor probe `match_cam=0`.
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapInferAppearSpawnLrFromStatus` | Cosmetic fallback: AppearR/L `status_id` → ±1 when `entry.lr` stomped |
+| `syNetRbSnapRestoreFighterTopNYawFromLrCosmetic` | Status infer enabled; sim repair path unchanged |
+| `syNetRbSnapApplyFighterModelPartsCosmeticFromBlob` | Materialize hidden roots + push blob modelpart DLs on joints with FTParts only (no status memcpy) |
+| `syNetRbSnapRestoreIntroCameraPresentationFromSlot` | Re-pin slot camera after gate verify (intro scope) |
+| `syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate` | Reordered: camera → entry → anim reapply → joint TRS → cosmetic yaw → blob modelparts → figatree → anim scalars |
+| `syNetRbSnapLogAppearPresentationDiag(..., phase)` | `pre_repair` / `post_prune` / `prepare_verify` / `post_cosmetic` + `infer_lr` field |
+
+## Correction (Phase 37 — 2026-06-10): sim-path entry.lr repair (spawn_lr sidecar)
+
+P36 soak: gate open + `resim complete`, sim hashes aligned, but both fighters still face the screen. Diag shows `entry_lr=0` live and in blob (union stomp during Appear physics); `infer_lr=±1` correct from AppearR/L status. P36 cosmetic TopN yaw (±90°) ran post-verify only — forward resim @240 clobbers it; mid-Appear facing is motion-driven (`topn_ry=0` in blob is sim-truth). `ftCommonAppearProcUpdate` restores `fp->lr` from `entry.lr` at anim end — stomped zero breaks Wait transition facing.
+
+| Change | Purpose |
+|--------|---------|
+| `SYNetRbSnapFighterBlob.spawn_lr` + `spawn_lr_captured` | Sidecar outside union (like `entry_pos`); immune to entry-overlay stomp |
+| `syNetRbSnapCaptureFighter` | Capture live `entry.lr` when non-zero, else infer via `dFTCommonEntryAppearStatusIDs` |
+| `syNetRbSnapRepairFighterEntryLrInOverlay` | When `entry.lr==0`, restore from sidecar or status infer |
+| `syNetRbSnapRestoreFighterEntryOverlayFromBlob` + `syNetRbSnapApplyFighter` + `IntroLoadFidelityPreSanityRepair` | Call repair on sim path before verify / forward resim |
+| Remove `RestoreFighterTopNYawFromLrCosmetic` from gate cosmetic path | Mid-Appear yaw owned by motion, not static TopN override |
+| `appear_presentation_diag` | Log `spawn_lr_blob` alongside `entry_lr` / `infer_lr` |
+
+## Correction (Phase 38 — 2026-06-10): save/load spawn_lr symmetry
+
+P37 soak: `entry_lr` repair worked but load verify failed every tick (239→223) — `top_joint_ry` live ±90° vs blob 0. `RestoreFighterTopNYawFromLr` in post-canonicalize rewrote joint/gobj yaw from repaired `entry.lr`; capture never recorded that state (`fhash_full` folds `joint_rotate[]` from live at save).
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapNormalizeEntryLrInOverlay()` | Single policy: patch stomped `entry.lr` when `spawn_lr != 0` |
+| `syNetRbSnapCaptureAndNormalizeSpawnLrInBlob()` | Capture sidecar + normalize `status_vars.common.entry.lr` in ring blob |
+| `syNetRbSnapRepairFighterEntryLrInOverlay()` | Apply path calls same normalize on live overlay after `status_vars` memcpy |
+| Remove `RestoreFighterTopNYawFromLr` from post-canonicalize | Sim fold round-trip: joint/gobj TRS strictly from blob bytes |
+| `RestoreFighterPostCanonicalizeFromBlob` | Joint pose + gobj transform + entry_pos + anim scalars only |
 
 ## Diagnostic (Phase 25 — 2026-06-10): intro anchor +1 sim trail
 

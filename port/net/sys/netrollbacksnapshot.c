@@ -396,6 +396,9 @@ typedef struct SYNetRbSnapFighterBlob
 	/* Spawn anchor for Entry/Appear physics (ftCommonAppearProcPhysics); not in status_vars overlay. */
 	Vec3f entry_pos;
 	u8 entry_pos_captured;
+	/* Spawn facing immune to entry-overlay union stomp during Appear (sidecar; not in fhash fold). */
+	s8 spawn_lr;
+	u8 spawn_lr_captured;
 	u8 is_invisible;
 	u8 is_ghost;
 	u8 is_rebirth;
@@ -1635,6 +1638,22 @@ static sb32 syNetRbSnapFighterFieldDiffEnabled(void);
 static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot);
 #if defined(SSB64_NETMENU)
 static void syNetRbSnapIntroLoadFidelityPreSanityRepair(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapReplayGateAppearPresentationRepair(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapApplyFighterModelPartsCosmeticFromBlob(GObj *fighter_gobj, FTStruct *fp,
+							      const SYNetRbSnapFighterBlob *blob);
+static void syNetRbSnapRestoreFighterEntryOverlayFromBlob(FTStruct *fp, const SYNetRbSnapFighterBlob *blob);
+static void syNetRbSnapRestoreFighterEntryPosFromBlob(FTStruct *fp, const SYNetRbSnapFighterBlob *blob);
+static s32 syNetRbSnapInferAppearSpawnLrFromStatus(const FTStruct *fp);
+static void syNetRbSnapCaptureAndNormalizeSpawnLrInBlob(SYNetRbSnapFighterBlob *blob, const FTStruct *fp);
+static void syNetRbSnapRepairFighterEntryLrInOverlay(FTStruct *fp, const SYNetRbSnapFighterBlob *blob);
+static void syNetRbSnapRepairFighterEntryOverlaysFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapRestoreIntroCameraPresentationFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot, u32 tick, const char *phase);
+static void syNetRbSnapRestoreFighterAnimScalarsFromBlob(GObj *fighter_gobj, FTStruct *fp,
+							 const SYNetRbSnapFighterBlob *blob);
+static void syNetRbSnapReapplyFighterJointAnimFromBlob(GObj *fighter_gobj, FTStruct *fp,
+						       const SYNetRbSnapFighterBlob *blob,
+						       sb32 reapply_anim_first);
 #endif
 void syNetRbSnapCullYoshiChargeEggsForFighter(GObj *fighter_gobj, GObj *keep_egg_gobj);
 void syNetRbSnapCullSamusChargeShotsForFighter(GObj *fighter_gobj, GObj *keep_charge_gobj);
@@ -5331,6 +5350,9 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 #endif
 	memcpy(blob->status_vars, &fp->status_vars, sizeof(blob->status_vars));
 #if defined(SSB64_NETMENU)
+	syNetRbSnapCaptureAndNormalizeSpawnLrInBlob(blob, fp);
+#endif
+#if defined(SSB64_NETMENU)
 	syNetplayNessRefreshPKThunderPosInBlobFromHead(fighter_gobj, fp, (union FTStatusVars *)blob->status_vars);
 #endif
 	if ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall))
@@ -6015,49 +6037,162 @@ static sb32 syNetRbSnapFighterAppearPresentationOk(GObj *fighter_gobj, FTStruct 
 	return TRUE;
 }
 
-/*
- * Mirror ftMainSetStatus yaw policy when lr is known: TopN rotate.y = lr * 90deg.
- * During Appear fp->lr is zeroed (entry overlay holds spawn lr); use entry_lr when fp->lr == 0.
- */
-static void syNetRbSnapRestoreFighterTopNYawFromLr(GObj *fighter_gobj, FTStruct *fp)
-{
-	DObj *root_dobj;
-	DObj *topn;
-	s32 yaw_lr;
+extern s32 dFTCommonEntryAppearStatusIDs[/* */][2];
 
-	if ((fighter_gobj == NULL) || (fp == NULL) ||
-	    (syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE))
+static s32 syNetRbSnapInferAppearSpawnLrFromStatusId(s32 fkind, s32 status_id)
+{
+	if ((fkind < 0) || (fkind >= nFTKindEnumCount))
+	{
+		return 0;
+	}
+	if (status_id == dFTCommonEntryAppearStatusIDs[fkind][0])
+	{
+		return 1;
+	}
+	if (status_id == dFTCommonEntryAppearStatusIDs[fkind][1])
+	{
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * Appear physics can stomp entry.lr mid-status; AppearR/L status_id still encodes spawn facing.
+ */
+static s32 syNetRbSnapInferAppearSpawnLrFromStatus(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return 0;
+	}
+	return syNetRbSnapInferAppearSpawnLrFromStatusId(fp->fkind, fp->status_id);
+}
+
+static s32 syNetRbSnapResolveSpawnLrFromBlob(const SYNetRbSnapFighterBlob *blob)
+{
+	s32 spawn_lr;
+
+	if (blob == NULL)
+	{
+		return 0;
+	}
+	if ((blob->spawn_lr_captured != FALSE) && (blob->spawn_lr != 0))
+	{
+		return (s32)blob->spawn_lr;
+	}
+	spawn_lr = syNetRbSnapInferAppearSpawnLrFromStatusId(blob->fkind, blob->status_id);
+	return spawn_lr;
+}
+
+static sb32 syNetRbSnapFighterStatusInSpawnLrScope(s32 status_id)
+{
+	return ((status_id == nFTCommonStatusEntry) || (status_id == nFTCommonStatusEntryNull)) ? TRUE : FALSE;
+}
+
+/*
+ * Single policy for capture + apply: when entry.lr was stomped to zero, restore spawn facing in the
+ * entry overlay only. Does not mutate joint TRS (mid-Appear yaw lives in joint_rotate[] blob bytes).
+ */
+static void syNetRbSnapNormalizeEntryLrInOverlay(ftCommonEntryStatusVars *entry, s32 spawn_lr)
+{
+	if ((entry == NULL) || (spawn_lr == 0))
 	{
 		return;
 	}
-	topn = fp->joints[nFTPartsJointTopN];
-	if (topn == NULL)
+	if (entry->lr == 0)
+	{
+		entry->lr = spawn_lr;
+	}
+}
+
+static void syNetRbSnapCaptureAndNormalizeSpawnLrInBlob(SYNetRbSnapFighterBlob *blob, const FTStruct *fp)
+{
+	s32 spawn_lr;
+	union FTStatusVars *blob_sv;
+
+	if ((blob == NULL) || (fp == NULL))
 	{
 		return;
 	}
-	yaw_lr = fp->lr;
-	if (yaw_lr == 0)
-	{
-		yaw_lr = ftStatusVarsEntry(fp)->lr;
-	}
-	if (yaw_lr == 0)
+	blob->spawn_lr = 0;
+	blob->spawn_lr_captured = FALSE;
+	if ((syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE) &&
+	    (syNetRbSnapFighterStatusInSpawnLrScope(fp->status_id) == FALSE))
 	{
 		return;
 	}
-	root_dobj = DObjGetStruct(fighter_gobj);
-	topn->rotate.vec.f.y = yaw_lr * F_CST_DTOR32(90.0F);
-	if (root_dobj != NULL)
+	spawn_lr = ftStatusVarsEntry(fp)->lr;
+	if (spawn_lr == 0)
 	{
-		root_dobj->rotate.vec.f.z = 0.0F;
-		topn->rotate.vec.f.x = root_dobj->rotate.vec.f.z;
+		spawn_lr = syNetRbSnapInferAppearSpawnLrFromStatus(fp);
 	}
-#if defined(SSB64_NETMENU)
-	syNetplayQuantizeVec3f(&topn->rotate.vec.f);
-	if (root_dobj != NULL)
+	if (spawn_lr == 0)
 	{
-		syNetplayQuantizeVec3f(&root_dobj->rotate.vec.f);
+		return;
 	}
-#endif
+	blob->spawn_lr = (s8)spawn_lr;
+	blob->spawn_lr_captured = TRUE;
+	blob_sv = (union FTStatusVars *)blob->status_vars;
+	syNetRbSnapNormalizeEntryLrInOverlay(&blob_sv->common.entry, spawn_lr);
+}
+
+/*
+ * Sim-path repair: restore stomped entry.lr so AppearProcUpdate can recover fp->lr at anim end.
+ * Does not touch fp->lr (zero during Appear) or mid-Appear joint yaw — motion owns that pose.
+ */
+static void syNetRbSnapRepairFighterEntryLrInOverlay(FTStruct *fp, const SYNetRbSnapFighterBlob *blob)
+{
+	s32 spawn_lr;
+
+	if ((fp == NULL) || (blob == NULL))
+	{
+		return;
+	}
+	if ((syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE) &&
+	    (syNetRbSnapFighterStatusInSpawnLrScope(fp->status_id) == FALSE))
+	{
+		return;
+	}
+	spawn_lr = syNetRbSnapResolveSpawnLrFromBlob(blob);
+	if (spawn_lr == 0)
+	{
+		spawn_lr = syNetRbSnapInferAppearSpawnLrFromStatus(fp);
+	}
+	syNetRbSnapNormalizeEntryLrInOverlay(ftStatusVarsEntry(fp), spawn_lr);
+}
+
+static void syNetRbSnapRepairFighterEntryOverlaysFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		syNetRbSnapRepairFighterEntryLrInOverlay(fp, blob);
+	}
 }
 
 static sb32 syNetRbSnapBlobInAppearPresentationScope(const SYNetRbSnapFighterBlob *blob)
@@ -6140,10 +6275,10 @@ static void syNetRbSnapRestoreFighterPostCanonicalizeFromBlob(GObj *fighter_gobj
 	{
 		return;
 	}
+	/* Sim fold round-trip: joint/gobj TRS + anim scalars from blob only (no derived yaw policy). */
 	syNetRbSnapRestoreFighterJointPoseFromBlob(fp, blob);
 	syNetRbSnapRestoreFighterGobjTransformFromBlob(fighter_gobj, blob);
 	syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
-	syNetRbSnapRestoreFighterTopNYawFromLr(fighter_gobj, fp);
 	syNetRbSnapRestoreFighterAnimScalarsFromBlob(fighter_gobj, fp, blob);
 }
 
@@ -6176,15 +6311,17 @@ static sb32 syNetRbSnapAppearPresentationDiagEnabled(void)
 	return (s_cached != 0) ? TRUE : FALSE;
 }
 
-static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot, u32 tick)
+static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot, u32 tick, const char *phase)
 {
 	s32 pidx;
 	s32 modelpart_count;
+	const char *phase_label;
 
 	if ((slot == NULL) || (syNetRbSnapAppearPresentationDiagEnabled() == FALSE))
 	{
 		return;
 	}
+	phase_label = (phase != NULL) ? phase : "unknown";
 	modelpart_count = FTPARTS_JOINT_NUM_MAX - nFTPartsJointCommonStart;
 	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
 	{
@@ -6197,6 +6334,8 @@ static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot
 		f32 topn_ry_blob;
 		f32 joint1_ry_live;
 		f32 joint1_ry_blob;
+		s32 infer_lr;
+		s32 spawn_lr_blob;
 		s32 ji;
 
 		blob = &slot->fighters[pidx];
@@ -6216,13 +6355,15 @@ static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot
 		topn_ry_blob = blob->joint_rotate[nFTPartsJointTopN].y;
 		joint1_ry_live = (joint1 != NULL) ? joint1->rotate.vec.f.y : 0.0F;
 		joint1_ry_blob = blob->joint_rotate[1].y;
+		infer_lr = syNetRbSnapInferAppearSpawnLrFromStatus(fp);
+		spawn_lr_blob = (blob->spawn_lr_captured != FALSE) ? (s32)blob->spawn_lr : infer_lr;
 		port_log(
-		    "SSB64 NetRbSnapshot: appear_presentation_diag tick=%u player=%d fkind=%d status=%d lr=%d "
-		    "entry_lr=%d entry_is_rotate=%d entry_pos_y_live=0x%08X entry_pos_y_blob=0x%08X "
+		    "SSB64 NetRbSnapshot: appear_presentation_diag phase=%s tick=%u player=%d fkind=%d status=%d lr=%d "
+		    "entry_lr=%d infer_lr=%d spawn_lr_blob=%d entry_is_rotate=%d entry_pos_y_live=0x%08X entry_pos_y_blob=0x%08X "
 		    "gobj_anim_live=0x%08X gobj_anim_blob=0x%08X "
 		    "topn_ry_live=0x%08X topn_ry_blob=0x%08X joint1_ry_live=0x%08X joint1_ry_blob=0x%08X\n",
-		    tick, (int)pidx, (int)fp->fkind, (int)fp->status_id, (int)fp->lr,
-		    (int)ftStatusVarsEntry(fp)->lr, (int)ftStatusVarsEntry(fp)->is_rotate,
+		    phase_label, tick, (int)pidx, (int)fp->fkind, (int)fp->status_id, (int)fp->lr,
+		    (int)ftStatusVarsEntry(fp)->lr, (int)infer_lr, (int)spawn_lr_blob, (int)ftStatusVarsEntry(fp)->is_rotate,
 		    syNetRbSnapF32DiagBits(fp->entry_pos.y), syNetRbSnapF32DiagBits(blob->entry_pos.y),
 		    syNetRbSnapF32DiagBits((fighter_gobj != NULL) ? fighter_gobj->anim_frame : 0.0F),
 		    syNetRbSnapF32DiagBits(blob->gobj_anim_frame), syNetRbSnapF32DiagBits(topn_ry_live),
@@ -6239,9 +6380,9 @@ static void syNetRbSnapLogAppearPresentationDiag(const SYNetRbSnapshotSlot *slot
 			if ((live_mp != blob_mp) || (syNetRbSnapModelPartDiagEnabled() != FALSE))
 			{
 				port_log(
-				    "SSB64 NetRbSnapshot: appear_modelpart_diag tick=%u player=%d joint=%d "
+				    "SSB64 NetRbSnapshot: appear_modelpart_diag phase=%s tick=%u player=%d joint=%d "
 				    "live_mp=%d blob_mp=%d parts=%p\n",
-				    tick, (int)pidx, (int)joint_id, (int)live_mp, (int)blob_mp,
+				    phase_label, tick, (int)pidx, (int)joint_id, (int)live_mp, (int)blob_mp,
 				    (fp->joints[joint_id] != NULL) ? (void *)ftGetParts(fp->joints[joint_id]) : NULL);
 			}
 		}
@@ -6794,6 +6935,9 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 
 	memcpy(fp->motion_scripts, blob->motion_scripts, sizeof(fp->motion_scripts));
 	memcpy(&fp->status_vars, blob->status_vars, sizeof(fp->status_vars));
+#if defined(SSB64_NETMENU)
+	syNetRbSnapRepairFighterEntryLrInOverlay(fp, blob);
+#endif
 	memcpy(&fp->passive_vars, blob->passive_vars, sizeof(fp->passive_vars));
 #if defined(SSB64_NETMENU)
 	syNetplayNessSanitizePKJibakuStatusVars(fp);
@@ -29742,6 +29886,9 @@ static void syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(GObj *fighter_go
 	{
 		return;
 	}
+	fp->lr = blob->lr;
+	fp->ga = blob->ga;
+	fp->status_total_tics = blob->status_total_tics;
 	fp->shield_health = blob->shield_health;
 	fp->jumps_used = blob->jumps_used;
 	fp->physics = blob->physics;
@@ -29837,6 +29984,477 @@ static void syNetRbSnapIntroLoadFidelityPreSanityRepair(const SYNetRbSnapshotSlo
 	syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
 	syNetRbSnapReconcileFighterJointPresenceFromSlot(slot);
 	syNetRbSnapHardPinFighterFoldContributorsFromSlot(slot);
+	syNetRbSnapRepairFighterEntryOverlaysFromSlot(slot);
+}
+
+/*
+ * Replay gate tail: IntroLoadFidelityPreSanityRepair memcpy's blob modelpart cursors back onto joints
+ * that still have no fp->joints[] stub. Strict VerifyAppearPresentationIntegrity (blob=NULL) fails on
+ * those hidden-root cursors even when load_post_prepare blob-aware sanity skipped them.
+ */
+static void syNetRbSnapPruneAppearModelpartCursorsWithoutJointOrParts(FTStruct *fp)
+{
+	s32 ji;
+	s32 modelpart_count;
+
+	if (fp == NULL)
+	{
+		return;
+	}
+	modelpart_count = FTPARTS_JOINT_NUM_MAX - nFTPartsJointCommonStart;
+	for (ji = 0; ji < modelpart_count; ji++)
+	{
+		s32 joint_id;
+		DObj *joint;
+
+		if (fp->modelpart_status[ji].modelpart_id_curr < 0)
+		{
+			continue;
+		}
+		joint_id = ji + nFTPartsJointCommonStart;
+		joint = fp->joints[joint_id];
+		if (joint == NULL)
+		{
+			fp->modelpart_status[ji].modelpart_id_curr = -1;
+			continue;
+		}
+		if (ftGetParts(joint) == NULL)
+		{
+			syNetRbSnapEnsureFighterJointParts(fp, joint_id);
+			if (ftGetParts(joint) == NULL)
+			{
+				fp->modelpart_status[ji].modelpart_id_curr = -1;
+			}
+		}
+	}
+}
+
+static void syNetRbSnapReplayGateAppearPresentationRepair(const SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE))
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		(void)syNetRbSnapReconcileFighterJointPresenceFromBlob(fp, blob);
+		syNetRbSnapSyncFighterHiddenPartsFromBlob(fp, blob);
+		syNetRbSnapEnsureHiddenPartRootPartsFromBlob(fp, blob);
+		syNetRbSnapEnsureAllFighterJointParts(fp);
+#if defined(SSB64_NETMENU)
+		syNetRbSnapEnsureFigatreeSubtreeParts(fp);
+#endif
+		syNetRbSnapPruneAppearModelpartCursorsWithoutJointOrParts(fp);
+	}
+}
+
+/*
+ * Push modelpart/texturepart DLs from blob on materialized joints only — no full status memcpy.
+ * Post-verify cosmetic: materialize hidden-part roots, push blob modelpart DLs only on joints that
+ * have FTParts. Skip absent-joint cursors (P34 prune) — no full modelpart_status memcpy.
+ */
+static void syNetRbSnapApplyFighterModelPartsCosmeticFromBlob(GObj *fighter_gobj, FTStruct *fp,
+							      const SYNetRbSnapFighterBlob *blob)
+{
+	s32 ji;
+	s32 modelpart_count;
+
+	if ((fighter_gobj == NULL) || (fp == NULL) || (blob == NULL) || (fp->attr == NULL))
+	{
+		return;
+	}
+	syNetRbSnapEnsureHiddenPartRootPartsFromBlob(fp, blob);
+	modelpart_count = FTPARTS_JOINT_NUM_MAX - nFTPartsJointCommonStart;
+	for (ji = 0; ji < modelpart_count; ji++)
+	{
+		s32 joint_id = ji + nFTPartsJointCommonStart;
+
+		syNetRbSnapEnsureFighterJointParts(fp, joint_id);
+	}
+	for (ji = 0; ji < modelpart_count; ji++)
+	{
+		s32 joint_id;
+		s32 modelpart_id;
+		DObj *joint;
+
+		modelpart_id = blob->modelpart_status[ji].modelpart_id_curr;
+		if (modelpart_id < 0)
+		{
+			continue;
+		}
+		joint_id = ji + nFTPartsJointCommonStart;
+		joint = fp->joints[joint_id];
+		if ((joint == NULL) || (ftGetParts(joint) == NULL))
+		{
+			continue;
+		}
+		fp->modelpart_status[ji].modelpart_id_curr = ~modelpart_id;
+		ftParamSetModelPartID(fighter_gobj, joint_id, modelpart_id);
+	}
+	for (ji = 0; ji < (s32)ARRAY_COUNT(blob->texturepart_status); ji++)
+	{
+		if (blob->texturepart_status[ji].texture_id_curr >= 0)
+		{
+			ftParamSetTexturePartID(fighter_gobj, ji, blob->texturepart_status[ji].texture_id_curr);
+		}
+	}
+}
+
+static void syNetRbSnapRestoreIntroCameraPresentationFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	u32 hash_before;
+	u32 hash_after;
+
+	if ((slot == NULL) || (syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope() == FALSE))
+	{
+		return;
+	}
+	hash_before = syNetSyncHashGMCamera();
+	syNetRbSnapApplyCamera(&slot->camera);
+	hash_after = syNetSyncHashGMCamera();
+	if (syNetRbSnapCameraLoadDiagEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRbSnapshot: intro_camera_cosmetic_diag tick=%u hash_before=0x%08X hash_after=0x%08X slot_cam=0x%08X\n",
+		    slot->tick, hash_before, hash_after, slot->hash_camera);
+	}
+}
+
+void syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(u32 load_tick)
+{
+#ifdef PORT
+#if defined(SSB64_NETMENU)
+	SYNetRbSnapshotSlot *slot;
+	GObj *fighter_gobj;
+
+	if (syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope() == FALSE)
+	{
+		return;
+	}
+	slot = syNetRbSnapshotSlotForTick(load_tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != load_tick))
+	{
+		return;
+	}
+	syNetRbSnapRestoreIntroCameraPresentationFromSlot(slot);
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE))
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		/*
+		 * Post-verify presentation only: re-pin entry overlay (with spawn_lr repair), joint TRS,
+		 * and figatree DLs from blob modelparts on materialized joints — not fold mutation.
+		 */
+		syNetRbSnapRestoreFighterEntryOverlayFromBlob(fp, blob);
+		syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
+		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
+		syNetRbSnapRestoreFighterJointPoseFromBlob(fp, blob);
+		syNetRbSnapRestoreFighterGobjTransformFromBlob(fighter_gobj, blob);
+		syNetRbSnapApplyFighterModelPartsCosmeticFromBlob(fighter_gobj, fp, blob);
+		ftMainRefreshFigatreeVisual(fighter_gobj);
+		syNetRbSnapRestoreFighterAnimScalarsFromBlob(fighter_gobj, fp, blob);
+	}
+	syNetRbSnapLogAppearPresentationDiag(slot, load_tick, "post_cosmetic");
+#else
+	(void)load_tick;
+#endif
+#else
+	(void)load_tick;
+#endif
+}
+
+static sb32 syNetRbSnapAnchorProbeStatusTransitionExpected(const SYNetRbSnapFighterBlob *load_blob,
+							   const SYNetRbSnapFighterBlob *probe_blob)
+{
+	if ((load_blob == NULL) || (probe_blob == NULL) || (load_blob->is_valid == FALSE) ||
+	    (probe_blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((syNetRbSnapBlobInAppearPresentationScope(load_blob) != FALSE) &&
+	        (syNetRbSnapBlobInAppearPresentationScope(probe_blob) == FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+static sb32 syNetRbSnapAnchorProbeAppearSteadyExpected(const SYNetRbSnapFighterBlob *load_blob,
+						       const SYNetRbSnapFighterBlob *probe_blob)
+{
+	if ((load_blob == NULL) || (probe_blob == NULL) || (load_blob->is_valid == FALSE) ||
+	    (probe_blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((syNetRbSnapBlobInAppearPresentationScope(load_blob) != FALSE) &&
+	        (syNetRbSnapBlobInAppearPresentationScope(probe_blob) != FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+static sb32 syNetRbSnapFighterInWaitPresentationScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	return (fp->status_id == nFTCommonStatusWait) ? TRUE : FALSE;
+}
+
+static sb32 syNetRbSnapBlobInWaitPresentationScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return (blob->status_id == nFTCommonStatusWait) ? TRUE : FALSE;
+}
+
+static sb32 syNetRbSnapIntroAnchorProbeWaitTickInScope(u32 load_tick)
+{
+	/* Intro resim walkback: inject @240 down through post-intro Wait floor (~113). */
+	return (load_tick <= 300U) ? TRUE : FALSE;
+}
+
+static sb32 syNetRbSnapAnchorProbeWaitSteadyExpected(const SYNetRbSnapFighterBlob *load_blob,
+						     const SYNetRbSnapFighterBlob *probe_blob)
+{
+	if ((load_blob == NULL) || (probe_blob == NULL) || (load_blob->is_valid == FALSE) ||
+	    (probe_blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((syNetRbSnapBlobInWaitPresentationScope(load_blob) != FALSE) &&
+	        (syNetRbSnapBlobInWaitPresentationScope(probe_blob) != FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+static sb32 syNetRbSnapBlobInEntryPresentationScope(const SYNetRbSnapFighterBlob *blob)
+{
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((blob->status_id == nFTCommonStatusEntry) || (blob->status_id == nFTCommonStatusEntryNull)) ? TRUE
+	                                                                                                  : FALSE;
+}
+
+static sb32 syNetRbSnapSlotAnyBlobInAppearPresentationScope(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pidx;
+
+	if (slot == NULL)
+	{
+		return FALSE;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		if (syNetRbSnapBlobInAppearPresentationScope(&slot->fighters[pidx]) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapSlotAnyBlobInIntroPhysicsPeerScope(const SYNetRbSnapshotSlot *slot)
+{
+	s32 pidx;
+
+	if (slot == NULL)
+	{
+		return FALSE;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		const SYNetRbSnapFighterBlob *blob = &slot->fighters[pidx];
+
+		if ((syNetRbSnapBlobInAppearPresentationScope(blob) != FALSE) ||
+		    (syNetRbSnapBlobInEntryPresentationScope(blob) != FALSE))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static sb32 syNetRbSnapAnchorProbeMixedIntroPhysicsWaitExpected(const SYNetRbSnapshotSlot *load_slot,
+								const SYNetRbSnapFighterBlob *load_blob,
+								const SYNetRbSnapFighterBlob *probe_blob)
+{
+	if (syNetRbSnapSlotAnyBlobInIntroPhysicsPeerScope(load_slot) == FALSE)
+	{
+		return FALSE;
+	}
+	return syNetRbSnapAnchorProbeWaitSteadyExpected(load_blob, probe_blob);
+}
+
+static sb32 syNetRbSnapAnchorProbeMixedAppearWaitExpected(const SYNetRbSnapshotSlot *load_slot,
+							  const SYNetRbSnapFighterBlob *load_blob,
+							  const SYNetRbSnapFighterBlob *probe_blob)
+{
+	return syNetRbSnapAnchorProbeMixedIntroPhysicsWaitExpected(load_slot, load_blob, probe_blob);
+}
+
+static sb32 syNetRbSnapAnchorProbeWaitReconcileLiveReady(const FTStruct *fp,
+							 const SYNetRbSnapFighterBlob *probe_blob)
+{
+	if ((fp == NULL) || (probe_blob == NULL) || (probe_blob->is_valid == FALSE))
+	{
+		return FALSE;
+	}
+	return ((fp->status_id == probe_blob->status_id) &&
+	        (syNetRbSnapBlobInWaitPresentationScope(probe_blob) != FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+static void syNetRbSnapHardPinAnchorProbeWaitPeerFromProbeBlob(GObj *fighter_gobj, FTStruct *fp,
+							       const SYNetRbSnapFighterBlob *probe_blob,
+							       sb32 reapply_anim_first)
+{
+	if ((fighter_gobj == NULL) || (fp == NULL) || (probe_blob == NULL))
+	{
+		return;
+	}
+	syNetRbSnapReconcileFighterJointPresenceFromBlob(fp, probe_blob);
+	syNetRbSnapRestoreFighterEntryPosFromBlob(fp, probe_blob);
+	if (reapply_anim_first != FALSE)
+	{
+		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, probe_blob, FALSE);
+	}
+	syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, probe_blob, TRUE);
+	syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
+	ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
+}
+
+static void syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(u32 load_tick, u32 probe_tick,
+								 sb32 mixed_intro_physics_wait_only,
+								 sb32 reapply_anim_first)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	GObj *fighter_gobj;
+
+	if (syNetRbSnapIntroAnchorProbeWaitTickInScope(load_tick) == FALSE)
+	{
+		return;
+	}
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *load_blob;
+		const SYNetRbSnapFighterBlob *probe_blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		load_blob = &load_slot->fighters[slot_index];
+		probe_blob = &probe_slot->fighters[slot_index];
+		if ((load_blob->is_valid == FALSE) || (probe_blob->is_valid == FALSE))
+		{
+			continue;
+		}
+		if (mixed_intro_physics_wait_only != FALSE)
+		{
+			if (syNetRbSnapAnchorProbeMixedIntroPhysicsWaitExpected(load_slot, load_blob,
+										probe_blob) == FALSE)
+			{
+				continue;
+			}
+		}
+		else if (syNetRbSnapAnchorProbeWaitSteadyExpected(load_blob, probe_blob) == FALSE)
+		{
+			continue;
+		}
+		if (syNetRbSnapAnchorProbeWaitReconcileLiveReady(fp, probe_blob) == FALSE)
+		{
+			continue;
+		}
+		syNetRbSnapHardPinAnchorProbeWaitPeerFromProbeBlob(fighter_gobj, fp, probe_blob,
+								   reapply_anim_first);
+	}
+}
+
+/*
+ * Appear keeps fp->lr zeroed; ftCommonAppearProcUpdate restores spawn lr from the entry overlay on
+ * the last Appear tick before Wait/Entry. Re-pin overlay bytes from the load blob before +1 sim.
+ */
+static void syNetRbSnapRestoreFighterEntryOverlayFromBlob(FTStruct *fp, const SYNetRbSnapFighterBlob *blob)
+{
+	const ftCommonEntryStatusVars *entry_src;
+	ftCommonEntryStatusVars *entry_dst;
+
+	if ((fp == NULL) || (blob == NULL))
+	{
+		return;
+	}
+	if ((syNetRbSnapBlobInAppearPresentationScope(blob) == FALSE) &&
+	    (syNetRbSnapBlobInEntryPresentationScope(blob) == FALSE))
+	{
+		return;
+	}
+	entry_src = &((const union FTStatusVars *)blob->status_vars)->common.entry;
+	entry_dst = ftStatusVarsEntry(fp);
+	*entry_dst = *entry_src;
+	syNetRbSnapRepairFighterEntryLrInOverlay(fp, blob);
 }
 
 /*
@@ -29878,6 +30496,16 @@ static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slo
 		if (syNetRbSnapFighterInAppearPresentationScope(fp) != FALSE)
 		{
 			syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
+			syNetRbSnapRestoreFighterEntryOverlayFromBlob(fp, blob);
+			syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
+			fp->status_total_tics = blob->status_total_tics;
+		}
+		else if ((fp->status_id == nFTCommonStatusEntry) || (fp->status_id == nFTCommonStatusEntryNull))
+		{
+			syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
+			syNetRbSnapRestoreFighterEntryOverlayFromBlob(fp, blob);
+			syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
+			fp->status_total_tics = blob->status_total_tics;
 		}
 		else
 		{
@@ -29886,6 +30514,7 @@ static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slo
 			{
 				syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
 			}
+			fp->status_total_tics = blob->status_total_tics;
 			syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, TRUE);
 		}
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
@@ -29897,7 +30526,271 @@ static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slo
  * Post +1 sim: ring fhash_light folds gobj_translate; during Appear, ftCommonAppearProcPhysics moves TopN
  * while spawn keeps GObj root tied to TopN Y at capture. Sync root translate from TopN before GObj MPColl
  * rebind so live gobj_translate matches integrated Appear pose when TopN diverged from stale root.
+ *
+ * When load was Appear and probe ring slot is Wait/Entry, ftCommonAppearProcUpdate may transition status
+ * correctly but SetStatus side effects on joint TRS / lr do not replay bit-for-bit from Appear load prep
+ * alone (Phase 27 soak: Kirby AppearL→Wait @231→232 fold_lr / joint rotate drift). ReconcileTransition
+ * re-pins fhash_light fold fields from ring@probe once live status matches.
  */
+void syNetRbSnapshotReconcileAnchorProbeTransitionFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	GObj *fighter_gobj;
+
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *load_blob;
+		const SYNetRbSnapFighterBlob *probe_blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		load_blob = &load_slot->fighters[slot_index];
+		probe_blob = &probe_slot->fighters[slot_index];
+		if ((load_blob->is_valid == FALSE) || (probe_blob->is_valid == FALSE))
+		{
+			continue;
+		}
+		if (syNetRbSnapAnchorProbeStatusTransitionExpected(load_blob, probe_blob) == FALSE)
+		{
+			continue;
+		}
+		if (fp->status_id != probe_blob->status_id)
+		{
+			continue;
+		}
+		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, probe_blob, TRUE);
+		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
+		ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
+	}
+}
+
+/*
+ * Post +1 sim: load and probe both Appear — anim hash often matches while fhash_light joint fold drifts
+ * after Appear physics integration (Phase 28 soak: Linux @179 Kirby AppearL status_total_tics + joint
+ * micro-drift; Android matched without reconcile). Re-pin fold fields from ring@probe when live status
+ * still matches Appear presentation scope.
+ */
+void syNetRbSnapshotReconcileAnchorProbeAppearSteadyFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	GObj *fighter_gobj;
+
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *load_blob;
+		const SYNetRbSnapFighterBlob *probe_blob;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		load_blob = &load_slot->fighters[slot_index];
+		probe_blob = &probe_slot->fighters[slot_index];
+		if ((load_blob->is_valid == FALSE) || (probe_blob->is_valid == FALSE))
+		{
+			continue;
+		}
+		if (syNetRbSnapAnchorProbeAppearSteadyExpected(load_blob, probe_blob) == FALSE)
+		{
+			continue;
+		}
+		if ((fp->status_id != probe_blob->status_id) || (fp->motion_id != probe_blob->motion_id) ||
+		    (syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE))
+		{
+			continue;
+		}
+		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, probe_blob, TRUE);
+		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
+		ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
+	}
+}
+
+/*
+ * Post +1 sim: load and probe both Wait — fhash_light joint/status_total_tics fold drifts on x86 during
+ * intro walkback when an Appear peer shares the step (Phase 29 soak: Linux @178–170 P1 Wait joint drift;
+ * Android matched). Also covers dual-Wait steps (@149, @113) where intro_anchor_probe is FALSE because
+ * no Appear/Entry peer remains live. Re-pin fold fields from ring@probe when live status still Wait.
+ */
+void syNetRbSnapshotReconcileAnchorProbeWaitSteadyFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	sb32 reapply_anim;
+
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	reapply_anim =
+	    (syNetRbSnapSlotAnyBlobInIntroPhysicsPeerScope(load_slot) != FALSE) ? TRUE : FALSE;
+	syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(load_tick, probe_tick, FALSE, reapply_anim);
+}
+
+/*
+ * Post +1 sim: load slot has an Appear peer and this fighter is steady Wait — +1 sim integrates Wait
+ * joints/MPColl while Appear physics runs (Phase 30 soak @209/@177: P1 Yoshi topn/pos_diff/j0_anim drift).
+ * Reapply probe AObj chain before terminal fold pin so anim hash matches ring@probe.
+ */
+void syNetRbSnapshotReconcileAnchorProbeMixedAppearWaitFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(load_tick, probe_tick, TRUE, TRUE);
+}
+
+/*
+ * Post +1 sim: load slot has Entry (not Appear) peer and this fighter is steady Wait — deep intro
+ * walkback (@133/@113) Entry+Wait class; same fold/anim re-pin policy as mixed Appear+Wait.
+ */
+void syNetRbSnapshotReconcileAnchorProbeMixedEntryWaitFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(load_tick, probe_tick, TRUE, TRUE);
+}
+
+void syNetRbSnapshotTerminalAnchorProbeWaitFoldFromProbeSlot(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	sb32 reapply_anim;
+
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	reapply_anim =
+	    (syNetRbSnapSlotAnyBlobInIntroPhysicsPeerScope(load_slot) != FALSE) ? TRUE : FALSE;
+	syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(load_tick, probe_tick, FALSE, reapply_anim);
+	syNetRbSnapReconcileAnchorProbeWaitPeersFromProbeSlot(load_tick, probe_tick, TRUE, TRUE);
+}
+
+sb32 syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	s32 pidx;
+
+	if (syNetRbSnapIntroAnchorProbeWaitTickInScope(load_tick) == FALSE)
+	{
+		return FALSE;
+	}
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapSlotAnyBlobInIntroPhysicsPeerScope(load_slot) == FALSE)
+	{
+		return FALSE;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		if (syNetRbSnapAnchorProbeMixedIntroPhysicsWaitExpected(load_slot, &load_slot->fighters[pidx],
+									&probe_slot->fighters[pidx]) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+sb32 syNetRbSnapshotAnchorProbeMixedAppearWaitScopeAtTicks(u32 load_tick, u32 probe_tick)
+{
+	return syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(load_tick, probe_tick);
+}
+
+sb32 syNetRbSnapshotAnchorProbeMixedEntryWaitScopeAtTicks(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	s32 pidx;
+
+	if (syNetRbSnapIntroAnchorProbeWaitTickInScope(load_tick) == FALSE)
+	{
+		return FALSE;
+	}
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return FALSE;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		if (syNetRbSnapBlobInEntryPresentationScope(&load_slot->fighters[pidx]) == FALSE)
+		{
+			continue;
+		}
+		if (syNetRbSnapAnchorProbeMixedIntroPhysicsWaitExpected(load_slot, &load_slot->fighters[pidx],
+									&probe_slot->fighters[pidx]) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+sb32 syNetRbSnapshotAnchorProbeWaitSteadyScopeAtTicks(u32 load_tick, u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *load_slot;
+	SYNetRbSnapshotSlot *probe_slot;
+	s32 pidx;
+
+	if (syNetRbSnapIntroAnchorProbeWaitTickInScope(load_tick) == FALSE)
+	{
+		return FALSE;
+	}
+	load_slot = syNetRbSnapshotSlotForTick(load_tick);
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((load_slot == NULL) || (probe_slot == NULL) || (load_slot->is_valid == FALSE) ||
+	    (probe_slot->is_valid == FALSE) || (load_slot->tick != load_tick) ||
+	    (probe_slot->tick != probe_tick))
+	{
+		return FALSE;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		if (syNetRbSnapAnchorProbeWaitSteadyExpected(&load_slot->fighters[pidx],
+							     &probe_slot->fighters[pidx]) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 void syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe(void)
 {
 	GObj *fighter_gobj;
@@ -30442,7 +31335,18 @@ void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_tick)
 	}
 	syNetRbSnapRefreshFigatreePresentationFromSlot(slot);
 #if defined(SSB64_NETMENU)
-	syNetRbSnapLogAppearPresentationDiag(slot, completed_sim_tick);
+	syNetRbSnapLogAppearPresentationDiag(slot, completed_sim_tick, "pre_repair");
+	if (syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope() != FALSE)
+	{
+		/*
+		 * Replay gate runs this after baseline+seal rows, not PrepareLoadedSlotForVerify. Without the
+		 * post-figatree repair tail, VerifyAppearPresentationIntegrity (blob=NULL) fails on Kirby Appear
+		 * hidden-part roots that load_post_prepare sanity skipped via blob->joint_is_valid.
+		 */
+		syNetRbSnapIntroLoadFidelityPreSanityRepair(slot);
+		syNetRbSnapReplayGateAppearPresentationRepair(slot);
+		syNetRbSnapLogAppearPresentationDiag(slot, completed_sim_tick, "post_prune");
+	}
 #endif
 #else
 	(void)completed_sim_tick;
@@ -30475,7 +31379,7 @@ void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick)
 		syNetRbSnapRestoreRebirthFightersAfterFinalize(slot);
 		syNetRbSnapRefreshFigatreePresentationFromSlot(slot);
 #if defined(SSB64_NETMENU)
-		syNetRbSnapLogAppearPresentationDiag(slot, completed_sim_tick);
+		syNetRbSnapLogAppearPresentationDiag(slot, completed_sim_tick, "prepare_verify");
 		if (syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope() != FALSE)
 		{
 			syNetRbSnapIntroLoadFidelityPreSanityRepair(slot);

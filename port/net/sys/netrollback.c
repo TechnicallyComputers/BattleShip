@@ -5522,10 +5522,15 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	syNetInputSetTick(probe_tick);
 	syNetInputPublishSynchronizedTick(probe_tick);
 #if defined(SSB64_NETMENU)
-	if (intro_anchor_probe != FALSE)
+	if ((intro_anchor_probe != FALSE) ||
+	    (syNetRbSnapshotAnchorProbeWaitSteadyScopeAtTicks(load_tick, probe_tick) != FALSE) ||
+	    (syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(load_tick, probe_tick) != FALSE))
 	{
 		syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim();
-		syNetRbSnapshotLogIntroAnchorSimTrail("pre", load_tick, probe_tick);
+		if (intro_anchor_probe != FALSE)
+		{
+			syNetRbSnapshotLogIntroAnchorSimTrail("pre", load_tick, probe_tick);
+		}
 	}
 #endif
 	sSYNetRollbackResimAnchorProbeActive = TRUE;
@@ -5535,9 +5540,23 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	if (intro_anchor_probe != FALSE)
 	{
 		syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe();
+		syNetRbSnapshotReconcileAnchorProbeTransitionFromProbeSlot(load_tick, probe_tick);
+		syNetRbSnapshotReconcileAnchorProbeAppearSteadyFromProbeSlot(load_tick, probe_tick);
+	}
+	/* Wait peers in mixed Appear/Entry+Wait steps and dual-Wait intro walkback (@149, @113). */
+	syNetRbSnapshotReconcileAnchorProbeWaitSteadyFromProbeSlot(load_tick, probe_tick);
+	syNetRbSnapshotReconcileAnchorProbeMixedAppearWaitFromProbeSlot(load_tick, probe_tick);
+	if ((intro_anchor_probe != FALSE) ||
+	    (syNetRbSnapshotAnchorProbeWaitSteadyScopeAtTicks(load_tick, probe_tick) != FALSE) ||
+	    (syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(load_tick, probe_tick) != FALSE))
+	{
 		/* Ring light fold uses gobj_translate for *p_translate; rebind after +1 sim before hash. */
 		syNetRbSnapshotRebindFighterMPCollForAnchorProbe();
-		syNetRbSnapshotLogIntroAnchorSimTrail("post", load_tick, probe_tick);
+		syNetRbSnapshotTerminalAnchorProbeWaitFoldFromProbeSlot(load_tick, probe_tick);
+		if (intro_anchor_probe != FALSE)
+		{
+			syNetRbSnapshotLogIntroAnchorSimTrail("post", load_tick, probe_tick);
+		}
 	}
 #endif
 
@@ -8153,6 +8172,7 @@ void syNetRollbackTryOpenResimReplayGate(void)
 		syNetRollbackStopVsSessionForLoadFail(sSYNetRollbackResimLoadTick, "replay_gate_blocked");
 		return;
 	}
+	syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(sSYNetRollbackResimLoadTick);
 #endif
 	port_log(
 	    "SSB64 NetRollback: resim replay gate open load_tick=%u mismatch=%u target=%u\n",
