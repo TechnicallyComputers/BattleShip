@@ -40,8 +40,10 @@ extern sb32 syNetRbSnapshotRestoreLiveEmergency(void);
 extern void syNetRbSnapshotFinalizeLoad(u32 completed_sim_tick);
 /* Finalize + rebind/reapply/coupling/item reconcile — same path production load and synctest use before verify. */
 extern void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick);
-/* Presentation-only 3-phase refresh + appear diag; world already at completed_sim_tick load. */
+/* Presentation refresh + intro repair tail for replay gate; world already at completed_sim_tick load. */
 extern void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_tick);
+/* Hash-safe Appear cosmetic refresh after replay gate verify (entry yaw + live modelpart DLs). */
+extern void syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(u32 load_tick);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
@@ -145,6 +147,26 @@ extern void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick);
 extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim(void);
 /* Intro anchor probe post +1 sim: sync Appear GObj root translate from TopN before fhash_light rebind. */
 extern void syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe(void);
+/* Intro anchor probe post +1 sim: Appear→Wait/Entry transition fold re-pin from ring@probe_tick. */
+extern void syNetRbSnapshotReconcileAnchorProbeTransitionFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Intro anchor probe post +1 sim: steady Appear fold re-pin from ring@probe_tick. */
+extern void syNetRbSnapshotReconcileAnchorProbeAppearSteadyFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Intro anchor probe post +1 sim: steady Wait fold re-pin from ring@probe_tick (intro tick band only). */
+extern void syNetRbSnapshotReconcileAnchorProbeWaitSteadyFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Intro anchor probe post +1 sim: Wait peer fold re-pin when load slot has an Appear peer (@209 class). */
+extern void syNetRbSnapshotReconcileAnchorProbeMixedAppearWaitFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Intro anchor probe post +1 sim: Wait peer fold re-pin when load slot has an Entry peer (@133 class). */
+extern void syNetRbSnapshotReconcileAnchorProbeMixedEntryWaitFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Post MPColl rebind: idempotent Wait + mixed intro-physics+Wait terminal fold pin before step hash. */
+extern void syNetRbSnapshotTerminalAnchorProbeWaitFoldFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* TRUE when any fighter has load/probe Wait blobs in intro anchor-probe walkback scope. */
+extern sb32 syNetRbSnapshotAnchorProbeWaitSteadyScopeAtTicks(u32 load_tick, u32 probe_tick);
+/* TRUE when load slot has Appear/Entry + steady Wait peer blobs at load/probe. */
+extern sb32 syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(u32 load_tick, u32 probe_tick);
+/* TRUE when load slot has Appear + steady Wait peer blobs at load/probe. */
+extern sb32 syNetRbSnapshotAnchorProbeMixedAppearWaitScopeAtTicks(u32 load_tick, u32 probe_tick);
+/* TRUE when load slot has Entry + steady Wait peer blobs at load/probe. */
+extern sb32 syNetRbSnapshotAnchorProbeMixedEntryWaitScopeAtTicks(u32 load_tick, u32 probe_tick);
 /* Intro anchor probe post +1 sim: rebind all fighters' coll_data.p_translate to GObj root for fhash_light. */
 extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbe(void);
 /* SSB64_NETPLAY_INTRO_ANCHOR_SIM_TRAIL=1: pre/post +1 sim Appear/MPColl scalar trail during anchor probe. */
