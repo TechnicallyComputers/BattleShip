@@ -44,6 +44,11 @@ void syNetSyncOnNetplayBattleGo(void)
 {
 }
 
+void syNetSyncLogNetplayBattleGoApply(u32 sim_tick)
+{
+	(void)sim_tick;
+}
+
 u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void)
 {
 	return 0U;

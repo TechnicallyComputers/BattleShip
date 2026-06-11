@@ -59,6 +59,10 @@ extern sb32 syNetRollbackIsResimulating(void); /* TRUE while nested `syNetRollba
 extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source);
 /* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
 extern sb32 syNetRollbackShouldBlockLiveBattleAdvance(u32 sim_tick);
+/* TRUE while resim awaits peer baseline / seal rows: skip live interface gcRunAll (countdown threads). */
+extern sb32 syNetRollbackShouldDeferInterfaceDuringResimWait(void);
+/* Cosmetic intro presentation refresh while interface defer is active (seal-wait / preemptive cap). */
+extern void syNetRollbackRefreshDeferredIntroPresentation(void);
 /* TRUE after resim load-fail abort: blocks sim advance, snapshot load/save, and baseline negotiation. */
 extern sb32 syNetRollbackIsBattleSimHoldActive(void);
 extern void syNetRollbackClearLoadFailBattleHold(void);

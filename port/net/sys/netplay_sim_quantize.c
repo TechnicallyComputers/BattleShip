@@ -5,6 +5,7 @@
 
 #include <sys/netpeer.h>
 #include <sys/netrollback.h>
+#include <sys/netrollbacksnapshot.h>
 #include <sys/obj.h>
 #include <sys/objtypes.h>
 #include <ft/fighter.h>
@@ -248,18 +249,7 @@ static sb32 syNetplayFighterInAppearSimScope(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	switch (fp->fkind)
-	{
-	case nFTKindKirby:
-	case nFTKindNKirby:
-		return ((fp->status_id == nFTKirbyStatusAppearR) || (fp->status_id == nFTKirbyStatusAppearL)) ? TRUE
-		                                                                                              : FALSE;
-	case nFTKindYoshi:
-		return ((fp->status_id == nFTYoshiStatusAppearR) || (fp->status_id == nFTYoshiStatusAppearL)) ? TRUE
-		                                                                                              : FALSE;
-	default:
-		return FALSE;
-	}
+	return syNetRbSnapshotStatusInAppearPresentationScope(fp->fkind, fp->status_id);
 }
 
 static void syNetplayCanonicalizeFighterIntroJointPose(GObj *fighter_gobj)

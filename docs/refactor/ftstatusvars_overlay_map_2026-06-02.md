@@ -129,6 +129,8 @@ Legitimate cross-overlay touches that must not log `witness stomp`:
 | Turn + `attack4.lr` read | Code: `ftCommonAttackS4CheckInterruptTurn` uses `ftStatusVarsTurn(fp)->lr_dash` |
 | Any status + `damage.*` during `ftCommonDamageInitDamageVars` | Witness: `syNetplayStatusVarsWitnessEnterDamageInit` depth gate |
 | Thrown + `damage.*` (motion events, proc_status) | Witness: allow `accessed=damage expected=thrown` |
+| Turn/Dash/… + `entry.*` while `camera_mode` Entry/Explain | Witness: allow `accessed=entry` when `gmcamera.c` reads `entry.lr` (`netplay_witness_soak1_false_stomps_2026-06-11.md`) |
+| Dash/Run/Wait/… + `turn.*` (persistent `lr_turn`) | Witness: allow `accessed=turn` for `status_id` in Wait…Ottotto |
 
 Ownership table also tags `ThrownKirbyStar` / `ThrownCopyStar` as **thrown** overlay.
 

@@ -239,7 +239,35 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	}
 	cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() +
 	      syNetPeerGetPhaseLockPredictionWindowTicks();
-	return (next_sim_tick <= cap) ? TRUE : FALSE;
+	if (next_sim_tick > cap)
+	{
+		return FALSE;
+	}
+#ifdef PORT
+	{
+		u32 epoch_cap;
+		u32 cap_source;
+
+		if ((syNetRollbackGetLiveSimCap(&epoch_cap, &cap_source) != FALSE) && (epoch_cap != ~(u32)0) &&
+		    (next_sim_tick > epoch_cap))
+		{
+			static u32 sLastEpochCapBlockedAdvanceLogTick = ~(u32)0;
+
+			if (next_sim_tick != sLastEpochCapBlockedAdvanceLogTick)
+			{
+				port_log(
+				    "SSB64 NetInput: sim advance blocked (rollback_epoch_cap=%u source=%u) next_sim=%u peer_vs_active=%d\n",
+				    epoch_cap,
+				    cap_source,
+				    next_sim_tick,
+				    (int)syNetPeerIsVSSessionActive());
+				sLastEpochCapBlockedAdvanceLogTick = next_sim_tick;
+			}
+			return FALSE;
+		}
+	}
+#endif
+	return TRUE;
 }
 
 void syNetInputAdvanceAuthoritativeSimTick(void)

@@ -150,6 +150,24 @@ sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const S
 	return FALSE;
 }
 
+sb32 syNetFrameCommitItemOnlyCosmeticDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b)
+{
+	if ((a == NULL) || (b == NULL))
+	{
+		return FALSE;
+	}
+	if (a->item_digest == b->item_digest)
+	{
+		return FALSE;
+	}
+	if ((a->fighter_digest != b->fighter_digest) || (a->world_digest != b->world_digest) ||
+	    (a->rng_digest != b->rng_digest) || (a->effect_digest != b->effect_digest))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, const SYNetFrameCommitToken *peer,
 					  u32 validation_tick, u32 *out_diag_figh, u32 *out_diag_world)
 {

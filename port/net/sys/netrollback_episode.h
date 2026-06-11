@@ -134,6 +134,8 @@ extern sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatc
 						       u32 row_begin, const SYNetInputFrame *rows, u32 row_count);
 extern sb32 syNetRollbackEpisodePeerSealRowsComplete(s32 player);
 extern sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void);
+/* Timeout fallback: fill missing peer-authority rows from wire-confirmed local history (all-or-nothing). */
+extern sb32 syNetRollbackEpisodeTrySelfSealMissingPeerRows(void);
 extern sb32 syNetRollbackEpisodeLocalSealRowsSendComplete(void);
 extern u32 syNetRollbackEpisodeGetLocalSealRowsSendPendingMask(void);
 extern u32 syNetRollbackEpisodeGetSealSpan(void);

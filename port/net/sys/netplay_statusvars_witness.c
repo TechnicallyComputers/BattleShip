@@ -186,6 +186,8 @@ static void syNetplayStatusVarsWitnessInitOwnershipTable(void)
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusTurn, nFTCommonStatusTurnRun, nFTStatusVarsOverlayTurn);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusKneeBend, nFTCommonStatusGuardKneeBend, nFTStatusVarsOverlayKneeBend);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusJumpAerialF, nFTCommonStatusJumpAerialB, nFTStatusVarsOverlayJumpAerial);
+    syNetplayStatusVarsWitnessFillRange(nFTCommonStatusSquat, nFTCommonStatusSquatRv, nFTStatusVarsOverlaySquat);
+    syNetplayStatusVarsWitnessFillRange(nFTCommonStatusLandingLight, nFTCommonStatusLandingHeavy, nFTStatusVarsOverlayLanding);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusDamageStart, nFTCommonStatusDamageEnd, nFTStatusVarsOverlayDamage);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusFallSpecial, nFTCommonStatusLandingFallSpecial, nFTStatusVarsOverlayFallSpecial);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusTwister, nFTCommonStatusTwister, nFTStatusVarsOverlayTwister);
@@ -231,16 +233,24 @@ static FTStatusVarsOverlay syNetplayStatusVarsWitnessExpectedOverlay(const FTStr
         }
     }
 
-    /* Character Appear / special paths reuse entry overlay without a common status_id. */
-    if (fp->camera_mode == nFTCameraModeEntry)
+    /*
+     * Appear / Entry camera paths reuse entry overlay before actionable sim statuses.
+     * Do not tag Wait+ as entry solely from camera_mode — intro countdown runs in Wait
+     * while camera_mode may still be Entry (soak1: false stomps on Turn/Squat/Dash).
+     */
+    if ((fp->camera_mode == nFTCameraModeEntry) || (fp->camera_mode == nFTCameraModeExplain))
     {
-        return nFTStatusVarsOverlayEntry;
+        if (fp->status_id < nFTCommonStatusWait)
+        {
+            return nFTStatusVarsOverlayEntry;
+        }
     }
 
     return nFTStatusVarsOverlayNone;
 }
 
-static sb32 syNetplayStatusVarsWitnessIsAllowedCrossOverlay(FTStatusVarsOverlay accessed, FTStatusVarsOverlay expected)
+static sb32 syNetplayStatusVarsWitnessIsAllowedCrossOverlay(const FTStruct *fp, FTStatusVarsOverlay accessed,
+                                                            FTStatusVarsOverlay expected)
 {
     if (s_statusvars_witness_damage_init_depth > 0)
     {
@@ -252,6 +262,20 @@ static sb32 syNetplayStatusVarsWitnessIsAllowedCrossOverlay(FTStatusVarsOverlay 
     if (accessed == nFTStatusVarsOverlayDamage)
     {
         if (expected == nFTStatusVarsOverlayThrown)
+        {
+            return TRUE;
+        }
+    }
+    if ((accessed == nFTStatusVarsOverlayEntry) && (fp != NULL))
+    {
+        if ((fp->camera_mode == nFTCameraModeEntry) || (fp->camera_mode == nFTCameraModeExplain))
+        {
+            return TRUE;
+        }
+    }
+    if ((accessed == nFTStatusVarsOverlayTurn) && (fp != NULL))
+    {
+        if ((fp->status_id >= nFTCommonStatusWait) && (fp->status_id <= nFTCommonStatusOttotto))
         {
             return TRUE;
         }
@@ -418,7 +442,7 @@ void syNetplayStatusVarsWitnessNoteAccess(const FTStruct *fp, FTStatusVarsOverla
     {
         return;
     }
-    if (syNetplayStatusVarsWitnessIsAllowedCrossOverlay(overlay, expected) != FALSE)
+    if (syNetplayStatusVarsWitnessIsAllowedCrossOverlay(fp, overlay, expected) != FALSE)
     {
         return;
     }
