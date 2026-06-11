@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10  
 **Scope:** `port/net/sys/netrollbacksnapshot.c`  
-**Status:** Phase 24 (restore probe canonicalize; keep synctest isolation) — soak pending (`INJECT_TICK=240`, `RESIM_ANCHOR_PROBE=1`)
+**Status:** Phase 27 (Appear AObj-coherent anchor prep; gobj←TopN post-sim sync) — soak pending (`INJECT_TICK=240`, `RESIM_ANCHOR_PROBE=1`)
 
 ## Symptoms
 
@@ -258,6 +258,30 @@ Phase 23 soak1: synctest isolation held (`SAVE_SKIPPED`, no `SYNCTEST_*`); `post
 - Phase 23 retained: `syNetRbSnapshotHashFightersLightFromLive` step oracle, synctest skip during probe, pre/post-sim `syNetRbSnapshotRebindFighterMPCollForAnchorProbe`, `HardPinEx(..., anchor_probe_mpcoll=TRUE)`.
 
 **soak1 cross-ISA validation (2026-06-10):** `step_anim_fail=0` on all anchor-probe walkback steps (Phase-23 regression cleared). `step_figh_fail=1` remains on Kirby AppearL (251/226) with `fold_topn_ty` / `fold_coll_pos_diff_y` / joint TRS cascade — still open per above.
+
+## Correction (Phase 26 — 2026-06-10): Appear TopN MPColl during anchor-probe +1 sim
+
+Phase 25 trail (`INTRO_ANCHOR_SIM_TRAIL=1`, `INJECT=240`): `postload_*_fail=0` @239; `step_figh_fail=1` @240 with P1 Yoshi AppearL (221/196) `light_ok=0` while P0 Kirby Wait `light_ok=1`. Pre→post +1 sim: Yoshi `pos_diff_y` `0xBD400000→0xBD410000` (ring@240 expects `0xBD400000`); `ptr_gobj=1` pre/post. Root cause: Phase 22–24 pre-sim GObj-root `p_translate` rebind + hard pin while `ftCommonAppearProcPhysics` moves TopN only — MPColl integrates `pos_diff` against static GObj root during Appear +1 sim, diverging from forward sim (TopN-bound `p_translate`).
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim` | Appear peers → TopN `*p_translate` before +1 sim; Wait/Entry → GObj |
+| `syNetRbSnapAnchorProbeSimPrepFromSlot` hard pin | Appear peers use TopN MPColl restore (`anchor_probe_mpcoll=FALSE`); others GObj |
+| Post-sim `RebindFighterMPCollForAnchorProbe` unchanged | All → GObj before `fhash_light` step hash |
+
+**Still open:** camera frozen during probe (`match_cam=0` every step); Kirby Appear @240 untested in Phase-25 inject window (re-run `INJECT=480`).
+
+## Correction (Phase 27 — 2026-06-10): Appear AObj-coherent anchor prep (Kirby AppearR)
+
+Phase 26 soak (`INJECT=240`): Yoshi AppearL `light_ok=1` @240 (Phase 26 confirmed); Kirby AppearR `250/225` sole `step_figh_fail` with `fold_topn_ty` / `fold_coll_pos_diff_y` / joint TRS cascade while `anim_ok=1` and `transn_anim`/`j0_anim` matched ring@240. Trail: `transn_ty` diverges pre→post despite matching anim scalars — hard pin after reapply overwrote joint TRS without refreshing AObj chains built by `ApplyDObjAnim`.
+
+| Change | Purpose |
+|--------|---------|
+| `syNetRbSnapAnchorProbeSimPrepFromSlot` Appear branch | Reapply only (AObj + post-canonicalize re-pin incl. `entry_pos`); skip trailing hard pin |
+| Non-Appear intro peers unchanged | Reapply + `entry_pos` + GObj MPColl hard pin (Wait/Entry spawn fold) |
+| `syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe` | Post +1 sim: copy TopN translate → GObj root before GObj MPColl hash rebind |
+
+**Phase 26 retained:** TopN MPColl pre-sim rebind for Appear; post-sim GObj rebind for hash.
 
 ## Diagnostic (Phase 25 — 2026-06-10): intro anchor +1 sim trail
 

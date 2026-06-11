@@ -2924,9 +2924,46 @@ static void syNetRbSnapRebindAllFighterMPCollPointers(void)
 	}
 }
 
+static sb32 syNetRbSnapFighterInAppearPresentationScope(const FTStruct *fp);
+
 /*
- * Anchor-probe +1 sim: ring capture folds *p_translate from GObj root (ftManager spawn). Rebind all
- * fighters before scVSBattleFuncUpdateBattleSimOnly so Wait/Appear peers match blob gobj_translate fold.
+ * Anchor-probe +1 sim (pre): ftCommonAppearProcPhysics moves TopN while GObj root stays fixed. Forward
+ * sim uses TopN *p_translate; rebinding Appear peers to GObj before +1 sim integrates pos_diff against a
+ * static root and diverges from ring (Phase 25 trail: pos_diff_y BD40→BD41 on Yoshi AppearL @240).
+ * Wait/Entry peers keep GObj-root MPColl so blob gobj_translate fold matches vanilla spawn semantics.
+ */
+void syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		Vec3f *p_translate;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		if (syNetRbSnapFighterInAppearPresentationScope(fp) != FALSE)
+		{
+			p_translate = syNetRbSnapFighterMPCollTranslatePtrTopN(fp);
+		}
+		else
+		{
+			p_translate = syNetRbSnapFighterMPCollTranslatePtrGobj(fighter_gobj);
+		}
+		fp->coll_data.p_translate = p_translate;
+		fp->coll_data.p_lr = &fp->lr;
+		fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	}
+}
+
+/*
+ * Anchor-probe +1 sim (post): ring fhash_light folds *p_translate from GObj root (blob->gobj_translate).
+ * Rebind all fighters after +1 sim, before step hash collect.
  */
 void syNetRbSnapshotRebindFighterMPCollForAnchorProbe(void)
 {
@@ -29676,8 +29713,8 @@ static void syNetRbSnapRestoreFighterMPCollFromBlob(FTStruct *fp, const SYNetRbS
 }
 
 /*
- * Anchor-probe +1 sim only: ring capture folds *p_translate from GObj root (ftManager spawn). Appear
- * physics moves TopN while gobj root stays fixed — use vanilla pointer only for the probe forward step.
+ * Anchor-probe hard-pin tail (non-Appear peers): ring fhash_light folds gobj_translate for *p_translate.
+ * Appear peers use TopN restore via syNetRbSnapRestoreFighterMPCollFromBlob — Appear physics moves TopN.
  */
 static void syNetRbSnapRestoreFighterMPCollFromBlobForAnchorProbe(GObj *fighter_gobj, FTStruct *fp,
 								const SYNetRbSnapFighterBlob *blob)
@@ -29803,10 +29840,10 @@ static void syNetRbSnapIntroLoadFidelityPreSanityRepair(const SYNetRbSnapshotSlo
 }
 
 /*
- * Anchor-probe +1 sim: IntroLoadFidelity ends with TRS/MPColl hard pin matching load hash, but forward
- * sim also consumes AObj/event32 cursors and entry_pos (Appear physics). Re-run full blob anim reapply
- * (no modelpart push) + entry_pos + terminal pin so scVSBattleFuncUpdateBattleSimOnly starts from the
- * same hidden sim state the ring slot had at load_tick.
+ * Anchor-probe +1 sim: IntroLoadFidelityPreSanityRepair already ran reapply + hard pin. Appear peers
+ * need coherent AObj chains for the +1 anim step — hard pin after reapply overwrites joint TRS without
+ * refreshing AObj (Phase 26 soak: Kirby AppearR transn_ty/topn_ty drift while anim_frame matched).
+ * Wait/Entry peers keep reapply + GObj MPColl hard pin (Phase 22/26 spawn fold semantics).
  */
 static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slot)
 {
@@ -29838,19 +29875,55 @@ static void syNetRbSnapAnchorProbeSimPrepFromSlot(const SYNetRbSnapshotSlot *slo
 		{
 			continue;
 		}
-		/*
-		 * Apply to every valid fighter while any peer is still in Entry/Appear intro scope.
-		 * Yoshi can reach Wait (Entry→Wait skip) while Kirby is still in Appear; per-fighter
-		 * intro scope would skip Wait and leave TopN-bound p_translate for the +1 sim step.
-		 */
-		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
-		if (syNetRbSnapFighterInIntroLoadFidelityScope(fp) != FALSE)
+		if (syNetRbSnapFighterInAppearPresentationScope(fp) != FALSE)
 		{
-			syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
+			syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
 		}
-		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, TRUE);
+		else
+		{
+			syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
+			if (syNetRbSnapFighterInIntroLoadFidelityScope(fp) != FALSE)
+			{
+				syNetRbSnapRestoreFighterEntryPosFromBlob(fp, blob);
+			}
+			syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, TRUE);
+		}
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
 		ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
+	}
+}
+
+/*
+ * Post +1 sim: ring fhash_light folds gobj_translate; during Appear, ftCommonAppearProcPhysics moves TopN
+ * while spawn keeps GObj root tied to TopN Y at capture. Sync root translate from TopN before GObj MPColl
+ * rebind so live gobj_translate matches integrated Appear pose when TopN diverged from stale root.
+ */
+void syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		DObj *root_dobj;
+		DObj *topn;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (syNetRbSnapFighterInAppearPresentationScope(fp) == FALSE))
+		{
+			continue;
+		}
+		topn = fp->joints[nFTPartsJointTopN];
+		root_dobj = DObjGetStruct(fighter_gobj);
+		if ((topn == NULL) || (root_dobj == NULL))
+		{
+			continue;
+		}
+		root_dobj->translate.vec.f = topn->translate.vec.f;
+#if defined(SSB64_NETMENU)
+		syNetplayQuantizeVec3f(&root_dobj->translate.vec.f);
+#endif
 	}
 }
 

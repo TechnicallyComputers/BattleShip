@@ -5524,7 +5524,7 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 #if defined(SSB64_NETMENU)
 	if (intro_anchor_probe != FALSE)
 	{
-		syNetRbSnapshotRebindFighterMPCollForAnchorProbe();
+		syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim();
 		syNetRbSnapshotLogIntroAnchorSimTrail("pre", load_tick, probe_tick);
 	}
 #endif
@@ -5534,6 +5534,7 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 #if defined(SSB64_NETMENU)
 	if (intro_anchor_probe != FALSE)
 	{
+		syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe();
 		/* Ring light fold uses gobj_translate for *p_translate; rebind after +1 sim before hash. */
 		syNetRbSnapshotRebindFighterMPCollForAnchorProbe();
 		syNetRbSnapshotLogIntroAnchorSimTrail("post", load_tick, probe_tick);
