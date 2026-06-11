@@ -141,7 +141,11 @@ extern sb32 syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope(void);
 extern sb32 syNetRbSnapshotVerifyAppearPresentationIntegrity(u32 tick);
 /* Re-pin live fighter pose/anim from ring slot before anchor-probe +1 sim (post-prepare blob contract). */
 extern void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick);
-/* Intro anchor probe: rebind all fighters' coll_data.p_translate to GObj root (vanilla spawn semantics). */
+/* Intro anchor probe pre +1 sim: Appear → TopN *p_translate; Wait/Entry → GObj root. */
+extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbePreSim(void);
+/* Intro anchor probe post +1 sim: sync Appear GObj root translate from TopN before fhash_light rebind. */
+extern void syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe(void);
+/* Intro anchor probe post +1 sim: rebind all fighters' coll_data.p_translate to GObj root for fhash_light. */
 extern void syNetRbSnapshotRebindFighterMPCollForAnchorProbe(void);
 /* SSB64_NETPLAY_INTRO_ANCHOR_SIM_TRAIL=1: pre/post +1 sim Appear/MPColl scalar trail during anchor probe. */
 extern void syNetRbSnapshotLogIntroAnchorSimTrail(const char *phase, u32 load_tick, u32 probe_tick);
