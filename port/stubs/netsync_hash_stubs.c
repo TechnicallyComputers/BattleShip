@@ -40,6 +40,21 @@ void syNetSyncResetNetplayBattleClock(void)
 {
 }
 
+void syNetSyncLatchNetplayCountdownCreatedSimTick(u32 sim_tick)
+{
+	(void)sim_tick;
+}
+
+sb32 syNetSyncShouldDeferCountdownGoFromThread(void)
+{
+	return FALSE;
+}
+
+void syNetSyncTryApplyAuthoritativeNetplayGo(u32 sim_tick)
+{
+	(void)sim_tick;
+}
+
 void syNetSyncOnNetplayBattleGo(void)
 {
 }

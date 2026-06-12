@@ -121,6 +121,10 @@ extern void syNetSyncResetNetplayBattleClock(void);
 /* Minutes for netplay timer reconcile/HUD (battle_state->time_limit). */
 extern u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void);
 extern void syNetSyncOnNetplayBattleGo(void);
+/* Latch countdown-create sim; GO fires at created + I_SEC_TO_TICS(5) on completed sim steps (not gcRunAll thread). */
+extern void syNetSyncLatchNetplayCountdownCreatedSimTick(u32 sim_tick);
+extern sb32 syNetSyncShouldDeferCountdownGoFromThread(void);
+extern void syNetSyncTryApplyAuthoritativeNetplayGo(u32 sim_tick);
 /* `SSB64_NETPLAY_BATTLE_GO_LOG=1`: world_detail + latch line when GO status is applied. */
 extern void syNetSyncLogNetplayBattleGoApply(u32 sim_tick);
 extern void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick);

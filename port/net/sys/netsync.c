@@ -55,6 +55,8 @@
 extern void port_log(const char *fmt, ...);
 
 static u32 sSYNetSyncBattleGoSimTick = ~(u32)0;
+static u32 sSYNetSyncNetplayCountdownCreatedSimTick = ~(u32)0;
+static u32 sSYNetSyncNetplayAuthoritativeGoSimTick = ~(u32)0;
 static sb32 sSYNetSyncItemHashTruncationLogged = FALSE;
 static sb32 sSYNetSyncTimeUpTriggered = FALSE;
 static sb32 sSYNetSyncBattleGoPending = FALSE;
@@ -705,10 +707,83 @@ u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void)
 void syNetSyncResetNetplayBattleClock(void)
 {
 	sSYNetSyncBattleGoSimTick = ~(u32)0;
+	sSYNetSyncNetplayCountdownCreatedSimTick = ~(u32)0;
+	sSYNetSyncNetplayAuthoritativeGoSimTick = ~(u32)0;
 	sSYNetSyncTimeUpTriggered = FALSE;
 	sSYNetSyncBattleGoPending = FALSE;
 	syNetSyncResetJointTranslateTraceSession();
 	syNetSyncResetFhashLightMismatchTriggerSession();
+}
+
+void syNetSyncLatchNetplayCountdownCreatedSimTick(u32 sim_tick)
+{
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (sSYNetSyncNetplayCountdownCreatedSimTick != ~(u32)0)
+	{
+		return;
+	}
+	sSYNetSyncNetplayCountdownCreatedSimTick = sim_tick;
+	/*
+	 * Vanilla countdown: 60-tic scroll + main loop until timer == I_SEC_TO_TICS(5).
+	 * Thread GO is gcRunAll-driven and drifts when resim/defer asymmetry adds extra passes;
+	 * bind gameplay GO to this sim tick instead (soak1: countdown ~87 → GO ~387).
+	 */
+	sSYNetSyncNetplayAuthoritativeGoSimTick = sim_tick + (u32)I_SEC_TO_TICS(5);
+	if (syNetSyncBattleGoLogEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetSync: netplay_countdown_latch created_sim=%u authoritative_go_sim=%u\n",
+		    sim_tick,
+		    sSYNetSyncNetplayAuthoritativeGoSimTick);
+	}
+}
+
+sb32 syNetSyncShouldDeferCountdownGoFromThread(void)
+{
+	if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetplayRollbackSemanticsActive() == FALSE))
+	{
+		return FALSE;
+	}
+	return (sSYNetSyncNetplayAuthoritativeGoSimTick != ~(u32)0) ? TRUE : FALSE;
+}
+
+void syNetSyncTryApplyAuthoritativeNetplayGo(u32 sim_tick)
+{
+	if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetplayRollbackSemanticsActive() == FALSE))
+	{
+		return;
+	}
+	if ((gSCManagerBattleState == NULL) ||
+	    (gSCManagerBattleState->game_status != nSCBattleGameStatusWait))
+	{
+		return;
+	}
+	if (sSYNetSyncNetplayAuthoritativeGoSimTick == ~(u32)0)
+	{
+		return;
+	}
+	if (sim_tick < sSYNetSyncNetplayAuthoritativeGoSimTick)
+	{
+		return;
+	}
+	ifCommonAnnounceGoMakeInterface();
+	ifCommonAnnounceGoSetStatus();
+	ifCommonPlayerDamageSetShowInterface();
+	if (gGMCameraGObj != NULL)
+	{
+		gmCameraRunFuncCamera(gGMCameraGObj);
+	}
+	if (syNetSyncBattleGoLogEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetSync: netplay_authoritative_go sim=%u latched_go_sim=%u countdown_created_sim=%u\n",
+		    sim_tick,
+		    sSYNetSyncNetplayAuthoritativeGoSimTick,
+		    sSYNetSyncNetplayCountdownCreatedSimTick);
+	}
 }
 
 void syNetSyncOnNetplayBattleGo(void)

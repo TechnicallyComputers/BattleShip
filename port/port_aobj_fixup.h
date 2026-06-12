@@ -43,6 +43,30 @@ extern "C" {
 void port_aobj_event32_unhalfswap_stream(void *head);
 
 /**
+ * Same as port_aobj_event32_unhalfswap_stream but walks even when @p head is
+ * outside registered halfswapped ranges.  Walker validation still applies.
+ * Used for intro Appear hidden-part EVENT32 streams that live in figatree heap
+ * dependency slices not covered by per-file registration.
+ */
+void port_aobj_event32_unhalfswap_stream_force(void *head);
+
+/**
+ * Drop cached walker verdicts for @p head so the next
+ * port_aobj_event32_unhalfswap_stream call re-walks the stream.  Used when
+ * figatree heap bytes at a stable pointer were overwritten without going
+ * through port_aobj_register_halfswapped_range (modelpart swap, snapshot
+ * blob re-pin, etc.).
+ */
+void port_aobj_event32_unhalfswap_forget(void *head);
+
+/**
+ * Evict every walker / one-shot-fixup cache entry keyed on an address inside
+ * [@p base, @p base + @p size).  Same eviction as
+ * port_aobj_register_halfswapped_range without registering a new range.
+ */
+void port_aobj_event32_unhalfswap_evict_range(void *base, unsigned long size);
+
+/**
  * Register a memory region (from a fighter-figatree reloc file) that was
  * u16-halfswapped at load time.  The walker refuses to touch pointers
  * outside any registered region — protects against accidentally
@@ -52,6 +76,12 @@ void port_aobj_event32_unhalfswap_stream(void *head);
  * after portRelocFixupFighterFigatree.
  */
 void port_aobj_register_halfswapped_range(void *base, unsigned long size);
+
+/**
+ * Register an entire per-fighter figatree heap as halfswapped-eligible.
+ * Extends any existing registration for the same base via max(end).
+ */
+void port_aobj_register_figatree_heap_span(void *heap, unsigned long heap_size);
 
 /**
  * Clear the visited set and registered ranges.  Called on scene reset

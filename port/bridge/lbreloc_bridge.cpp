@@ -32,6 +32,7 @@
 #include "port_scene_heap.h"
 
 extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long size);
+extern "C" void port_aobj_event32_unhalfswap_evict_range(void *base, unsigned long size);
 
 // Bridge-local type definitions.
 // These MUST be ABI-compatible with the decomp definitions in lbtypes.h.
@@ -548,6 +549,7 @@ void lbRelocLoadAndRelocFile(u32 file_id, void *ram_dst, u32 bytes_num, s32 loc)
 	// this, portFixupSprite/Bitmap/SpriteBitmapData wrongly skip the new load
 	// and the BSWAP texel loop later walks past the texture on bogus sizes.
 	portEvictStructFixupsInRange(ram_dst, copySize);
+	port_aobj_event32_unhalfswap_evict_range(ram_dst, (unsigned long)copySize);
 	// Evict any libultraship texture-cache entries whose origAddr falls in
 	// the heap range we're about to overwrite. The Fast3D cache key is
 	// {addr, fmt, siz, sizeBytes, masks, maskt, w, h} — same-shape textures
@@ -895,9 +897,17 @@ void* lbRelocGetForceExternBufferFile(u32 id)
 
 void* lbRelocGetForceExternHeapFile(u32 id, void *heap)
 {
+	void *result;
+
 	sLBRelocExternFileHeap = heap;
 	sLBRelocInternBuffer.force_status_buffer_num = 0;
-	return lbRelocGetForceExternBufferFile(id);
+	result = lbRelocGetForceExternBufferFile(id);
+	if ((result != NULL) && (heap != NULL) && (sLBRelocExternFileHeap > heap))
+	{
+		port_aobj_register_halfswapped_range(
+		    heap, (unsigned long)((uintptr_t)sLBRelocExternFileHeap - (uintptr_t)heap));
+	}
+	return result;
 }
 
 // // // // // // // // // // // //

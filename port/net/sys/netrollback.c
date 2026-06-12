@@ -1017,6 +1017,9 @@ static sb32 syNetRollbackResolveLoadTickForSnapshot(u32 *io_load_tick, u32 *io_m
 static void syNetRollbackApplyLoadAnchorFragileWalkback(u32 *io_load_tick, u32 *io_mismatch_tick);
 static sb32 syNetRollbackTryLoadPostTickWithFidelityWalkback(u32 *io_load_tick, u32 *io_mismatch_tick);
 static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick);
+#if defined(SSB64_NETMENU)
+static u32 syNetRollbackAnchorProbeEpisodeMismatchTick(void);
+#endif
 static sb32 syNetRollbackAnchorProbeTryWalkbackLoad(u32 before_load, u32 min_load, u32 *io_load_tick,
 						    u32 *io_mismatch_tick);
 static sb32 syNetRollbackPeerBaselineDriftIsAnimOnly(const SYNetRollbackHashSet *peer,
@@ -1778,6 +1781,24 @@ static sb32 syNetRollbackTryRecoverEffectHashDrift(u32 tick, u32 live_ef)
 	return TRUE;
 }
 
+static sb32 syNetRollbackTryRecoverWeaponHashDrift(u32 tick, u32 live_wp)
+{
+	if (live_wp == syNetRbSnapshotGetSlotHashWeapon(tick))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapshotTryRepairWeaponHashForVerify(tick) == FALSE)
+	{
+		return FALSE;
+	}
+	port_log(
+	    "SSB64 NetRollback: LOAD_HASH_DRIFT weapon-repair ok tick=%u wpn=0x%08X/0x%08X\n",
+	    tick,
+	    syNetRbSnapshotGetSlotHashWeapon(tick),
+	    syNetSyncHashActiveWeaponsForRollback());
+	return TRUE;
+}
+
 static sb32 syNetRollbackLoadHashDriftTrySoftContinue(u32 tick, u32 live_f, u32 live_m)
 {
 	if (syNetRollbackLoadHashDriftIsSoft() == FALSE)
@@ -1877,6 +1898,39 @@ static sb32 syNetRollbackFcRecoveryFighDriftOk(u32 tick, u32 live_f)
 	live_light = syNetRbSnapshotHashFightersLightFromLive();
 	slot_light = syNetRbSnapshotGetSlotHashFighterLight(tick);
 	return (live_light == slot_light) ? TRUE : FALSE;
+}
+
+/*
+ * FC recovery: ring may retain weapon blobs from a poisoned local forward-sim span while live load
+ * correctly has none (peer-empty @480 soak3). Allow resim load when sim-critical partitions match.
+ */
+static sb32 syNetRollbackFcRecoveryWpnOnlyDriftOk(u32 tick, u32 live_f, u32 live_w, u32 live_i, u32 live_wp,
+						  u32 live_m, u32 live_r)
+{
+	if (sSYNetRollbackFcStateRecoveryActive == FALSE)
+	{
+		return FALSE;
+	}
+	if (live_wp == syNetRbSnapshotGetSlotHashWeapon(tick))
+	{
+		return FALSE;
+	}
+	if ((live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
+	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_m != syNetRbSnapshotGetSlotHashMap(tick)) ||
+	    (live_r != syNetRbSnapshotGetSlotHashRng(tick)))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackFcRecoveryFighDriftOk(tick, live_f) == FALSE)
+	{
+		return FALSE;
+	}
+	port_log(
+	    "SSB64 NetRollback: LOAD_HASH_DRIFT fc_recovery wpn-only ok tick=%u wpn=0x%08X/0x%08X (stale ring weapons)\n",
+	    tick,
+	    syNetRbSnapshotGetSlotHashWeapon(tick),
+	    live_wp);
+	return TRUE;
 }
 #endif
 
@@ -3505,6 +3559,12 @@ static void syNetRollbackOnResimCompleted(void)
 	syNetRollbackFlushPendingResimPostHandshake();
 	syNetRollbackTryCompleteEpisodeAfterPostMatch();
 	syNetRollbackClearResimPostBoundaryDigest();
+#if defined(SSB64_NETMENU)
+	if ((sSYNetRollbackResimTargetTick != ~(u32)0) && (sSYNetRollbackResimTargetTick != 0U))
+	{
+		syNetRbSnapshotRefreshIntroPresentationAfterResimComplete(sSYNetRollbackResimTargetTick);
+	}
+#endif
 	sSYNetRollbackResimLoadTick = ~(u32)0;
 	if (syNetRollbackEpisodeFsmEnabled() == FALSE)
 	{
@@ -5643,6 +5703,13 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 			}
 			live_ef = syNetSyncHashActiveEffectsForRollback();
 		}
+		if (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick))
+		{
+			if (syNetRollbackTryRecoverWeaponHashDrift(tick, live_wp) != FALSE)
+			{
+				live_wp = syNetSyncHashActiveWeaponsForRollback();
+			}
+		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
 		                                                 live_c, live_a, live_ef) != FALSE)
 		{
@@ -5685,6 +5752,12 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		{
 			return TRUE;
 		}
+#if defined(SSB64_NETMENU)
+		if (syNetRollbackFcRecoveryWpnOnlyDriftOk(tick, live_f, live_w, live_i, live_wp, live_m, live_r) != FALSE)
+		{
+			return TRUE;
+		}
+#endif
 		return FALSE;
 	}
 	return TRUE;
@@ -5764,6 +5837,23 @@ static sb32 syNetRollbackAnchorProbeTryWalkbackLoad(u32 before_load, u32 min_loa
  * Caller (resim begin) keeps the loaded world; diagnostic-only callers restore emergency after probe.
  * Returns TRUE when load+1 forward sim does not match ring figh/anim (actionable fidelity mismatch).
  */
+#if defined(SSB64_NETMENU)
+static u32 syNetRollbackAnchorProbeEpisodeMismatchTick(void)
+{
+	if ((sSYNetRollbackBeginResimInitialLoad != FALSE) &&
+	    (sSYNetRollbackExecutingEpisode.valid != FALSE) &&
+	    (sSYNetRollbackExecutingEpisode.mismatch_tick != 0U))
+	{
+		return sSYNetRollbackExecutingEpisode.mismatch_tick;
+	}
+	if ((sSYNetRollbackResimMismatchTick != 0U) && (sSYNetRollbackResimMismatchTick != ~(u32)0))
+	{
+		return sSYNetRollbackResimMismatchTick;
+	}
+	return 0U;
+}
+#endif
+
 static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 {
 	u32 probe_tick;
@@ -5858,6 +5948,47 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 			syNetRbSnapshotLogFighterFieldDiffAtTick(load_tick, "resim_anchor_probe_postload_anim");
 		}
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Episode mismatch tick (FORCE_MISMATCH / corrected input): ring@probe was captured on forward
+	 * sim before correction. When post-load restore matched, skip the +1 probe sim entirely — running
+	 * it only poisons presentation (soak3 @520 DK joint spin) and forces spurious walkback.
+	 */
+	{
+		u32 episode_mismatch = syNetRollbackAnchorProbeEpisodeMismatchTick();
+
+		if ((postload_mismatch == FALSE) && (probe_tick == episode_mismatch) &&
+		    (episode_mismatch != 0U))
+		{
+			if (log_verbose != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: RESIM_ANCHOR_PROBE_STEP_BYPASS probe_tick=%u load=%u reason=postload_ok_episode_mismatch\n",
+				    probe_tick,
+				    load_tick);
+			}
+			sSYNetRollbackResimAnchorProbeLastMismatch = FALSE;
+			syNetInputSetTick(load_tick);
+			if (keep_loaded == FALSE)
+			{
+				if (emerg_ok != FALSE)
+				{
+					(void)syNetRbSnapshotRestoreLiveEmergency();
+				}
+			}
+			return FALSE;
+		}
+	}
+#endif
+	/*
+	 * Reseed published/remote input slots from history at load_tick before the +1 probe step.
+	 * BeginResim calls syNetInputRollbackPrepareForResim only after the walkback loop; without
+	 * this, Turn→Dash and other tap_stick-window transitions diverge (soak3 @479: tap_stick 6 vs 254).
+	 */
+#if defined(SSB64_NETMENU)
+	syNetInputSetTick(load_tick);
+	syNetInputRollbackPrepareForResim(probe_tick);
+#endif
 	syNetInputSetTick(probe_tick);
 	syNetInputPublishSynchronizedTick(probe_tick);
 #if defined(SSB64_NETMENU)
@@ -5885,6 +6016,12 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 	/* Wait peers in mixed Appear/Entry+Wait steps and dual-Wait intro walkback (@149, @113). */
 	syNetRbSnapshotReconcileAnchorProbeWaitSteadyFromProbeSlot(load_tick, probe_tick);
 	syNetRbSnapshotReconcileAnchorProbeMixedAppearWaitFromProbeSlot(load_tick, probe_tick);
+	syNetRbSnapshotReconcileAnchorProbeMixedEntryWaitFromProbeSlot(load_tick, probe_tick);
+	if ((intro_anchor_probe == FALSE) &&
+	    (syNetRbSnapshotAnyLiveFighterInIntroLoadFidelityScope() == FALSE))
+	{
+		syNetRbSnapshotReconcileAnchorProbeGameplayFromProbeSlot(load_tick, probe_tick);
+	}
 	if ((intro_anchor_probe != FALSE) ||
 	    (syNetRbSnapshotAnchorProbeWaitSteadyScopeAtTicks(load_tick, probe_tick) != FALSE) ||
 	    (syNetRbSnapshotAnchorProbeMixedIntroPhysicsWaitScopeAtTicks(load_tick, probe_tick) != FALSE))
@@ -5901,7 +6038,6 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 
 	live = syNetRollbackCollectHashes();
 #if defined(SSB64_NETMENU)
-	if (intro_anchor_probe != FALSE)
 	{
 		u32 ring_f_light;
 		u32 live_f_light;
@@ -5909,16 +6045,58 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		ring_f_light = syNetRbSnapshotGetSlotHashFighterLight(probe_tick);
 		live_f_light = syNetRbSnapshotHashFightersLightFromLive();
 		step_figh_mismatch = (ring_f_light != live_f_light) ? TRUE : FALSE;
-		ring_f = ring_f_light;
-		live.fighter = live_f_light;
+		if (intro_anchor_probe != FALSE)
+		{
+			ring_f = ring_f_light;
+			live.fighter = live_f_light;
+		}
 	}
-	else
+#else
+	step_figh_mismatch = (ring_f != live.fighter) ? TRUE : FALSE;
 #endif
-	{
-		step_figh_mismatch = (ring_f != live.fighter) ? TRUE : FALSE;
-	}
 	step_anim_mismatch = (ring_a != live.animation) ? TRUE : FALSE;
 	step_mismatch = (step_figh_mismatch != FALSE) || (step_anim_mismatch != FALSE);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Episode mismatch tick uses corrected inputs on resim; ring@probe was captured on forward sim
+	 * before correction (FORCE_MISMATCH btn XOR). Post-load fidelity is the anchor — skip +1 step
+	 * compare at the original mismatch tick when load restore matched.
+	 */
+	{
+		u32 episode_mismatch = syNetRollbackAnchorProbeEpisodeMismatchTick();
+
+		if ((postload_mismatch == FALSE) && (step_mismatch != FALSE) &&
+		    (probe_tick == episode_mismatch) && (episode_mismatch != 0U))
+		{
+			if (log_verbose != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: RESIM_ANCHOR_PROBE_STEP_SKIPPED probe_tick=%u reason=input_correction_mismatch_tick\n",
+				    probe_tick);
+			}
+			step_figh_mismatch = FALSE;
+			step_anim_mismatch = FALSE;
+			step_mismatch = FALSE;
+		}
+		/*
+		 * Walkback hunt: post-load matched but +1 anim diverged (ring captured pre-correction inputs).
+		 * Figh light already matched — anim-only step mismatch must not force deeper load rewind.
+		 */
+		if ((sSYNetRollbackBeginResimInitialLoad != FALSE) && (postload_mismatch == FALSE) &&
+		    (step_figh_mismatch == FALSE) && (step_anim_mismatch != FALSE))
+		{
+			if (log_verbose != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: RESIM_ANCHOR_PROBE_STEP_ANIM_SKIPPED load=%u probe_tick=%u reason=postload_ok_figh_ok_anim_only\n",
+				    load_tick,
+				    probe_tick);
+			}
+			step_anim_mismatch = FALSE;
+			step_mismatch = FALSE;
+		}
+	}
+#endif
 	actionable_mismatch = (postload_mismatch != FALSE) || (step_mismatch != FALSE);
 	if (log_verbose != FALSE)
 	{
@@ -5996,7 +6174,7 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		reload_ok = syNetRollbackLoadPostTick(load_tick);
 		if (reload_ok != FALSE)
 		{
-			syNetInputSetTick(probe_tick);
+			syNetInputSetTick(load_tick);
 		}
 		else
 		{
@@ -6092,6 +6270,13 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 #endif
 			return TRUE;
 		}
+		if (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick))
+		{
+			if (syNetRollbackTryRecoverWeaponHashDrift(tick, live_wp) != FALSE)
+			{
+				live_wp = syNetSyncHashActiveWeaponsForRollback();
+			}
+		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
 		                                                 live_c, live_a, live_ef) != FALSE)
 		{
@@ -6135,6 +6320,20 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 #endif
 			return TRUE;
 		}
+		if ((live_w == syNetRbSnapshotGetSlotHashWorld(tick)) &&
+		    (live_i == syNetRbSnapshotGetSlotHashItem(tick)) && (live_m == syNetRbSnapshotGetSlotHashMap(tick)) &&
+		    (live_r == syNetRbSnapshotGetSlotHashRng(tick)) &&
+		    (syNetRollbackFcRecoveryFighDriftOk(tick, live_f) != FALSE) &&
+		    (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) &&
+		    (syNetRollbackTryRecoverWeaponHashDrift(tick, live_wp) != FALSE))
+		{
+			syNetRbSnapshotRebindAllFighters();
+#if defined(SSB64_NETMENU)
+			syNetRollbackWhispyPresentationAfterLoad(tick, "weapon_hash_recovered");
+			syNetRollbackLoadPostTickCommitSideEffects(tick);
+#endif
+			return TRUE;
+		}
 		if (syNetRbSnapshotLoadHashEffSoftContinueBlocked(tick) != FALSE)
 		{
 			port_log(
@@ -6151,6 +6350,13 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 			return TRUE;
 		}
 #if defined(SSB64_NETMENU)
+		if (syNetRollbackFcRecoveryWpnOnlyDriftOk(tick, live_f, live_w, live_i, live_wp, live_m, live_r) != FALSE)
+		{
+			syNetRbSnapshotRebindAllFighters();
+			syNetRollbackWhispyPresentationAfterLoad(tick, "fc_recovery_wpn_only");
+			syNetRollbackLoadPostTickCommitSideEffects(tick);
+			return TRUE;
+		}
 		if (syNetRollbackLoadHashDriftIsResimLoadContext() != FALSE)
 		{
 			syNetRbSnapshotMarkLoadUnsafe(tick);
@@ -8366,6 +8572,19 @@ static sb32 syNetRollbackTryNegotiateResimLoadTickWithPeer(u32 peer_load_tick)
 	{
 		return FALSE;
 	}
+	/*
+	 * Peer walked back for effect-probe fragility after we already matched baseline @local_load —
+	 * do not downgrade the initiator (soak1 @520: Linux matched @519, peer @487 → 471 crash).
+	 */
+	if ((sSYNetRollbackResimBaselineDigestMatched != FALSE) && (local_load == sSYNetRollbackResimLoadTick))
+	{
+		port_log(
+		    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE refused local baseline matched load=%u peer=%u sim=%u\n",
+		    local_load,
+		    peer_load_tick,
+		    syNetInputGetTick());
+		return FALSE;
+	}
 	port_log(
 	    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE local=%u peer=%u negotiated=%u sim=%u\n",
 	    local_load,
@@ -8611,6 +8830,7 @@ void syNetRollbackTryOpenResimReplayGate(void)
 		syNetRollbackStopVsSessionForLoadFail(sSYNetRollbackResimLoadTick, "replay_gate_blocked");
 		return;
 	}
+	syNetRbSnapshotResetIntroPresentationRepairState();
 	syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(sSYNetRollbackResimLoadTick);
 #endif
 	port_log(

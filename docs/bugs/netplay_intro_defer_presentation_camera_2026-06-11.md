@@ -21,9 +21,11 @@ After Phase 1/2 preemptive baseline cap fixes (no sim freeze at `@232`):
 
 | Item | Change |
 |------|--------|
-| Defer cosmetic | `syNetRollbackRefreshDeferredIntroPresentation` from defer path; Appear blob re-pin + live camera integrate (**no slot camera re-pin**) |
+| Defer cosmetic | ~~Appear blob re-pin~~ **2026-06-11 follow-up:** defer-wait is **camera-only**; visible Appear figatree owned by forward resim |
+| Replay gate | **camera-only** at gate open; no `post_cosmetic` blob re-pin before forward resim |
 | Forward intro sim | `syNetRbSnapshotRefreshLiveIntroPresentationAfterInterface` after `gcRunAll` during `game_status=Wait`; live figatree + `gmCameraRunFuncCamera` |
-| Forward resim cam | Per resim tick: live figatree refresh + camera integrate only (no slot camera re-pin) |
+| Forward resim cam | Per resim tick: **live figatree only** (`RefreshIntroAppearCosmeticLiveFromSim`) + camera integrate — no slot blob re-pin |
+| Load presentation | Intro scope: replay-gate **hash-oracle repair only**; skip `RefreshFigatreePresentationFromSlot` until forward resim |
 | live_apply | After `RefreshPresentationForLoadedTick`, call `syNetRbSnapshotResyncLiveFightersFromSlotForSim` |
 
 ## Verify
