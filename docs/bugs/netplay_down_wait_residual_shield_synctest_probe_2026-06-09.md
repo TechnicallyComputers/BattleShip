@@ -1,6 +1,6 @@
 # Netplay down-wait residual shield synctest probe — 2026-06-09
 
-**Status:** FIX SHIPPED (soak pending)
+**Status:** FIX SHIPPED (soak pending). **2026-06-11 resim follow-up:** `down_wait_residual_shield_probe` removed from resim-load fragile walkback; residual-shield joint repair on load/forward-resim (see `netplay_link_bomb_resim_load_fail_2026-06-11.md`).
 
 ## Symptom
 

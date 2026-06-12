@@ -23,7 +23,8 @@ Secondary: `syNetSyncOnNetplayBattleGo()` re-armed `battle_go_pending` every liv
 
 1. **`syNetRollbackShouldDeferInterfaceDuringResimWait()`** — skip live `ifCommonBattleUpdateInterfaceAll` while `resim_pending && !baseline_gate_open`. `scVSBattleFuncUpdate` also returns before live battle sim during seal-wait (prevents `LOAD_SLOT_LIVE_DRIFT`). Forward resim still uses `scVSBattleFuncUpdateBattleSimOnly` + interface.
 2. **`syNetSyncOnNetplayBattleGo()`** — latch battle-clock anchor only once (`battle_go_sim_tick` still unset).
-3. **`SSB64_NETPLAY_BATTLE_GO_LOG=1`** — `battle_go_apply` + `world_detail` + optional `defer_resim_seal_wait` lines.
+3. **Authoritative GO sim tick (2026-06-11 phase 2)** — `ifCommonCountdownThread` GO is gcRunAll-driven; resim replay / asymmetric defer still lets thread GO fire 1 tick apart (387 vs 388). Latch `countdown_created_sim + I_SEC_TO_TICS(5)` at `ifCommonCountdownMakeInterface`; defer thread `ifCommonAnnounceGoSetStatus` during rollback VS; apply GO from `syNetSyncTryApplyAuthoritativeNetplayGo` on completed sim steps (`scVSBattleFuncUpdate` + `BattleSimOnly`) with post-GO camera integrate.
+4. **`SSB64_NETPLAY_BATTLE_GO_LOG=1`** — `battle_go_apply` + `world_detail` + optional `defer_resim_seal_wait` / `netplay_countdown_latch` / `netplay_authoritative_go` lines.
 
 ## Verify
 

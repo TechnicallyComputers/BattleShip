@@ -46,11 +46,19 @@ extern void syNetRbSnapshotRefreshPresentationForLoadedTick(u32 completed_sim_ti
 extern void syNetRbSnapshotCosmeticAppearPresentationAfterReplayGate(u32 load_tick);
 /* Intro resim burst: cosmetic camera + figatree refresh after each forward-resim tick (no sim revert). */
 extern void syNetRbSnapshotRefreshIntroPresentationAfterForwardResimTick(u32 presentation_tick);
+/* Post-resim terminal intro cosmetic repair from completed target tick slot. */
+extern void syNetRbSnapshotRefreshIntroPresentationAfterResimComplete(u32 target_tick);
 /* Seal-wait / preemptive cap: cosmetic Appear + camera refresh while interface gcRunAll is deferred. */
 extern void syNetRbSnapshotRefreshIntroPresentationForDeferWait(u32 presentation_tick);
 extern void syNetRbSnapshotRefreshDeferredIntroPresentation(u32 sim_tick, u32 anchor_tick);
 /* Intro Wait forward sim: live figatree + camera integrate after gcRunAll (no slot camera re-pin). */
 extern void syNetRbSnapshotRefreshLiveIntroPresentationAfterInterface(void);
+/* Intro Entry/Appear: evict stale EVENT32 cache + un-halfswap before gcRunAll parses joint anims. */
+extern void syNetRbSnapshotPreSimUnhalfswapIntroAppearAnim(void);
+/* Gameplay resim: same EVENT32 repair for locomotion + special-move fragile statuses (post-GO). */
+extern void syNetRbSnapshotPreSimUnhalfswapGameplayResimAnim(void);
+/* Clear one-shot intro presentation repair latch at resim replay-gate open. */
+extern void syNetRbSnapshotResetIntroPresentationRepairState(void);
 /* Rebind status procs after load verify (proc pointers are not hashed). */
 extern void syNetRbSnapshotRebindAllFighters(void);
 /* TRUE if any fighter link has catch_gobj or capture_gobj set (all slots). */
@@ -65,6 +73,7 @@ extern u32 syNetRbSnapshotFrameCommitIntervalCap(u32 default_interval);
 extern void syNetRbSnapshotReconcileLoadedItemsForVerify(u32 tick);
 /* Reconcile trail/shock effects from ring slot when sim core matches but eff hash drifted on verify. */
 extern sb32 syNetRbSnapshotTryRepairEffectHashForVerify(u32 tick);
+extern sb32 syNetRbSnapshotTryRepairWeaponHashForVerify(u32 tick);
 extern void syNetRbSnapshotFinalizeVerifyEffectState(u32 completed_sim_tick);
 extern void syNetRbSnapshotFinalizeEffectsForVerifyHash(u32 completed_sim_tick);
 /* Guard/Yoshi shield bubble ensure/prune/dedupe from ring slot or live (tap-churn orphan cleanup). */
@@ -160,6 +169,8 @@ extern void syNetRbSnapshotSyncAppearGobjTranslateFromTopNForAnchorProbe(void);
 extern void syNetRbSnapshotReconcileAnchorProbeTransitionFromProbeSlot(u32 load_tick, u32 probe_tick);
 /* Intro anchor probe post +1 sim: steady Appear fold re-pin from ring@probe_tick. */
 extern void syNetRbSnapshotReconcileAnchorProbeAppearSteadyFromProbeSlot(u32 load_tick, u32 probe_tick);
+/* Gameplay anchor probe post +1 sim: re-pin Pass/Squat/Landing/Dash leg AObj from ring@probe when live matches. */
+extern void syNetRbSnapshotReconcileAnchorProbeGameplayFromProbeSlot(u32 load_tick, u32 probe_tick);
 /* Intro anchor probe post +1 sim: steady Wait fold re-pin from ring@probe_tick (intro tick band only). */
 extern void syNetRbSnapshotReconcileAnchorProbeWaitSteadyFromProbeSlot(u32 load_tick, u32 probe_tick);
 /* Intro anchor probe post +1 sim: Wait peer fold re-pin when load slot has an Appear peer (@209 class). */

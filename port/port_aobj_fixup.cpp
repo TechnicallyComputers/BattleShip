@@ -12,6 +12,7 @@
 #include "resource/RelocPointerTable.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <unordered_set>
 #include <vector>
 
@@ -32,6 +33,17 @@ std::vector<Range> sHalfswappedRanges;
  * port_aobj_register_halfswapped_range adds a new range so that
  * figatree-heap reloads at the same address get re-fixed. */
 std::unordered_set<uintptr_t> sUnhalfswappedVisited;
+
+bool sUnhalfswapDiagEnabled()
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char *env = getenv("SSB64_AOBJ_UNHALFSWAP_DIAG");
+        cached = (env != NULL && env[0] != '\0' && env[0] != '0') ? 1 : 0;
+    }
+    return cached != 0;
+}
 
 bool is_in_halfswapped_range(const void *p) {
     uintptr_t addr = reinterpret_cast<uintptr_t>(p);
@@ -102,6 +114,7 @@ struct ScanCtx {
     int total_steps;
     bool unhalfswap;       /* interpret each command as unhalfswap(raw); collect pending addresses */
     bool follow_recurse;   /* follow Jump/SetAnim tokens into sub-streams */
+    bool force_range;      /* walk even when head is outside registered halfswapped ranges */
 };
 
 bool scan(uint32_t *head, ScanCtx &ctx);
@@ -116,7 +129,7 @@ bool scan_recurse(uint32_t token, ScanCtx &ctx) {
 
 bool scan(uint32_t *head, ScanCtx &ctx) {
     if (head == nullptr) return true;
-    if (!is_in_halfswapped_range(head)) return true; /* not our data; skip silently */
+    if (!ctx.force_range && !is_in_halfswapped_range(head)) return true; /* not our data; skip silently */
     uintptr_t key = reinterpret_cast<uintptr_t>(head);
     if (sUnswappedHeads.count(key)) return true;
     if (sRejectedHeads.count(key)) return false;
@@ -212,12 +225,40 @@ bool scan(uint32_t *head, ScanCtx &ctx) {
     }
 }
 
-void walk(uint32_t *head) {
-    if (head == nullptr) return;
-    if (!is_in_halfswapped_range(head)) return;
+enum class WalkOutcome {
+    NullHead,
+    OutOfRange,
+    AlreadyUnswapped,
+    RejectedCached,
+    Phase1Invalid,
+    Phase2Native,
+    Phase3SubstreamFail,
+    Applied,
+};
+
+void walk(uint32_t *head, bool force_range, WalkOutcome *out_outcome) {
+    WalkOutcome outcome = WalkOutcome::Applied;
+    if (head == nullptr) {
+        outcome = WalkOutcome::NullHead;
+        if (out_outcome != nullptr) *out_outcome = outcome;
+        return;
+    }
+    if (!force_range && !is_in_halfswapped_range(head)) {
+        outcome = WalkOutcome::OutOfRange;
+        if (out_outcome != nullptr) *out_outcome = outcome;
+        return;
+    }
     uintptr_t key = reinterpret_cast<uintptr_t>(head);
-    if (sUnswappedHeads.count(key)) return;
-    if (sRejectedHeads.count(key)) return;
+    if (sUnswappedHeads.count(key)) {
+        outcome = WalkOutcome::AlreadyUnswapped;
+        if (out_outcome != nullptr) *out_outcome = outcome;
+        return;
+    }
+    if (sRejectedHeads.count(key)) {
+        outcome = WalkOutcome::RejectedCached;
+        if (out_outcome != nullptr) *out_outcome = outcome;
+        return;
+    }
 
     /* Phase 1: measure main-stream length under the un-halfswap
      * interpretation (no recursion yet — we just need the count for
@@ -228,10 +269,13 @@ void walk(uint32_t *head) {
     unswap_main.total_steps = 0;
     unswap_main.unhalfswap = true;
     unswap_main.follow_recurse = false;
+    unswap_main.force_range = force_range;
     bool unswap_valid = scan(head, unswap_main);
 
     if (!unswap_valid) {
         sRejectedHeads.insert(key);
+        outcome = WalkOutcome::Phase1Invalid;
+        if (out_outcome != nullptr) *out_outcome = outcome;
         return;
     }
 
@@ -260,10 +304,13 @@ void walk(uint32_t *head) {
     raw_main.total_steps = 0;
     raw_main.unhalfswap = false;
     raw_main.follow_recurse = false;
+    raw_main.force_range = force_range;
     bool raw_valid = scan(head, raw_main);
 
     if (raw_valid && raw_main.total_steps >= 2) {
         sRejectedHeads.insert(key);
+        outcome = WalkOutcome::Phase2Native;
+        if (out_outcome != nullptr) *out_outcome = outcome;
         return;
     }
 
@@ -274,10 +321,13 @@ void walk(uint32_t *head) {
     full.total_steps = 0;
     full.unhalfswap = true;
     full.follow_recurse = true;
+    full.force_range = force_range;
     if (!scan(head, full)) {
         /* Main stream validated but a sub-stream failed.  Don't
          * partially un-halfswap; reject the whole tree. */
         sRejectedHeads.insert(key);
+        outcome = WalkOutcome::Phase3SubstreamFail;
+        if (out_outcome != nullptr) *out_outcome = outcome;
         return;
     }
 
@@ -287,43 +337,52 @@ void walk(uint32_t *head) {
     for (uintptr_t k : full.visited) {
         sUnswappedHeads.insert(k);
     }
+    if (out_outcome != nullptr) *out_outcome = outcome;
 }
 
-} // namespace
-
-extern "C" void port_aobj_event32_unhalfswap_stream(void *head) {
-    walk(static_cast<uint32_t *>(head));
+static const char *walk_outcome_name(WalkOutcome outcome)
+{
+    switch (outcome) {
+    case WalkOutcome::NullHead: return "null_head";
+    case WalkOutcome::OutOfRange: return "out_of_range";
+    case WalkOutcome::AlreadyUnswapped: return "already_unswapped";
+    case WalkOutcome::RejectedCached: return "rejected_cached";
+    case WalkOutcome::Phase1Invalid: return "phase1_invalid";
+    case WalkOutcome::Phase2Native: return "phase2_native";
+    case WalkOutcome::Phase3SubstreamFail: return "phase3_substream_fail";
+    case WalkOutcome::Applied: return "applied";
+    }
+    return "unknown";
 }
 
-extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long size) {
-    if (base == nullptr || size == 0) return;
-    uintptr_t b = reinterpret_cast<uintptr_t>(base);
-    uintptr_t e = b + static_cast<uintptr_t>(size);
-    /* Evict every cache keyed on an address inside the new range —
-     * fighter figatree heaps are bump-reset between status changes, so a
-     * later load lands fresh halfswap-corrupted bytes at addresses a
-     * previous load already populated.  Any cached "already processed"
-     * verdict from the previous load is stale once the bytes change.
+void walk_and_diag(uint32_t *head, bool force_range)
+{
+    WalkOutcome outcome;
+    walk(head, force_range, &outcome);
+    if (sUnhalfswapDiagEnabled())
+    {
+        uint32_t raw = (head != nullptr) ? *head : 0U;
+        port_log("SSB64 aobj unhalfswap: head=%p raw_u32=0x%08x in_range=%d force=%d outcome=%s\n",
+                 (void *)head, raw, is_in_halfswapped_range(head) ? 1 : 0, force_range ? 1 : 0,
+                 walk_outcome_name(outcome));
+    }
+}
+
+static void evict_caches_in_range(uintptr_t b, uintptr_t e)
+{
+    /* Evict every cache keyed on an address inside [b, e) — fighter
+     * figatree heaps are bump-reset between status changes, so a later load
+     * lands fresh halfswap-corrupted bytes at addresses a previous load
+     * already populated.  Any cached "already processed" verdict from the
+     * previous load is stale once the bytes change.
      *
-     * Three caches need eviction in lockstep, all keyed on raw heap
-     * pointer:
-     *   - sUnhalfswappedVisited: per-block one-shot fixup tracker (used
-     *     by interp.c spline data).  Eviction was already here.
-     *   - sUnswappedHeads: event32 streams the walker successfully fixed
-     *     up.  Without eviction, the walker short-circuits on a fresh
-     *     load's stream that happens to land at the same address.
-     *   - sRejectedHeads: event32 streams the walker decided not to
-     *     touch.  Without eviction, a stream that was non-event32 in the
-     *     previous load (correctly rejected) blocks a real event32 stream
-     *     in the new load from being un-halfswapped.
+     * Three caches need eviction in lockstep, all keyed on raw heap pointer:
+     *   - sUnhalfswappedVisited: per-block one-shot fixup tracker (interp.c).
+     *   - sUnswappedHeads: event32 streams the walker successfully fixed up.
+     *   - sRejectedHeads: event32 streams the walker decided not to touch.
      *
-     * Symptom that surfaced the missing two: Master Hand's okutsubushi /
-     * okupunch / drill animations parsed garbage — gcParseDObjAnimJoint
-     * would hit a halfswap-corrupted command word with an out-of-range
-     * opcode (typically 64) and bail with "UNHANDLED opcode=64 — ending
-     * anim", leaving TransN.translate at (0,0,0) for the rest of the
-     * attack.  Same shape as project_fixup_idempotency_heap_reuse: cache
-     * keyed on pointer, heap reuses addresses, fresh bytes skip fixup. */
+     * Symptom when stale: gcParseDObjAnimJoint hits opcode 64 and ends the
+     * anim — same shape as project_fixup_idempotency_heap_reuse. */
     auto evict = [&](std::unordered_set<uintptr_t> &set) {
         for (auto it = set.begin(); it != set.end(); ) {
             if (*it >= b && *it < e) it = set.erase(it);
@@ -333,17 +392,62 @@ extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long s
     evict(sUnhalfswappedVisited);
     evict(sUnswappedHeads);
     evict(sRejectedHeads);
+}
+
+static void forget_head(void *head)
+{
+    if (head == nullptr) return;
+    uintptr_t key = reinterpret_cast<uintptr_t>(head);
+    sUnswappedHeads.erase(key);
+    sRejectedHeads.erase(key);
+}
+
+} // namespace
+
+extern "C" void port_aobj_event32_unhalfswap_stream(void *head) {
+    walk_and_diag(static_cast<uint32_t *>(head), false);
+}
+
+extern "C" void port_aobj_event32_unhalfswap_stream_force(void *head) {
+    walk_and_diag(static_cast<uint32_t *>(head), true);
+}
+
+extern "C" void port_aobj_event32_unhalfswap_forget(void *head) {
+    forget_head(head);
+}
+
+extern "C" void port_aobj_event32_unhalfswap_evict_range(void *base, unsigned long size) {
+    if (base == nullptr || size == 0) return;
+    uintptr_t b = reinterpret_cast<uintptr_t>(base);
+    uintptr_t e = b + static_cast<uintptr_t>(size);
+    evict_caches_in_range(b, e);
+}
+
+extern "C" void port_aobj_register_halfswapped_range(void *base, unsigned long size) {
+    if (base == nullptr || size == 0) return;
+    uintptr_t b = reinterpret_cast<uintptr_t>(base);
+    uintptr_t e = b + static_cast<uintptr_t>(size);
+    evict_caches_in_range(b, e);
     /* Heaps are bump-reset and reloaded at the same base across status
      * changes, so the same {b,e} arrives repeatedly — update in place
      * instead of letting the vector (linearly scanned on the per-joint
      * hot path) accumulate duplicates over a long session. */
     for (auto &range : sHalfswappedRanges) {
         if (range.base == b) {
-            range.end = e;
+            if (e > range.end) {
+                range.end = e;
+            }
             return;
         }
     }
     sHalfswappedRanges.push_back({b, e});
+}
+
+extern "C" void port_aobj_register_figatree_heap_span(void *heap, unsigned long heap_size) {
+    if (heap == nullptr || heap_size == 0U) {
+        return;
+    }
+    port_aobj_register_halfswapped_range(heap, heap_size);
 }
 
 extern "C" int port_aobj_unhalfswap_visit(const void *p) {
