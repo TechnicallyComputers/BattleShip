@@ -1,0 +1,10 @@
+{
+    "name": "HookTest",
+    "main": "build.gen",
+    "version": "1.0.0",
+    "website": "https://example.com",
+    "description": "Exercises the funchook detour path: hooks osSpTaskStartGo and passes through.",
+    "author": "ssb64-port",
+    "license": "MIT",
+    "code-version": 1
+}

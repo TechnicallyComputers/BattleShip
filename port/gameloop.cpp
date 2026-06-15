@@ -25,6 +25,7 @@
 #include "widescreen/widescreen.h"
 #include "port.h"
 #include "port_watchdog.h"
+#include "hooks/Events.h"
 
 extern "C" {
 int syNetPeerIsVSSessionActive(void);
@@ -45,6 +46,7 @@ extern unsigned int dSYTaskmanFrameCount;
 }
 
 #include <libultraship/libultraship.h>
+#include <libultraship/bridge/eventsbridge.h>
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
 
@@ -968,6 +970,13 @@ void PortPushFrame(void)
 	 * `(OSMesg)INTR_VRETRACE` here. */
 	osSendMesg(&gSYSchedulerTaskMesgQueue, port_make_os_mesg_int(INTR_VRETRACE), OS_MESG_NOBLOCK);
 
+	/* TCC mod hook: GamePreUpdateEvent fires once per frame BEFORE the
+	 * per-frame coroutine resume. Listeners run on the main thread with
+	 * the game in an inert state — safe to read but mutating game data
+	 * from here races with the about-to-start game tick. Use Post for
+	 * mutations that should land "after this frame's logic." */
+	CALL_EVENT(GamePreUpdateEvent);
+
 	/* Resume all service thread coroutines that are waiting for messages.
 	 * This runs multiple rounds to handle cascading messages:
 	 *   Round 1: Scheduler picks up VRETRACE, sends ticks to clients
@@ -1009,9 +1018,15 @@ void PortPushFrame(void)
 
 #if defined(PORT) && defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
 	portNetReconnectDrawOverlay();
-#endif
 	/* ConnectivityManager JNI must run on SDL_main (not the game coroutine fiber). */
 	port_android_network_drain();
+#endif
+	/* TCC mod hook: GamePostUpdateEvent fires once per frame AFTER game
+	 * logic + GFX submission. Most common subscription point — game state
+	 * is settled, the display list for this frame has been built, the
+	 * scene tree reflects the just-completed tick. The event system is core
+	 * libultraship; with no mods subscribed this dispatches to an empty list. */
+	CALL_EVENT(GamePostUpdateEvent);
 
 	sFrameCount++;
 	sNetplayPushSimAdvances++;

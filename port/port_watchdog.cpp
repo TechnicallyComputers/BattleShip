@@ -6,6 +6,7 @@
 #include "port_log.h"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -199,16 +200,45 @@ void WriteCrashRegs(const CrashRegs &r) {
  *
  * Sanity checks bail out if the chain looks corrupt — no heap, no libc
  * beyond what backtrace_symbols_fd uses. */
-/* Probe that [addr, addr+len) is readable without risking a nested fault:
- * write(2) to /dev/null returns EFAULT instead of crashing when the source
- * buffer is unmapped. open/write/close are all async-signal-safe. Returns
- * false if the probe fd can't be opened (treat as unreadable — the FP walk
- * falls back to backtrace()). */
+/* Probe that [addr, addr+len) is readable without risking a nested fault.
+ * Must write to a PIPE: the pipe write path copies the source bytes into
+ * the kernel buffer, so it genuinely returns EFAULT on unreadable memory.
+ * A /dev/null write does NOT work — both XNU's nullwrite and Linux's
+ * write_null discard the request without ever touching the source buffer,
+ * so it reports success for ANY address. That was the 2026-06-10
+ * double-fault (macos_crash.txt): the probe waved the FP walk onto a
+ * PROT_NONE coroutine-stack guard page and the crash handler SIGBUSed,
+ * losing the original fault's backtrace.
+ *
+ * The fds are created in port_watchdog_init (pipe(2) is not on the
+ * async-signal-safe list, so don't open lazily here); if they're missing
+ * treat everything as unreadable — the FP walk falls back to backtrace().
+ * write/read are async-signal-safe, and the read drains what the probe
+ * wrote so the pipe can never fill. */
+int sProbePipe[2] = {-1, -1};
+
 bool ProbeReadable(uintptr_t addr, size_t len) {
-    static int fd = -2; /* -2 = not yet opened */
-    if (fd == -2) fd = open("/dev/null", O_WRONLY);
-    if (fd < 0) return false;
-    return write(fd, reinterpret_cast<const void *>(addr), len) == (ssize_t)len;
+    char drain[2 * sizeof(uintptr_t)];
+    if (sProbePipe[1] < 0 || len > sizeof(drain)) return false;
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        ssize_t wrote = write(sProbePipe[1], reinterpret_cast<const void *>(addr), len);
+        if (wrote == (ssize_t)len) {
+            ssize_t drained = 0;
+            while (drained < wrote) {
+                ssize_t got = read(sProbePipe[0], drain, sizeof(drain));
+                if (got <= 0) break;
+                drained += got;
+            }
+            return true;
+        }
+        if (wrote >= 0 || errno != EAGAIN) {
+            return false; /* EFAULT (unreadable) or unexpected partial write */
+        }
+        /* EAGAIN: leftover bytes filled the pipe somehow — drain, retry once. */
+        while (read(sProbePipe[0], drain, sizeof(drain)) > 0) {}
+    }
+    return false;
 }
 
 int WalkFPChain(const CrashRegs &r, void **frames, int max_frames) {
@@ -474,6 +504,18 @@ extern "C" void port_watchdog_init(void) {
     if (!sStarted.compare_exchange_strong(expected, true)) return;
 #if !defined(_WIN32)
     sMainThread = pthread_self();
+
+    /* Self-pipe for ProbeReadable (see comment there). Created up front
+     * because pipe(2) isn't async-signal-safe; O_NONBLOCK so a probe can
+     * never block inside the crash handler. */
+    if (pipe(sProbePipe) == 0) {
+        for (int i = 0; i < 2; i++) {
+            fcntl(sProbePipe[i], F_SETFL, O_NONBLOCK);
+            fcntl(sProbePipe[i], F_SETFD, FD_CLOEXEC);
+        }
+    } else {
+        sProbePipe[0] = sProbePipe[1] = -1;
+    }
 
     /* Alternate signal stack so a stack-overflow SIGSEGV still has room to
      * run the crash handler. SIGSTKSZ is small on some platforms — bump it. */

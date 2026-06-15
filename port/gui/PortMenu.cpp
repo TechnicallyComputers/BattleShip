@@ -18,6 +18,12 @@
 #include <ship/Context.h>
 #include <ship/window/Window.h>
 #include <ship/window/gui/Gui.h>
+#ifndef DISABLE_SCRIPTING
+#include <ship/scripting/ScriptLoader.h>
+#include "../mods/HookManager.h"
+
+namespace ssb64 { void MountModsDir(); }
+#endif
 
 #include <imgui.h>
 
@@ -1012,7 +1018,7 @@ void PortMenu::AddMenuSettings() {
                      .DefaultIndex(0));
 
     // --- Competitive ruleset (still in Gameplay sidebar) ---
-    AddWidget(path, "Rules", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Competitive Rules", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Use Competitive Ruleset", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::CompRulesetCVarName())
         .RaceDisable(false)
@@ -1027,12 +1033,40 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Forces balanced, opposite-side starting positions for 1v1 and Team Battles."));
 
+    // --- Z-Cancel options ---
+    AddWidget(path, "Z-Cancel Options", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Auto Z-Cancel", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::AutoZCancelCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Automatically cancels the landing lag from aerial attacks."));
+    AddWidget(path, "Flash on Failed Z-Cancel", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::FailedZCancelCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Makes your character temporarily flash in flames on a failed Z-Cancel."));
+
     // --- Quality-of-Life (still in Gameplay sidebar) ---
     AddWidget(path, "Quality-of-Life", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Boot to VS CSS", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::BootToVSCSSCVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Skips the intro sequences and boots directly to the VS Mode Character Select Screen."));
+    AddWidget(path, "Classic Co-op (Needs reload)", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ClassicCoopCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip("Classic (1P) mode uses the VS Mode Character Select Screen so a "
+                              "second player can join the whole run as a co-op partner. If only "
+                              "one player picks a character, the run plays as normal solo "
+                              "Classic. Restart required for the toggle to take effect.")
+                     .DefaultValue(true));
+    AddWidget(path, "Co-op Friendly Fire", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ClassicCoopFriendlyFireCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip("Lets the two Classic Co-op players hit each other, like the "
+                              "original 1P mode's CPU ally could. Off by default; takes effect "
+                              "from the next stage.")
+                     .DefaultValue(false));
     AddWidget(path, "Skip Results Screen", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::SkipResultsScreenCVarName())
         .RaceDisable(false)
@@ -1041,11 +1075,19 @@ void PortMenu::AddMenuSettings() {
         .CVar(ssb64::enhancements::CpuLevel9CVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Automatically forces all CPU players to Level 9."));
+    AddWidget(path, "Shuffle Music", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ShuffleMusicCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Randomizes the BGM after a stage is chosen. Useful when enabling the competitive ruleset."));
+    AddWidget(path, "Add Music Selection Screen", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::MusicSelectionCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Allows the player to pick a custom BGM track after the stage selection screen (music shuffling is ignored if this is turned on)."));
 
     // --- Input customization ---
-    path.sidebarName = "Input";
+    path.sidebarName = "Input Mappings";
     path.column = SECTION_COLUMN_1;
-    AddSidebarEntry("Settings", "Input", 1);
+    AddSidebarEntry("Settings", "Input Mappings", 1);
 
     AddWidget(path, "Controller", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Controller Configuration", WIDGET_WINDOW_BUTTON)
@@ -1056,9 +1098,9 @@ void PortMenu::AddMenuSettings() {
         .Options(WindowButtonOptions().Tooltip("Toggles the controller configuration window."));
 
     // --- Controls sidebar: per-player input remapping ---
-    path.sidebarName = "Controls";
+    path.sidebarName = "Control Enhancements";
     path.column = SECTION_COLUMN_1;
-    AddSidebarEntry("Settings", "Controls", 1);
+    AddSidebarEntry("Settings", "Control Enhancements", 1);
 
     for (int p = 0; p < PORT_ENHANCEMENT_MAX_PLAYERS; ++p) {
         const std::string playerLabel = fmt::format("Player {}", p + 1);
@@ -1356,6 +1398,62 @@ void PortMenu::AddMenuAssets() {
 #endif // PORT_HIRES_ENABLED
 }
 
+#ifndef DISABLE_SCRIPTING
+static void DoHotReload() {
+    auto scripting = Ship::Context::GetInstance()->GetScriptLoader();
+    if (!scripting) {
+        return;
+    }
+    try {
+        /* Unload: ModExit fires, then HookManager uninstalls every
+         * hook owned by that mod (postExit callback runs BEFORE
+         * FreeLibrary so trampolines into the about-to-be-freed mod
+         * code get cleanly removed). Then recompile + reload with the
+         * SetCurrentOwner wrapper so new Install calls re-tag with
+         * the right owner. */
+        scripting->UnloadAll(
+            /*preExit=*/std::nullopt,
+            /*postExit=*/[](const std::string& mod) {
+                ssb64::mods::HookManager::UninstallHooksForOwner(mod.c_str());
+            });
+        /* Pick up any new mod folders/archives that landed in mods/
+         * since the last load. Idempotent: already-mounted archives
+         * are skipped. */
+        ssb64::MountModsDir();
+        scripting->CompileAll();
+        scripting->LoadAll(
+            /*preInit=*/[](const std::string& mod) {
+                ssb64::mods::HookManager::SetCurrentOwner(mod.c_str());
+            },
+            /*postInit=*/[](const std::string&) {
+                ssb64::mods::HookManager::ClearCurrentOwner();
+            });
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("Mod reload failed: {}", e.what());
+    }
+}
+
+void PortMenu::AddMenuMods() {
+    AddMenuEntry("Mods", CVAR_SETTING("Menu.ModsSidebarSection"));
+
+    WidgetPath path = { "Mods", "Mods", SECTION_COLUMN_1 };
+    AddSidebarEntry("Mods", "Mods", 1);
+    AddWidget(path, "mods_panel", WIDGET_CUSTOM)
+        .CustomFunction([](WidgetInfo&) {
+            if (ImGui::Button("Hot Reload")) {
+                DoHotReload();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Unload + recompile + re-init all TCC mods.\n"
+                                  "Adding or removing mod folders still needs an engine restart.");
+            }
+            ImGui::Separator();
+            ImGui::TextWrapped("Mods are loaded from the mods/ folder next to the executable. "
+                               "Drop a folder or .o2r in there, then Hot Reload (or restart) to pick it up.");
+        });
+}
+#endif
+
 void PortMenu::AddMenuAbout() {
     AddMenuEntry("About", CVAR_SETTING("Menu.AboutSidebarSection"));
 
@@ -1454,6 +1552,9 @@ void PortMenu::AddMenuAbout() {
 void PortMenu::AddMenuElements() {
     AddMenuSettings();
     AddMenuAssets();
+#ifndef DISABLE_SCRIPTING
+    AddMenuMods();
+#endif
     AddMenuAbout();
 
     if (CVarGetInteger(CVAR_SETTING("Menu.SidebarSearch"), 0)) {

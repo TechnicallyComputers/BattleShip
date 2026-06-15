@@ -1,6 +1,7 @@
 # Stale BattleShip.o2r after binary updates — recipe-stamp auto re-extraction
 
-**Date:** 2026-06-09 (issues #217, #221, #225 family)
+**Date:** 2026-06-09 (issue #217's attached log; #221/#225 attribution corrected 2026-06-10 — see
+"Attribution correction" below)
 **Status:** FIXED — superproject `fe9d421d` (CMake recipe hash + first_run sidecar)
 **Platforms:** Windows / macOS / Linux (Android excluded — its Java extraction flow
 has its own sentinel and deletes the staged ROM, so a native re-extract can't run)
@@ -38,6 +39,22 @@ mismatched struct layouts as garbage.
   until a replacement is fully built, so "no ROM available" or a failed
   re-extract logs a breadcrumb and keeps running on the stale archive
   rather than locking the user out.
+
+## Attribution correction (2026-06-10)
+
+Timeline check after the fact: extraction inputs last changed **2026-04-27**
+(codegen regen of all reloc yamls + reloc_data.h; torch's 05-18 change is
+JP-only), and they are **byte-identical from v0.9.4-beta through v1.2**. So
+recipe skew cannot explain the "0.9.4 worked → 1.x crashes on ESC" reports.
+The #217 log proving skew is a *rotated* log dated 05-01 (April-era build +
+pre-04-27 archive) — real skew, wrong era. The more likely mechanism for the
+v1.x ESC crashes is **stale config**: v1.0 moved/renamed menu sections, the
+selected section is persisted by name in BattleShip.cfg.json, and
+`GetVectorIndexOf` returns `size()` on a miss into unguarded `.at()` calls
+(hardened in the v1.3 Menu.cpp fixes). Both reporters deleted config and
+assets together, so re-extraction got the credit. Lesson recorded: check the
+*date* of an attached log before letting it anchor a root cause — rotated
+`.N` logs can predate the report by weeks.
 
 ## Audit hook
 
