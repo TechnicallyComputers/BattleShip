@@ -69,7 +69,9 @@ bin/
 # `mods/` on Linux dev launches before falling back to <app-data>/mods/,
 # so it's common to end up with a pack folder at the repo root during
 # pack-authoring sessions. Always user-private content, never tracked.
-mods/
+# Root-anchored: an unanchored `mods/` also matched port/mods/ (the hook
+# system source) and workspace/*/mods/, silently dropping new files there.
+/mods/
 relocAssets/
 undefined*
 ctx.c
