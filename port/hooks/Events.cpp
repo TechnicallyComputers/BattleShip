@@ -22,4 +22,10 @@ extern "C" void PortRegisterEvents(void) {
     REGISTER_EVENT(DisplayPostUpdateEvent);
     REGISTER_EVENT(EngineRenderMenubarEvent);
     REGISTER_EVENT(EngineRenderModsEvent);
+
+    REGISTER_EVENT(FighterEnvColorQueryEvent);
+    REGISTER_EVENT(FighterDamageDirectionApplyEvent);
+    REGISTER_EVENT(FighterHitboxSlotResetEvent);
+    REGISTER_EVENT(FighterParentKindResolveEvent);
+    REGISTER_EVENT(FighterRapidJabStatusQueryEvent);
 }

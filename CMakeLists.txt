@@ -699,6 +699,10 @@ target_include_directories(ssb64_game PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers
     ${CMAKE_CURRENT_SOURCE_DIR}/port             # Port headers (coroutine.h, etc.)
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools      # Acmd trace (mixer.h calls acmd_trace_log_cmd)
+    # Event system headers: decomp PORT hooks fire engine events directly
+    # (hooks/Events.h -> ship/events/EventTypes.h + bridge/eventsbridge.h).
+    ${CMAKE_CURRENT_SOURCE_DIR}/libultraship/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/libultraship/include
 )
 
 # Clang 16+ promoted several historically-warning diagnostics to errors by
@@ -826,6 +830,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
+    ${SSB64_CSS_GEN_DIR}                         # CSS icon baked headers (arrow_data.h)
 )
 if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_include_directories(${PROJECT_NAME} PRIVATE
