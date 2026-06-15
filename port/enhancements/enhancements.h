@@ -57,6 +57,10 @@ void port_comp_ruleset_skip_stageselect(void);
 // neutral spawn points on dreamland
 int port_enhancement_neutral_spawns(void);
 
+// z-cancel options
+int port_enhancement_IsAutoZCancelEnabled(void);
+int port_enhancement_IsFailedZCancelFlashEnabled(void);
+
 // boot to CSS
 int port_enhancement_boot_to_vs_css(void);
 
@@ -92,6 +96,8 @@ const char* AnalogRemapRangeCVarName(int playerIndex);
 const char* WidescreenCVarName();
 const char* CompRulesetCVarName();
 const char* NeutralSpawnsCVarName();
+const char* AutoZCancelCVarName();
+const char* FailedZCancelCVarName();
 const char* BootToVSCSSCVarName();
 const char* SkipResultsScreenCVarName();
 const char* CpuLevel9CVarName();

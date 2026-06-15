@@ -1008,7 +1008,7 @@ void PortMenu::AddMenuSettings() {
                      .DefaultIndex(0));
 
     // --- Competitive ruleset (still in Gameplay sidebar) ---
-    AddWidget(path, "Rules", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Competitive Rules", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Use Competitive Ruleset", WIDGET_CVAR_CHECKBOX)
         .CVar(ssb64::enhancements::CompRulesetCVarName())
         .RaceDisable(false)
@@ -1022,6 +1022,17 @@ void PortMenu::AddMenuSettings() {
         .CVar(ssb64::enhancements::NeutralSpawnsCVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Forces balanced, opposite-side starting positions for 1v1 and Team Battles."));
+
+    // --- Z-Cancel options ---
+    AddWidget(path, "Z-Cancel Options", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Auto Z-Cancel", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::AutoZCancelCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Automatically cancels the landing lag from aerial attacks."));
+    AddWidget(path, "Flash on Failed Z-Cancel", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::FailedZCancelCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Makes your character temporarily flash in flames on a failed Z-Cancel."));
 
     // --- Quality-of-Life (still in Gameplay sidebar) ---
     AddWidget(path, "Quality-of-Life", WIDGET_SEPARATOR_TEXT);
