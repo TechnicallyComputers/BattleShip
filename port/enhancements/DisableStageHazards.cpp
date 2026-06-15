@@ -12,6 +12,7 @@ constexpr const char* kStageHazardsDisabledCVar = "gEnhancements.StageHazardsDis
 constexpr unsigned char kSceneVSBattle = 22;
 constexpr unsigned char kScene1PGame = 52;
 constexpr unsigned char kScene1PTrainingMode = 54;
+constexpr unsigned char kStageYoshi = 5;
 
 constexpr unsigned char kBattleStageEnd = 8;
 constexpr unsigned char kStageSector = 1;
@@ -145,6 +146,7 @@ extern "C" {
     extern SCBattleStatePrefix* gSCManagerBattleState;
     extern GObj* gGCCommonLinks[];
     void gcEjectGObj(GObj* gobj);
+    void grYosterStopCloudEvaporation(void);
 }
 
 namespace {
@@ -213,6 +215,11 @@ void LatchBattleSettingIfNeeded() {
 }
 
 void PauseGroundHazardProcesses() {
+    // Whitelist Yoshi's Story entirely since its priority >= 4 processes are just platforms, not hazards
+    if (IsCurrentStage(kStageYoshi)) {
+        return;
+    }
+
     for (GObj* gobj = gGCCommonLinks[kLinkGround]; gobj != nullptr; gobj = gobj->link_next) {
         for (GObjProcess* proc = gobj->gobjproc_head; proc != nullptr; proc = proc->link_next) {
             if (proc->priority >= 4) {
@@ -308,6 +315,11 @@ void ApplyHazardDisable() {
     PauseGroundHazardProcesses();
     EjectGroundHazardWeapons();
     EjectGroundHazardItems();
+
+    // freeze evaporation timer on Yoshi's
+    if (IsCurrentStage(kStageYoshi)) {
+        grYosterStopCloudEvaporation();
+    }
 }
 
 } // namespace

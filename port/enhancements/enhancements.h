@@ -57,6 +57,10 @@ void port_comp_ruleset_skip_stageselect(void);
 // neutral spawn points on dreamland
 int port_enhancement_neutral_spawns(void);
 
+// z-cancel options
+int port_enhancement_IsAutoZCancelEnabled(void);
+int port_enhancement_IsFailedZCancelFlashEnabled(void);
+
 // boot to CSS
 int port_enhancement_boot_to_vs_css(void);
 
@@ -65,6 +69,16 @@ int port_enhancement_skip_results_screen(void);
 
 // cpu behavior
 int port_enhancement_cpu_level_9(void);
+
+// Classic mode 2-player co-op. The enabled flag is latched at boot
+// (port_classic_coop_latch) — "(Needs reload)" semantics. The context flag
+// marks the VS CSS overlay as currently serving Classic mode so its
+// classic-only hooks (difficulty/stock selectors, exit redirects) engage.
+void port_classic_coop_latch(void);
+int port_enhancement_classic_coop(void);
+int port_classic_coop_context(void);
+void port_classic_coop_set_context(int active);
+int port_classic_coop_friendly_fire(void);
 
 #ifdef __cplusplus
 }
@@ -82,9 +96,15 @@ const char* AnalogRemapRangeCVarName(int playerIndex);
 const char* WidescreenCVarName();
 const char* CompRulesetCVarName();
 const char* NeutralSpawnsCVarName();
+const char* AutoZCancelCVarName();
+const char* FailedZCancelCVarName();
 const char* BootToVSCSSCVarName();
 const char* SkipResultsScreenCVarName();
 const char* CpuLevel9CVarName();
+const char* ClassicCoopCVarName();
+const char* ClassicCoopFriendlyFireCVarName();
+const char* ShuffleMusicCVarName();
+const char* MusicSelectionCVarName();
 
 // Discord Rich Presence
 void UpdateDiscordPresence(const char* gameState, const char* matchDetails);
