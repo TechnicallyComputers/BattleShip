@@ -1056,9 +1056,9 @@ void PortMenu::AddMenuSettings() {
         .Options(CheckboxOptions().Tooltip("Automatically forces all CPU players to Level 9."));
 
     // --- Input customization ---
-    path.sidebarName = "Input";
+    path.sidebarName = "Input Mappings";
     path.column = SECTION_COLUMN_1;
-    AddSidebarEntry("Settings", "Input", 1);
+    AddSidebarEntry("Settings", "Input Mappings", 1);
 
     AddWidget(path, "Controller", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Controller Configuration", WIDGET_WINDOW_BUTTON)
@@ -1069,9 +1069,9 @@ void PortMenu::AddMenuSettings() {
         .Options(WindowButtonOptions().Tooltip("Toggles the controller configuration window."));
 
     // --- Controls sidebar: per-player input remapping ---
-    path.sidebarName = "Controls";
+    path.sidebarName = "Control Enhancements";
     path.column = SECTION_COLUMN_1;
-    AddSidebarEntry("Settings", "Controls", 1);
+    AddSidebarEntry("Settings", "Control Enhancements", 1);
 
     for (int p = 0; p < PORT_ENHANCEMENT_MAX_PLAYERS; ++p) {
         const std::string playerLabel = fmt::format("Player {}", p + 1);
