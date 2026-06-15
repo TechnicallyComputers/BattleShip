@@ -92,6 +92,11 @@ sb32 syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void)
 	return FALSE;
 }
 
+u64 syNetPeerOsMonotonicMs(void)
+{
+	return 0ULL;
+}
+
 u32 syNetPeerGetSkewPacingHoldFrameCount(void)
 {
 	return 0U;

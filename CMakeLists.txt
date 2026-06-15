@@ -284,6 +284,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND (MINGW OR CMAKE_CROSSCOMPILING))
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
             -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
         )
+    endif()
+endif()
 ################################################################################
 # funchook - cross-platform runtime function-detouring lib used by the mod
 # loader. Replaces MinHook (which is x86/x64-Windows-only) so the hook system
@@ -1198,6 +1200,8 @@ if(SSB64_NETMENU)
         target_link_libraries(${PROJECT_NAME} PRIVATE PThreads4W::PThreads4W iphlpapi)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
         target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi)
+    endif()
+endif()
 if (NOT DISABLE_SCRIPTING)
     # funchook hook backend (libultraship is already linked above).
     target_link_libraries(${PROJECT_NAME} PRIVATE funchook-static)
