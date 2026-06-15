@@ -31,6 +31,7 @@ CONTROLS.md
 *.v64
 *.otr
 *.o2r
+*.o2r.recipe
 torch.hash.yml
 tex_dump/
 ssb64_save.bin
