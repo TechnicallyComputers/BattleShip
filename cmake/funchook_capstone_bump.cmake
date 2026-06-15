@@ -86,7 +86,7 @@ static int funchook_mac_arm64_set_rx(void *addr, size_t size) {
 }
 #endif]==])
 
-set(_anchor_begin "    rv = mprotect(mstate->addr, mstate->size, prot)\;")
+set(_anchor_begin "    rv = mprotect(mstate->addr, mstate->size, prot);")
 set(_repl_begin [==[#if defined(__APPLE__) && defined(__aarch64__)
     if (funchook_mac_arm64_set_rw(mstate->addr, mstate->size) == 0) {
         funchook_log(funchook, "  unprotect memory %p (size=%"PRIuPTR", prot=read,write,copy) <- %p (size=%"PRIuPTR")\n",
@@ -96,7 +96,7 @@ set(_repl_begin [==[#if defined(__APPLE__) && defined(__aarch64__)
 #endif
     rv = mprotect(mstate->addr, mstate->size, prot);]==])
 
-set(_anchor_end "    int rv = mprotect(mstate->addr, mstate->size, PROT_READ | PROT_EXEC)\;")
+set(_anchor_end "    int rv = mprotect(mstate->addr, mstate->size, PROT_READ | PROT_EXEC);")
 set(_repl_end [==[#if defined(__APPLE__) && defined(__aarch64__)
     if (funchook_mac_arm64_set_rx(mstate->addr, mstate->size) == 0) {
         funchook_log(funchook, "  protect memory %p (size=%"PRIuPTR", prot=read,exec)\n",
@@ -106,8 +106,16 @@ set(_repl_end [==[#if defined(__APPLE__) && defined(__aarch64__)
 #endif
     int rv = mprotect(mstate->addr, mstate->size, PROT_READ | PROT_EXEC);]==])
 
-if(NOT _unix_contents MATCHES "funchook_mac_arm64_set_rw")
-    string(REPLACE "${_anchor_inc}" "${_helper}"      _unix_contents "${_unix_contents}")
+# Key idempotency on the call-site wrap (only the begin/end replacements emit
+# `funchook_mac_arm64_set_rw(mstate->addr`), not on the helper definition.
+# Earlier the guard keyed on the helper name and a busted "\;" anchor left the
+# helper inserted but the call sites unwrapped — a partial state that then
+# always skipped re-patching. Insert the helper only if absent so re-running
+# over that partial state self-heals.
+if(NOT _unix_contents MATCHES "funchook_mac_arm64_set_rw\\(mstate->addr")
+    if(NOT _unix_contents MATCHES "static int funchook_mac_arm64_set_rw")
+        string(REPLACE "${_anchor_inc}" "${_helper}"  _unix_contents "${_unix_contents}")
+    endif()
     string(REPLACE "${_anchor_begin}" "${_repl_begin}" _unix_contents "${_unix_contents}")
     string(REPLACE "${_anchor_end}" "${_repl_end}"     _unix_contents "${_unix_contents}")
     file(WRITE "${_unix}" "${_unix_contents}")
