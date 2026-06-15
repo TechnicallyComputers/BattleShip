@@ -97,6 +97,8 @@ const char* SkipResultsScreenCVarName();
 const char* CpuLevel9CVarName();
 const char* ClassicCoopCVarName();
 const char* ClassicCoopFriendlyFireCVarName();
+const char* ShuffleMusicCVarName();
+const char* MusicSelectionCVarName();
 
 // Discord Rich Presence
 void UpdateDiscordPresence(const char* gameState, const char* matchDetails);

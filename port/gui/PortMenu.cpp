@@ -1054,6 +1054,14 @@ void PortMenu::AddMenuSettings() {
         .CVar(ssb64::enhancements::CpuLevel9CVarName())
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Automatically forces all CPU players to Level 9."));
+    AddWidget(path, "Shuffle Music", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::ShuffleMusicCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Randomizes the BGM after a stage is chosen. Useful when enabling the competitive ruleset."));
+    AddWidget(path, "Add Music Selection Screen", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::MusicSelectionCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Allows the player to pick a custom BGM track after the stage selection screen (music shuffling is ignored if this is turned on)."));
 
     // --- Input customization ---
     path.sidebarName = "Input Mappings";
