@@ -245,7 +245,8 @@ void                       *port_fighter_computer_attack_list(int fkind);
 int                         port_fighter_shield_hitlag_skip(int fkind,
                                                              struct GObj *fighter_gobj,
                                                              int status_id);
-int                         port_fighter_ecb_override(struct FTStruct *fp,
+int                         port_fighter_ecb_override(int fkind,
+                                                       struct FTStruct *fp,
                                                        int next_status_id,
                                                        float *out_upper,
                                                        float *out_middle);

@@ -165,16 +165,17 @@ int port_fighter_shield_hitlag_skip(int fkind, struct GObj *fighter_gobj, int st
     return 0;
 }
 
-int port_fighter_ecb_override(struct FTStruct *fp, int next_status_id,
+int port_fighter_ecb_override(int fkind, struct FTStruct *fp, int next_status_id,
                                float *out_upper, float *out_middle)
 {
     if (fp == nullptr || out_upper == nullptr || out_middle == nullptr) return 0;
-    for (size_t i = 0; i < sRegistry.size(); ++i) {
-        const FighterDescriptor *r = sRegistry[i].get();
-        if (r == nullptr) continue;
-        if (r->ecb_override == nullptr) continue;
-        if (r->ecb_override(fp, next_status_id, out_upper, out_middle)) {
-            return 1;
+    /* ECB resizing is per-fighter: only the descriptor registered for THIS
+     * fighter's fkind may rewrite its diamond. The old form looped over every
+     * registered fighter and called each one's callback with this fp, so a mod
+     * that hooked one character could resize unrelated/vanilla fighters. */
+    if (const auto *r = get(fkind)) {
+        if (r->ecb_override != nullptr) {
+            return r->ecb_override(fp, next_status_id, out_upper, out_middle);
         }
     }
     return 0;
