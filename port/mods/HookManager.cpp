@@ -301,6 +301,21 @@ int HookManager::InstallHook(const char *symbol_name, void *replacement,
     ChainState &st = chain_it->second;
     void *prev_outer = st.chain.back();
 
+    /* Allocate the new chain trampoline BEFORE any destructive teardown.
+     * If it fails we return with the existing handle and chain fully
+     * intact (target still correctly detoured to prev_outer). Doing this
+     * after DestroyHandle/BuildHandle (the old order) left the target
+     * detoured to `replacement` with *original_out never set — an
+     * untracked live detour with a null "original" the chain didn't even
+     * record, so the mod would crash on call-original and the previous
+     * chain was silently bypassed. */
+    void *new_trampoline = AllocThunk(prev_outer);
+    if (new_trampoline == nullptr) {
+        port_log("[mods] InstallHook(%s): chain thunk alloc failed (chain left intact)\n",
+                 symbol_name);
+        return 1;
+    }
+
     DestroyHandle((funchook_t *)st.fh);
     st.fh = nullptr;
 
@@ -308,8 +323,10 @@ int HookManager::InstallHook(const char *symbol_name, void *replacement,
     funchook_t *fh = BuildHandle(symbol_name, chain_it->first, replacement,
                                  &new_orig_call);
     if (fh == nullptr) {
-        /* The target is now un-hooked entirely. Drop the chain so the
-         * engine runs clean rather than leaving dangling trampolines. */
+        /* funchook couldn't re-detour the target. It is now un-hooked
+         * entirely; drop the chain (and the trampoline just allocated)
+         * so the engine runs clean rather than leaving dangling thunks. */
+        FreeThunk(new_trampoline);
         for (void *t : st.chain_trampolines) {
             FreeThunk(t);
         }
@@ -320,12 +337,6 @@ int HookManager::InstallHook(const char *symbol_name, void *replacement,
     st.orig_call = new_orig_call;
     SetThunkTarget(st.inner_thunk, new_orig_call);
 
-    void *new_trampoline = AllocThunk(prev_outer);
-    if (new_trampoline == nullptr) {
-        port_log("[mods] InstallHook(%s): chain thunk alloc failed\n",
-                 symbol_name);
-        return 1;
-    }
     st.chain.push_back(replacement);
     st.chain_owners.push_back(sCurrentOwner);
     st.chain_trampolines.push_back(new_trampoline);
