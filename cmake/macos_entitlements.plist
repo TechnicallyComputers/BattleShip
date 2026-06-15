@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Entitlements required for the TCC mod loader on Apple Silicon.
+
+      The hook backend (funchook) installs inline detours by making an
+      engine __TEXT page writable+executable and rewriting the function
+      prologue. Apple Silicon enforces W^X on code-signed text pages, so
+      that mprotect is denied (EACCES: "Failed to unprotect memory ...
+      prot=read,write,exec") unless the process carries these
+      entitlements. They are honored even for ad-hoc signatures, which
+      is what local/dev builds use.
+
+      allow-jit / allow-unsigned-executable-memory: permit RWX and
+        runtime code patching (funchook detours + trampoline thunks,
+        and libtcc's own JIT-style codegen).
+      disable-library-validation: permit dlopen of the unsigned
+        libtcc-compiled mod .dylib into the signed process.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

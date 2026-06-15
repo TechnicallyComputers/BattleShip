@@ -9,6 +9,22 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     enable_language(ASM)
 endif()
 
+# Mod system master switch (TinyCC source scripting + funchook hook backend +
+# port/mods). DISABLE_SCRIPTING gates it everywhere — funchook FetchContent,
+# port/mods sources, the no-inline linkage tweaks, the post-build .tcc/ staging,
+# and the in-engine call sites (#ifndef DISABLE_SCRIPTING). Forced ON for
+# Android: funchook/TinyCC have no Android target and the loader is desktop-only.
+# Set BEFORE add_subdirectory(libultraship) so the engine half sees it too.
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(DISABLE_SCRIPTING ON CACHE BOOL "Disable the mod system (scripting + hooks)" FORCE)
+endif()
+if (DISABLE_SCRIPTING)
+    # Define for every superproject target (ssb64_game + the exe + port glue)
+    # so the #ifndef DISABLE_SCRIPTING guards in port/*.cpp engage. libultraship
+    # additionally defines it PUBLIC from its own CMake when the var is set.
+    add_compile_definitions(DISABLE_SCRIPTING)
+endif()
+
 include(ExternalProject)
 include(FetchContent) # pull discord-rpc from GitHub (desktop only)
 
@@ -54,6 +70,15 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
+endif()
+
+# Disable MSVC's vectorized STL helpers (added in 14.40 / VS 17.10).
+# Some VS installs ship the headers without the matching vcruntime
+# symbols, which produces unresolved external errors at link
+# (__std_find_first_of_trivial_pos_1 etc). The fallback non-vectorized
+# variants are functionally equivalent and always work.
+if(MSVC)
+    add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0)
 endif()
 
 ################################################################################
@@ -128,6 +153,43 @@ set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 ################################################################################
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
+
+################################################################################
+# funchook - cross-platform runtime function-detouring lib used by the mod
+# loader. Replaces MinHook (which is x86/x64-Windows-only) so the hook system
+# works on every release target: Windows x64, Linux x64/arm64, and
+# macOS arm64 (Apple Silicon). funchook does the prologue rewrite +
+# trampoline emit; HookManager layers the per-target hot-reload chain on top.
+#
+# funchook pulls its disassembler backend itself (distorm on x86, capstone
+# on arm64). Its hardcoded capstone (aquynh/capstone @ 4.0.2) is patched up
+# to capstone-engine/capstone @ 5.0.1 via the PATCH_COMMAND below — 4.0.2's
+# `cmake_policy(CMP0048 OLD)` is rejected outright by CMake >=4.
+# Pinned to v1.1.3 (latest release; the project is archived but the
+# instruction sets it rewrites are stable). GPLv2 + linking exception —
+# the exception means it does NOT impose GPL on the rest of the codebase.
+#
+# Desktop-only: the mod system is excluded on Android, where DISABLE_SCRIPTING
+# is forced ON, so funchook is not fetched there.
+################################################################################
+if (NOT DISABLE_SCRIPTING)
+    include(FetchContent)
+    set(FUNCHOOK_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(FUNCHOOK_BUILD_STATIC ON  CACHE BOOL "" FORCE)
+    set(FUNCHOOK_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
+    set(FUNCHOOK_INSTALL      OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        funchook
+        GIT_REPOSITORY https://github.com/kubo/funchook.git
+        GIT_TAG        v1.1.3
+        PATCH_COMMAND  ${CMAKE_COMMAND}
+                       -DCAPSTONE_TMPL=cmake/capstone.cmake.in
+                       -DFUNCHOOK_CML=CMakeLists.txt
+                       -DFUNCHOOK_UNIX=src/funchook_unix.c
+                       -P ${CMAKE_SOURCE_DIR}/cmake/funchook_capstone_bump.cmake
+    )
+    FetchContent_MakeAvailable(funchook)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # Android: build Torch in-tree as a STATIC lib (USE_STANDALONE=OFF
@@ -375,6 +437,13 @@ list(APPEND SSB64_SRC_PORT
 # coroutine_test.cpp has its own main(); only built standalone when
 # SSB64_BUILD_COROUTINE_TEST=ON below. Never link it into the game.
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/coroutine_test\\.cpp$")
+# port/mods/ (HookManager + SymbolResolver) wraps funchook, which isn't
+# fetched when the mod system is disabled. Drop it so nothing references the
+# missing backend. port/hooks/ (the event dispatch system) is funchook-free
+# and uses core libultraship events, so it stays compiled on every target.
+if (DISABLE_SCRIPTING)
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/mods/")
+endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # libtorch_runner.so wraps android_torch_bridge.cpp separately; keep
     # it out of libmain.so so the static libtorch + its FetchContent'd
@@ -761,6 +830,46 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
 endif()
 add_dependencies(ssb64_game GenerateCreditsAssets)
+if (NOT DISABLE_SCRIPTING)
+    # funchook hook backend (libultraship is already linked above).
+    target_link_libraries(${PROJECT_NAME} PRIVATE funchook-static)
+
+    ############################################################################
+    # Mod-system linkage requirements
+    #
+    # 1. Disable function inlining on the main executable so engine
+    #    functions remain resolvable + hookable by name. Without this, the
+    #    optimizer can collapse a hookable function into its caller and
+    #    eliminate the address mods would target. /Ob0 (MSVC) and
+    #    -fno-inline-functions (GCC/Clang) preserve every function as a
+    #    standalone symbol.
+    #
+    #    Cost: marginal. The decomp is already non-matching for the port
+    #    build and the renderer is the perf bottleneck, not game logic.
+    #
+    # 2. Ensure PDB (Windows) / debug symbols (Linux/macOS) are produced
+    #    for Release builds too, since symbol resolution depends on them.
+    ############################################################################
+    if (MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE /Ob0)
+        target_compile_options(ssb64_game     PRIVATE /Ob0)
+        # /Zi on compile + /DEBUG on link emits a PDB for every config,
+        # not just Debug. Release builds otherwise strip symbols.
+        target_compile_options(${PROJECT_NAME} PRIVATE /Zi)
+        target_compile_options(ssb64_game     PRIVATE /Zi)
+        # NOTE: do NOT add /OPT:REF or /OPT:ICF here. /OPT:REF strips
+        # unreferenced symbols (mods reach in by-name even when nothing
+        # in the binary references the function); /OPT:ICF folds
+        # identical code sections (two functions with the same body
+        # collapse to one symbol, breaking hook-by-name when two ports
+        # of the same function exist). Plain /DEBUG is enough; it just
+        # tells the linker to emit a full PDB.
+        target_link_options(${PROJECT_NAME}    PRIVATE /DEBUG)
+    else()
+        target_compile_options(${PROJECT_NAME} PRIVATE -fno-inline-functions -g)
+        target_compile_options(ssb64_game     PRIVATE -fno-inline-functions -g)
+    endif()
+endif()
 
 ################################################################################
 # Platform-specific settings
@@ -788,6 +897,30 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/port/ssb64.rc)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,-export-dynamic)
+endif()
+# NOTE (APPLE): the mod hook backend needs __TEXT max-protection = rwx so
+# the JIT-entitled process can flip an engine code page writable to patch
+# a prologue. `-Wl,-segprot,__TEXT,rwx,r-x` would do it, but Apple's new
+# linker (ld-prime, ld-12xx) silently ignores -segprot. It's instead done
+# as a deterministic post-link Mach-O edit below (before codesign).
+
+################################################################################
+# TCC mod scripting: export the engine's full symbol table so libtcc-compiled
+# mods can resolve any engine function by name. On Windows this is what makes
+# `tcc.exe -impdef BattleShip.exe -o BattleShip.def` produce a useful import
+# library; on Unix the linker default-visibility + -Wl,-export-dynamic above
+# handles it.
+################################################################################
+if(NOT DISABLE_SCRIPTING)
+    # ENABLE_EXPORTS makes the EXE produce an import library (.lib) and
+    # surface its symbols to runtime-loaded modules. Without it
+    # WINDOWS_EXPORT_ALL_SYMBOLS only generates a .def file but the linker
+    # doesn't actually emit an export table on the EXE - the .exe ends up
+    # without an .edata section and tcc -impdef returns "no symbols found".
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        ENABLE_EXPORTS TRUE
+        WINDOWS_EXPORT_ALL_SYMBOLS TRUE
+    )
 endif()
 
 ################################################################################
@@ -854,6 +987,132 @@ else()
         COMMENT "Packaging Fast3D shaders into f3d.o2r (Android)"
     )
     add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
+endif()
+
+################################################################################
+# TCC mod scripting: post-build .tcc/ population + BattleShip.def generation
+#
+# At runtime the engine's ScriptLoader feeds mod source through libtcc with
+# include paths under .tcc/include/ and library paths under .tcc/lib/. We
+# populate both from the FetchContent'd TinyCC source tree so the binary is
+# self-contained; modders don't have to install TinyCC.
+#
+# On Windows we additionally run `tcc.exe -impdef BattleShip.exe -o
+# BattleShip.def` to generate the import library that libtcc links mod
+# objects against. WINDOWS_EXPORT_ALL_SYMBOLS (set above) makes the EXE's
+# export table contain every engine function so the .def covers them all.
+################################################################################
+if(NOT DISABLE_SCRIPTING)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMENT "Copying libtcc headers, libs, and runtime DLL..."
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/_deps/tinycc-src/include/"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/include/"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            # libtcc1.a built by MSVC is COFF format which TCC can't
+            # parse. Use tcc.exe itself to recompile the runtime sources
+            # into a TCC-readable archive. -B points tcc at .tcc/ for
+            # tccdefs.h (auto-included via the command line). This
+            # produces libtcc1.o + dllcrt1.o + dllmain.o in TCC's native
+            # object format, then `tcc -ar rcs` bundles them.
+            COMMAND "$<TARGET_FILE:tcc>"
+                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
+                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/lib/libtcc1.c"
+                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
+            COMMAND "$<TARGET_FILE:tcc>"
+                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
+                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllcrt1.c"
+                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
+            COMMAND "$<TARGET_FILE:tcc>"
+                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
+                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllmain.c"
+                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
+            COMMAND "$<TARGET_FILE:tcc>" -ar rcs
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.a"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
+            # libtcc is built SHARED -> tcc.dll. The exe imports its symbols,
+            # so it must be loadable at process start. Without this the exe
+            # fails with 0xC0000135 (DLL not found) before main() runs.
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:libtcc>"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/$<TARGET_FILE_NAME:libtcc>"
+            VERBATIM
+        )
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMENT "Generating BattleShip.def via tcc -impdef..."
+            COMMAND "$<TARGET_FILE:tcc>"
+                    -impdef "$<TARGET_FILE:${PROJECT_NAME}>"
+                    -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/BattleShip.def"
+            VERBATIM
+        )
+        add_dependencies(${PROJECT_NAME} tcc)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMENT "Copying libtcc headers and libs..."
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/_deps/tinycc-src/include/"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "$<TARGET_FILE:libtcc1>"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.a"
+            VERBATIM
+        )
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMENT "Copying libtcc headers and libs..."
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/_deps/tinycc-src/include/"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "$<TARGET_FILE:libtcc1>"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.a"
+            VERBATIM
+        )
+    endif()
+endif()
+
+################################################################################
+# macOS: re-sign with JIT entitlements so the mod loader's hook backend
+# (funchook) can patch engine __TEXT at runtime.
+#
+# Apple Silicon enforces W^X on code-signed text pages: funchook's inline
+# detour mprotect(RWX) is denied ("Failed to unprotect memory ...
+# Permission denied") on a linker-/ad-hoc-signed binary with no
+# entitlements. Re-signing ad-hoc WITH the JIT entitlements lifts that —
+# the cs.allow-* keys are honored for ad-hoc signatures. Must run LAST
+# (any later binary mutation would invalidate the signature). No-op on
+# Intel macs too, but harmless; gated to APPLE.
+################################################################################
+
+if(APPLE AND NOT DISABLE_SCRIPTING)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMENT "macOS: __TEXT->rwx maxprot + ad-hoc re-sign w/ JIT entitlements (mod hook backend)"
+        # 1. Raise __TEXT max-protection to rwx so the hook backend can
+        #    flip an engine code page writable at runtime.
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/macho_text_rwx.py
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+        # 2. Re-sign LAST (seals the modified binary). The cs.allow-*
+        #    entitlements are honored for ad-hoc signatures.
+        COMMAND codesign --force --sign - --timestamp=none
+            --entitlements "${CMAKE_SOURCE_DIR}/cmake/macos_entitlements.plist"
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+        VERBATIM
+    )
 endif()
 
 ################################################################################
@@ -1079,4 +1338,17 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
             ${CMAKE_CURRENT_SOURCE_DIR}/port
         )
     endif()
+endif()
+
+################################################################################
+# Workspace TCC mods (desktop only — the mod system is excluded on Android)
+#
+# Each mod under workspace/ has its own CMakeLists.txt that bundles the
+# mod's source + assets into output/ and stages a copy under
+# build/<config>/mods/<ModName>/ so the runtime loader picks it up.
+# ModO2R provides the optional ssb64_add_mod_o2r_target helper for
+# packaging into a single .o2r distributable.
+################################################################################
+if (NOT DISABLE_SCRIPTING)
+    include(ModO2R)
 endif()
