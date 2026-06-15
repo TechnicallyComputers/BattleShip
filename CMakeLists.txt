@@ -189,6 +189,28 @@ if (NOT DISABLE_SCRIPTING)
                        -P ${CMAKE_SOURCE_DIR}/cmake/funchook_capstone_bump.cmake
     )
     FetchContent_MakeAvailable(funchook)
+
+    # Stale-cache guard. FetchContent runs PATCH_COMMAND only on the FIRST
+    # populate of funchook-src; an already-populated _deps/funchook-src (e.g.
+    # from an older/partial patch) is reused silently. If the macOS arm64
+    # mach_vm_protect rewrite isn't wired into its call site, inline detours
+    # fail at runtime with mprotect(RWX) EINVAL — and nothing catches it until
+    # a mod tries to hook. Fail loudly at configure time instead. See
+    # docs/bugs/funchook_macos_arm64_patch_anchor_2026-06-15.md.
+    if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(_fh_unix "${funchook_SOURCE_DIR}/src/funchook_unix.c")
+        if (EXISTS "${_fh_unix}")
+            file(READ "${_fh_unix}" _fh_unix_contents)
+            if (NOT _fh_unix_contents MATCHES "funchook_mac_arm64_set_rw\\(mstate->addr")
+                message(FATAL_ERROR
+                    "funchook_unix.c lacks the Apple Silicon mach_vm_protect patch "
+                    "(stale FetchContent cache). Remove ${CMAKE_BINARY_DIR}/_deps/funchook-* "
+                    "and re-configure. See docs/bugs/funchook_macos_arm64_patch_anchor_2026-06-15.md")
+            endif()
+            unset(_fh_unix_contents)
+        endif()
+        unset(_fh_unix)
+    endif()
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
