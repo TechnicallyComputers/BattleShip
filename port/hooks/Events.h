@@ -11,3 +11,4 @@
 #pragma once
 
 #include "list/EngineEvent.h"
+#include "list/FighterEvent.h"
