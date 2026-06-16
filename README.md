@@ -228,6 +228,7 @@ scripts/      packaging (.dmg / .AppImage / .zip), worktree helper
 
 ### Further reading
 
+- [`docs/modding.md`](docs/modding.md) — writing native C mods: the event catalog, function detours, and fighter override points
 - [`docs/architecture.md`](docs/architecture.md) — project status, ROM info, dependency map, source-tree layout
 - [`docs/c_conventions.md`](docs/c_conventions.md) — decomp naming prefixes, IDO idioms to preserve, code style, macros
 - [`docs/n64_reference.md`](docs/n64_reference.md) — RDRAM, RSP/RDP, GBI, audio, threading, endianness primer
