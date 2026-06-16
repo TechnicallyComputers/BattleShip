@@ -28,7 +28,9 @@ packaging to `.o2r`, hot reload), the canonical how-to is
    logs once per second — the smallest complete example.
 3. See `workspace/hooktest/` for a minimal **function-detour** mod (it hooks
    `osSpTaskStartGo` and passes through).
-4. Use this page as your reference for **which events exist** and **how to read
+4. See `workspace/playertint/` for a minimal **fighter-event** mod (it tints
+   each player a distinct color via `FighterEnvColorQueryEvent`).
+5. Use this page as your reference for **which events exist** and **how to read
    their payloads**.
 
 ---
@@ -172,7 +174,10 @@ decomp types; cast them to the documented decomp type inside your listener.
 ## A complete example: tint a fighter red
 
 A full mod that forces player 1's environment color to red. Drop this in
-`src/` of a copied template, build, and load.
+`src/` of a copied template, build, and load. A complete, packaged version
+that tints **all four** players a distinct color ships in
+[`workspace/playertint/`](../workspace/playertint/) — copy that folder to start
+from a working fighter-event mod instead of the heartbeat template.
 
 ```c
 /* tint.c — force player 1's fighter env color to red. */
@@ -218,6 +223,11 @@ MOD_EXIT() {
 - **Build errors surface at load, not at author-build time.** `merge_mod.py`
   only preprocesses/amalgamates your sources; the real compile happens in libtcc
   when the engine loads the mod. Watch `ssb64.log` for compile errors.
+- **Pillow is a packaging dependency.** `merge_mod.py` imports Pillow (PIL). If
+  `cmake --build` fails with `No module named 'PIL'`, install it with
+  `pip install Pillow` — into the interpreter **CMake selected**, which can
+  differ from the `python` on your `PATH` (CMake's `find_package(Python3)` may
+  pick another install). The build output prints the interpreter path it found.
 
 ---
 
