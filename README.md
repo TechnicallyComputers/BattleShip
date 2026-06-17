@@ -6,9 +6,9 @@
 
 **BattleShip** is a PC port of **Super Smash Bros. (N64)** — both the **US** (NTSC-U v1.0) and **Japanese** (Nintendo All-Star! Dairantou Smash Brothers) releases — built on top of the [VetriTheRetri/ssb-decomp-re](https://github.com/vetritheretri/ssb-decomp-re) decompilation, using [libultraship](https://github.com/Kenix3/libultraship) for PC-native rendering / audio / input and [Torch](https://github.com/HarbourMasters/Torch) for extracting assets out of the ROM at build time.
 
-Runs natively on macOS (Apple Silicon), Linux, and Windows.
+Runs natively on macOS (Apple Silicon), Linux, Windows, and Android.
 
-Android is planned and work-in-progress.
+Download the high resolution texture pack from [GhostlyDark](https://github.com/GhostlyDark) [here!](https://evilgames.eu/texture-packs/ssb-reloaded.htm#pc)
 
 ## No copyrighted assets are included in this repository
 
@@ -28,38 +28,67 @@ If your dump does not match the hashes for its version, it will not work.
 
 ## Features
 
-### Toggleable Port Specific Enhancements
+Everything below is toggleable in-game from the ESC menu.
 
-- Tap Jump
-- C-Stick Smash
-- D-Pad Jump
-- Hitbox Visual Mode
-- Nrage Stick Config with Customizable Ranges
+### Input enhancements (per-player)
 
-## Controls
+- **Disable Tap Jump**
+- **C-Stick Smash**
+- **D-Pad to Jump**
+- **NRage analog-stick remap** with customizable per-axis ranges
 
-- Controller and Rumble Support Powered by SDL 2
-- Native Raphnet Support up to 4 Channels Through Hidapi
+### Gameplay & match options
 
-## Rendering
+- **Classic Co-op** — play the originally single-player Classic mode with 2-player local co-op, with an optional friendly-fire toggle
+- **Z-Cancel assists** — Auto Z-Cancel and Flash on Failed Z-Cancel (L-cancel practice aids)
+- **Competitive ruleset** — one-click tournament rules, plus neutral spawns on Dream Land
+- **Disable Stage Hazards**
+- **Hitbox view** — visualize hitboxes / hurtboxes / collision
+- **Boot straight to the VS character-select screen**, **Skip Results Screen**, **Force CPU Level 9**
+- **Unlocks** — unlock everything, or individual characters (Captain Falcon, Jigglypuff, Luigi, Ness) and features (Mushroom Kingdom, Item Switch menu, Sound Test)
 
-All Powered by LibultraShip
+### Audio
 
-- Resolution scaling
-- Anti Aliasing
-- Tri Point Texture Filtering
+- **Music shuffler** — randomize stage BGM
+- **Music selection screen** — pick the track per stage
+- Independent Master / Music / Sound / Voice volume sliders
 
-## Rollback Netcode and Online Play (WORK IN PROGRESS)
+### Rendering (powered by libultraship / Fast3D)
+
+- Internal resolution scaling, MSAA anti-aliasing, three-point texture filtering
+- Full widescreen support, including ultrawide resolutions.
+- Renderer backend selection (OpenGL / Metal / Direct3D), VSync, windowed-fullscreen, multi-window
+- **Post-process shader support** with an in-app shader-pack downloader
+
+### Textures & mods
+
+- **Hi-res texture packs** on desktop *and* Android (opt-in, read in place straight out of a `.zip`). Download GhostlyDark's pack from [evilgames.eu](https://evilgames.eu/texture-packs/ssb-reloaded.htm#pc).
+- **Native C mod support** — write mods in C, compiled at runtime (TinyCC), with hot-reload, function detours, and a documented engine/fighter event catalog. See [`docs/modding.md`](docs/modding.md). *(Desktop only; scripting is disabled on Android.)*
+
+### Controls
+
+- Controller and rumble support powered by **SDL2**, with plug-and-play routing for up to 4 pads
+- Native **Raphnet** adapter support up to 4 channels through **hidapi**
+- Per-controller configuration UI and a bundled `gamecontrollerdb.txt` mapping database
+
+### Platform & quality-of-life
+
+- Runs natively on **macOS (Apple Silicon), Linux, Windows, and Android**
+- First-run ROM-extraction wizard, built-in update checker/downloader, and Discord Rich Presence
+
+### Rollback netcode & online play
+
+Work in progress.
 
 ## Author's notes
 
 ### About the project
 
-This is a work in progress port that I started and developed alone with Claude until the v0.3-beta release. It took a little over a month of night and day work to get to the first beta release, and a massive 4 day long sprint working all day resolving bugs from v0.3-beta to v0.7-beta. As of now, this is no longer a pure AI project. Many people have offered their time playtesting, their knowledge of the game, or their experience with modding or competitive play; to bring improvements, bug fixes, new feature suggestions, and additions. Without them, the project would not be what it is today.
+This is a project that I started and developed alone with Claude until the v0.3-beta release. It took a little over a month of night and day work to get to the first beta release, and a massive 4 day long sprint working all day resolving bugs from v0.3-beta to v0.7-beta. As of now, this is no longer a pure AI project. Many people have offered their time playtesting, their knowledge of the game, or their experience with modding or competitive play; to bring improvements, bug fixes, new feature suggestions, and additions. Without them, the project would not be what it is today.
 
 If you find anything that you would like to see improved, create an issue on Github. I'll fix it.
 
-This port was started when the original decomp was 96% complete code only. The remaining 4% is the internal debug menu and Libultra functions that aren't necessary to port the game. The relocatable data was also not decompiled at the time. The port was designed with this in mind, and it is why certain design decisions had to have been made. I like to move fast, obviously.
+This port was started when the original decomp was 96% complete code only. The remaining 4% was the internal debug menu and Libultra functions that aren't necessary to port the game. The relocatable data was also not decompiled at the time. The port was designed with this in mind, and it is why certain design decisions had to have been made. I like to move fast, obviously.
 
 This project uses a heavily modified LibUltraShip and Torch, those two modules obviously don't work with every n64 game out of the box and a lot of game specific things needed to be implemented. The original game is quite unique and uses rendering techniques and n64 hardware tricks in ways other LUS projects did not need to account for.
 
@@ -208,6 +237,9 @@ Both forks live as submodules so their history stays their own and so upstream c
 ```
 port/         modern C++ port layer — Ship::Context, resource factories,
               endian fixups, bridges between decomp code and libultraship
+                port/hooks/     engine/fighter event system (all platforms)
+                port/mods/      native C mod loader + hook backend (funchook)
+workspace/    worked example mods (hooktest, playertint, template)
 include/      headers (some generated: reloc_data.h)
 decomp/       submodule — decompiled SSB64 C source (largely unchanged
               game logic). Major subdirs inside the submodule:
@@ -241,7 +273,7 @@ scripts/      packaging (.dmg / .AppImage / .zip), worktree helper
 
 ## Contributing
 
-PRs are welcome but please don't be offended if responses are slow — this is a side project. If you're opening a bug report, the most useful things to include are:
+PRs are welcome from anyone. If you're opening a bug report, the most useful things to include are:
 
 - SHA-1 of your `baserom.us.z64`
 - OS + architecture (especially macOS ARM64 vs x86_64, since LP64 bitfield layout has bitten us several times — see `docs/bugs/`)
@@ -255,6 +287,8 @@ PRs are welcome but please don't be offended if responses are slow — this is a
 - Runtime framework: [libultraship](https://github.com/Kenix3/libultraship) — Copyright (c) 2022 kenix3, MIT-licensed. Originated by the Harbour Masters team (Ship of Harkinian) and now maintained at Kenix3/libultraship. Vendored as the `libultraship/` submodule.
 - Asset pipeline: [Torch](https://github.com/HarbourMasters/Torch) — Copyright (c) 2023 Lywx (Harbour Masters), MIT-licensed. Vendored as the `torch/` submodule.
 - Menu fonts: [Montserrat](https://github.com/JulietaUla/Montserrat) and [Inconsolata](https://github.com/cyrealtype/Inconsolata), both bundled under the [SIL Open Font License 1.1](https://openfontlicense.org). License texts ship alongside the font files in [`assets/custom/fonts/`](assets/custom/fonts/).
+- Controller mappings: [`gamecontrollerdb.txt`](gamecontrollerdb.txt) from the [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) project — bundled with every build and loaded at startup so more controllers work out of the box. Distributed under the zlib license; full text in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+- High-resolution texture pack: *SSB Reloaded* by [GhostlyDark](https://github.com/GhostlyDark), distributed separately at [evilgames.eu](https://evilgames.eu/texture-packs/ssb-reloaded.htm#pc). Not bundled with this repository or its builds — the port loads it only if you download it yourself.
 - Reference ports I learned from and adapted code from: [Starship](https://github.com/HarbourMasters/Starship) (SF64) and [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) (OoT) — both MIT-licensed by The Harbour Masters; see [`LICENSE`](LICENSE) for the per-file attribution.
 - Reference ports I learned from but did not borrow code from: [SM64 PC Port](https://github.com/sm64-port/sm64-port) (SM64), [SpaghettiKart](https://github.com/HarbourMasters/SpaghettiKart) (MK64).
 - Port work: me ([JRickey](https://github.com/JRickey)), with an enormous amount of help, debugging, and feature suggestions from contributors in our Discord server.
@@ -274,3 +308,4 @@ The MIT grant covers only the port-specific code (the `port/` layer, build scrip
 - The `libultraship` submodule — Copyright (c) 2022 kenix3, MIT-licensed (originated by the Harbour Masters team).
 - The `torch` submodule — Copyright (c) 2023 Lywx (Harbour Masters), MIT-licensed.
 - The bundled menu fonts under `assets/custom/fonts/`, which are licensed under the SIL Open Font License 1.1 (per-font license files in that directory).
+- The bundled controller-mapping database `gamecontrollerdb.txt`, from the [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) project — distributed under the zlib license. Full text and attribution in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
