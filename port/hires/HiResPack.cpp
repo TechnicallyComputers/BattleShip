@@ -10,6 +10,12 @@
 // here to pick up the function declarations.
 #include <stb_image.h>
 
+// libzip — already on the include path via libultraship.h → classes.h →
+// O2rArchive.h (the engine's .o2r loader is libzip-based). Used here so a
+// pack can be dropped into mods/ as a .zip and read in place, with no
+// extraction step (the distributed pack format on every platform).
+#include <zip.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -22,6 +28,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace ssb64::hires {
 
@@ -45,8 +52,24 @@ struct HashKeyHasher {
     }
 };
 
-// Index of all parsed pack PNGs. Phase 3 reads it from Lookup().
-std::unordered_map<HashKey, std::string, HashKeyHasher> gIndex;
+// Where a parsed pack PNG lives. A pack entry is either a loose file on disk
+// (member empty) or a member inside a .zip dropped in mods/ (member = the
+// entry name inside the archive at `container`). Same HashKey grammar either
+// way — only the decode source differs (stbi_load vs stbi_load_from_memory).
+struct PackEntry {
+    std::string container; // loose: the .png path; zip: the .zip path
+    std::string member;    // empty for loose; entry name within the zip
+    bool inZip() const noexcept { return !member.empty(); }
+};
+
+// Index of all parsed pack PNGs (loose + zip members). Lookup() reads it.
+std::unordered_map<HashKey, PackEntry, HashKeyHasher> gIndex;
+
+// Open zip handles, keyed by .zip path, kept alive for the process so we don't
+// re-parse a pack's central directory on every first-decode. Single-threaded
+// (the hook runs on the game/render thread), so one shared handle per zip is
+// safe to reuse sequentially.
+std::unordered_map<std::string, zip_t*> gOpenZips;
 
 std::string gModsRoot;
 
@@ -156,8 +179,25 @@ public:
         mList.emplace_back(k, std::move(tex));
         mIndex[k] = std::prev(mList.end());
         mBytes += addBytes;
-        // Evict from the LRU end (front) until back under budget. Never
-        // evict the tail — that's what we just inserted.
+        EvictToBudget();
+    }
+
+    // Re-point the budget after construction. The cache is built at static-init
+    // time (before CVars load), so HiResPack::Init reads the
+    // gHiResTextures.CacheBudgetMB CVar and calls this once config is up.
+    void SetBudget(size_t budgetBytes) {
+        mBudget = budgetBytes;
+        EvictToBudget();
+    }
+
+    size_t Bytes() const noexcept { return mBytes; }
+    size_t Budget() const noexcept { return mBudget; }
+
+private:
+    // Evict from the LRU end (front) until back under budget. Never evict the
+    // tail (most-recently inserted) — Lookup returns a pointer into it that
+    // must stay valid through the immediately-following UploadTexture call.
+    void EvictToBudget() {
         while (mBytes > mBudget && mList.size() > 1) {
             auto& front = mList.front();
             mBytes -= front.second.rgba.size();
@@ -166,17 +206,15 @@ public:
         }
     }
 
-    size_t Bytes() const noexcept { return mBytes; }
-
-private:
     std::list<Node> mList;
     std::unordered_map<HashKey, std::list<Node>::iterator, HashKeyHasher> mIndex;
     size_t mBytes = 0;
     size_t mBudget;
 };
 
-constexpr size_t kDefaultLruBudget = 512u * 1024u * 1024u; // 512 MB
-LruCache gLru{ kDefaultLruBudget };
+// Initial budget from the platform default in HiResPack.h; HiResPack::Init
+// re-points it from the gHiResTextures.CacheBudgetMB CVar once config loads.
+LruCache gLru{ (size_t)kDefaultLruBudgetMB * 1024u * 1024u };
 
 bool IsHexDigit(char c) noexcept {
     return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
@@ -257,6 +295,82 @@ std::optional<HashKey> ParseFilename(std::string_view filename) {
     return key;
 }
 
+// Basename (after the last '/' or '\\') of a path or zip entry name.
+std::string_view Basename(std::string_view p) noexcept {
+    size_t slash = p.find_last_of("/\\");
+    return slash == std::string_view::npos ? p : p.substr(slash + 1);
+}
+
+// True if `name` ends in ".<ext>" (case-insensitive). `ext` is 3 lowercase chars.
+bool HasExt(std::string_view name, const char* ext) noexcept {
+    if (name.size() < 4) return false;
+    std::string_view e = name.substr(name.size() - 4);
+    return e[0] == '.' && (e[1] | 0x20) == ext[0] && (e[2] | 0x20) == ext[1] && (e[3] | 0x20) == ext[2];
+}
+
+// Insert a parsed entry, applying the "last scan wins" collision rule (matches
+// the loose-file ordering) and updating stats. Shared by both scanners.
+void IndexEntry(const HashKey& key, PackEntry entry, PackStats& stats) {
+    auto it = gIndex.find(key);
+    if (it == gIndex.end()) {
+        gIndex.emplace(key, std::move(entry));
+        stats.indexedTextures++;
+    } else {
+        it->second = std::move(entry); // last-scanned wins
+        stats.collisions++;
+    }
+}
+
+// Open a pack .zip read-only and cache the handle for the process lifetime so
+// we don't re-parse its central directory on every first-decode. A null handle
+// is cached too, so a broken zip isn't retried.
+zip_t* OpenZipCached(const std::string& path) {
+    if (auto it = gOpenZips.find(path); it != gOpenZips.end()) return it->second;
+    int err = 0;
+    zip_t* z = zip_open(path.c_str(), ZIP_RDONLY, &err);
+    if (z == nullptr) {
+        zip_error_t ze;
+        zip_error_init_with_code(&ze, err);
+        port_log("HiResPack: cannot open zip %s (%s)\n", path.c_str(), zip_error_strerror(&ze));
+        zip_error_fini(&ze);
+    }
+    gOpenZips[path] = z;
+    return z;
+}
+
+// Enumerate a .zip's entries and index every member whose basename matches the
+// pack grammar. The central-directory read is one shot — far cheaper than the
+// recursive directory walk a loose pack needs (and it sidesteps the per-file
+// scoped-storage traversal cost on Android).
+void ScanZip(const std::string& zipPath, PackStats& stats) {
+    zip_t* z = OpenZipCached(zipPath);
+    if (z == nullptr) return;
+    zip_int64_t n = zip_get_num_entries(z, 0);
+    for (zip_int64_t i = 0; i < n; i++) {
+        const char* name = zip_get_name(z, i, 0);
+        if (name == nullptr) continue;
+        auto key = ParseFilename(Basename(name));
+        if (!key) { stats.skippedFilenames++; continue; }
+        IndexEntry(*key, PackEntry{zipPath, std::string(name)}, stats);
+    }
+}
+
+// Read a zip member fully into `out`. Returns false on any libzip error.
+bool ReadZipMember(const std::string& zipPath, const std::string& member,
+                   std::vector<uint8_t>& out) {
+    zip_t* z = OpenZipCached(zipPath);
+    if (z == nullptr) return false;
+    zip_stat_t st;
+    zip_stat_init(&st);
+    if (zip_stat(z, member.c_str(), 0, &st) != 0 || !(st.valid & ZIP_STAT_SIZE)) return false;
+    zip_file_t* zf = zip_fopen(z, member.c_str(), 0);
+    if (zf == nullptr) return false;
+    out.resize((size_t)st.size);
+    zip_int64_t rd = zip_fread(zf, out.data(), st.size);
+    zip_fclose(zf);
+    return rd >= 0 && (zip_uint64_t)rd == st.size;
+}
+
 } // namespace
 
 HiResPack& HiResPack::Get() {
@@ -271,6 +385,11 @@ const char* HiResPack::ModsRoot() const noexcept {
 bool HiResPack::Init() {
     mStats = {};
     gIndex.clear();
+    // Close any zip handles from a prior Init before re-scanning.
+    for (auto& [path, z] : gOpenZips) {
+        if (z != nullptr) zip_close(z);
+    }
+    gOpenZips.clear();
 
     // Resolve <app-data>/mods alongside BattleShip.o2r and ssb64_save.bin.
     // Same convention as port_save.cpp.
@@ -282,51 +401,60 @@ bool HiResPack::Init() {
         return false;
     }
 
+    // Apply the decoded-RGBA8 LRU budget now that config (CVars) is loaded.
+    // Platform default (HiResPack.h) unless the user overrode it; floored so a
+    // too-small value can't make the cache thrash by re-decoding every miss.
+    int budgetMB = CVarGetInteger("gHiResTextures.CacheBudgetMB", kDefaultLruBudgetMB);
+    if (budgetMB < kMinLruBudgetMB) budgetMB = kMinLruBudgetMB;
+    gLru.SetBudget((size_t)budgetMB * 1024u * 1024u);
+    port_log("HiResPack: decoded-RGBA8 LRU budget = %d MB%s\n", budgetMB,
+             kMaxPackTexels ? " (mobile per-texture upscale cap active)" : "");
+
     if (!Directory::Exists(gModsRoot)) {
         port_log("HiResPack: %s does not exist; create it and drop a pack inside to enable\n",
                  gModsRoot.c_str());
         return false;
     }
 
-    auto files = Directory::ListFiles(gModsRoot); // recursive
-    std::sort(files.begin(), files.end()); // deterministic collision-winner
+    // ListFiles' recursive iterator throws on a bad mods/ (locked subdir,
+    // symlink loop, a file removed mid-walk) — catch it so a junk folder just
+    // disables the pack instead of taking down boot.
+    try {
+        auto files = Directory::ListFiles(gModsRoot); // recursive
+        std::sort(files.begin(), files.end()); // deterministic collision-winner
 
-    for (const std::string& path : files) {
-        mStats.scannedFiles++;
+        for (const std::string& path : files) {
+            mStats.scannedFiles++;
+            std::string_view name = Basename(path);
 
-        // Extract the basename for parsing.
-        size_t slash = path.find_last_of("/\\");
-        std::string_view name = (slash == std::string::npos)
-            ? std::string_view(path)
-            : std::string_view(path).substr(slash + 1);
+            // A .zip pack is read in place: enumerate + index its members. This
+            // is the distributed pack format — desktop users drop the zip into
+            // mods/, and the Android importer copies the downloaded zip here.
+            if (HasExt(name, "zip")) {
+                ScanZip(path, mStats);
+                continue;
+            }
 
-        // Cheap pre-filter: must end in .png.
-        if (name.size() < 5) continue;
-        std::string_view ext = name.substr(name.size() - 4);
-        if (ext.size() != 4 || ext[0] != '.'
-            || (ext[1] | 0x20) != 'p' || (ext[2] | 0x20) != 'n' || (ext[3] | 0x20) != 'g') {
-            continue;
+            // Otherwise index a loose .png (member empty → decoded via stbi_load).
+            if (!HasExt(name, "png")) continue;
+            auto key = ParseFilename(name);
+            if (!key) {
+                mStats.skippedFilenames++;
+                continue;
+            }
+            IndexEntry(*key, PackEntry{path, std::string()}, mStats);
         }
-
-        auto key = ParseFilename(name);
-        if (!key) {
-            mStats.skippedFilenames++;
-            continue;
-        }
-
-        auto [it, inserted] = gIndex.try_emplace(*key, path);
-        if (!inserted) {
-            mStats.collisions++;
-            it->second = path; // last-scanned (alphabetically last) wins
-        } else {
-            mStats.indexedTextures++;
-        }
+    } catch (const std::exception& e) {
+        port_log("HiResPack: cannot scan %s (%s); hi-res pack disabled this run\n",
+                 gModsRoot.c_str(), e.what());
+        gIndex.clear();
+        return false;
     }
 
-    port_log("HiResPack: scanned %s — %zu files, %zu indexed, %zu unparsed PNGs, %zu hash collisions\n",
+    port_log("HiResPack: scanned %s — %zu files, %zu indexed, %zu unparsed, %zu hash collisions, %zu zip(s)\n",
              gModsRoot.c_str(),
              mStats.scannedFiles, mStats.indexedTextures,
-             mStats.skippedFilenames, mStats.collisions);
+             mStats.skippedFilenames, mStats.collisions, gOpenZips.size());
     return true;
 }
 
@@ -378,15 +506,40 @@ const DecodedTexture* HiResPack::Lookup(uint8_t fmt, uint8_t siz,
         return nullptr;
     }
 
+    const PackEntry& entry = it->second;
     int w = 0, h = 0, ch = 0;
-    uint8_t* raw = stbi_load(it->second.c_str(), &w, &h, &ch, 4);
+    uint8_t* raw = nullptr;
+    if (entry.inZip()) {
+        // Decode straight from the zip member — no extraction to disk.
+        std::vector<uint8_t> bytes;
+        if (ReadZipMember(entry.container, entry.member, bytes)) {
+            raw = stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &ch, 4);
+        }
+    } else {
+        raw = stbi_load(entry.container.c_str(), &w, &h, &ch, 4);
+    }
     if (raw == nullptr || w <= 0 || h <= 0 || w > 65535 || h > 65535) {
         if (raw) stbi_image_free(raw);
-        port_log("HiResPack: stbi_load failed for %s (%s)\n",
-                 it->second.c_str(), stbi_failure_reason() ? stbi_failure_reason() : "?");
+        port_log("HiResPack: decode failed for %s%s%s (%s)\n",
+                 entry.container.c_str(), entry.inZip() ? " :: " : "",
+                 entry.inZip() ? entry.member.c_str() : "",
+                 stbi_failure_reason() ? stbi_failure_reason() : "?");
         // Drop the entry so we don't keep retrying every cache miss.
         gIndex.erase(it);
         mLookupStats.decodeFails++;
+        return nullptr;
+    }
+
+    // Mobile per-texture upscale cap (kMaxPackTexels = 0 → uncapped on desktop).
+    // A single oversize PNG would blow the LRU budget (the just-inserted tail is
+    // never evicted) and balloon the uncompressed GPU upload, so reject it and
+    // fall back to the native texture. Drop the index entry so we don't re-decode
+    // the same monster on every cache miss.
+    if (kMaxPackTexels != 0 && (size_t)w * (size_t)h > kMaxPackTexels) {
+        stbi_image_free(raw);
+        port_log("HiResPack: %s decodes to %dx%d (> mobile %u-texel cap) — using native texture\n",
+                 entry.container.c_str(), w, h, (unsigned)kMaxPackTexels);
+        gIndex.erase(it);
         return nullptr;
     }
 
