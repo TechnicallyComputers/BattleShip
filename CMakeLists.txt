@@ -472,13 +472,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # deps don't bloat the SDL-bound game library.
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/android_torch_bridge\\.cpp$")
     # Drop features we explicitly disable on Android (no curl-driven
-    # self-updater, no discord-rpc link, no libretro shader downloader,
-    # no hires-pack runtime). The corresponding menu entries are gated
-    # with #if !defined(__ANDROID__) in port/gui/PortMenu.cpp so nothing
-    # references the removed symbols.
+    # self-updater, no discord-rpc link, no libretro shader downloader).
+    # The corresponding menu entries are gated with #if !defined(__ANDROID__)
+    # in port/gui/PortMenu.cpp so nothing references the removed symbols.
+    # (port/hires/ is NOT dropped here — it compiles on Android but runs
+    # opt-in with a reduced LRU budget; see the PORT_HIRES_ENABLED block.)
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX
         "port/enhancements/(Updater|DiscordRichPresence|ShaderDownloader)\\.cpp$")
-    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/port_window_icon\\.cpp$")
 endif()
 # Treat the generated icon header as a source so CMake schedules it ahead
@@ -621,17 +621,19 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
-# Hi-res texture pack support is US-only on desktop and dropped entirely
-# on Android (mobile memory budget can't carry the 512 MB LRU cache,
-# and the dump-tooling menu items add no value on touch UI).
+# Hi-res texture pack support is US-only (desktop AND Android). On Android
+# it compiles but defaults to OFF and runs with a smaller decoded-RGBA8 LRU
+# budget (see port/hires/HiResPack.h: kHiResEnabledDefault / kDefaultLruBudgetMB)
+# plus a per-texture upscale cap, so a pack can't blow the mobile memory
+# budget and trip the low-memory killer; the dev dump-tooling menu items are
+# still gated off touch UI in PortMenu.cpp.
 # Pack PNGs are addressed by CRC32-IEEE of the decoded RGBA8 buffer that
 # came out of the US ROM fast-path; JP rendering hits different hash inputs
 # (different glyph art for VS-records, JP-only menus, plus palette/sprite
 # nuances on shared assets), so a US-built pack would silently miss on JP
-# and no JP-only pack has been authored. Drop port/hires/ from the JP and
-# Android builds entirely and gate the port.cpp / PortMenu.cpp integration
-# on PORT_HIRES_ENABLED.
-if(SSB64_VERSION STREQUAL "us" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+# and no JP-only pack has been authored. Drop port/hires/ from the JP build
+# entirely and gate the port.cpp / PortMenu.cpp integration on PORT_HIRES_ENABLED.
+if(SSB64_VERSION STREQUAL "us")
     list(APPEND SSB64_COMPILE_DEFS PORT_HIRES_ENABLED=1)
 else()
     list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/hires/")
