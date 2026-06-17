@@ -1335,7 +1335,15 @@ void PortMenu::AddMenuAssets() {
         .Options(CheckboxOptions().Tooltip("When on, every cache-miss texture upload hashes the decoded RGBA8 image "
                                             "and substitutes a matching PNG from the mods/ index at the pack's higher "
                                             "resolution.")
-                     .DefaultValue(true));
+                     .DefaultValue(ssb64::hires::kHiResEnabledDefault != 0));
+#if defined(__ANDROID__)
+    AddWidget(path,
+              "Mobile note: decoded textures are uncompressed in RAM and on the GPU. "
+              "The pack is capped to a 128 MB cache (gHiResTextures.CacheBudgetMB) and "
+              "per-texture upscale limit, but large packs can still pressure memory on "
+              "low-RAM devices. Off by default — enable only if your device has headroom.",
+              WIDGET_TEXT);
+#endif
     AddWidget(path, "Open Mods Folder", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([](WidgetInfo&) {
@@ -1350,6 +1358,10 @@ void PortMenu::AddMenuAssets() {
                            ssb64::hires::HiResPack::Get().Stats().indexedTextures),
               WIDGET_TEXT);
 
+    // Pack-authoring dump tooling is desktop-only — it writes hundreds of
+    // files into <app>/ and is driven from a separate offline conversion
+    // pipeline, neither of which makes sense on a touch device.
+#if !defined(__ANDROID__)
     AddWidget(path, "Pack Authoring", WIDGET_SEPARATOR_TEXT);
     AddWidget(path,
               "Dump Source Textures writes one .bin per unique texture into "
@@ -1398,6 +1410,7 @@ void PortMenu::AddMenuAssets() {
             SDL_OpenURL(std::string("file:///" + fs::absolute(missPath).string()).c_str());
         })
         .Options(ButtonOptions().Tooltip("Opens the hires_miss_dump/ folder where native-key dumps land."));
+#endif // !__ANDROID__ (pack-authoring dump tooling)
 #endif // PORT_HIRES_ENABLED
 }
 
