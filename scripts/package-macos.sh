@@ -241,11 +241,34 @@ chmod +x "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"
 step "Bundling Homebrew dylib dependencies"
 command -v dylibbundler >/dev/null \
     || fail "dylibbundler not in PATH — install with: brew install dylibbundler"
-dylibbundler -of -b -cd -ns \
-    -x "$APP/Contents/MacOS/$APP_NAME" \
-    -x "$APP/Contents/MacOS/torch" \
-    -d "$APP/Contents/Frameworks/" \
-    -p "@executable_path/../Frameworks/"
+# dylibbundler reads stdin and PROMPTS ("...does not exist. Try again") when it
+# can't auto-locate a dependency — which BLOCKS FOREVER in non-interactive CI.
+# The culprit is libtcc.dylib: TinyCC (the v1.4 mod-scripting runtime) is built
+# SHARED in our own build tree (_deps/tinycc-*), not a system/Homebrew lib, so
+# dylibbundler can't find it on its own. (Linux's linuxdeploy follows the
+# binary's rpath and bundles libtcc.so fine — which is why only macOS broke.)
+#   -s <libtcc dir>      : point dylibbundler at libtcc.dylib's build dir so it
+#                          gets bundled + install-name-fixed — the fix.
+#   -s /opt/homebrew/lib : insurance for the Homebrew deps.
+#   </dev/null + hard timeout (CI, where gtimeout/timeout exists): dylibbundler
+#                          can never block the pipeline again; a still-unresolved
+#                          dep fails fast naming the missing lib instead of
+#                          hanging. Local runs stay interactive for a human.
+DYLIBBUNDLER_ARGS=(-of -b -cd -ns -s /opt/homebrew/lib)
+TCC_DYLIB="$(find "$BUILD_DIR" -name 'libtcc.dylib' -type f 2>/dev/null | head -1)"
+[[ -n "$TCC_DYLIB" ]] && DYLIBBUNDLER_ARGS+=(-s "$(dirname "$TCC_DYLIB")")
+DYLIBBUNDLER_ARGS+=(
+    -x "$APP/Contents/MacOS/$APP_NAME"
+    -x "$APP/Contents/MacOS/torch"
+    -d "$APP/Contents/Frameworks/"
+    -p "@executable_path/../Frameworks/")
+DB_TIMEOUT="$(command -v gtimeout || command -v timeout || true)"
+if [[ -n "$DB_TIMEOUT" ]]; then
+    "$DB_TIMEOUT" --signal=KILL 300 dylibbundler "${DYLIBBUNDLER_ARGS[@]}" </dev/null \
+        || fail "dylibbundler failed/timed out — an unresolved dependency it tried to prompt for; see its output above."
+else
+    dylibbundler "${DYLIBBUNDLER_ARGS[@]}"
+fi
 
 # Sanity-check: no /opt/homebrew or /usr/local references should remain in
 # the binaries' load commands. Catches the case where dylibbundler missed a
