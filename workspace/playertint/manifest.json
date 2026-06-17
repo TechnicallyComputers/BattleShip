@@ -1,0 +1,10 @@
+{
+    "name": "Player Tint",
+    "main": "build.gen",
+    "version": "1.0.0",
+    "website": "https://example.com",
+    "description": "Gives each player a distinct fighter color via FighterEnvColorQueryEvent (P1 red, P2 blue, P3 green, P4 yellow).",
+    "author": "ssb64-port",
+    "license": "MIT",
+    "code-version": 1
+}
