@@ -5,4 +5,6 @@
     <!-- Launcher long-press shortcuts (res/xml/shortcuts.xml). -->
     <string name="shortcut_repick_short">Re-extract ROM</string>
     <string name="shortcut_repick_long">Provide a different SSB64 ROM</string>
+    <string name="shortcut_import_short">Import texture pack</string>
+    <string name="shortcut_import_long">Import a hi-res texture pack (.zip)</string>
 </resources>
