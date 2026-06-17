@@ -165,7 +165,10 @@ public class BootActivity extends ComponentActivity {
                     showError("Asset extraction failed:\n\n" + err);
                     return;
                 }
-                String devPack = getIntent() != null
+                // Debug-only: BootActivity is the exported launcher entry, so a
+                // release build must not let another app drive an arbitrary
+                // absolute-path import through this extra (confused deputy).
+                String devPack = (BuildConfig.DEBUG && getIntent() != null)
                     ? getIntent().getStringExtra(EXTRA_DEV_PACK) : null;
                 if (devPack != null && !devPack.isEmpty()) {
                     importDevPack(new File(devPack));

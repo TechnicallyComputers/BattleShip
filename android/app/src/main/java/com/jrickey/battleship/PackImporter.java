@@ -12,6 +12,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.zip.ZipFile;
 
@@ -124,26 +126,32 @@ public final class PackImporter {
             return null;
         }
 
-        // Untrusted input: confirm it's a parseable ZIP with at least one entry
-        // before publishing it where the native scanner will open it.
-        if (!isValidZip(tmp)) {
-            Log.e(TAG, "rejected " + total + " bytes: not a valid .zip archive");
-            tmp.delete();
+        // Validate (untrusted input — confirm it parses as a ZIP with >=1 entry)
+        // and publish. The `published` flag + finally guarantees the .part temp
+        // is removed on every exit short of a successful publish — including a
+        // Throwable (e.g. OutOfMemoryError raised inside ZipFile on a hostile
+        // archive), which would otherwise leave a ~200 MB orphan.
+        boolean published = false;
+        try {
+            if (!isValidZip(tmp)) {
+                Log.e(TAG, "rejected " + total + " bytes: not a valid .zip archive");
+                return null;
+            }
+            // Files.move replaces any existing same-named pack in one step — no
+            // delete-then-rename window that could leave mods/ with neither the
+            // old nor the new pack.
+            Files.move(tmp.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            published = true;
+            Log.i(TAG, "imported " + total + " bytes -> " + dst);
+            return dst;
+        } catch (IOException e) {
+            Log.e(TAG, "publish failed", e);
             return null;
+        } finally {
+            if (!published) {
+                tmp.delete();
+            }
         }
-
-        // Publish: replace any existing same-named pack, then atomically rename
-        // the validated temp into place.
-        if (dst.exists() && !dst.delete()) {
-            Log.w(TAG, "could not replace existing " + dst);
-        }
-        if (!tmp.renameTo(dst)) {
-            Log.e(TAG, "rename " + tmp.getName() + " -> " + dst.getName() + " failed");
-            tmp.delete();
-            return null;
-        }
-        Log.i(TAG, "imported " + total + " bytes -> " + dst);
-        return dst;
     }
 
     /** Best-effort SAF display name (OpenableColumns.DISPLAY_NAME); null on miss. */

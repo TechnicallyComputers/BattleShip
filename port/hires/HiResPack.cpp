@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <list>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -190,6 +191,15 @@ public:
         EvictToBudget();
     }
 
+    // Drop all decoded entries (called from Init so a re-scan with a changed
+    // pack can't return a stale decoded texture on an LRU hit that predates
+    // the new index).
+    void Clear() {
+        mList.clear();
+        mIndex.clear();
+        mBytes = 0;
+    }
+
     size_t Bytes() const noexcept { return mBytes; }
     size_t Budget() const noexcept { return mBudget; }
 
@@ -355,7 +365,16 @@ void ScanZip(const std::string& zipPath, PackStats& stats) {
     }
 }
 
-// Read a zip member fully into `out`. Returns false on any libzip error.
+// Upper bound on a single decoded zip member (the compressed PNG bytes we
+// read into memory). A pack is untrusted input — without a cap a crafted or
+// corrupt entry whose stat declares a huge uncompressed size would drive
+// out.resize() into an uncaught std::bad_alloc (crash). Real pack PNGs top out
+// around ~25 MB; 256 MB is generous headroom and stays well under INT_MAX so
+// the later (int)bytes.size() cast for stbi_load_from_memory can't overflow.
+constexpr uint64_t kMaxPackMemberBytes = 256ull * 1024ull * 1024ull;
+
+// Read a zip member fully into `out`. Returns false on any libzip error, an
+// out-of-range member size, or an allocation failure.
 bool ReadZipMember(const std::string& zipPath, const std::string& member,
                    std::vector<uint8_t>& out) {
     zip_t* z = OpenZipCached(zipPath);
@@ -363,9 +382,22 @@ bool ReadZipMember(const std::string& zipPath, const std::string& member,
     zip_stat_t st;
     zip_stat_init(&st);
     if (zip_stat(z, member.c_str(), 0, &st) != 0 || !(st.valid & ZIP_STAT_SIZE)) return false;
+    // Reject empty / absurd members before allocating from an untrusted stat.
+    if (st.size == 0 || st.size > kMaxPackMemberBytes) {
+        port_log("HiResPack: zip member %s size %llu out of range — skipping\n",
+                 member.c_str(), (unsigned long long)st.size);
+        return false;
+    }
     zip_file_t* zf = zip_fopen(z, member.c_str(), 0);
     if (zf == nullptr) return false;
-    out.resize((size_t)st.size);
+    try {
+        out.resize((size_t)st.size);
+    } catch (const std::bad_alloc&) {
+        port_log("HiResPack: out of memory reading zip member %s (%llu bytes)\n",
+                 member.c_str(), (unsigned long long)st.size);
+        zip_fclose(zf);
+        return false;
+    }
     zip_int64_t rd = zip_fread(zf, out.data(), st.size);
     zip_fclose(zf);
     return rd >= 0 && (zip_uint64_t)rd == st.size;
@@ -385,6 +417,7 @@ const char* HiResPack::ModsRoot() const noexcept {
 bool HiResPack::Init() {
     mStats = {};
     gIndex.clear();
+    gLru.Clear(); // drop decoded textures so a re-scan can't serve stale hits
     // Close any zip handles from a prior Init before re-scanning.
     for (auto& [path, z] : gOpenZips) {
         if (z != nullptr) zip_close(z);
