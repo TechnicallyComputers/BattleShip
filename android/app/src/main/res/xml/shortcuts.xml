@@ -28,4 +28,22 @@
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 
+    <shortcut
+        android:shortcutId="import_pack"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_import_short"
+        android:shortcutLongLabel="@string/shortcut_import_long">
+
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.jrickey.battleship"
+            android:targetClass="com.jrickey.battleship.BootActivity">
+            <extra
+                android:name="ssb64.import_pack"
+                android:value="true" />
+        </intent>
+
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
 </shortcuts>
