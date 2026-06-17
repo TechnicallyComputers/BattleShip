@@ -73,11 +73,21 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
+# Use ccache as the compiler launcher when it's on PATH (CI installs it and
+# warms a cross-run cache; harmless locally when it isn't present). Shrinks the
+# compile window so a slow / mid-compile-stalling hosted runner is likelier to
+# finish before the timeout. The ${CCACHE_ARGS[@]+...} guard keeps the
+# empty-array expansion safe under `set -u` on the bash 3.2 macOS ships.
+CCACHE_ARGS=()
+if command -v ccache >/dev/null 2>&1; then
+    CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 step "Configuring release build with NON_PORTABLE=ON"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
+    "${CCACHE_ARGS[@]+"${CCACHE_ARGS[@]}"}" \
     >/dev/null
 
 step "Building BattleShip + torch"
