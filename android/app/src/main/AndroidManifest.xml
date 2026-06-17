@@ -52,7 +52,14 @@
             android:exported="true"
             android:resizeableActivity="true"
             android:maxAspectRatio="2.4"
-            android:screenOrientation="landscape">
+            android:screenOrientation="landscape"
+            android:configChanges="layoutDirection|locale|orientation|density|fontScale|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
+            <!-- configChanges: BootActivity runs a multi-second background
+                 import/extract. Without this, a config change in that window
+                 (multi-window resize, dark mode, font scale) recreates the
+                 Activity, and the worker thread posts its result to the dead
+                 instance — leaving the app stuck on the picker. The plain UI
+                 needs no recreation to handle these, so we absorb them. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

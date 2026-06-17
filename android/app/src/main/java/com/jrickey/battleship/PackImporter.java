@@ -183,7 +183,10 @@ public final class PackImporter {
             base = base.substring(cut + 1);
         }
         base = base.replaceAll("[^A-Za-z0-9 ._-]", "_").trim();
-        if (base.isEmpty() || base.equals(".") || base.equals("..")) {
+        // Also reject names that are nothing but the extension (e.g. a SAF name
+        // of " .zip" trims to ".zip", which would land as a hidden file).
+        if (base.isEmpty() || base.equals(".") || base.equals("..")
+                || base.equalsIgnoreCase(".zip")) {
             base = "pack";
         }
         if (!base.toLowerCase(Locale.ROOT).endsWith(".zip")) {

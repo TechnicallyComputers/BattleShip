@@ -356,6 +356,11 @@ void ScanZip(const std::string& zipPath, PackStats& stats) {
     zip_t* z = OpenZipCached(zipPath);
     if (z == nullptr) return;
     zip_int64_t n = zip_get_num_entries(z, 0);
+    if (n < 0) { // corrupt central directory; signed n makes the loop skip anyway
+        port_log("HiResPack: zip_get_num_entries failed for %s — treating as empty\n",
+                 zipPath.c_str());
+        return;
+    }
     for (zip_int64_t i = 0; i < n; i++) {
         const char* name = zip_get_name(z, i, 0);
         if (name == nullptr) continue;
