@@ -505,6 +505,40 @@ void MountModsDir() {
 	walk(modsDir);
 }
 
+/* Unmount mod archives whose on-disk source no longer exists. MountModsDir
+ * only ever ADDS archives, so a mod folder/.o2r deleted at runtime stays
+ * mounted in the ArchiveManager for the rest of the session — Hot Reload would
+ * recompile it from the still-mounted VFS and Rescan would still list it.
+ * Removing the stale archive here lets both reflect deletions. Only archives
+ * carrying a manifest.json are considered, so the base game + shader archives
+ * are never touched. Call with mod scripts already unloaded (the loaded image
+ * is independent of the archive, but unloading first keeps state consistent). */
+void UnmountMissingMods() {
+	namespace fs = std::filesystem;
+	auto rm = sContext ? sContext->GetResourceManager() : nullptr;
+	if (!rm) return;
+	auto am = rm->GetArchiveManager();
+	if (!am) return;
+	auto archives = am->GetArchives();
+	if (!archives) return;
+
+	/* Collect first, then remove — don't mutate the manager's list mid-walk. */
+	std::vector<std::string> stale;
+	for (const auto& a : *archives) {
+		if (!a) continue;
+		if (!a->HasFile("manifest.json")) continue; /* not a mod */
+		const std::string path = a->GetPath();
+		std::error_code ec;
+		if (!fs::exists(fs::path(path), ec)) {
+			stale.push_back(path);
+		}
+	}
+	for (const auto& path : stale) {
+		am->RemoveArchive(path);
+		port_log("SSB64: unmounted deleted mod archive -> %s\n", path.c_str());
+	}
+}
+
 } // namespace ssb64
 #endif
 

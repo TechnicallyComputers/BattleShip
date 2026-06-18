@@ -23,7 +23,7 @@
 #include "../mods/HookManager.h"
 #include "../mods/ModRegistry.h"
 
-namespace ssb64 { void MountModsDir(); }
+namespace ssb64 { void MountModsDir(); void UnmountMissingMods(); }
 #endif
 
 #include <imgui.h>
@@ -1376,6 +1376,12 @@ static std::vector<ssb64::mods::ModInfo> s_modList;
 static bool s_modListLoaded = false;
 
 static void RefreshModList() {
+    // Sync the mounted set to what's actually on disk so the list reflects mods
+    // added or deleted at runtime: drop archives whose folder is gone, pick up
+    // newly dropped ones. New mods appear as "not loaded" until a Hot Reload
+    // compiles them; this only refreshes the inventory, it does not recompile.
+    ssb64::UnmountMissingMods();
+    ssb64::MountModsDir();
     s_modList = ssb64::mods::ModRegistry::Snapshot();
     s_modListLoaded = true;
 }
@@ -1397,9 +1403,12 @@ static void DoHotReload() {
             /*postExit=*/[](const std::string& mod) {
                 ssb64::mods::HookManager::UninstallHooksForOwner(mod.c_str());
             });
-        /* Pick up any new mod folders/archives that landed in mods/
-         * since the last load. Idempotent: already-mounted archives
-         * are skipped. */
+        /* Now that every script is unloaded, drop archives whose mod folder
+         * was deleted at runtime — otherwise it stays mounted and gets
+         * recompiled below as if it were still installed. Then pick up any
+         * new folders/archives that landed in mods/ since the last load
+         * (idempotent: already-mounted archives are skipped). */
+        ssb64::UnmountMissingMods();
         ssb64::MountModsDir();
         scripting->CompileAll();
         scripting->LoadAll(
