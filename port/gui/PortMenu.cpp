@@ -1492,6 +1492,9 @@ void PortMenu::AddMenuAbout() {
     AddWidget(path, "Bleee: Playtesting", WIDGET_TEXT);
     AddWidget(path, "Fray: Nrage Control Advising", WIDGET_TEXT);
     AddWidget(path, "ElBateSoli: Raphnet Playtesting", WIDGET_TEXT);
+    AddWidget(path, "MickleMoose: C Modding Toolkit Developer", WIDGET_TEXT);
+    AddWidget(path, "Zorkats: C Modding Documentation", WIDGET_TEXT);
+
 
 #if !defined(__ANDROID__)
     // BUILT-IN UPDATER — hidden on Android. App updates come through the
