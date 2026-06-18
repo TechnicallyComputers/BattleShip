@@ -1425,10 +1425,8 @@ static void DoHotReload() {
 }
 
 void PortMenu::AddMenuMods() {
-    AddMenuEntry("Mods", CVAR_SETTING("Menu.ModsSidebarSection"));
-
-    WidgetPath path = { "Mods", "Mods", SECTION_COLUMN_1 };
-    AddSidebarEntry("Mods", "Mods", 1);
+    WidgetPath path = { "Assets", "Script Mods", SECTION_COLUMN_1 };
+    AddSidebarEntry("Assets", "Script Mods", 1);
     AddWidget(path, "mods_panel", WIDGET_CUSTOM)
         .CustomFunction([](WidgetInfo&) {
             // --- Action bar -------------------------------------------------
