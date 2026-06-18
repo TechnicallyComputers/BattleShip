@@ -1083,6 +1083,20 @@ void PortShutdown(void) {
 	// that's about to be torn down).
 	ssb64::mods::HookManager::Shutdown();
 	ssb64::mods::SymbolResolver::Shutdown();
+
+	// Unload mod scripts now, while the Context's EventSystem is still fully
+	// alive, so each mod's ModExit (which calls UNREGISTER_LISTENER) can reach
+	// it. Otherwise the only UnloadAll happens inside ~Context via the
+	// sContext.reset() below — by which point the EventSystem is being torn
+	// down, so EventSystemUnregisterListener -> Context::GetEventSystem
+	// dereferences a dead shared_ptr<EventSystem> and crashes on exit whenever
+	// a listener-registering mod (e.g. one that REGISTER_LISTENERs in ModInit)
+	// is loaded. The later ~Context UnloadAll then finds nothing loaded.
+	if (sContext) {
+		if (auto scripting = sContext->GetScriptLoader()) {
+			scripting->UnloadAll();
+		}
+	}
 #endif
 
 	// Drop audio bridge resource references before Ship::Context goes away.
