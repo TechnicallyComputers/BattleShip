@@ -1,3 +1,65 @@
+diff --git a/src/lb/lbcommon.c b/src/lb/lbcommon.c
+index 5f1d7a2..f71c188 100644
+--- a/src/lb/lbcommon.c
++++ b/src/lb/lbcommon.c
+@@ -782,10 +782,16 @@ alSoundEffect* lbCommonMakePositionFGM(u16 fgm, f32 pos)
+          * byte of siz34's unk_0x28 EE0C pointer slot).  Writing through
+          * the alSoundEffect view would corrupt unk_0x28's high byte
+          * and crash the FGM ucode parser the first time the EE0C is
+-         * dereferenced.  Reach siz34's `unk_0x2F` (offset 0x43 on LP64)
+-         * directly via byte arithmetic — siz34's struct definition is
+-         * private to n_env.c, so no header is available to share. */
++         * dereferenced.  Reach siz34's `unk_0x2F` directly via byte
++         * arithmetic — siz34's struct definition is private to n_env.c, so no
++         * header is available to share.  The target byte sits at 0x43 on LP64
++         * (widened pointers) and at the N64-native 0x2F on ILP32 (e.g. Android
++         * armeabi-v7a); see the layout asserts in n_env.c. */
++#if __SIZEOF_POINTER__ == 8
+         *((u8 *)snd + 0x43) = (u8)balance;
++#else
++        *((u8 *)snd + 0x2F) = (u8)balance;
++#endif
+ #else
+         snd->balance = balance;
+ #endif
+diff --git a/src/libultra/n_audio/n_env.c b/src/libultra/n_audio/n_env.c
+index fb8d7c8..bc799f0 100644
+--- a/src/libultra/n_audio/n_env.c
++++ b/src/libultra/n_audio/n_env.c
+@@ -295,6 +295,8 @@ typedef struct ALWhatever8009EDD0_siz34
+ } ALWhatever8009EDD0_siz34;
+ 
+ #ifdef PORT
++#if __SIZEOF_POINTER__ == 8
++/* LP64/LLP64: 8-byte pointers widen these pointer-bearing audio structs. */
+ _Static_assert(offsetof(ALWhatever8009EE0C, unk30) == 0x50,
+     "EE0C.unk30 must be at offset 0x50 — parser asm hard-codes this");
+ _Static_assert(offsetof(ALWhatever8009EDD0_siz34, unkALWhatever8009EDD0_siz34_0x28) == 0x38,
+@@ -309,6 +311,24 @@ _Static_assert(offsetof(ALWhatever8009EE0C, unk44) == 0x68,
+     "EE0C.unk44 expected at 0x68 on LP64");
+ _Static_assert(offsetof(ALWhatever8009EE0C, unk48) == 0x70,
+     "EE0C.unk48 expected at 0x70 on LP64");
++#else
++/* ILP32 (e.g. Android armeabi-v7a): 4-byte pointers — these pointer-bearing
++ * structs revert to the N64-native layout encoded in the field names. n_env.c
++ * reaches every field by name so it stays correct; the matching byte-poke in
++ * lbCommonMakePositionFGM uses the N64-native offset 0x2F here. */
++_Static_assert(offsetof(ALWhatever8009EE0C, unk30) == 0x30,
++    "EE0C.unk30 must be at offset 0x30 on ILP32");
++_Static_assert(offsetof(ALWhatever8009EDD0_siz34, unkALWhatever8009EDD0_siz34_0x28) == 0x28,
++    "siz34.unk_0x28 must be at offset 0x28 on ILP32");
++_Static_assert(sizeof(ALWhatever8009EDD0_siz34) == 0x34,
++    "siz34 sizeof must be 0x34 (52 bytes) on ILP32");
++_Static_assert(offsetof(ALWhatever8009EDD0_siz34, unkALWhatever8009EDD0_siz34_0x2F) == 0x2F,
++    "siz34.unk_0x2F must be at offset 0x2F on ILP32 (N64-native)");
++_Static_assert(offsetof(ALWhatever8009EE0C, unk44) == 0x44,
++    "EE0C.unk44 expected at 0x44 on ILP32");
++_Static_assert(offsetof(ALWhatever8009EE0C, unk48) == 0x48,
++    "EE0C.unk48 expected at 0x48 on ILP32");
++#endif
+ #endif
+ 
+ typedef struct ALWhatever8009EDD0_off18
 diff --git a/src/sys/taskman.c b/src/sys/taskman.c
 index 3642a94..5084fc3 100644
 --- a/src/sys/taskman.c

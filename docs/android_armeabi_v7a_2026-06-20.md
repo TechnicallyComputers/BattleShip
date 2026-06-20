@@ -132,6 +132,20 @@ arm64-v8a (LP64), with their fixes:
   64-bit" guardrail (it protects no actual 8-byte packing). Relaxed to accept
   4- or 8-byte `uintptr_t`. This lives in the decomp submodule.
 
+- **`n_env.c` / `lbcommon.c` audio layout (real pointer-width dependency).**
+  The N64 audio structs `ALWhatever8009EE0C` / `ALWhatever8009EDD0_siz34`
+  contain pointers, so on LP64 they widen and `n_env.c` asserts their offsets
+  at `0x50/0x38/0x48/0x43/0x68/0x70`. On ILP32 the layout reverts to the
+  N64-native offsets the field names encode (`0x30/0x28/0x34/0x2F/0x44/0x48`),
+  so the assert set is gated on `__SIZEOF_POINTER__`. `n_env.c` reaches every
+  field by name (correct on both ABIs); the only hardcoded site is
+  `lbCommonMakePositionFGM` in `lbcommon.c`, which pokes `siz34.unk_0x2F` via
+  byte arithmetic — `0x43` on LP64, the N64-native `0x2F` on ILP32 (also
+  gated). The audio LP64-hardcoded layout is contained to these two files (no
+  other `on LP64` offset asserts or byte pokes in the audio/lb tree).
+  **Compile-validated** (the ILP32 offsets are exactly the actuals clang
+  computed); the panning byte-poke still wants on-device audio verification.
+
 ### Decomp patch bridge
 
 The dev environment can only push to `JRickey/BattleShip` (the git proxy and
