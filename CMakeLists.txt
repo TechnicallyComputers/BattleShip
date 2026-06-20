@@ -18,6 +18,36 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(DISABLE_SCRIPTING ON CACHE BOOL "Disable the mod system (scripting + hooks)" FORCE)
 endif()
+
+# 32-bit x86 (ILP32) build option.
+#
+# The N64 is itself a 32-bit machine, so the port's pointer-heavy
+# infrastructure is written pointer-width-agnostically and re-collapses to the
+# original layout on ILP32: Fast3D's Gfx word is {uintptr_t w0; uintptr_t w1;}
+# (8 bytes on ILP32 == native N64 command; the display-list "widening" becomes
+# a near-identity segment rewrite), and the lbReloc token-pointer table stores
+# a real host pointer in its existing 4-byte slot directly.
+#
+# Requires a 32-bit-capable toolchain AND 32-bit builds of every dependency
+# (SDL2, OpenGL, StormLib, zlib, libpng, spdlog, tinyxml2, ...):
+#   Linux:   gcc-multilib/g++-multilib + the :i386 -dev libraries, or an
+#            i686 cross toolchain.
+#   Windows: configure the Win32 generator (-A Win32) instead of this flag.
+# See docs/32bit_x86_feasibility_2026-06-20.md for the full assessment.
+option(SSB64_32BIT "Build a 32-bit x86 (ILP32) binary" OFF)
+if (SSB64_32BIT)
+    if (MSVC)
+        message(STATUS "SSB64_32BIT: use the Win32 generator (-A Win32); -m32 is non-MSVC only")
+    else()
+        add_compile_options(-m32)
+        add_link_options(-m32)
+    endif()
+    # funchook + TinyCC have no 32-bit x86 backend, and the hook stub emitter
+    # (port/mods/HookManager.cpp) only generates x86-64 / arm64 machine code.
+    # Force the mod system off so a 32-bit build links.
+    set(DISABLE_SCRIPTING ON CACHE BOOL "Disable the mod system (scripting + hooks)" FORCE)
+endif()
+
 if (DISABLE_SCRIPTING)
     # Define for every superproject target (ssb64_game + the exe + port glue)
     # so the #ifndef DISABLE_SCRIPTING guards in port/*.cpp engage. libultraship
