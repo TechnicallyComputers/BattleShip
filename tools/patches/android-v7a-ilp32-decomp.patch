@@ -1,0 +1,18 @@
+diff --git a/src/sys/taskman.c b/src/sys/taskman.c
+index 3642a94..5084fc3 100644
+--- a/src/sys/taskman.c
++++ b/src/sys/taskman.c
+@@ -25,7 +25,12 @@ extern void port_log(const char *fmt, ...);
+ 
+ #ifdef PORT
+ #include "port_log.h"
+-_Static_assert(sizeof(uintptr_t) == 8, "PORT build requires 64-bit uintptr_t");
++/* The token-pointer table (port/resource/RelocPointerTable) and Fast3D's
++ * uintptr_t Gfx words make the port pointer-width-agnostic, so both LP64/LLP64
++ * (8-byte) and ILP32 (4-byte, e.g. Android armeabi-v7a) builds are supported.
++ * Guard only against an exotic uintptr_t that matches neither. */
++_Static_assert(sizeof(uintptr_t) == 8 || sizeof(uintptr_t) == 4,
++               "PORT build requires 32- or 64-bit uintptr_t");
+ 
+ /* PORT scene arena. Allocated once in syTaskmanStartTask, recycled across
+  * every scene transition. File-scope so port-side diag and cache code can
