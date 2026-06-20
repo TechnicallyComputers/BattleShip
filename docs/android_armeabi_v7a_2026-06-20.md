@@ -74,6 +74,21 @@ hardware is still the final step.
 
 ## Building for armeabi-v7a
 
+The Android APK is Gradle-driven (AGP `externalNativeBuild` → the root CMake).
+The ABI list is configurable via a Gradle property (default `arm64-v8a`):
+
+```sh
+cd android
+./gradlew assembleDebug -Pssb64.abis=armeabi-v7a
+# or build both: -Pssb64.abis=arm64-v8a,armeabi-v7a
+```
+
+AGP re-runs the CMake configure+compile once per ABI with
+`-DANDROID_ABI=armeabi-v7a`, so the whole dependency stack (SDL2,
+libultraship, StormLib, …) is built from source for 32-bit ARM.
+
+A standalone native build (no Gradle) is also possible:
+
 ```sh
 cmake -B build-android-v7a \
   -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
@@ -82,11 +97,21 @@ cmake -B build-android-v7a \
 cmake --build build-android-v7a -j
 ```
 
-The dependency stack (SDL2, libultraship, StormLib, …) must be built for the
-`armeabi-v7a` ABI; the NDK toolchain file handles this when `ANDROID_ABI` is
-set before configure. The emulator/system-image helper
-(`scripts/android-emulator.sh`) is still arm64-v8a; add an
-`armeabi-v7a`/x86 image there if you want to emulate v7a locally.
+### CI
+
+`.github/workflows/android-v7a.yml` builds the armeabi-v7a APK with the real
+NDK r29 on GitHub's runners (which can reach `dl.google.com`; the dev sandbox
+cannot, so the NDK can't be fetched there). It triggers on pushes to the
+feature branch and via `workflow_dispatch`, and is the authoritative
+real-toolchain check for the per-ABI dependency build.
+
+### Emulator
+
+`scripts/android-emulator.sh` uses an `arm64-v8a` system image. Google no
+longer ships `armeabi-v7a` system images for current API levels, so emulating
+a pure-v7a device is impractical; on-device testing on real armeabi-v7a
+hardware is the validation path. (User-mode `qemu-arm` already validates the
+ARM32 coroutine context-switch — see Verification above.)
 
 ## Caveats
 
