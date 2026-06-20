@@ -3,10 +3,19 @@
 **Verdict: feasible with moderate effort. The bottleneck is the dependency
 toolchain, not the port's own code.**
 
-The N64 is itself a 32-bit machine, so the hardest pointer-width work in this
-port — which exists *only* to cope with 8-byte desktop pointers — re-collapses
-to the original N64 layout on a 32-bit (ILP32) target. The LP64 problem
-inverts: pointers become 4 bytes again, matching the ROM's own assumptions.
+The N64's VR4300 is a 64-bit CPU, but the game is built for the MIPS **o32
+ABI**, where `int`, `long`, and `void*` are all **32 bits** — libultra
+addresses RDRAM with 32-bit pointers. It is that *pointer width* (not register
+width) that drives this port's hardest infrastructure, which exists *only* to
+cope with 8-byte desktop pointers. On a 32-bit (ILP32) target the LP64 problem
+inverts: pointers become 4 bytes again, matching the ROM's own layout, and the
+indirection re-collapses to the original N64 form.
+
+> **Note (2026-06-20):** the concrete target this work is aimed at turned out to
+> be **Android armeabi-v7a** (32-bit ARM), not 32-bit x86 — see
+> `docs/android_armeabi_v7a_2026-06-20.md`. The ILP32 pointer-width analysis
+> below applies identically to ARM32; only the platform-specific blockers
+> (coroutine ABI, toolchain) differ.
 
 ## What this was asked for
 

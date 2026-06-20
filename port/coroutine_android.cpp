@@ -1,23 +1,25 @@
 /**
- * coroutine_android.cpp — aarch64 coroutine impl for Android (bionic).
+ * coroutine_android.cpp — ARM coroutine impl for Android (bionic).
  *
  * Bionic libc dropped getcontext/makecontext/swapcontext (they were
- * never supported on aarch64), so the POSIX ucontext path in
- * coroutine_posix.cpp doesn't compile here. Instead, we ship a
- * minimal asm context-switch (port/coroutine_aarch64.S) that saves
- * the AAPCS64 callee-saved set — same approach as boost::context's
- * fcontext_t — and drive it from this file.
+ * never supported on ARM), so the POSIX ucontext path in
+ * coroutine_posix.cpp doesn't compile here. Instead, we ship a minimal
+ * asm context-switch that saves the AAPCS callee-saved set — same approach
+ * as boost::context's fcontext_t — and drive it from this file:
+ *   arm64-v8a   -> port/coroutine_aarch64.S  (AAPCS64)
+ *   armeabi-v7a -> port/coroutine_armv7.S    (AArch32 AAPCS)
  *
- * The CoroCtx struct in this file MUST stay in lockstep with the
- * offsets in coroutine_aarch64.S. The static_asserts below catch any
- * drift at compile time.
+ * The CoroCtx struct in this file MUST stay in lockstep with the offsets
+ * in the matching .S. The static_asserts below catch any drift at compile
+ * time.
  */
 
 #if defined(__ANDROID__)
 
-#if !defined(__aarch64__)
-#  error "Android coroutine backend currently supports arm64-v8a only. "  \
-         "Add an x86_64 / armv7 swap if you need those ABIs."
+#if !defined(__aarch64__) && !defined(__arm__)
+#  error "Android coroutine backend supports arm64-v8a (coroutine_aarch64.S) "  \
+         "and armeabi-v7a (coroutine_armv7.S) only. Add an x86/x86_64 swap "    \
+         "if you need those ABIs."
 #endif
 
 #include "coroutine.h"
@@ -35,6 +37,7 @@
 
 extern "C" {
 
+#if defined(__aarch64__)
 struct alignas(16) CoroCtx {
     uint64_t x19, x20, x21, x22;   /* offsets   0..24 */
     uint64_t x23, x24, x25, x26;   /*          32..56 */
@@ -52,6 +55,25 @@ static_assert(__builtin_offsetof(CoroCtx, sp)  == 96,     "sp offset");
 static_assert(__builtin_offsetof(CoroCtx, d8)  == 112,    "d8 offset");
 static_assert(__builtin_offsetof(CoroCtx, d15) == 168,    "d15 offset");
 
+#elif defined(__arm__)
+/* AArch32 AAPCS callee-saved set. Mirrors coroutine_armv7.S. */
+struct alignas(8) CoroCtx {
+    uint32_t r4, r5, r6, r7;       /* offsets   0..12 */
+    uint32_t r8, r9, r10, r11;     /*          16..28 */
+    uint32_t sp;                    /*             32 */
+    uint32_t lr;                    /*             36 */
+    double   d8,  d9,  d10, d11;   /*          40..64 */
+    double   d12, d13, d14, d15;   /*          72..96 */
+};
+static_assert(sizeof(CoroCtx) == 104,           "CoroCtx size must match asm");
+static_assert(__builtin_offsetof(CoroCtx, r4)  == 0,      "r4 offset");
+static_assert(__builtin_offsetof(CoroCtx, r11) == 28,     "r11 offset");
+static_assert(__builtin_offsetof(CoroCtx, sp)  == 32,     "sp offset");
+static_assert(__builtin_offsetof(CoroCtx, lr)  == 36,     "lr offset");
+static_assert(__builtin_offsetof(CoroCtx, d8)  == 40,     "d8 offset");
+static_assert(__builtin_offsetof(CoroCtx, d15) == 96,     "d15 offset");
+#endif
+
 struct PortCoroutine {
     CoroCtx ctx;            /* this coroutine's saved state */
     CoroCtx caller_ctx;     /* whoever last resumed us */
@@ -62,9 +84,13 @@ struct PortCoroutine {
     size_t  stack_total;    /* full mapping length incl. guard page */
 };
 
-/* Implemented in port/coroutine_aarch64.S */
+/* Implemented in port/coroutine_aarch64.S (arm64) / coroutine_armv7.S (arm32) */
 void port_coroutine_swap(CoroCtx *from, CoroCtx *to);
+#if defined(__aarch64__)
 void port_coroutine_trampoline_aarch64(void);
+#elif defined(__arm__)
+void port_coroutine_trampoline_armv7(void);
+#endif
 
 static thread_local PortCoroutine *sCurrentCoroutine = nullptr;
 
@@ -125,14 +151,21 @@ PortCoroutine *port_coroutine_create(void (*entry)(void *), void *arg, size_t st
     co->finished   = 0;
 
     /* Initial saved-context state. On first swap into this coroutine:
-     *   sp  := top of stack (high address, 16-aligned)
-     *   x19 := PortCoroutine* (read by the asm trampoline -> mov x0, x19)
-     *   x30 := trampoline entry (lr, popped by `ret` at end of swap)
+     *   sp       := top of stack (high address, 8/16-aligned)
+     *   arg reg  := PortCoroutine* (read by the asm trampoline as its 1st arg)
+     *   link reg := trampoline entry (restored as lr, entered by the swap's
+     *               final `ret`/`bx lr`)
      * All other regs are zero-init via calloc. */
     char *stack_top = (char *)co->stack_mem + co->stack_total;
+#if defined(__aarch64__)
     co->ctx.sp  = (uint64_t)stack_top;
     co->ctx.x19 = (uint64_t)co;
     co->ctx.x30 = (uint64_t)&port_coroutine_trampoline_aarch64;
+#elif defined(__arm__)
+    co->ctx.sp = (uint32_t)(uintptr_t)stack_top;
+    co->ctx.r4 = (uint32_t)(uintptr_t)co;
+    co->ctx.lr = (uint32_t)(uintptr_t)&port_coroutine_trampoline_armv7;
+#endif
 
     return co;
 }
