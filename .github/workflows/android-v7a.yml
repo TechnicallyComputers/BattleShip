@@ -15,6 +15,7 @@ on:
       - 'android/**'
       - 'port/coroutine_*'
       - 'CMakeLists.txt'
+      - 'tools/patches/**'
       - '.github/workflows/android-v7a.yml'
   workflow_dispatch:
 
