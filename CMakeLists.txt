@@ -765,11 +765,28 @@ if (NOT MSVC)
     # but only landed in GCC 14+ (or never).
     if (CMAKE_C_COMPILER_ID MATCHES "Clang")
         target_compile_options(ssb64_game PRIVATE
-            -Werror=incompatible-library-redeclaration
             -Werror=return-mismatch
             -Wno-constant-conversion
             -Wno-tautological-constant-out-of-range-compare
         )
+        if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+            # ILP32 targets (e.g. Android armeabi-v7a): the decomp shim headers
+            # declare the malloc/calloc/realloc family with `unsigned long` size
+            # params. On LP64 that matches size_t; on ILP32 size_t is
+            # `unsigned int`, so clang reports an incompatible-library-
+            # redeclaration against the builtin `void *(unsigned int)`. The
+            # mismatch is purely a type-name difference — `unsigned long` and
+            # `unsigned int` are both 32-bit and ABI-identical here — so it is
+            # benign (no truncation, same calling convention). Demote to a
+            # warning rather than #ifdef-patching the decomp headers. The
+            # diagnostic stays an error on LP64, where a real width mismatch
+            # would matter. See docs/android_armeabi_v7a_2026-06-20.md.
+            target_compile_options(ssb64_game PRIVATE
+                -Wno-incompatible-library-redeclaration)
+        else()
+            target_compile_options(ssb64_game PRIVATE
+                -Werror=incompatible-library-redeclaration)
+        endif()
     endif()
 endif()
 

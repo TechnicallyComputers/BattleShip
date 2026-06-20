@@ -113,6 +113,20 @@ a pure-v7a device is impractical; on-device testing on real armeabi-v7a
 hardware is the validation path. (User-mode `qemu-arm` already validates the
 ARM32 coroutine context-switch — see Verification above.)
 
+## ILP32 build deltas
+
+Issues surfaced by the real-NDK armeabi-v7a build (CI) that are absent on
+arm64-v8a (LP64), with their fixes:
+
+- **`malloc`/`calloc`/`realloc` redeclaration.** The decomp shim header
+  `decomp/include/stdlib.h` declares the malloc family with `unsigned long`
+  size params. On LP64 that equals `size_t`; on ILP32 `size_t` is
+  `unsigned int`, so clang's `-Werror=incompatible-library-redeclaration`
+  fires against the builtin `void *(unsigned int)`. The mismatch is
+  ABI-identical (both 32-bit, same register passing), so `CMakeLists.txt`
+  demotes that one diagnostic to a warning when `CMAKE_SIZEOF_VOID_P EQUAL 4`,
+  leaving it `-Werror` on LP64 where a real width mismatch would matter.
+
 ## Caveats
 
 - armeabi-v7a-only devices are old and weak (often ≤2 GB RAM, GLES2-era GPUs).
