@@ -129,11 +129,17 @@ android {
         versionCode = 1
         versionName = "0.1.0-spike"
 
-        // Single ABI for now. arm64-v8a covers ~99% of in-use Android devices
-        // and runs natively on the M-series emulator. Add x86_64 if you need
-        // to test on Intel-host emulators.
+        // ABIs to build. Default arm64-v8a (covers ~99% of in-use devices and
+        // runs natively on the M-series emulator). Override at the command line
+        // with -Pssb64.abis=armeabi-v7a (or a comma-separated list, e.g.
+        // "arm64-v8a,armeabi-v7a") to build 32-bit ARM for older devices and
+        // cheap Android TV boxes. See docs/android_armeabi_v7a_2026-06-20.md.
+        // Add x86_64 if you need Intel-host emulators.
+        val ssb64Abis = (project.findProperty("ssb64.abis") as String?)
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?: listOf("arm64-v8a")
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += ssb64Abis
         }
 
         externalNativeBuild {
