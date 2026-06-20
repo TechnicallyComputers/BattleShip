@@ -68,12 +68,20 @@ static size_t port_page_size(void)
 /* ========================================================================= */
 
 /*
- * makecontext requires a function with int parameters. We pass the
- * PortCoroutine pointer split into two ints for 64-bit compatibility.
+ * makecontext requires a function with int parameters. A host pointer may be
+ * wider than int, so on LP64/LLP64 (8-byte pointers) we split the
+ * PortCoroutine pointer into a low and a high 32-bit half. On ILP32 (e.g.
+ * 32-bit x86) a pointer already fits in a single int, and shifting a 4-byte
+ * uintptr_t by 32 is undefined behavior — so the high half is unused there.
  */
 static void ucontext_entry(unsigned int lo, unsigned int hi)
 {
+#if UINTPTR_MAX > 0xFFFFFFFFu
 	uintptr_t ptr = ((uintptr_t)hi << 32) | (uintptr_t)lo;
+#else
+	(void)hi;
+	uintptr_t ptr = (uintptr_t)lo;
+#endif
 	PortCoroutine *co = (PortCoroutine *)ptr;
 
 	co->entry(co->arg);
@@ -141,7 +149,11 @@ PortCoroutine *port_coroutine_create(void (*entry)(void *), void *arg,
 	ptr = (uintptr_t)co;
 	makecontext(&co->ctx, (void (*)(void))ucontext_entry, 2,
 	            (unsigned int)(ptr & 0xFFFFFFFF),
+#if UINTPTR_MAX > 0xFFFFFFFFu
 	            (unsigned int)(ptr >> 32));
+#else
+	            (unsigned int)0);
+#endif
 
 	return co;
 }
