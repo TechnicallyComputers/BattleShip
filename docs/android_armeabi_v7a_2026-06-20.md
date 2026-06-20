@@ -127,6 +127,22 @@ arm64-v8a (LP64), with their fixes:
   demotes that one diagnostic to a warning when `CMAKE_SIZEOF_VOID_P EQUAL 4`,
   leaving it `-Werror` on LP64 where a real width mismatch would matter.
 
+- **`taskman.c` 64-bit guard.** `decomp/src/sys/taskman.c` had a PORT-only
+  `_Static_assert(sizeof(uintptr_t) == 8, ...)` — a blanket "PORT requires
+  64-bit" guardrail (it protects no actual 8-byte packing). Relaxed to accept
+  4- or 8-byte `uintptr_t`. This lives in the decomp submodule.
+
+### Decomp patch bridge
+
+The dev environment can only push to `JRickey/BattleShip` (the git proxy and
+the GitHub tools are both scoped to it), not to the `ssb-decomp-re` fork, so
+the decomp fix can't be pushed and the submodule pointer can't be bumped to it
+from here. The canonical fix is committed on the isolated decomp branch
+`agent/armeabi-v7a-ilp32` (ready for someone with decomp push access to land +
+bump the submodule). As a bridge, the CI workflow applies the same diff
+(`tools/patches/android-v7a-ilp32-decomp.patch`) to the checked-out decomp tree
+before building. Remove the patch step once the submodule pointer is bumped.
+
 ## Caveats
 
 - armeabi-v7a-only devices are old and weak (often ≤2 GB RAM, GLES2-era GPUs).
