@@ -1,6 +1,8 @@
 # Builds BattleShip as a self-contained Windows release zip.
 #
 # Output: <repo-root>\dist\BattleShip-windows.zip
+#         <repo-root>\dist\BattleShip-windows-modding.zip when
+#         SSB64_ENABLE_SCRIPTING=1
 #
 # Layout produced (extracted):
 #   BattleShip\
@@ -12,6 +14,10 @@
 #     gamecontrollerdb.txt       — SDL controller mappings
 #     SDL2.dll                   — runtime dependency (vcpkg-bundled)
 #     <other vcpkg DLLs>         — picked up by Get-ChildItem from build dir
+#
+# The default Windows package disables TCC scripting so ordinary players do not
+# receive tcc.dll, which trips Microsoft Defender false positives. Set
+# SSB64_ENABLE_SCRIPTING=1 to build the opt-in modding package with TCC support.
 #
 # Portable: drop the extracted folder anywhere and run BattleShip.exe.
 # Save data and config (ssb64_save.bin, BattleShip.cfg.json, logs/) land
@@ -41,11 +47,20 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 # unaffected.
 $Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
 if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
-$BuildDir = Join-Path $Root "build-bundle-win-$Ver"
+$EnableScripting = $env:SSB64_ENABLE_SCRIPTING -in @("1", "ON", "TRUE", "YES", "on", "true", "yes")
+if ($EnableScripting -and $Ver -eq "jp") {
+    Write-Error "JP source modding is not release-supported yet; the TCC mod API still compiles mods with US region defines."
+    exit 1
+}
+$DisableScripting = if ($EnableScripting) { "OFF" } else { "ON" }
+$PackageFlavor = if ($EnableScripting) { "modding" } else { "standard" }
+$ZipSuffix = if ($EnableScripting) { "-windows-modding" } else { "-windows" }
+$BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
 $DistDir = Join-Path $Root "dist"
 $AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
-$StageDir = Join-Path $DistDir $AppName
-$ZipPath = Join-Path $DistDir "$AppName-windows.zip"
+$StageName = if ($EnableScripting) { "$AppName-modding" } else { $AppName }
+$StageDir = Join-Path $DistDir $StageName
+$ZipPath = Join-Path $DistDir "$AppName$ZipSuffix.zip"
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
@@ -69,7 +84,7 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-Write-Step "Configuring release build (portable)"
+Write-Step "Configuring release build (portable, scripting=$EnableScripting)"
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
@@ -86,6 +101,7 @@ $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
 cmake -B $BuildDir $Root `
     -DCMAKE_BUILD_TYPE=Release `
+    "-DDISABLE_SCRIPTING=$DisableScripting" `
     "-DSSB64_VERSION=$Ver" `
     "-DPython3_EXECUTABLE=$PythonExe" `
     | Out-Null
@@ -210,4 +226,9 @@ if (-not (Test-Path $ZipPath)) { Fail "zip was not created" }
 $ZipKB = [int]((Get-Item $ZipPath).Length / 1024)
 Write-Host "`n✓ Release zip ready: $ZipPath ($ZipKB KB)" -ForegroundColor Green
 Write-Host "   Portable: extract anywhere; save data lives next to BattleShip.exe."
+if ($EnableScripting) {
+    Write-Host "   Modding build: includes TCC scripting support for C mods."
+} else {
+    Write-Host "   Standard build: TCC scripting disabled; use the -modding zip for C mods."
+}
 Write-Host "   First launch will prompt for your ROM via the ImGui wizard."
