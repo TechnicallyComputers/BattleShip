@@ -124,7 +124,13 @@ android {
 
     defaultConfig {
         applicationId = "com.jrickey.battleship"
-        minSdk = 26          // matches CMake -DANDROID_PLATFORM=android-26
+        // Production/default floor is Android 8.0 (API 26). The newest SDK
+        // manager-provided armeabi-v7a emulator image is API 25, so local
+        // emulator verification can temporarily lower this with
+        // -Pssb64.minSdk=25; AGP forwards that minSdk into the CMake Android
+        // platform for the native build.
+        val ssb64MinSdk = (project.findProperty("ssb64.minSdk") as String?)?.toInt() ?: 26
+        minSdk = ssb64MinSdk
         targetSdk = 34       // Play Store requires >= 34 (since Aug 2024)
         versionCode = 1
         versionName = "0.1.0-spike"
