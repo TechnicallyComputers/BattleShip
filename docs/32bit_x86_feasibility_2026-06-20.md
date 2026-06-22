@@ -72,7 +72,7 @@ token round-trip still passes — both widths are correct by construction.
 
 2. **Mod / scripting system — disabled on 32-bit.**
    `port/mods/HookManager.cpp` emits x86-64 `movabs` hook stubs; funchook +
-   TinyCC have no x86-32 backend. The new `SSB64_32BIT` CMake option forces
+   TinyCC have no x86-32 backend. Any future x86-32 build should force
    `DISABLE_SCRIPTING=ON` (already a first-class switch, forced on for Android
    for the same reason). 32-bit builds ship without in-engine modding.
 
@@ -85,15 +85,13 @@ spdlog, tinyxml2, nlohmann-json, plus i686 AppImage packaging on Linux. All are
 portable; none are built 32-bit here yet.
 
 - **Linux:** `apt install gcc-multilib g++-multilib` + the `:i386` `-dev`
-  libraries (or an i686 cross toolchain), then `cmake -DSSB64_32BIT=ON`.
+  libraries, or use an i686 cross toolchain.
 - **Windows:** configure the Win32 MSVC generator (`-A Win32`); the dependency
   packages must be the 32-bit variants.
 
 ## Changes landed on this branch
 
 - `port/coroutine_posix.cpp` — ILP32-safe pointer passing (blocker #1).
-- `CMakeLists.txt` — new `SSB64_32BIT` option (`-m32` + link flags, forces
-  `DISABLE_SCRIPTING`).
 - This document.
 
 ## Suggested next steps (in order)
@@ -101,7 +99,8 @@ portable; none are built 32-bit here yet.
 1. **Confirm the target device arch first.** If it's an Android TV, pivot to
    packaging the existing arm64 port — far less work than a new x86-32 target.
 2. If x86-32 is genuinely needed: stand up i686 `:i386` dev libs (Linux) /
-   Win32 dependency packages, then `cmake -DSSB64_32BIT=ON` and iterate on the
-   real compile to surface any remaining cold-path `sizeof`/literal assumptions
-   (reading code cannot catch every one).
+   Win32 dependency packages, add a real 32-bit toolchain configuration before
+   CMake's `project()` call, and iterate on the real compile to surface any
+   remaining cold-path `sizeof`/literal assumptions (reading code cannot catch
+   every one).
 3. Add a 32-bit CI job once a clean local build exists.

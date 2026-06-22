@@ -79,8 +79,19 @@ The ABI list is configurable via a Gradle property (default `arm64-v8a`):
 
 ```sh
 cd android
+git -C ../decomp apply ../tools/patches/android-v7a-ilp32-decomp.patch
 ./gradlew assembleDebug -Pssb64.abis=armeabi-v7a
 # or build both: -Pssb64.abis=arm64-v8a,armeabi-v7a
+```
+
+The patch step is temporary. Once the decomp submodule pointer includes the
+ILP32 fixes, skip it and remove the CI bridge step.
+
+For local emulator setup, the newest SDK-provided `armeabi-v7a` Google APIs
+image is API 25. Build that test APK with a matching temporary minSdk:
+
+```sh
+./gradlew assembleDebug -Pssb64.abis=armeabi-v7a -Pssb64.minSdk=25
 ```
 
 AGP re-runs the CMake configure+compile once per ABI with
@@ -107,11 +118,48 @@ real-toolchain check for the per-ABI dependency build.
 
 ### Emulator
 
-`scripts/android-emulator.sh` uses an `arm64-v8a` system image. Google no
-longer ships `armeabi-v7a` system images for current API levels, so emulating
-a pure-v7a device is impractical; on-device testing on real armeabi-v7a
-hardware is the validation path. (User-mode `qemu-arm` already validates the
-ARM32 coroutine context-switch — see Verification above.)
+`scripts/android-emulator.sh` defaults to the existing `arm64-v8a` API 34 AVD.
+Pass `--v7a` to install/create the newest SDK-provided ARMv7 phone image:
+
+```sh
+scripts/android-emulator.sh --v7a --recreate
+```
+
+Google no longer ships `armeabi-v7a` phone images for current API levels, so
+this AVD is API 25 and needs the temporary `-Pssb64.minSdk=25` build described
+above. The current Android Emulator 36.5.11 can install/create that image, but
+cannot boot it:
+
+```text
+FATAL | CPU Architecture 'arm' is not supported by the QEMU2 emulator
+```
+
+An API 25 `arm64-v8a` emulator also does not substitute for this test: it boots,
+but rejects the v7a-only APK with `INSTALL_FAILED_NO_MATCHING_ABIS`. Runtime
+validation therefore needs the legacy emulator path or a physical
+armeabi-v7a Android device.
+
+For local smoke tests, `--v7a-legacy` downloads the official Android Emulator
+30.0.26 archive (`emulator-darwin-6885378.zip`) into
+`~/.cache/ssb64-port/android-emulator-30.0.26`, creates a smaller API 25 ARMv7
+AVD, and boots it with the old `qemu-system-armel` backend:
+
+```sh
+scripts/android-emulator.sh --v7a-legacy --recreate
+```
+
+Observed on Apple Silicon macOS 26.5.1: the legacy emulator boots the API 25
+ARMv7 image under Rosetta and reports `ro.product.cpu.abilist=armeabi-v7a,armeabi`;
+first boot is slow, and large APK installs should wait until framework services
+(`package`, `mount`, `activity`, `window`) are all registered. A debug APK
+install can destabilize zygote while the system is still settling; prefer the
+smaller release APK for emulator smoke tests:
+
+```sh
+cd android
+./gradlew assembleRelease -Pssb64.abis=armeabi-v7a -Pssb64.minSdk=25
+adb -s emulator-5554 install --no-streaming -r app/build/outputs/apk/release/app-release.apk
+```
 
 ## ILP32 build deltas
 
@@ -119,13 +167,12 @@ Issues surfaced by the real-NDK armeabi-v7a build (CI) that are absent on
 arm64-v8a (LP64), with their fixes:
 
 - **`malloc`/`calloc`/`realloc` redeclaration.** The decomp shim header
-  `decomp/include/stdlib.h` declares the malloc family with `unsigned long`
-  size params. On LP64 that equals `size_t`; on ILP32 `size_t` is
-  `unsigned int`, so clang's `-Werror=incompatible-library-redeclaration`
-  fires against the builtin `void *(unsigned int)`. The mismatch is
-  ABI-identical (both 32-bit, same register passing), so `CMakeLists.txt`
-  demotes that one diagnostic to a warning when `CMAKE_SIZEOF_VOID_P EQUAL 4`,
-  leaving it `-Werror` on LP64 where a real width mismatch would matter.
+  `decomp/include/stdlib.h` declared `malloc` with an `unsigned long` size
+  param. On LP64 that equals `size_t`; on ILP32 `size_t` is `unsigned int`, so
+  clang's `-Werror=incompatible-library-redeclaration` fired against the
+  builtin `void *(unsigned int)`. The fix lives in the decomp patch: under
+  `PORT`, include `<stddef.h>` and declare `malloc(size_t)`, keeping the strict
+  diagnostic enabled.
 
 - **`taskman.c` 64-bit guard.** `decomp/src/sys/taskman.c` had a PORT-only
   `_Static_assert(sizeof(uintptr_t) == 8, ...)` — a blanket "PORT requires
@@ -137,7 +184,7 @@ arm64-v8a (LP64), with their fixes:
   contain pointers, so on LP64 they widen and `n_env.c` asserts their offsets
   at `0x50/0x38/0x48/0x43/0x68/0x70`. On ILP32 the layout reverts to the
   N64-native offsets the field names encode (`0x30/0x28/0x34/0x2F/0x44/0x48`),
-  so the assert set is gated on `__SIZEOF_POINTER__`. `n_env.c` reaches every
+  so the assert set is gated using `sizeof(uintptr_t)`. `n_env.c` reaches every
   field by name (correct on both ABIs); the only hardcoded site is
   `lbCommonMakePositionFGM` in `lbcommon.c`, which pokes `siz34.unk_0x2F` via
   byte arithmetic — `0x43` on LP64, the N64-native `0x2F` on ILP32 (also

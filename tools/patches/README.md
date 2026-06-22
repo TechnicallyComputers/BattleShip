@@ -14,7 +14,8 @@ Same diff is also committed on the decomp branch `agent/armeabi-v7a-ilp32`
 | File | Fix |
 |------|-----|
 | `src/sys/taskman.c` | Relax the PORT `_Static_assert(sizeof(uintptr_t)==8)` to accept 4- or 8-byte `uintptr_t`. |
-| `src/libultra/n_audio/n_env.c` | Gate the `ALWhatever8009EE0C`/`...siz34` audio-struct layout asserts on `__SIZEOF_POINTER__` (LP64 offsets vs N64-native ILP32 offsets). |
+| `include/stdlib.h` | Declare `malloc(size_t)` under `PORT` so ILP32 Clang keeps `-Wincompatible-library-redeclaration` strict. |
+| `src/libultra/n_audio/n_env.c` | Gate the `ALWhatever8009EE0C`/`...siz34` audio-struct layout asserts with `sizeof(uintptr_t)` (8-byte host offsets vs N64-native ILP32 offsets). |
 | `src/lb/lbcommon.c` | `lbCommonMakePositionFGM` byte-poke offset: `0x43` on LP64, N64-native `0x2F` on ILP32. |
 
 All changes are inside `#ifdef PORT` and gated by pointer width, so LP64/LLP64
