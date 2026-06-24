@@ -112,8 +112,9 @@ cmake --build build-android-v7a -j
 
 `.github/workflows/android-v7a.yml` builds the armeabi-v7a APK with the real
 NDK r29 on GitHub's runners (which can reach `dl.google.com`; the dev sandbox
-cannot, so the NDK can't be fetched there). It triggers on pushes to the
-feature branch and via `workflow_dispatch`, and is the authoritative
+cannot, so the NDK can't be fetched there). It triggers on pull requests that
+touch Android/native port/ILP32 patch inputs, pushes to `main`, pushes to the
+staging feature branch, and via `workflow_dispatch`. It is the authoritative
 real-toolchain check for the per-ABI dependency build.
 
 ### Emulator
