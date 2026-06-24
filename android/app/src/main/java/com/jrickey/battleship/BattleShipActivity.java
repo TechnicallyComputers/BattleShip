@@ -1,5 +1,6 @@
 package com.jrickey.battleship;
 
+import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 
 import org.libsdl.app.SDLActivity;
@@ -36,6 +37,7 @@ public class BattleShipActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         super.onCreate(savedInstanceState);
         // Lay the touch overlay on top of SDL's GLES surface. Has to come
         // after super.onCreate so SDLActivity has already installed its
