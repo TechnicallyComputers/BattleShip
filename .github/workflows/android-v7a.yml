@@ -8,13 +8,27 @@
 name: android-armeabi-v7a
 
 on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'port/**'
+      - 'CMakeLists.txt'
+      - 'decomp'
+      - 'libultraship'
+      - 'torch'
+      - 'tools/patches/**'
+      - '.github/workflows/android-v7a.yml'
   push:
     branches:
+      - main
       - claude/32bit-x86-feasibility-n4utui
     paths:
       - 'android/**'
       - 'port/**'
       - 'CMakeLists.txt'
+      - 'decomp'
+      - 'libultraship'
+      - 'torch'
       - 'tools/patches/**'
       - '.github/workflows/android-v7a.yml'
   workflow_dispatch:
