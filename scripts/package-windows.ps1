@@ -217,6 +217,13 @@ Get-ChildItem -Path $ExeBuildDir -Filter "*.dll" | ForEach-Object {
     Copy-Item $_.FullName $StageDir
 }
 
+if ($EnableScripting) {
+    Write-Step "Staging TCC scripting runtime"
+    $TccDir = Join-Path $ExeBuildDir ".tcc"
+    if (-not (Test-Path $TccDir)) { Fail ".tcc scripting runtime not found at $TccDir" }
+    Copy-Item $TccDir (Join-Path $StageDir ".tcc") -Recurse -Force
+}
+
 # ── 5. Zip ──
 Write-Step "Compressing $ZipPath"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
