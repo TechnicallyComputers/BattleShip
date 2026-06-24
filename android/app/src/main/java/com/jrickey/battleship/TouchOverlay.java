@@ -21,7 +21,7 @@ import android.widget.TextView;
  * On-screen touch controls for the SSB64 port.
  *
  * Layout (landscape):
- *   - Left half: floating-anchor virtual analog stick ({@link AnalogStickView}).
+ *   - Left half: fixed-anchor virtual analog stick ({@link AnalogStickView}).
  *   - Right half: face-button cluster.
  *   - Top corners: shoulder/trigger buttons (Z, R) and the menu hamburger.
  *
