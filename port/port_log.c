@@ -160,38 +160,6 @@ int port_log_get_fd(void)
 
 void port_log(const char *fmt, ...)
 {
-<<<<<<< HEAD
-    va_list ap;
-    int mirror_regular;
-
-    if (fmt == NULL) {
-        return;
-    }
-
-    mirror_regular = (port_log_debug_active() && sLogRegular != NULL) ? 1 : 0;
-
-    va_start(ap, fmt);
-    if (sActiveSink == PORT_LOG_SINK_DEBUG && sLogDebug != NULL) {
-        portLogEmit(sLogDebug, fmt, ap);
-    } else if (sLogRegular != NULL) {
-        portLogEmit(sLogRegular, fmt, ap);
-    }
-    va_end(ap);
-
-    if (mirror_regular != 0) {
-        va_start(ap, fmt);
-        portLogEmit(sLogRegular, fmt, ap);
-        va_end(ap);
-    }
-
-#if defined(__ANDROID__)
-    if (port_log_debug_active() && sAndroidLogcatMirror != 0) {
-        va_start(ap, fmt);
-        portLogMirrorAndroidLogcat(fmt, ap);
-        va_end(ap);
-    }
-#endif
-=======
 	if (sLogFile == NULL) return;
 	va_list ap;
 	va_start(ap, fmt);
@@ -201,5 +169,4 @@ void port_log(const char *fmt, ...)
 	 * figatree watchdogs fire 28x per frame during a stuck APPEAR. Rely on
 	 * stdio's buffer + OS-on-exit flush for normal logging; crash dumps
 	 * have their own flush path. */
->>>>>>> 727be194b1dafb4f31c88ea39b10881ddd174186
 }

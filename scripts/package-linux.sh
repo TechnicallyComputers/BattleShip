@@ -208,14 +208,10 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
-<<<<<<< HEAD
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=ON)"
 else
-	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
-fi
-=======
-# Use ccache as the compiler launcher when it's on PATH (CI installs it and
+	# Use ccache as the compiler launcher when it's on PATH (CI installs it and
 # warms a cross-run cache; harmless locally when it isn't present). Shrinks the
 # compile window so a slow / mid-compile-stalling hosted runner is likelier to
 # finish before the timeout.
@@ -223,17 +219,14 @@ CCACHE_ARGS=()
 if command -v ccache >/dev/null 2>&1; then
     CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
-step "Configuring release build with NON_PORTABLE=ON"
->>>>>>> 727be194b1dafb4f31c88ea39b10881ddd174186
+step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
+fi
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
-<<<<<<< HEAD
     ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"} \
-=======
     "${CCACHE_ARGS[@]+"${CCACHE_ARGS[@]}"}" \
->>>>>>> 727be194b1dafb4f31c88ea39b10881ddd174186
     >/dev/null
 
 step "Building BattleShip + torch"
