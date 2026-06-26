@@ -10,6 +10,8 @@
 # Output:
 #   Default:  dist\BattleShip-windows.zip
 #   Netplay:  dist\BattleShip-Netplay-windows.zip  (JP: BattleShip-JP-Netplay-windows.zip)
+#         <repo-root>\dist\BattleShip-windows-modding.zip when
+#         SSB64_ENABLE_SCRIPTING=1
 #
 # Layout produced (extracted):
 #   BattleShip\
@@ -22,6 +24,10 @@
 #     SDL2.dll                   — runtime dependency (vcpkg / dumpbin walk)
 #     libcurl*.dll, libssl*.dll, libcrypto*.dll, zlib1.dll  — netplay HTTPS (when dynamic)
 #     <other transitive DLLs>    — recursive dumpbin walk from BattleShip.exe + torch.exe
+#
+# The default Windows package disables TCC scripting so ordinary players do not
+# receive tcc.dll, which trips Microsoft Defender false positives. Set
+# SSB64_ENABLE_SCRIPTING=1 to build the opt-in modding package with TCC support.
 #
 # Portable: drop the extracted folder anywhere and run BattleShip.exe.
 # Save data and config (ssb64_save.bin, BattleShip.cfg.json, logs/) land
@@ -55,18 +61,20 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 # unaffected.
 $Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
 if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
-$AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
-if ($Netplay) {
-    $BuildDir = Join-Path $Root "build-bundle-win-netplay-$Ver"
-    $StageLabel = if ($Ver -eq "jp") { "BattleShip-JP-Netplay" } else { "BattleShip-Netplay" }
-    $ZipPath = Join-Path $Root "dist\$StageLabel-windows.zip"
-} else {
-    $BuildDir = Join-Path $Root "build-bundle-win-$Ver"
-    $StageLabel = $AppName
-    $ZipPath = Join-Path $Root "dist\$AppName-windows.zip"
+$EnableScripting = $env:SSB64_ENABLE_SCRIPTING -in @("1", "ON", "TRUE", "YES", "on", "true", "yes")
+if ($EnableScripting -and $Ver -eq "jp") {
+    Write-Error "JP source modding is not release-supported yet; the TCC mod API still compiles mods with US region defines."
+    exit 1
 }
+$DisableScripting = if ($EnableScripting) { "OFF" } else { "ON" }
+$PackageFlavor = if ($EnableScripting) { "modding" } else { "standard" }
+$ZipSuffix = if ($EnableScripting) { "-windows-modding" } else { "-windows" }
+$BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
 $DistDir = Join-Path $Root "dist"
-$StageDir = Join-Path $DistDir $StageLabel
+$AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
+$StageName = if ($EnableScripting) { "$AppName-modding" } else { $AppName }
+$StageDir = Join-Path $DistDir $StageName
+$ZipPath = Join-Path $DistDir "$AppName$ZipSuffix.zip"
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
@@ -484,36 +492,7 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-# Ninja + x64 MSVC. GHA sets vcvars via ilammy/msvc-dev-cmd; local builds need a Developer Command Prompt.
-$CmakeArgs = @(
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DSSB64_VERSION=$Ver",
-    "-GNinja",
-    "-DCMAKE_VS_PLATFORM_NAME=x64",
-    "-DCMAKE_C_COMPILER=cl",
-    "-DCMAKE_CXX_COMPILER=cl"
-)
-if ($Netplay) {
-    $CmakeArgs += "-DSSB64_NETMENU=ON"
-} else {
-    # Force OFF — stale CMakeCache from a netplay configure must not pull in mm_matchmaking/curl.
-    $CmakeArgs += "-DSSB64_NETMENU=OFF"
-}
-if ($env:SSB64_EXTRA_CMAKE_ARGS) {
-    foreach ($extraArg in ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+')) {
-        if ($extraArg) { $CmakeArgs += $extraArg }
-    }
-}
-Write-Step "Configuring release build (portable$(if ($Netplay) { ', SSB64_NETMENU=ON' }))"
-Import-VcVars64IfNeeded
-if ($env:GITHUB_ACTIONS -eq 'true' -and (Test-Path -LiteralPath $BuildDir)) {
-    Write-Host "   CI: removing prior build tree for clean MSVC configure"
-    Remove-Item -LiteralPath $BuildDir -Recurse -Force
-}
-# Use libultraship's local vcpkg tree (not a stale runner-wide VCPKG_ROOT).
-Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
-Remove-InvalidVcpkgTree (Join-Path $BuildDir "libultraship\vcpkg")
-Reset-StaleCmakeCache $BuildDir $Netplay.IsPresent
+Write-Step "Configuring release build (portable, scripting=$EnableScripting)"
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
@@ -533,17 +512,12 @@ if ($Netplay) {
 # CSS-arrow asset rules then fail with "Pillow is required" mid-build.
 $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
-$PythonCmakeArgs = @(
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DSSB64_VERSION=$Ver",
-    "-DPython3_EXECUTABLE=$PythonExe"
-)
-if ($env:SSB64_EXTRA_CMAKE_ARGS) {
-    foreach ($extraArg in ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+')) {
-        if ($extraArg) { $PythonCmakeArgs += $extraArg }
-    }
-}
-cmake -B $BuildDir $Root @PythonCmakeArgs | Out-Null
+cmake -B $BuildDir $Root `
+    -DCMAKE_BUILD_TYPE=Release `
+    "-DDISABLE_SCRIPTING=$DisableScripting" `
+    "-DSSB64_VERSION=$Ver" `
+    "-DPython3_EXECUTABLE=$PythonExe" `
+    | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 if ($Netplay) {
@@ -732,6 +706,13 @@ if ($Netplay) {
 Test-StagedPeDependencies -Binary (Join-Path $StageDir "$AppName.exe") -StageDir $StageDir
 Test-StagedPeDependencies -Binary $StagedTorch -StageDir $StageDir
 
+if ($EnableScripting) {
+    Write-Step "Staging TCC scripting runtime"
+    $TccDir = Join-Path $ExeBuildDir ".tcc"
+    if (-not (Test-Path $TccDir)) { Fail ".tcc scripting runtime not found at $TccDir" }
+    Copy-Item $TccDir (Join-Path $StageDir ".tcc") -Recurse -Force
+}
+
 # ── 5. Zip ──
 Write-Step "Compressing $ZipPath"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
@@ -742,6 +723,11 @@ $ZipKB = [int]((Get-Item $ZipPath).Length / 1024)
 Write-Host "`n✓ Release zip ready: $ZipPath ($ZipKB KB)" -ForegroundColor Green
 Write-Host "   Variant: $(if ($Netplay) { 'netmenu/netplay' } else { 'offline' })"
 Write-Host "   Portable: extract anywhere; save data lives next to BattleShip.exe."
+if ($EnableScripting) {
+    Write-Host "   Modding build: includes TCC scripting support for C mods."
+} else {
+    Write-Host "   Standard build: TCC scripting disabled; use the -modding zip for C mods."
+}
 Write-Host "   First launch will prompt for your ROM via the ImGui wizard."
 if ($Netplay) {
     Write-Host "   Netplay: automatch uses HTTPS matchmaking (vcpkg curl + ssl\cacert.pem)."

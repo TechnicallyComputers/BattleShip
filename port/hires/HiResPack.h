@@ -7,6 +7,13 @@
  *
  *   <anything>#<rgba8CRC32>#<fmt>#<siz>[_<anything>].png
  *
+ * A pack may be either a folder of loose PNGs OR a .zip dropped straight into
+ * mods/ — the distributed pack format. Zips are read in place (libzip +
+ * stbi_load_from_memory at decode time), so there is no extraction step on
+ * any platform: desktop users drop the zip into mods/, and the Android
+ * importer copies the downloaded zip there. Loose PNGs and zip members are
+ * indexed identically; only the decode source differs.
+ *
  * The hash key is a CRC32-IEEE over the *decoded* RGBA8 image — the same
  * tightly-packed pixel buffer the GPU receives at upload time. This makes
  * the key independent of N64 source byte layout (Sprite/Bitmap/raw/CI all
@@ -18,8 +25,8 @@
  * (rgba8CRC, fmt, siz). PNG decoding is deferred to first lookup; Init()
  * only builds the index.
  *
- * Pack folders work additively — drop multiple subfolders under mods/ and
- * the union of their PNGs is indexed. If two PNGs hash-collide the later
+ * Packs work additively — drop multiple subfolders and/or zips under mods/
+ * and the union of their PNGs is indexed. If two PNGs hash-collide the later
  * scan wins (alphabetical order).
  */
 
@@ -28,6 +35,44 @@
 #include <vector>
 
 namespace ssb64::hires {
+
+// ── Platform-scaled tuning (shared by HiResPack.cpp / HiResHook.cpp /
+//    PortMenu.cpp so the runtime default and the menu widget default agree) ──
+
+// Master-enable CVar (gHiResTextures.Enabled) default. Hi-res substitution
+// is on by default on desktop but OPT-IN on Android: a pack's decoded-RGBA8
+// working set (see kDefaultLruBudgetMB) plus its uncompressed GPU uploads can
+// push a phone past the OS low-memory-killer threshold, so a mobile user must
+// enable it deliberately rather than have a dropped-in pack allocate silently.
+#if defined(__ANDROID__)
+inline constexpr int kHiResEnabledDefault = 0;
+#else
+inline constexpr int kHiResEnabledDefault = 1;
+#endif
+
+// Decoded-RGBA8 LRU budget default, in MB (overridable at runtime via the
+// gHiResTextures.CacheBudgetMB CVar, read in HiResPack::Init). Desktop can
+// afford a large cache; Android runs under a far tighter per-app footprint
+// (the LMK reaps the foreground app well below desktop RAM limits), so it
+// defaults much lower. Floored at kMinLruBudgetMB so a too-small value can't
+// make the cache thrash (re-decoding on every miss stalls the render thread).
+#if defined(__ANDROID__)
+inline constexpr int kDefaultLruBudgetMB = 128;
+#else
+inline constexpr int kDefaultLruBudgetMB = 512;
+#endif
+inline constexpr int kMinLruBudgetMB = 16;
+
+// Per-texture upscale ceiling, in decoded pixels. A pack PNG decoding to more
+// than this many texels is rejected (the native texture renders instead) so a
+// single pathological upscale can't blow the budget / GPU upload in one shot —
+// the LRU never evicts its just-inserted tail, so a lone over-budget entry
+// would otherwise exceed the cap outright. 0 = uncapped (desktop).
+#if defined(__ANDROID__)
+inline constexpr uint32_t kMaxPackTexels = 2048u * 2048u; // 16 MB RGBA8
+#else
+inline constexpr uint32_t kMaxPackTexels = 0u;
+#endif
 
 struct DecodedTexture {
     std::vector<uint8_t> rgba; // tightly packed RGBA8, w * h * 4 bytes
@@ -78,7 +123,9 @@ public:
     /* Hash the decoded RGBA8 image (CRC32-IEEE over `width*height*4` bytes)
      * and return a substitute decoded RGBA8 buffer if the pack contains a
      * matching PNG. Decode of the pack PNG is lazy + memoized; a small LRU
-     * caps total decoded RAM at ~256 MB. The returned pointer is owned by
+     * caps total decoded RAM at kDefaultLruBudgetMB (512 MB desktop / 128 MB
+     * Android, overridable via the gHiResTextures.CacheBudgetMB CVar). The
+     * returned pointer is owned by
      * the LRU and stays valid through the calling frame's UploadTexture
      * (eviction only fires on subsequent Lookup() calls that miss the
      * cache, never during this call). Returns nullptr on miss / decode

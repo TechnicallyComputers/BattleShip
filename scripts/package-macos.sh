@@ -214,12 +214,22 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
+# Use ccache as the compiler launcher when it's on PATH (CI installs it and
+# warms a cross-run cache; harmless locally when it isn't present). Shrinks the
+# compile window so a slow / mid-compile-stalling hosted runner is likelier to
+# finish before the timeout. The ${CCACHE_ARGS[@]+...} guard keeps the
+# empty-array expansion safe under `set -u` on the bash 3.2 macOS ships.
+CCACHE_ARGS=()
+if command -v ccache >/dev/null 2>&1; then
+    CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMENU=ON)}"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
     ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"} \
+    "${CCACHE_ARGS[@]+"${CCACHE_ARGS[@]}"}" \
     >/dev/null
 
 step "Building BattleShip + torch"
@@ -391,11 +401,34 @@ chmod +x "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"
 step "Bundling Homebrew dylib dependencies"
 command -v dylibbundler >/dev/null \
     || fail "dylibbundler not in PATH — install with: brew install dylibbundler"
-dylibbundler -of -b -cd -ns \
-    -x "$APP/Contents/MacOS/$APP_NAME" \
-    -x "$APP/Contents/MacOS/torch" \
-    -d "$APP/Contents/Frameworks/" \
-    -p "@executable_path/../Frameworks/"
+# dylibbundler reads stdin and PROMPTS ("...does not exist. Try again") when it
+# can't auto-locate a dependency — which BLOCKS FOREVER in non-interactive CI.
+# The culprit is libtcc.dylib: TinyCC (the v1.4 mod-scripting runtime) is built
+# SHARED in our own build tree (_deps/tinycc-*), not a system/Homebrew lib, so
+# dylibbundler can't find it on its own. (Linux's linuxdeploy follows the
+# binary's rpath and bundles libtcc.so fine — which is why only macOS broke.)
+#   -s <libtcc dir>      : point dylibbundler at libtcc.dylib's build dir so it
+#                          gets bundled + install-name-fixed — the fix.
+#   -s /opt/homebrew/lib : insurance for the Homebrew deps.
+#   </dev/null + hard timeout (CI, where gtimeout/timeout exists): dylibbundler
+#                          can never block the pipeline again; a still-unresolved
+#                          dep fails fast naming the missing lib instead of
+#                          hanging. Local runs stay interactive for a human.
+DYLIBBUNDLER_ARGS=(-of -b -cd -ns -s /opt/homebrew/lib)
+TCC_DYLIB="$(find "$BUILD_DIR" -name 'libtcc.dylib' -type f 2>/dev/null | head -1)"
+[[ -n "$TCC_DYLIB" ]] && DYLIBBUNDLER_ARGS+=(-s "$(dirname "$TCC_DYLIB")")
+DYLIBBUNDLER_ARGS+=(
+    -x "$APP/Contents/MacOS/$APP_NAME"
+    -x "$APP/Contents/MacOS/torch"
+    -d "$APP/Contents/Frameworks/"
+    -p "@executable_path/../Frameworks/")
+DB_TIMEOUT="$(command -v gtimeout || command -v timeout || true)"
+if [[ -n "$DB_TIMEOUT" ]]; then
+    "$DB_TIMEOUT" --signal=KILL 300 dylibbundler "${DYLIBBUNDLER_ARGS[@]}" </dev/null \
+        || fail "dylibbundler failed/timed out — an unresolved dependency it tried to prompt for; see its output above."
+else
+    dylibbundler "${DYLIBBUNDLER_ARGS[@]}"
+fi
 
 # Sanity-check: no /opt/homebrew or /usr/local references should remain in
 # the binaries' load commands. Catches the case where dylibbundler missed a
@@ -465,65 +498,129 @@ codesign --verify --deep --strict "$APP" \
     || fail "codesign verify failed on $APP"
 
 # ── 5. Build a drag-and-drop DMG ──
-# Drives `create-dmg` (homebrew: `brew install create-dmg`) rather than
-# rolling our own Finder/AppleScript dance. The community tool handles
-# the well-known macOS quirks that make hand-rolled DMG styling
-# unreliable: Finder view caching across remounts of the same volume
-# name, alias resolution back to the writable scratch image, .DS_Store
-# write timing, and quarantine xattr stripping. Reinventing these
-# workarounds isn't worth the maintenance.
+# Two paths, because the pretty one isn't safe everywhere:
 #
-# Background image: we cap the long edge at 600px so the installer
-# window matches the standard macOS DMG footprint instead of the source
-# artwork's full 1586x992. The 1x and 2x renders are combined into a
-# single multi-representation TIFF — Apple's documented mechanism for
-# resolution-independent DMG backgrounds; Finder picks the right rep
-# based on the user's display.
-DMG_VOLNAME="$APP_DISPLAY_NAME"
+#   • Styled (create-dmg) — a Finder-arranged window with a background image,
+#     the app icon, and an Applications drop-link. create-dmg drives Finder
+#     through AppleScript (osascript) to place those. That AppleScript step
+#     reliably HANGS on headless GitHub-hosted macOS runners: observed
+#     stalling a release for 30+ min (toward the 6h job ceiling) while every
+#     other platform finished in minutes — the build itself is only ~4 min,
+#     so the time was entirely in this Finder step. Used only for
+#     local/interactive builds, and even then capped + fallback-guarded.
+#
+#   • Plain (hdiutil) — a compressed image holding the .app plus an
+#     /Applications symlink, no background art, no Finder automation. Builds
+#     in seconds and cannot hang. This is what CI ships.
+#
+# Path selection:
+#   DMG_PLAIN=1   force plain   (overrides everything)
+#   DMG_STYLED=1  force styled  (attempt it even under CI; still falls back)
+#   otherwise     plain when running under CI (GitHub Actions sets CI=true)
+#                 or when create-dmg is absent; styled on a dev machine.
+# The styled path falls back to plain on any failure or timeout, so this
+# script always emits a working DMG.
+DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
 DMG_STAGE="$DIST_DIR/dmg-stage"
 DMG_BG_DIR="$DIST_DIR/dmg-bg"
 
-command -v create-dmg >/dev/null \
-    || fail "create-dmg not in PATH — install with: brew install create-dmg"
+# Unmount any stale volume of our name before hdiutil touches it — a leftover
+# mount makes hdiutil's auto-mount step fail.
+detach_dmg_volume() {
+    if [[ -d "/Volumes/$DMG_VOLNAME" ]]; then
+        hdiutil detach "/Volumes/$DMG_VOLNAME" -force >/dev/null 2>&1 || true
+    fi
+}
+
+# Plain compressed DMG — no Finder, no AppleScript, no hang. The user drags
+# the .app onto the bundled Applications symlink; functionally identical to
+# install, it just lacks the background banner / icon layout.
+build_plain_dmg() {
+    rm -f "$DMG"
+    ln -snf /Applications "$DMG_STAGE/Applications"
+    detach_dmg_volume
+    hdiutil create \
+        -volname "$DMG_VOLNAME" \
+        -srcfolder "$DMG_STAGE" \
+        -fs HFS+ \
+        -format UDZO \
+        -ov -quiet \
+        "$DMG"
+}
+
+# Styled DMG via create-dmg. Returns non-zero on failure/timeout so the caller
+# can fall back. Capped with timeout/gtimeout when one is on PATH (macOS ships
+# neither by default, so a local dev relies on Ctrl-C; CI never reaches this
+# path). The `${cap[@]+...}` guard keeps the empty-array expansion safe under
+# `set -u` on the bash 3.2 macOS still ships as /bin/bash.
+build_styled_dmg() {
+    sips -Z $((DMG_BG_LONG * 2)) "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg@2x.png" >/dev/null
+    sips -Z $DMG_BG_LONG          "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg.png"    >/dev/null
+    local w h
+    w=$(sips -g pixelWidth  "$DMG_BG_DIR/bg.png" | awk '/pixelWidth/  {print $2}')
+    h=$(sips -g pixelHeight "$DMG_BG_DIR/bg.png" | awk '/pixelHeight/ {print $2}')
+    # Multi-rep TIFF: 1x at 72 dpi + 2x at 144 dpi so Finder picks the right
+    # rep on retina vs non-retina displays.
+    tiffutil -cathidpicheck "$DMG_BG_DIR/bg.png" "$DMG_BG_DIR/bg@2x.png" \
+        -out "$DMG_BG_DIR/background.tiff" >/dev/null
+
+    detach_dmg_volume
+    rm -f "$DMG"
+
+    local cap=() tmo
+    tmo="$(command -v gtimeout || command -v timeout || true)"
+    [[ -n "$tmo" ]] && cap=("$tmo" "${DMG_TIMEOUT:-300}")
+
+    "${cap[@]+"${cap[@]}"}" create-dmg \
+        --volname "$DMG_VOLNAME" \
+        --background "$DMG_BG_DIR/background.tiff" \
+        --window-pos 200 120 \
+        --window-size "$w" "$h" \
+        --icon-size 128 \
+        --icon "$APP_NAME.app" $((w / 4))     $((h * 3 / 5)) \
+        --app-drop-link        $((w * 3 / 4)) $((h * 3 / 5)) \
+        --hide-extension "$APP_NAME.app" \
+        --hdiutil-quiet \
+        --no-internet-enable \
+        "$DMG" \
+        "$DMG_STAGE"
+}
 
 step "Building DMG"
 rm -rf "$DMG_STAGE" "$DMG_BG_DIR" "$DMG"
 mkdir -p "$DMG_STAGE" "$DMG_BG_DIR"
-# create-dmg expects a source folder containing only the artifacts the
-# user should see in the DMG window. The Applications shortcut is
-# injected by --app-drop-link, not staged here.
+# Stage only the .app. The styled path injects Applications via
+# --app-drop-link; the plain path adds its own Applications symlink.
 cp -R "$APP" "$DMG_STAGE/"
 
-sips -Z $((DMG_BG_LONG * 2)) "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg@2x.png" >/dev/null
-sips -Z $DMG_BG_LONG          "$DMG_BG_SRC" --out "$DMG_BG_DIR/bg.png"    >/dev/null
-DMG_BG_W=$(sips -g pixelWidth  "$DMG_BG_DIR/bg.png" | awk '/pixelWidth/  {print $2}')
-DMG_BG_H=$(sips -g pixelHeight "$DMG_BG_DIR/bg.png" | awk '/pixelHeight/ {print $2}')
-# Multi-rep TIFF: tile the 1x at 72 dpi and the 2x at 144 dpi into a
-# single file. Finder reads the matching rep on retina vs non-retina.
-tiffutil -cathidpicheck "$DMG_BG_DIR/bg.png" "$DMG_BG_DIR/bg@2x.png" \
-    -out "$DMG_BG_DIR/background.tiff" >/dev/null
-
-# Detach any stale mount of the same volume name before invoking
-# create-dmg — otherwise hdiutil's auto-mount step will fail.
-if [[ -d "/Volumes/$DMG_VOLNAME" ]]; then
-    hdiutil detach "/Volumes/$DMG_VOLNAME" -force >/dev/null 2>&1 || true
+want_styled=1
+if [[ -n "${DMG_PLAIN:-}" ]]; then
+    want_styled=0
+elif [[ -n "${DMG_STYLED:-}" ]]; then
+    want_styled=1
+elif [[ -n "${CI:-}" ]]; then
+    want_styled=0   # create-dmg's Finder/AppleScript step hangs on hosted CI
 fi
+command -v create-dmg >/dev/null || want_styled=0
 
-create-dmg \
-    --volname "$DMG_VOLNAME" \
-    --background "$DMG_BG_DIR/background.tiff" \
-    --window-pos 200 120 \
-    --window-size "$DMG_BG_W" "$DMG_BG_H" \
-    --icon-size 128 \
-    --icon "$APP_BUNDLE_BASENAME" $((DMG_BG_W / 4))     $((DMG_BG_H * 3 / 5)) \
-    --app-drop-link            $((DMG_BG_W * 3 / 4)) $((DMG_BG_H * 3 / 5)) \
-    --hide-extension "$APP_BUNDLE_BASENAME" \
-    --hdiutil-quiet \
-    --no-internet-enable \
-    "$DMG" \
-    "$DMG_STAGE"
+if [[ "$want_styled" -eq 1 ]]; then
+    step "Building styled DMG (create-dmg)"
+    if build_styled_dmg && [[ -f "$DMG" ]]; then
+        echo "  styled DMG built"
+    else
+        echo "  create-dmg failed or timed out — falling back to a plain hdiutil DMG" >&2
+        detach_dmg_volume
+        # create-dmg leaves a writable scratch image (rw.*.dmg) on failure.
+        rm -f "$DIST_DIR"/rw.*.dmg "$DMG" 2>/dev/null || true
+        step "Building plain DMG (hdiutil fallback)"
+        build_plain_dmg
+    fi
+else
+    step "Building plain DMG (hdiutil — CI-safe, no Finder)"
+    build_plain_dmg
+fi
 
 rm -rf "$DMG_STAGE" "$DMG_BG_DIR"
 [[ -f "$DMG" ]] || fail "DMG was not created"

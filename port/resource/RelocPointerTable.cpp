@@ -159,17 +159,25 @@ void *portRelocResolvePointerDebug(uint32_t token, const char *file, int line)
     }
     uint32_t index = 0;
     if (!decodeToken(token, &index)) {
-        uint32_t tokenGen   = token >> TOKEN_GENERATION_SHIFT;
-        uint32_t tokenIndex = token & TOKEN_INDEX_MASK;
-        uint32_t slotGen    = (sSlots && tokenIndex < sNextIndex) ? sSlots[tokenIndex].gen : 0;
-        if (file != nullptr) {
-            spdlog::error("RelocPointerTable: invalid/stale token 0x{:08X} "
-                          "(token_gen=0x{:03X} slot_gen=0x{:03X} index={} max={}, caller={}:{})",
-                          token, tokenGen, slotGen, tokenIndex, sNextIndex - 1, file, line);
-        } else {
-            spdlog::error("RelocPointerTable: invalid/stale token 0x{:08X} "
-                          "(token_gen=0x{:03X} slot_gen=0x{:03X} index={} max={})",
-                          token, tokenGen, slotGen, tokenIndex, sNextIndex - 1);
+        /* Rate-limit: an APPEAR figatree binding pass can resolve the same
+         * stale token thousands of times per frame (each joint stream re-
+         * checks). spdlog flushes on error so unrate-limited logging stalls
+         * the main thread. Cap to one log per 1024 misses; the message is
+         * the same value anyway. */
+        static uint32_t sStaleLogCount = 0;
+        if ((sStaleLogCount++ & 0x3FF) == 0) {
+            uint32_t tokenGen   = token >> TOKEN_GENERATION_SHIFT;
+            uint32_t tokenIndex = token & TOKEN_INDEX_MASK;
+            uint32_t slotGen    = (sSlots && tokenIndex < sNextIndex) ? sSlots[tokenIndex].gen : 0;
+            if (file != nullptr) {
+                spdlog::error("RelocPointerTable: invalid/stale token 0x{:08X} "
+                              "(token_gen=0x{:03X} slot_gen=0x{:03X} index={} max={}, caller={}:{}, miss_count={})",
+                              token, tokenGen, slotGen, tokenIndex, sNextIndex - 1, file, line, sStaleLogCount);
+            } else {
+                spdlog::error("RelocPointerTable: invalid/stale token 0x{:08X} "
+                              "(token_gen=0x{:03X} slot_gen=0x{:03X} index={} max={}, miss_count={})",
+                              token, tokenGen, slotGen, tokenIndex, sNextIndex - 1, sStaleLogCount);
+            }
         }
         return nullptr;
     }

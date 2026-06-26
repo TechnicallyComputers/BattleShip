@@ -11,6 +11,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.result.ActivityResultLauncher;
@@ -48,6 +49,13 @@ public class BootActivity extends ComponentActivity {
             new ActivityResultContracts.OpenDocument(),
             this::onRomPicked);
 
+    /** Result handler for the hi-res-pack SAF picker (import-pack flow).
+     *  Registered eagerly so it survives Activity recreation mid-pick. */
+    private final ActivityResultLauncher<String[]> mPickPack
+        = registerForActivityResult(
+            new ActivityResultContracts.OpenDocument(),
+            this::onPackPicked);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -80,6 +88,34 @@ public class BootActivity extends ComponentActivity {
      * (defined in res/xml/shortcuts.xml).
      */
     private static final String EXTRA_REPICK = "ssb64.repick";
+
+    /**
+     * If true on the launching Intent, BootActivity shows a SAF picker for a
+     * hi-res texture pack (.zip) after assets are ready, copies it into the
+     * app-owned mods/ folder ({@link PackImporter}), then continues to the
+     * normal route. Surfaced via the "Import texture pack" launcher shortcut
+     * (res/xml/shortcuts.xml); also drivable for dev/testing:
+     *
+     *   adb shell am start -n com.jrickey.battleship.debug/.BootActivity \
+     *                       --ez ssb64.import_pack true
+     *
+     * Import runs BEFORE the SDL game starts, so HiResPack's scan sees the new
+     * pack on a single thread at boot — no rescan race against the renderer.
+     */
+    private static final String EXTRA_IMPORT_PACK = "ssb64.import_pack";
+
+    private boolean isImportPackRequest() {
+        return getIntent() != null
+            && getIntent().getBooleanExtra(EXTRA_IMPORT_PACK, false);
+    }
+
+    /**
+     * Dev/test: import a pack from an absolute path the app can read, skipping
+     * the SAF picker. Mirrors {@link #EXTRA_DEV_ROM}.
+     *   adb shell am start -n com.jrickey.battleship.debug/.BootActivity \
+     *                       --es ssb64.dev_pack /sdcard/Download/pack.zip
+     */
+    private static final String EXTRA_DEV_PACK = "ssb64.dev_pack";
 
     private void buildUi() {
         mStatus = new TextView(this);
@@ -128,6 +164,19 @@ public class BootActivity extends ComponentActivity {
             runOnUi(() -> {
                 if (err != null) {
                     showError("Asset extraction failed:\n\n" + err);
+                    return;
+                }
+                // Debug-only: BootActivity is the exported launcher entry, so a
+                // release build must not let another app drive an arbitrary
+                // absolute-path import through this extra (confused deputy).
+                String devPack = (BuildConfig.DEBUG && getIntent() != null)
+                    ? getIntent().getStringExtra(EXTRA_DEV_PACK) : null;
+                if (devPack != null && !devPack.isEmpty()) {
+                    importDevPack(new File(devPack));
+                    return;
+                }
+                if (isImportPackRequest()) {
+                    showPackPicker();
                     return;
                 }
                 routeAfterAssets();
@@ -247,6 +296,67 @@ public class BootActivity extends ComponentActivity {
             // thread itself, so we can safely call from this background.
             runOnUi(() -> extractFromAbsolutePath(staged, true));
         }, "ssb64-rom-stage").start();
+    }
+
+    /* ===================================================================== */
+    /*  Optional: hi-res texture pack import (ssb64.import_pack)              */
+    /* ===================================================================== */
+
+    private void showPackPicker() {
+        mStatus.setText(
+            "Import a hi-res texture pack.\n\n" +
+            "Pick the pack's .zip file. It's copied into the app's mods folder " +
+            "and applied the next time the game loads textures."
+        );
+        mPickButton.setText("Choose texture pack (.zip)");
+        mPickButton.setOnClickListener(v -> launchPackPicker());
+        mPickButton.setVisibility(View.VISIBLE);
+    }
+
+    private void launchPackPicker() {
+        // Bias toward zips but fall back to "*/*" (some providers report a
+        // pack as octet-stream); PackImporter validates by actually opening it.
+        mPickPack.launch(new String[] { "application/zip", "*/*" });
+    }
+
+    private void importDevPack(File packFile) {
+        mPickButton.setVisibility(View.GONE);
+        mStatus.setText("Importing texture pack (dev)…");
+        new Thread(() -> {
+            File pack = PackImporter.importPackFromFile(getApplicationContext(), packFile);
+            runOnUi(() -> {
+                Toast.makeText(BootActivity.this,
+                    pack != null
+                        ? "Texture pack imported (dev)."
+                        : "Dev pack import failed — see logcat tag ssb64.pack.",
+                    Toast.LENGTH_LONG).show();
+                routeAfterAssets();
+            });
+        }, "ssb64-pack-import-dev").start();
+    }
+
+    private void onPackPicked(Uri packUri) {
+        if (packUri == null) {
+            // Cancelled — go on to the game/ROM flow without a new pack.
+            routeAfterAssets();
+            return;
+        }
+        mPickButton.setVisibility(View.GONE);
+        mStatus.setText("Importing texture pack…");
+
+        new Thread(() -> {
+            File pack = PackImporter.importPack(getApplicationContext(), packUri);
+            runOnUi(() -> {
+                // Toast survives the hand-off to the game Activity, so the
+                // result is visible even though we route on immediately.
+                Toast.makeText(BootActivity.this,
+                    pack != null
+                        ? "Texture pack imported."
+                        : "Couldn't import that file — is it a valid .zip pack?",
+                    Toast.LENGTH_LONG).show();
+                routeAfterAssets();
+            });
+        }, "ssb64-pack-import").start();
     }
 
     /* ===================================================================== */

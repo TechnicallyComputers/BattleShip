@@ -129,10 +129,12 @@ bool HiResHook(uint8_t fmt, uint8_t siz,
                const uint8_t* rgba8, uint16_t width, uint16_t height,
                const uint8_t** outBuf, uint16_t* outW, uint16_t* outH) {
     // Master enable lives in a CVar so the menu toggle takes effect
-    // immediately (no relaunch). Defaults to on — Init() already logged
-    // whether the mods/ folder exists, so a flat "no PNGs to substitute"
-    // setup is silently a no-op.
-    if (CVarGetInteger("gHiResTextures.Enabled", 1) == 0) {
+    // immediately (no relaunch). Default is platform-scaled (kHiResEnabledDefault
+    // in HiResPack.h): on for desktop, OFF/opt-in for Android so a dropped-in
+    // pack can't silently allocate a large decoded working set on a phone.
+    // Init() already logged whether the mods/ folder exists, so a flat "no PNGs
+    // to substitute" setup is silently a no-op.
+    if (CVarGetInteger("gHiResTextures.Enabled", ssb64::hires::kHiResEnabledDefault) == 0) {
         return false;
     }
 

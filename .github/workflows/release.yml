@@ -4,9 +4,12 @@ name: Release
 #   - Pushing a tag matching v* (e.g. v1.0.0, v0.1-test)
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
-# Platform jobs (offline), each matrixed over us/jp where applicable, plus netplay
-# variants for macOS, Linux, Windows, and Android (build-android-netplay). A final
-# `release` job stitches artifacts into a GitHub Release on tag push.
+# Platform jobs build the releasable artifacts, matrixed over ROM versions
+# where applicable. Windows additionally emits a standard package with
+# scripting disabled by default plus an opt-in US modding package with TCC.
+# Desktop jobs build through the corresponding scripts/package-*.sh|.ps1
+# helper (SSB64_VERSION selects the region). A final `release` job stitches
+# the artifacts into a GitHub Release attached to the tag.
 #
 # US keeps the historical artifact names (BattleShip.dmg, …-x86_64.AppImage,
 # …-windows.zip) so existing links and the in-app updater are unaffected;
@@ -20,17 +23,25 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:    # manual trigger; no Release is created
+      - "v*"
+  workflow_dispatch: # manual trigger; no Release is created
 
 permissions:
-  contents: write       # softprops/action-gh-release needs this on the
-                        # final job to attach assets and create the
-                        # Release. Read-only on every other step.
+  contents:
+    write # softprops/action-gh-release needs this on the
+    # final job to attach assets and create the
+    # Release. Read-only on every other step.
+  id-token: write # actions/attest signs provenance via OIDC.
+  attestations: write # publish artifact attestations for release assets.
 
 jobs:
   build-macos:
     runs-on: macos-14
+    # Hosted runners (macOS arm64 especially) intermittently stall mid-compile
+    # and only die at the ~1h "lost communication with the server" mark — see
+    # actions/runner-images#13882. Cap well under that so a stalled job fails
+    # fast and can be re-run, instead of blocking the release for an hour.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -64,8 +75,17 @@ jobs:
         run: |
           brew install cmake ninja \
             sdl2 glew libzip nlohmann-json tinyxml2 spdlog \
-            zip create-dmg dylibbundler
+            zip create-dmg dylibbundler coreutils
           python3 -m pip install --break-system-packages Pillow
+      - name: Set up ccache
+        # Compiler cache shared across runs (package-macos.sh uses ccache as
+        # the C/C++ launcher when present). First run is a cold miss that
+        # populates the cache; later runs compile far less, shrinking the
+        # window in which a flaky runner can stall.
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: release-macos-${{ matrix.version }}
+          max-size: 2G
       - name: Package macOS .app + .dmg
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -178,6 +198,7 @@ jobs:
     # fires at find_package() time even though we never invoke the
     # tools — stub them with `touch + chmod +x` to bypass the check.
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -196,6 +217,11 @@ jobs:
           # both <sha> and refs/tags/<tag> to refs/tags/<tag>". Using
           # fetch-depth: 0 sidesteps the conflict.
           fetch-depth: 0
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: release-linux-${{ matrix.version }}
+          max-size: 2G
       - name: Install build deps
         # libultraship find_package set: libzip, nlohmann_json, tinyxml2,
         # spdlog, SDL2, GLEW. See header comment on the runner for the
@@ -254,6 +280,7 @@ jobs:
     # Pinning is also enforced in CMakeLists.txt; setting SSB64_VERSION=jp
     # on Android would FATAL out at configure time.
     runs-on: ubuntu-22.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -264,7 +291,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
       - name: Install Pillow for CSS asset baking
         # Gradle's externalNativeBuild invokes the same CMake rules as the
         # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
@@ -277,7 +304,7 @@ jobs:
           # and compileSdk = 34. ssb64-port has confirmed r29 + API 34
           # build clean against bionic / NDK toolchain; older NDKs trip on
           # the ptrdiff_t shim in decomp/include/stddef.h.
-          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865"
       - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
         # Mirrors the GenerateF3DO2R CMake target. We don't invoke the full
         # CMake build here because Gradle's externalNativeBuild handles that;
@@ -301,10 +328,10 @@ jobs:
         # issue" with no jobs ever scheduled. Doing the check inside the
         # shell against an env-mapped value is the documented safe pattern.
         env:
-          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
-          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
-          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
-          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
+          SSB64_ANDROID_KEYSTORE_BASE64: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS: ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD: ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
             echo "::warning::No release keystore secret configured; falling back to debug signing"
@@ -358,7 +385,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
       - name: Install Pillow for CSS asset baking
         # Gradle's externalNativeBuild invokes the same CMake rules as the
         # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
@@ -367,16 +394,16 @@ jobs:
       - name: Install Android SDK + NDK r29
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865"
       - name: Generate f3d.o2r (open-source Fast3D shaders bundled in APK)
         working-directory: libultraship/src/fast
         run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
       - name: Decode release keystore (if configured via secrets)
         env:
-          SSB64_ANDROID_KEYSTORE_BASE64:       ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
-          SSB64_ANDROID_KEYSTORE_PASSWORD:     ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
-          SSB64_ANDROID_KEY_ALIAS:             ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
-          SSB64_ANDROID_KEY_PASSWORD:          ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
+          SSB64_ANDROID_KEYSTORE_BASE64: ${{ secrets.SSB64_ANDROID_KEYSTORE_BASE64 }}
+          SSB64_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SSB64_ANDROID_KEYSTORE_PASSWORD }}
+          SSB64_ANDROID_KEY_ALIAS: ${{ secrets.SSB64_ANDROID_KEY_ALIAS }}
+          SSB64_ANDROID_KEY_PASSWORD: ${{ secrets.SSB64_ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$SSB64_ANDROID_KEYSTORE_BASE64" ]; then
             echo "::warning::No release keystore secret configured; falling back to debug signing"
@@ -426,10 +453,26 @@ jobs:
 
   build-windows:
     runs-on: windows-2022
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        version: [us, jp]
+        include:
+          - version: us
+            flavor: standard
+            enable_scripting: "0"
+            artifact_name: BattleShip-windows-us
+            artifact_path: dist/BattleShip-windows.zip
+          - version: jp
+            flavor: standard
+            enable_scripting: "0"
+            artifact_name: BattleShip-windows-jp
+            artifact_path: dist/BattleShip-JP-windows.zip
+          - version: us
+            flavor: modding
+            enable_scripting: "1"
+            artifact_name: BattleShip-windows-us-modding
+            artifact_path: dist/BattleShip-windows-modding.zip
     steps:
       - uses: actions/checkout@v4
         with:
@@ -457,21 +500,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow
         shell: pwsh
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-          vsversion: '2022'
-      - name: Package Windows zip
+      - name: Package Windows zip (${{ matrix.flavor }})
         env:
           SSB64_VERSION: ${{ matrix.version }}
-        # Step shell is pwsh; msvc-dev-cmd + GITHUB_ENV LIB apply to this step directly.
-        run: ./scripts/package-windows.ps1
+          SSB64_ENABLE_SCRIPTING: ${{ matrix.enable_scripting }}
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
         shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
-          name: BattleShip-windows-${{ matrix.version }}
-          path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-windows.zip
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
 
   build-windows-netplay:
@@ -497,7 +535,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          vsversion: '2022'
+          vsversion: "2022"
       - name: Package Windows netplay zip
         env:
           SSB64_VERSION: ${{ matrix.version }}
@@ -511,14 +549,44 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-macos-netplay, build-linux, build-linux-netplay, build-windows, build-windows-netplay, build-android, build-android-netplay]
-    if: startsWith(github.ref, 'refs/tags/v')   # only on tag pushes
+    needs:
+      [
+        build-macos,
+        build-macos-netplay,
+        build-linux,
+        build-linux-netplay,
+        build-windows,
+        build-windows-netplay,
+        build-android,
+        build-android-netplay,
+      ]
+    if: startsWith(github.ref, 'refs/tags/v') # only on tag pushes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+      - name: Generate SHA256SUMS.txt
+        run: |
+          find artifacts -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > release-subjects.sha256
+          find artifacts -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' file; do
+                (cd artifacts && sha256sum "$(basename "$file")")
+              done > artifacts/SHA256SUMS.txt
+          cat artifacts/SHA256SUMS.txt
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-checksums: release-subjects.sha256
+      - name: Attest checksum manifest
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/SHA256SUMS.txt
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
@@ -535,10 +603,13 @@ jobs:
             artifacts/BattleShip-JP-Netplay-x86_64.AppImage
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
+            artifacts/BattleShip-windows-modding.zip
             artifacts/BattleShip-Netplay-windows.zip
             artifacts/BattleShip-JP-Netplay-windows.zip
             artifacts/BattleShip-android.apk
             artifacts/BattleShip-android-netplay.apk
+            artifacts/SHA256SUMS.txt
           generate_release_notes: true
-          draft: true   # land as a draft so a human can sanity-check
-                        # before the release is visible to the public.
+          draft:
+            true # land as a draft so a human can sanity-check
+            # before the release is visible to the public.
