@@ -52,15 +52,12 @@
 #endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
-<<<<<<< HEAD
 #include "android_network.h"
 #if defined(__ANDROID__)
 #include <android/log.h>
 #define SSB64_ANDROID_LOG_TAG "ssb64"
 #endif
-=======
 #include "fighter_registry.h"
->>>>>>> 727be194b1dafb4f31c88ea39b10881ddd174186
 
 #ifndef DISABLE_SCRIPTING
 #include <ship/scripting/ScriptLoader.h>
@@ -152,7 +149,6 @@ static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
 	if (file) port_log("    file: %ls:%u\n", file, line);
 	port_log_close();
 }
-#endif
 
 static volatile LONG sMinidumpWritten = 0;
 static void portResolveSymbol(void* addr, char* out, size_t cap);
