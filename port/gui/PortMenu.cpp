@@ -992,6 +992,41 @@ void PortMenu::AddMenuSettings() {
                          "the toggle to take effect.")
                      .DefaultValue(true));
 
+    // Overscan crop. SSB64 bakes a 10px title-safe margin into its GBI scissor on
+    // every side (decomp sys/rdp.c + sys/objdisplay.c); a CRT's overscan hid it,
+    // but a desktop window shows it as a black border framing the whole image.
+    // libultraship's Gui::DrawGame crops this proportional margin out of the
+    // presented framebuffer so the safe area fills the viewport. Takes effect
+    // immediately (read every frame at present time, no reload needed).
+    AddWidget(path, "Crop Overscan Border", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_PREFIX_ADVANCED_RESOLUTION ".Overscan.Enabled")
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+                     .Tooltip("Removes the black border framing the image by cropping the game's built-in "
+                              "title-safe margin, so the picture fills the window like it filled a CRT. "
+                              "Disable to see the raw N64 framebuffer including its overscan border.")
+                     .DefaultValue(true));
+
+    AddWidget(path, "Overscan Crop — Horizontal", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_PREFIX_ADVANCED_RESOLUTION ".Overscan.Horizontal")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("How many N64 pixels (of 320 wide) to crop from each of the left and right "
+                              "edges. The game's authored margin is 10.")
+                     .Min(0.0f)
+                     .Max(32.0f)
+                     .DefaultValue(10.0f));
+
+    AddWidget(path, "Overscan Crop — Vertical", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_PREFIX_ADVANCED_RESOLUTION ".Overscan.Vertical")
+        .RaceDisable(false)
+        .Options(FloatSliderOptions()
+                     .Tooltip("How many N64 pixels (of 240 tall) to crop from each of the top and bottom "
+                              "edges. The game's authored margin is 10.")
+                     .Min(0.0f)
+                     .Max(32.0f)
+                     .DefaultValue(10.0f));
+
     path.sidebarName = "Gameplay";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Gameplay", 1);
@@ -1332,7 +1367,15 @@ void PortMenu::AddMenuAssets() {
         .Options(CheckboxOptions().Tooltip("When on, every cache-miss texture upload hashes the decoded RGBA8 image "
                                             "and substitutes a matching PNG from the mods/ index at the pack's higher "
                                             "resolution.")
-                     .DefaultValue(true));
+                     .DefaultValue(ssb64::hires::kHiResEnabledDefault != 0));
+#if defined(__ANDROID__)
+    AddWidget(path,
+              "Mobile note: decoded textures are uncompressed in RAM and on the GPU. "
+              "The pack is capped to a 128 MB cache (gHiResTextures.CacheBudgetMB) and "
+              "per-texture upscale limit, but large packs can still pressure memory on "
+              "low-RAM devices. Off by default — enable only if your device has headroom.",
+              WIDGET_TEXT);
+#endif
     AddWidget(path, "Open Mods Folder", WIDGET_BUTTON)
         .RaceDisable(false)
         .Callback([](WidgetInfo&) {
@@ -1347,6 +1390,10 @@ void PortMenu::AddMenuAssets() {
                            ssb64::hires::HiResPack::Get().Stats().indexedTextures),
               WIDGET_TEXT);
 
+    // Pack-authoring dump tooling is desktop-only — it writes hundreds of
+    // files into <app>/ and is driven from a separate offline conversion
+    // pipeline, neither of which makes sense on a touch device.
+#if !defined(__ANDROID__)
     AddWidget(path, "Pack Authoring", WIDGET_SEPARATOR_TEXT);
     AddWidget(path,
               "Dump Source Textures writes one .bin per unique texture into "
@@ -1395,6 +1442,7 @@ void PortMenu::AddMenuAssets() {
             SDL_OpenURL(std::string("file:///" + fs::absolute(missPath).string()).c_str());
         })
         .Options(ButtonOptions().Tooltip("Opens the hires_miss_dump/ folder where native-key dumps land."));
+#endif // !__ANDROID__ (pack-authoring dump tooling)
 #endif // PORT_HIRES_ENABLED
 }
 
@@ -1476,6 +1524,9 @@ void PortMenu::AddMenuAbout() {
     AddWidget(path, "Bleee: Playtesting", WIDGET_TEXT);
     AddWidget(path, "Fray: Nrage Control Advising", WIDGET_TEXT);
     AddWidget(path, "ElBateSoli: Raphnet Playtesting", WIDGET_TEXT);
+    AddWidget(path, "MickleMoose: C Modding Toolkit Developer", WIDGET_TEXT);
+    AddWidget(path, "Zorkats: C Modding Documentation", WIDGET_TEXT);
+
 
 #if !defined(__ANDROID__)
     // BUILT-IN UPDATER — hidden on Android. App updates come through the

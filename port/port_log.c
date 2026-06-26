@@ -160,6 +160,7 @@ int port_log_get_fd(void)
 
 void port_log(const char *fmt, ...)
 {
+<<<<<<< HEAD
     va_list ap;
     int mirror_regular;
 
@@ -190,4 +191,15 @@ void port_log(const char *fmt, ...)
         va_end(ap);
     }
 #endif
+=======
+	if (sLogFile == NULL) return;
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(sLogFile, fmt, ap);
+	va_end(ap);
+	/* fflush on every call costs seconds per frame on a slow drive when
+	 * figatree watchdogs fire 28x per frame during a stuck APPEAR. Rely on
+	 * stdio's buffer + OS-on-exit flush for normal logging; crash dumps
+	 * have their own flush path. */
+>>>>>>> 727be194b1dafb4f31c88ea39b10881ddd174186
 }
