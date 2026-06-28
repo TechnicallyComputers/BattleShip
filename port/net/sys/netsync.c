@@ -327,8 +327,10 @@ static u32 syNetSyncFoldFighterSlotFullContribution(const FTStruct *fp)
 			contribution =
 			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->translate.vec.f.z));
 			/* Fold joint rotate so the oracle catches facing desyncs (joints[TopN]->rotate.y == fp->lr*90deg
-			   facing). Rotate is quantized in-sim every frame by gcPlayDObjAnimJoint's
-			   syNetplayQuantizeDObjAnimPose hook (and again here), so this is cross-ISA safe like translate. */
+			   facing). syNetSyncHashF32 hashes the raw bits (no quantize here); cross-ISA safety comes
+			   solely from gcPlayDObjAnimJoint quantizing the output pose in-sim via
+			   syNetplayQuantizeDObjAnimPose. The AObj interpolation node state folded by the anim hash is
+			   likewise canonicalized in-sim by syNetplayQuantizeDObjAObjChain. */
 			contribution =
 			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.x));
 			contribution =

@@ -1398,6 +1398,47 @@ static sb32 mmParseMatchedBodyInto(const char *body, MmMatchResult *r)
 #define MM_HTTPS_DEFAULT_TIMEOUT_SEC 30L
 #define MM_HTTPS_TRICKLE_TIMEOUT_SEC 8L
 
+#if defined(_MSC_VER)
+#define MM_THREAD_LOCAL __declspec(thread)
+#else
+#define MM_THREAD_LOCAL __thread
+#endif
+
+/*
+ * Per-thread reusable curl handle. mmHttpsRequestInternal runs on BOTH the matchmaking
+ * worker (SSB64MmWorker) and the game thread (sync ICE trickle / role-ready), so the handle
+ * must be thread-local — a single shared CURL* is not thread-safe. Reusing one handle per
+ * thread keeps the HTTPS connection alive (keep-alive) and the c-ares DNS cache warm across
+ * the rapid queue-poll / ICE trickle burst, instead of curl_easy_init()+cleanup() per call.
+ * That collapses the per-request DNS+TLS+socket open/close churn that maximizes the
+ * bionic-fdsan fd-reuse window on Android (see docs/bugs/android_ice_connect_fdsan_2026-05-30.md
+ * and android_matchmaking_cares_dns_fdsan_2026-06-26.md).
+ */
+static MM_THREAD_LOCAL CURL *sTlsCurlHandle;
+
+static CURL *mmCurlThreadHandle(void)
+{
+	if (sTlsCurlHandle == NULL)
+	{
+		sTlsCurlHandle = curl_easy_init();
+	}
+	else
+	{
+		/* Clears options but preserves the connection cache + DNS cache for reuse. */
+		curl_easy_reset(sTlsCurlHandle);
+	}
+	return sTlsCurlHandle;
+}
+
+static void mmCurlThreadHandleRelease(void)
+{
+	if (sTlsCurlHandle != NULL)
+	{
+		curl_easy_cleanup(sTlsCurlHandle);
+		sTlsCurlHandle = NULL;
+	}
+}
+
 static long mmHttpsRequestInternal(const char *method, const char *path_suffix, const char *json_body, sb32 verb,
                                    char **resp_body_out, sb32 ice_serialize, long curl_timeout_sec)
 {
@@ -1417,7 +1458,7 @@ static long mmHttpsRequestInternal(const char *method, const char *path_suffix, 
 
 	snprintf(url, sizeof(url), "%s%s", sBaseUrl, path_suffix);
 
-	c = curl_easy_init();
+	c = mmCurlThreadHandle();
 
 	if (c == NULL)
 	{
@@ -1462,6 +1503,26 @@ static long mmHttpsRequestInternal(const char *method, const char *path_suffix, 
 	curl_easy_setopt(c, CURLOPT_TIMEOUT, (curl_timeout_sec > 0L) ? curl_timeout_sec : MM_HTTPS_DEFAULT_TIMEOUT_SEC);
 	mmCurlConfigureSsl(c);
 
+#if defined(__ANDROID__)
+	/*
+	 * Android curl is built with c-ares (no threaded system resolver) so the matchmaking
+	 * worker never calls Android getaddrinfo -> netd/DnsResolver Binder, whose Parcel-owned
+	 * fds were double-closed under bionic fdsan (SIGABRT at matchmaking entry).
+	 * c-ares cannot auto-discover DNS servers on Android (net.dns* sysprops gone since 8.0),
+	 * so supply them explicitly. Overridable for restricted networks; a future hardening can
+	 * use ares_library_init_android() to read the device's configured resolvers.
+	 */
+	{
+		const char *dns_servers = getenv("SSB64_MATCHMAKING_DNS_SERVERS");
+
+		if ((dns_servers == NULL) || (dns_servers[0] == '\0'))
+		{
+			dns_servers = "1.1.1.1,8.8.8.8,9.9.9.9";
+		}
+		(void)curl_easy_setopt(c, CURLOPT_DNS_SERVERS, dns_servers);
+	}
+#endif
+
 	if (ice_serialize != FALSE)
 	{
 		mnVSNetAutomatchAMIceHttpsLockBeforeRequest();
@@ -1473,8 +1534,12 @@ static long mmHttpsRequestInternal(const char *method, const char *path_suffix, 
 	}
 
 	curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+	/*
+	 * Keep the thread-local handle alive for connection reuse; only free the per-request
+	 * header list. The next call resets the handle (mmCurlThreadHandle) before re-setting
+	 * CURLOPT_HTTPHEADER, so the freed slist is never referenced by a later perform.
+	 */
 	curl_slist_free_all(hdrs);
-	curl_easy_cleanup(c);
 
 #ifdef PORT
 	if ((curl_code != CURLE_OK) || (verb != FALSE))
@@ -2778,6 +2843,8 @@ static void *mmWorkerPthreadThunk(void *p)
 	mmWorkerSetThreadName();
 	(void)p;
 	mmJobWorkerLoop(NULL);
+	/* Tear down this thread's reused curl handle (and its keep-alive socket) before join. */
+	mmCurlThreadHandleRelease();
 	return NULL;
 }
 
@@ -2798,6 +2865,25 @@ void mmMatchmakingStartup(void)
 #endif
 		return;
 	}
+
+#ifdef PORT
+	{
+		/*
+		 * Confirm the resolver backend at runtime. On Android the c-ares async resolver
+		 * (async_dns=1, c-ares=<ver>) is required to avoid the getaddrinfo->netd Binder
+		 * Parcel-fd double-close under fdsan. async_dns=0 / c-ares=(none) means the build
+		 * fell back to the threaded system resolver and the entry crash will recur.
+		 */
+		curl_version_info_data *vinfo = curl_version_info(CURLVERSION_NOW);
+		const char *ares_ver =
+		    ((vinfo != NULL) && (vinfo->ares != NULL) && (vinfo->ares[0] != '\0')) ? vinfo->ares : "(none)";
+		int async_dns = ((vinfo != NULL) && ((vinfo->features & CURL_VERSION_ASYNCHDNS) != 0)) ? 1 : 0;
+		port_log("SSB64 Matchmaking: curl %s ssl=%s async_dns=%d c-ares=%s\n",
+		         (vinfo != NULL) ? vinfo->version : "?",
+		         ((vinfo != NULL) && (vinfo->ssl_version != NULL)) ? vinfo->ssl_version : "?", async_dns,
+		         ares_ver);
+	}
+#endif
 
 	sWorkerRunning = TRUE;
 	sWorkerSpawned = TRUE;

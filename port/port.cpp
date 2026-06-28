@@ -149,6 +149,7 @@ static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
 	if (file) port_log("    file: %ls:%u\n", file, line);
 	port_log_close();
 }
+#endif
 
 static volatile LONG sMinidumpWritten = 0;
 static void portResolveSymbol(void* addr, char* out, size_t cap);
@@ -1205,6 +1206,18 @@ int PortIsRunning(void) {
 /* Hint/env cache only — safe before SDL_INIT_VIDEO (InitWindow). */
 static void portAndroidJniWarmupEarly(void)
 {
+	/*
+	 * Lock to landscape. SDL overrides the manifest's screenOrientation at window
+	 * creation: with no orientation hint and a resizable SDL window (LUS creates one),
+	 * SDLActivity.setOrientationBis() picks SCREEN_ORIENTATION_FULL_USER, so the app
+	 * follows the OS auto-rotate lock and sits in the device's natural (portrait)
+	 * orientation. Supplying both landscape tokens routes to SENSOR_LANDSCAPE — the
+	 * game rotates only between the two landscape orientations, never portrait, which
+	 * also avoids the portrait<->landscape surface resize that aborted the BLAST present
+	 * transaction (docs/bugs/android_surface_resize_blast_abort_2026-06-26.md).
+	 * Must be set before LUS creates the window (PortInit, below).
+	 */
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 	SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080");
 	(void)SDL_getenv("__ssb64_jni_warmup__");
 }

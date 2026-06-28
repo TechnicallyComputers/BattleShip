@@ -794,39 +794,6 @@ if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT STREQUAL "")
     endif()
 endif()
 
-if(SSB64_NETMENU)
-    list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
-endif()
-
-if(SSB64_NETMENU AND SSB64_NETPLAY_ICE)
-    list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_ICE=1)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64Libjuice.cmake")
-endif()
-
-if(SSB64_NETPLAY_HARD_LAN_MODE)
-    list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
-endif()
-
-if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT STREQUAL "")
-    if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT MATCHES "^[0-9]+$")
-        message(FATAL_ERROR
-            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be numeric (got '${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}')")
-    endif()
-    math(EXPR _SSB64_AUTOMATCH_STAGE_DEFAULT "${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
-    if(_SSB64_AUTOMATCH_STAGE_DEFAULT LESS 0 OR _SSB64_AUTOMATCH_STAGE_DEFAULT GREATER 8)
-        message(FATAL_ERROR
-            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be 0..8 (got ${_SSB64_AUTOMATCH_STAGE_DEFAULT})")
-    endif()
-    if(SSB64_NETMENU)
-        list(APPEND SSB64_COMPILE_DEFS
-             SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT})
-        message(STATUS "SSB64 automatch stage default (compile): GRKind ${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
-    else()
-        message(WARNING
-            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT ignored (requires SSB64_NETMENU=ON)")
-    endif()
-endif()
-
 # Hi-res texture pack support is US-only (desktop AND Android). On Android
 # it compiles but defaults to OFF and runs with a smaller decoded-RGBA8 LRU
 # budget (see port/hires/HiResPack.h: kHiResEnabledDefault / kDefaultLruBudgetMB)

@@ -160,13 +160,28 @@ int port_log_get_fd(void)
 
 void port_log(const char *fmt, ...)
 {
-	if (sLogFile == NULL) return;
-	va_list ap;
-	va_start(ap, fmt);
-	vfprintf(sLogFile, fmt, ap);
-	va_end(ap);
-	/* fflush on every call costs seconds per frame on a slow drive when
-	 * figatree watchdogs fire 28x per frame during a stuck APPEAR. Rely on
-	 * stdio's buffer + OS-on-exit flush for normal logging; crash dumps
-	 * have their own flush path. */
+    FILE *fp = (sActiveSink == PORT_LOG_SINK_DEBUG) ? sLogDebug : sLogRegular;
+    va_list ap;
+
+#if defined(__ANDROID__)
+    if (sAndroidLogcatMirror) {
+        va_start(ap, fmt);
+        portLogMirrorAndroidLogcat(fmt, ap);
+        va_end(ap);
+    }
+#endif
+
+    if (fp != NULL) {
+        va_start(ap, fmt);
+        portLogEmit(fp, fmt, ap);
+        va_end(ap);
+    }
+
+    /* When a debug session is active, also append connectivity lines to the
+     * regular ssb64.log so a user who only exports one file still has them. */
+    if (sActiveSink == PORT_LOG_SINK_DEBUG && sLogRegular != NULL && sLogRegular != fp) {
+        va_start(ap, fmt);
+        portLogEmit(sLogRegular, fmt, ap);
+        va_end(ap);
+    }
 }

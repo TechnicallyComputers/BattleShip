@@ -13,6 +13,8 @@
 #include <mp/map.h>
 #include <mp/mpdef.h>
 
+#include <lb/lbcommon.h>
+
 #include <ft/ftchar/ftkirby/ftkirby.h>
 #include <ft/ftchar/ftness/ftness.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
@@ -39,9 +41,11 @@
 #include <macros.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
+extern void port_log(const char *fmt, ...);
 
 static sb32 sSYNetplaySimQuantizeEnvCache = -999;
 
@@ -227,6 +231,32 @@ void syNetplayQuantizeDObjAnimPose(DObj *dobj)
 	syNetplayQuantizeDObjTranslate(dobj);
 	syNetplayQuantizeDObjRotate(dobj);
 	syNetplayQuantizeDObjScale(dobj);
+}
+
+void syNetplayQuantizeDObjAObjChain(DObj *dobj)
+{
+	AObj *aobj;
+
+	if ((dobj == NULL) || (syNetplaySimQuantizeActive() == FALSE))
+	{
+		return;
+	}
+	/*
+	 * Mirror syNetRbSnapCaptureAObjNode/syNetRbSnapApplyAObjNode exactly: snapshot capture and
+	 * apply round these six AObj fields to the shared grid, but live forward sim (gcParseDObjAnimJoint
+	 * sets value/rate from the figatree stream, gcPlayDObjAnimJoint accumulates length += anim_speed)
+	 * never does. Quantizing them here keeps the live chain bit-identical to a snapshot-restored chain,
+	 * so a resim replay continues the same interpolation track and the cross-ISA anim hash stops forking.
+	 */
+	for (aobj = dobj->aobj; aobj != NULL; aobj = aobj->next)
+	{
+		aobj->length_invert = syNetplayQuantizeF32(aobj->length_invert);
+		aobj->length = syNetplayQuantizeF32(aobj->length);
+		aobj->value_base = syNetplayQuantizeF32(aobj->value_base);
+		aobj->value_target = syNetplayQuantizeF32(aobj->value_target);
+		aobj->rate_base = syNetplayQuantizeF32(aobj->rate_base);
+		aobj->rate_target = syNetplayQuantizeF32(aobj->rate_target);
+	}
 }
 
 sb32 syNetplayFighterInIntroSimScope(const FTStruct *fp)
@@ -1167,6 +1197,187 @@ void syNetplayCanonicalizeRebirthFighterMapPose(GObj *fighter_gobj)
 		if (fp->joints[nFTPartsJointTopN] != NULL)
 		{
 			syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+		}
+	}
+}
+
+/*
+ * Per-joint forward-vs-resim AObj trace (default off; SSB64_NETPLAY_AOBJ_LEG_TRACE=1).
+ *
+ * Ground-truth probe for the post-rollback joint-spin bug: dumps, for every active fighter joint,
+ * the parsed AObj-chain digest (length/length_invert/value_base/value_target/rate_base/rate_target +
+ * track/kind), a digest of the raw figatree EVENT32 stream bytes (the parser's source data — NOT folded
+ * into the per-tick anim hash), the anim cursor scalars, and the rotate output. Tagged phase=fwd|resim
+ * and keyed by stable dobj/event32 pointers so the same joint can be compared across the forward pass
+ * and the resim replay of the same tick. Independent of SIM_F32_QUANTIZE so it works in a quantize-off
+ * bisect. Bound the volume with SSB64_NETPLAY_AOBJ_LEG_TRACE_TICK_MIN / _TICK_MAX.
+ *
+ * Divergence localization (compare fwd vs resim line for the same tick+dobj):
+ *   stream differs  -> raw figatree bytes mutated by restore (force un-halfswap) vs forward sim.
+ *   chain differs, stream same -> parser produced a different chain from the same bytes (cursor/timing).
+ *   rotate differs, chain same -> downstream pose write divergence.
+ */
+static u32 syNetplayAObjF32Bits(f32 v)
+{
+	u32 bits;
+
+	memcpy(&bits, &v, sizeof(bits));
+	return bits;
+}
+
+static sb32 sSYNetplayAObjLegTraceEnvCache = -999;
+static u32 sSYNetplayAObjLegTraceTickMin = 0U;
+static u32 sSYNetplayAObjLegTraceTickMax = 0xFFFFFFFFU;
+
+static sb32 syNetplayAObjLegTraceEnabled(void)
+{
+	const char *env;
+
+	if (sSYNetplayAObjLegTraceEnvCache != -999)
+	{
+		return sSYNetplayAObjLegTraceEnvCache;
+	}
+	env = getenv("SSB64_NETPLAY_AOBJ_LEG_TRACE");
+	sSYNetplayAObjLegTraceEnvCache = ((env != NULL) && (atoi(env) != 0)) ? TRUE : FALSE;
+	if (sSYNetplayAObjLegTraceEnvCache != FALSE)
+	{
+		const char *mn = getenv("SSB64_NETPLAY_AOBJ_LEG_TRACE_TICK_MIN");
+		const char *mx = getenv("SSB64_NETPLAY_AOBJ_LEG_TRACE_TICK_MAX");
+
+		if ((mn != NULL) && (mn[0] != '\0'))
+		{
+			sSYNetplayAObjLegTraceTickMin = (u32)atoi(mn);
+		}
+		if ((mx != NULL) && (mx[0] != '\0'))
+		{
+			sSYNetplayAObjLegTraceTickMax = (u32)atoi(mx);
+		}
+	}
+	return sSYNetplayAObjLegTraceEnvCache;
+}
+
+static u32 syNetplayAObjStreamDigest(const void *event32)
+{
+	const u32 *ev = (const u32 *)event32;
+	u32 h = 2166136261U;
+	s32 i;
+
+	if (ev == NULL)
+	{
+		return 0U;
+	}
+	for (i = 0; i < 16; i++)
+	{
+		h ^= ev[i];
+		h *= 16777619U;
+	}
+	return h;
+}
+
+static u32 syNetplayAObjChainDigest(const DObj *dobj)
+{
+	const AObj *aobj;
+	u32 h = 2166136261U;
+	s32 n = 0;
+
+	for (aobj = dobj->aobj; (aobj != NULL) && (n < 32); aobj = aobj->next, n++)
+	{
+		h ^= (u32)aobj->track;
+		h *= 16777619U;
+		h ^= (u32)aobj->kind;
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->length_invert);
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->length);
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->value_base);
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->value_target);
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->rate_base);
+		h *= 16777619U;
+		h ^= syNetplayAObjF32Bits(aobj->rate_target);
+		h *= 16777619U;
+	}
+	return h;
+}
+
+/* seg=jnt: sim joint (fp->joints[]).  seg=vis: visual figatree DObj under TopN->child (the rendered
+ * model the parser actually animates) — separate from the sim joints and the only place a reattach-
+ * reloaded-but-not-renormalized stream surfaces.  idx is the joint index for jnt, a walk counter for vis. */
+static void syNetplayTraceLogDObjAObj(u32 tick, sb32 is_resim, FTStruct *fp, const char *seg, s32 idx,
+				      DObj *dobj)
+{
+	if (dobj == NULL)
+	{
+		return;
+	}
+	if ((dobj->aobj == NULL) && (dobj->anim_joint.event32 == NULL))
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetAObjTrace: tick=%u phase=%s seg=%s player=%d fkind=%d joint=%d dobj=%p ev=%p "
+	    "af=%.9g aw=%.9g as=%.9g ra=%.9g rx=%.9g ry=%.9g rz=%.9g tx=%.9g ty=%.9g tz=%.9g "
+	    "sx=%.9g sy=%.9g sz=%.9g chain=0x%08x stream=0x%08x\n",
+	    tick, (is_resim != FALSE) ? "resim" : "fwd", seg, (s32)fp->player, (s32)fp->fkind, idx,
+	    (void *)dobj, (void *)dobj->anim_joint.event32, (f64)dobj->anim_frame, (f64)dobj->anim_wait,
+	    (f64)dobj->anim_speed, (f64)dobj->rotate.a, (f64)dobj->rotate.vec.f.x,
+	    (f64)dobj->rotate.vec.f.y, (f64)dobj->rotate.vec.f.z, (f64)dobj->translate.vec.f.x,
+	    (f64)dobj->translate.vec.f.y, (f64)dobj->translate.vec.f.z, (f64)dobj->scale.vec.f.x,
+	    (f64)dobj->scale.vec.f.y, (f64)dobj->scale.vec.f.z, syNetplayAObjChainDigest(dobj),
+	    syNetplayAObjStreamDigest(dobj->anim_joint.event32));
+}
+
+void syNetplayTraceActiveFighterAObj(u32 tick)
+{
+	GObj *fighter_gobj;
+	sb32 is_resim;
+
+	if (syNetplayAObjLegTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((tick < sSYNetplayAObjLegTraceTickMin) || (tick > sSYNetplayAObjLegTraceTickMax))
+	{
+		return;
+	}
+	is_resim = (syNetRollbackIsResimulating() != FALSE) ? TRUE : FALSE;
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		s32 ji;
+		DObj *root_dobj;
+		DObj *current_dobj;
+		s32 vis_idx;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+		{
+			syNetplayTraceLogDObjAObj(tick, is_resim, fp, "jnt", ji, fp->joints[ji]);
+		}
+
+		/* Visual figatree tree (rendered model) — walked exactly like
+		 * syNetRbSnapUnhalfswapFighterFigatreeDObjAnimStreams so vis indices align across logs. */
+		if (fp->joints[nFTPartsJointTopN] == NULL)
+		{
+			continue;
+		}
+		root_dobj = fp->joints[nFTPartsJointTopN]->child;
+		if (root_dobj == NULL)
+		{
+			continue;
+		}
+		vis_idx = 0;
+		for (current_dobj = root_dobj; current_dobj != NULL;
+		     current_dobj = lbCommonGetTreeDObjNextFromRoot(current_dobj, root_dobj))
+		{
+			syNetplayTraceLogDObjAObj(tick, is_resim, fp, "vis", vis_idx, current_dobj);
+			vis_idx++;
 		}
 	}
 }

@@ -51,6 +51,7 @@
 #include <wp/wppikachu/wppikachuthunderjolt.h>
 #include <wp/wpsamus/wpsamusbomb.h>
 #include <wp/wpsamus/wpsamuschargeshot.h>
+#include <wp/wpboss/wpbossbullet.h>
 #include <wp/wpvars.h>
 #if defined(PORT) && defined(SSB64_NETMENU)
 extern wpSamusChargeShotAttributes dWPSamusChargeShotWeaponAttributes[];
@@ -152,6 +153,14 @@ extern void port_log(const char *fmt, ...);
 #define SYNETRB_ITEM_FLAG_GROUND_MONSTER_ANIM_VALID 0x10U
 #define SYNETRB_ITEM_FLAG_MARUMINE_EXPLODE         0x20U
 #define SYNETRB_ITEM_FLAG_GBUMPER_PRESENTATION_VALID 0x40U
+
+/*
+ * item_flags bits 4..7 are kind-multiplexed (Link bomb status vs ground-monster/marumine/gbumper),
+ * so generic per-item bools that apply to ANY kind live in item_flags2. is_damage_all is folded into
+ * syNetSyncHashActiveItemsForRollback (netsync.c), so it must be captured/restored or a matched
+ * in-place apply keeps the stale live value and trips LOAD_HASH_DRIFT.
+ */
+#define SYNETRB_ITEM_FLAG2_DAMAGE_ALL              0x01U
 /* LBParticle sparkle outlives the 6-tick explode item GObj; replay from ring history after load. */
 #define SYNETRB_LINK_BOMB_SPARKLE_REPLAY_WINDOW 48U
 #define SYNETRB_LINK_BOMB_SPARKLE_REPLAY_MAX     8
@@ -531,6 +540,7 @@ typedef struct SYNetRbSnapItemBlob
 {
 	sb32 is_valid;
 	u32 gobj_id;
+	u32 instance_id;
 	s32 kind;
 	s32 type;
 	u8 team;
@@ -557,7 +567,8 @@ typedef struct SYNetRbSnapItemBlob
 	f32 present_anim_wait;
 	u8 present_texture_id_curr;
 	u8 item_flags;
-	u8 item_flags_pad[3];
+	u8 item_flags2;
+	u8 item_flags_pad[2];
 	u8 item_vars[sizeof(union ITStatusVars)];
 	u32 attack_record_victim_gobj_id[GMATTACKREC_NUM_MAX];
 
@@ -5389,6 +5400,89 @@ static sb32 syNetRbSnapFighterInIntroLoadFidelityScope(const FTStruct *fp);
 static sb32 syNetRbSnapFighterAppearPresentationOk(GObj *fighter_gobj, FTStruct *fp,
 						   const SYNetRbSnapFighterBlob *blob, const char **out_fail);
 
+#if defined(SSB64_NETMENU)
+static sb32 syNetRbSnapCaptureAnimDiagEnabled(void)
+{
+	static int s_cached = -999;
+	const char *env;
+
+	if (s_cached != -999)
+	{
+		return (s_cached != 0) ? TRUE : FALSE;
+	}
+	env = getenv("SSB64_NETPLAY_RESIM_CAPTURE_ANIM_DIAG");
+	s_cached = ((env != NULL) && (env[0] != '\0') && (atoi(env) != 0)) ? 1 : 0;
+	return (s_cached != 0) ? TRUE : FALSE;
+}
+
+static u32 syNetRbSnapCaptureAnimDiagTickBound(const char *name, u32 fallback)
+{
+	const char *env;
+	int parsed;
+
+	env = getenv(name);
+	if ((env == NULL) || (env[0] == '\0'))
+	{
+		return fallback;
+	}
+	parsed = atoi(env);
+	return (parsed < 0) ? 0U : (u32)parsed;
+}
+
+/*
+ * Capture-time anim-cursor probe (default off). Confirms whether the snapshot blob records the
+ * AOBJ_ANIM_NULL ("animation finished", == F32_MIN) sentinel for a joint that is actually
+ * mid-interpolation (non-zero AObj rate). That pairing freezes gcParseDObjAnimJoint on restore
+ * (the sentinel makes the parser treat the joint as done, so the event32 cursor never advances)
+ * while the live AObj chain keeps extrapolating -> post-resim joint spin. Logs both the captured
+ * blob values and the live DObj cursor so capture-phase mismatch (live already NULL) can be
+ * distinguished from a restore-side clobber. See docs/netplay_environment_variables.md.
+ */
+static void syNetRbSnapLogCaptureAnimDiag(const SYNetRbSnapDObjAnimBlob *anim, DObj *dobj,
+					  s32 player, s32 fkind, s32 joint)
+{
+	u32 tick;
+	u32 tmin;
+	u32 tmax;
+	u32 ai;
+
+	if (syNetRbSnapCaptureAnimDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((anim == NULL) || (dobj == NULL))
+	{
+		return;
+	}
+	tick = syNetInputGetTick();
+	tmin = syNetRbSnapCaptureAnimDiagTickBound("SSB64_NETPLAY_RESIM_CAPTURE_ANIM_DIAG_TICK_MIN", 0U);
+	tmax = syNetRbSnapCaptureAnimDiagTickBound("SSB64_NETPLAY_RESIM_CAPTURE_ANIM_DIAG_TICK_MAX", 0xFFFFFFFFU);
+	if ((tick < tmin) || (tick > tmax))
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetRbCaptureAnim: tick=%u player=%d fkind=%d joint=%d cap_ev=%p cap_af=%.9g cap_aw=%.9g "
+	    "cap_as=%.9g live_ev=%p live_af=%.9g live_aw=%.9g anim_null=%d aobj_count=%u chain_total=%u\n",
+	    tick, (int)player, (int)fkind, (int)joint, (void *)anim->event32_ptr, (f64)anim->anim_frame,
+	    (f64)anim->anim_wait, (f64)anim->anim_speed, (void *)dobj->anim_joint.event32,
+	    (f64)dobj->anim_frame, (f64)dobj->anim_wait,
+	    (anim->anim_wait == AOBJ_ANIM_NULL) ? 1 : 0, (unsigned int)anim->aobj_count,
+	    (unsigned int)anim->aobj_chain_total);
+	for (ai = 0U; ai < (u32)anim->aobj_count; ai++)
+	{
+		const SYNetRbSnapAObjNodeBlob *node = &anim->aobj[ai];
+
+		port_log(
+		    "SSB64 NetRbCaptureAnim:   aobj[%u] track=%u kind=%u len=%.9g vbase=%.9g vtarg=%.9g "
+		    "rbase=%.9g rtarg=%.9g\n",
+		    (unsigned int)ai, (unsigned int)node->track, (unsigned int)node->kind, (f64)node->length,
+		    (f64)node->value_base, (f64)node->value_target, (f64)node->rate_base,
+		    (f64)node->rate_target);
+	}
+}
+#endif
+
 static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp, GObj *fighter_gobj)
 {
 	s32 ji;
@@ -5571,6 +5665,10 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 			blob->joint_dobj_flags[ji] = fp->joints[ji]->flags;
 			blob->joint_anim_joint_event32[ji] =
 			    (fp->joints[ji]->anim_joint.event32 != NULL) ? (uintptr_t)fp->joints[ji]->anim_joint.event32 : 0U;
+#if defined(SSB64_NETMENU)
+			syNetRbSnapLogCaptureAnimDiag(&blob->joint_anim[ji], fp->joints[ji], blob->player,
+						      blob->fkind, ji);
+#endif
 		}
 	}
 #if defined(SSB64_NETMENU)
@@ -6880,17 +6978,148 @@ static void syNetRbSnapEvictFighterFigatreeEvent32Cache(FTStruct *fp)
 	{
 		return;
 	}
+	/* Snapshot native heads before the evict wipes the live memo, so the
+	 * double-swap detector below can still recognize an already-native stream. */
+	port_aobj_event32_capture_native_in_range(fp->figatree_heap, (unsigned long)gFTManagerFigatreeHeapSize);
 	port_aobj_event32_unhalfswap_evict_range(fp->figatree_heap, (unsigned long)gFTManagerFigatreeHeapSize);
 }
 
-static void syNetRbSnapUnhalfswapEvent32Head(void *head)
+static s32 sSYNetRbAObjDoubleSwapLogCount = 0;
+
+/*
+ * Detector (no behavior change): a head captured as native by the pre-evict snapshot (taken inside
+ * syNetRbSnapEvictFighterFigatreeEvent32Cache, before the range evict wipes the live memo) had native
+ * bytes going into the restore. If the unconditional forget()+force then re-applies an un-halfswap to
+ * it, the heuristic misfired and the stream was just corrupted (native -> halfswap), which surfaces as
+ * garbage AObj value/rate and continuous joint rotation after a rollback. Log it with fighter/joint
+ * context so the offending stream (e.g. DK leg) is identifiable.
+ *
+ * Reading the live memo here would always return "not native" because the caller evicts the whole
+ * figatree heap immediately before this runs; the pre-evict snapshot is what makes the probe meaningful.
+ */
+static void syNetRbSnapUnhalfswapEvent32Head(void *head, FTStruct *fp, s32 joint_index)
 {
+	int was_native;
+	int applied;
+
 	if (head == NULL)
 	{
 		return;
 	}
+	was_native = port_aobj_event32_head_was_native_preevict(head);
 	port_aobj_event32_unhalfswap_forget(head);
-	port_aobj_event32_unhalfswap_stream_force(head);
+	applied = port_aobj_event32_unhalfswap_stream_force_applied(head);
+	if ((was_native != 0) && (applied != 0) && (sSYNetRbAObjDoubleSwapLogCount < 256))
+	{
+		sSYNetRbAObjDoubleSwapLogCount++;
+		port_log(
+		    "SSB64 NetRbSnapshot: AOBJ_DOUBLE_SWAP head=%p fkind=%d player=%d status=%d motion=%d joint=%d "
+		    "(stream was native; restore re-applied un-halfswap -> corrupted) n=%d\n",
+		    head, (fp != NULL) ? (s32)fp->fkind : -1, (fp != NULL) ? (s32)fp->player : -1,
+		    (fp != NULL) ? (s32)fp->status_id : -1, (fp != NULL) ? (s32)fp->motion_id : -1, joint_index,
+		    sSYNetRbAObjDoubleSwapLogCount);
+	}
+}
+
+/*
+ * Restore-step stream-digest probe (default off; SSB64_NETPLAY_RESIM_STREAM_DIGEST_DIAG=1).
+ *
+ * Logs, per fighter joint, the FNV digest of the first 16 u32 at the joint's current EVENT32 cursor
+ * plus the cursor pointer and anim scalars, tagged with a checkpoint label. Call before/after each
+ * restore step (un-halfswap, figatree re-attach) so a joint whose digest changes across a single step
+ * pinpoints that step as the writer corrupting the figatree stream the parser will read on resim.
+ * Bound with the same tick window as the AObj leg trace would be — here it is unconditional within the
+ * restore, so keep the flag off outside targeted bisects.
+ */
+static sb32 syNetRbSnapStreamDigestDiagEnabled(void)
+{
+	static int cache = -1;
+
+	if (cache < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_RESIM_STREAM_DIGEST_DIAG");
+
+		cache = ((e != NULL) && (e[0] != '\0') && (e[0] != '0')) ? 1 : 0;
+	}
+	return (cache != 0) ? TRUE : FALSE;
+}
+
+/*
+ * Restore-path forced un-halfswap gate (default OFF = corruption fixed).
+ *
+ * Ground truth (SSB64_NETPLAY_RESIM_STREAM_DIGEST_DIAG, soak1 2026-06-27): the apply_pre -> apply_post
+ * forced un-halfswap below converts already-native figatree EVENT32 stream bytes back to halfswapped
+ * form for ~10 of 38 joints across BOTH fighters (e.g. DK joint 8 stream 0xb802419c -> 0xde6665ea at the
+ * same cursor), bit-identically on Linux and Android. That is a double-swap: the figatree heap is not part
+ * of the snapshot, so at apply time its bytes are the live, already-un-halfswapped forward-sim bytes. The
+ * blob restores a mid-stream cursor (post-advance position) that the load-time walker never memoized as a
+ * head, so the ambiguous heuristic re-walks it and mis-applies a swap -> garbage AObj value/rate ->
+ * continuous joint rotation after rollback resim.
+ *
+ * Genuine halfswapped bytes only ever appear after a figatree (re)load, which always routes through
+ * port_aobj_register_halfswapped_range (lbreloc_bridge load + ftMainRefreshFigatreeVisual reattach) and
+ * evicts the walker memo there; the parser then re-normalizes lazily from real stream heads on the next
+ * gcParseDObjAnimJoint, exactly as in forward sim. So the stable restore path must NOT re-derive byte
+ * order. Set SSB64_NETPLAY_RESIM_RESTORE_UNHALFSWAP=1 to restore the old (corrupting) behavior for A/B.
+ */
+static sb32 syNetRbSnapRestoreForceUnhalfswapEnabled(void)
+{
+	static int cache = -1;
+
+	if (cache < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_RESIM_RESTORE_UNHALFSWAP");
+
+		cache = ((e != NULL) && (e[0] != '\0') && (e[0] != '0')) ? 1 : 0;
+	}
+	return (cache != 0) ? TRUE : FALSE;
+}
+
+static u32 syNetRbSnapStreamDigest16(const void *head)
+{
+	const u32 *ev = (const u32 *)head;
+	u32 h = 2166136261U;
+	s32 i;
+
+	if (ev == NULL)
+	{
+		return 0U;
+	}
+	for (i = 0; i < 16; i++)
+	{
+		h ^= ev[i];
+		h *= 16777619U;
+	}
+	return h;
+}
+
+static void syNetRbSnapDiagFighterStreamDigests(FTStruct *fp, const char *label)
+{
+	s32 ji;
+
+	if ((syNetRbSnapStreamDigestDiagEnabled() == FALSE) || (fp == NULL))
+	{
+		return;
+	}
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		DObj *dobj = fp->joints[ji];
+		void *ev;
+
+		if (dobj == NULL)
+		{
+			continue;
+		}
+		ev = (void *)dobj->anim_joint.event32;
+		if (ev == NULL)
+		{
+			continue;
+		}
+		port_log(
+		    "SSB64 NetRbStreamDiag: %s player=%d fkind=%d joint=%d ev=%p stream=0x%08x af=%.9g aw=%.9g\n",
+		    label, (s32)fp->player, (s32)fp->fkind, ji, ev, syNetRbSnapStreamDigest16(ev),
+		    (f64)dobj->anim_frame, (f64)dobj->anim_wait);
+	}
 }
 
 static void syNetRbSnapRegisterFighterFigatreeHeapSpan(FTStruct *fp)
@@ -6916,7 +7145,7 @@ static void syNetRbSnapUnhalfswapFighterJointEvent32Streams(FTStruct *fp)
 		{
 			continue;
 		}
-		syNetRbSnapUnhalfswapEvent32Head(fp->joints[ji]->anim_joint.event32);
+		syNetRbSnapUnhalfswapEvent32Head(fp->joints[ji]->anim_joint.event32, fp, ji);
 	}
 }
 
@@ -6939,7 +7168,7 @@ static void syNetRbSnapUnhalfswapFighterFigatreeDObjAnimStreams(FTStruct *fp)
 	{
 		if (current_dobj->anim_joint.event32 != NULL)
 		{
-			syNetRbSnapUnhalfswapEvent32Head(current_dobj->anim_joint.event32);
+			syNetRbSnapUnhalfswapEvent32Head(current_dobj->anim_joint.event32, fp, -1);
 		}
 		current_dobj = lbCommonGetTreeDObjNextFromRoot(current_dobj, root_dobj);
 	}
@@ -6951,6 +7180,34 @@ static void syNetRbSnapPreSimUnhalfswapIntroAppearFighter(FTStruct *fp)
 	syNetRbSnapEvictFighterFigatreeEvent32Cache(fp);
 	syNetRbSnapUnhalfswapFighterJointEvent32Streams(fp);
 	syNetRbSnapUnhalfswapFighterFigatreeDObjAnimStreams(fp);
+}
+
+/*
+ * Resim/finalize figatree renormalize (default OFF; same env as the restore-apply gates).
+ *
+ * The intro-Appear repair above (register heap span -> evict the walker memo -> force a fresh un-halfswap
+ * of every joint/DObj cursor) is correct for a *freshly loaded* fighter whose figatree heap genuinely holds
+ * halfswapped bytes and whose cursors sit at real stream heads. It is actively harmful when re-run during a
+ * rollback resim or restore-finalize: the restore keeps the heap NATIVE, the cursors are restored MID-STREAM
+ * (post-advance) positions, and the register/evict wipes both the load-time walk memo and the restore re-pin's
+ * native marks. The subsequent force walk then re-derives byte order from a mid-stream cursor with an empty
+ * memo, mis-classifies an already-native event as halfswapped, double-swaps it, and the joint's anim collapses
+ * to af=0/aw=AOBJ_ANIM_NULL -> continuous extrapolation -> the spinning leg (soak 2026-06-27: P1 j27 fwd
+ * af=30/aw=1 vs resim af=0/aw=NULL; AOBJ_DOUBLE_SWAP detector silent because mid-stream cursors were never
+ * memoized as heads). It is also redundant: with the heap native and the cursor re-pinned, the per-tick resim
+ * does no ftMainRefreshFigatreeVisual reattach, so the native marks persist and gcParseDObjAnimJoint is a
+ * no-op on the already-native stream. Genuine mid-resim (re)loads still route through
+ * port_aobj_register_halfswapped_range (evict) and the parser re-normalizes lazily from the reloaded head.
+ * SSB64_NETPLAY_RESIM_RESTORE_UNHALFSWAP=1 re-enables the old (corrupting) force pass for A/B.
+ * See docs/bugs/netplay_aobj_restore_double_unhalfswap_resim_2026-06-27.md.
+ */
+static void syNetRbSnapResimRenormalizeFighterFigatreeStreams(FTStruct *fp)
+{
+	if (syNetRbSnapRestoreForceUnhalfswapEnabled() == FALSE)
+	{
+		return;
+	}
+	syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
 }
 #endif
 
@@ -7000,8 +7257,23 @@ static void syNetRbSnapApplyFighterModelPartsFromBlob(GObj *fighter_gobj, FTStru
 	memcpy(fp->modelpart_status, blob->modelpart_status, sizeof(fp->modelpart_status));
 	memcpy(fp->texturepart_status, blob->texturepart_status, sizeof(fp->texturepart_status));
 #if defined(SSB64_NETMENU)
-	syNetRbSnapEvictFighterFigatreeEvent32Cache(fp);
-	syNetRbSnapUnhalfswapFighterJointEvent32Streams(fp);
+	/*
+	 * Default OFF (same rationale as syNetRbSnapApplyFighterJointPoseAndAnimFromBlob): the figatree heap
+	 * is shared/live and already native at restore. This modelpart-apply runs AFTER the presentation
+	 * re-pin in syNetRbSnapRefreshFigatreePresentationFromSlot, so evicting the memo here wipes the native
+	 * marks the re-pin set and the forced un-halfswap then double-swaps native mid-stream cursors,
+	 * re-corrupting exactly the joints the re-pin just protected (soak 2026-06-27: status=10 motion=4,
+	 * AOBJ_DOUBLE_SWAP joints 21/25/26/28 P0, 24/27/32 P1, bit-identical on both peers). A genuine
+	 * modelpart swap above (ftParamSetModelPartID) reloads its figatree DL through
+	 * port_aobj_register_halfswapped_range, which evicts the memo so gcParseDObjAnimJoint re-normalizes
+	 * the freshly loaded stream lazily from its real head. SSB64_NETPLAY_RESIM_RESTORE_UNHALFSWAP=1
+	 * restores the old (corrupting) behavior for A/B.
+	 */
+	if (syNetRbSnapRestoreForceUnhalfswapEnabled() != FALSE)
+	{
+		syNetRbSnapEvictFighterFigatreeEvent32Cache(fp);
+		syNetRbSnapUnhalfswapFighterJointEvent32Streams(fp);
+	}
 #endif
 }
 
@@ -7174,6 +7446,20 @@ static void syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(FTStruct *fp, GObj *
 			{
 				fp->joints[ji]->anim_joint.event32 =
 				    (AObjEvent32 *)blob->joint_anim_joint_event32[ji];
+#if defined(SSB64_NETMENU)
+				/*
+				 * Re-pin the restored mid-stream cursor as native in the un-halfswap memo. The
+				 * figatree reload in syNetRbSnapshotSyncFighterPresentation evicts the whole heap's
+				 * walker memo via port_aobj_register_halfswapped_range, but a rollback re-bind does
+				 * NOT re-copy halfswapped bytes — this cursor (captured from native live state) still
+				 * points at native EVENT32 data (verified: presync_post_repin digest == forward).
+				 * Without this, gcParseDObjAnimJoint's lazy walk re-classifies the mid-stream cursor,
+				 * misreads a native mid-stream event as halfswapped, double-swaps it, and the joint's
+				 * anim collapses to af=0/aw=AOBJ_ANIM_NULL on the first resim tick (frozen/spinning leg).
+				 * See docs/bugs/netplay_aobj_restore_double_unhalfswap_resim_2026-06-27.md.
+				 */
+				port_aobj_event32_head_mark_unswapped(fp->joints[ji]->anim_joint.event32);
+#endif
 			}
 			else
 			{
@@ -7184,9 +7470,20 @@ static void syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(FTStruct *fp, GObj *
 	}
 	syNetRbSnapRestoreFighterAnimScalarsFromBlob(fighter_gobj, fp, blob);
 #if defined(SSB64_NETMENU)
-	syNetRbSnapEvictFighterFigatreeEvent32Cache(fp);
-	syNetRbSnapUnhalfswapFighterJointEvent32Streams(fp);
-	syNetRbSnapUnhalfswapFighterFigatreeDObjAnimStreams(fp);
+	syNetRbSnapDiagFighterStreamDigests(fp, "apply_pre_unhalfswap");
+	/*
+	 * Default OFF: the figatree heap is shared (not snapshotted) and already holds native bytes here;
+	 * re-deriving byte order from the restored mid-stream cursor double-swaps native streams and spins
+	 * joints after resim. (Re)loads invalidate the walker memo via port_aobj_register_halfswapped_range,
+	 * and the parser re-normalizes lazily from real heads. See syNetRbSnapRestoreForceUnhalfswapEnabled.
+	 */
+	if (syNetRbSnapRestoreForceUnhalfswapEnabled() != FALSE)
+	{
+		syNetRbSnapEvictFighterFigatreeEvent32Cache(fp);
+		syNetRbSnapUnhalfswapFighterJointEvent32Streams(fp);
+		syNetRbSnapUnhalfswapFighterFigatreeDObjAnimStreams(fp);
+	}
+	syNetRbSnapDiagFighterStreamDigests(fp, "apply_post_unhalfswap");
 #endif
 }
 
@@ -10138,6 +10435,7 @@ static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
 		memset(blob, 0, sizeof(*blob));
 		blob->is_valid = TRUE;
 		blob->gobj_id = gobj->id;
+		blob->instance_id = ip->instance_id;
 		blob->kind = ip->kind;
 		blob->type = ip->type;
 		blob->team = ip->team;
@@ -10177,6 +10475,11 @@ static sb32 syNetRbSnapCaptureItems(SYNetRbSnapshotSlot *slot)
 		if (ip->is_thrown != FALSE)
 		{
 			blob->item_flags |= 0x04U;
+		}
+		blob->item_flags2 = 0;
+		if (ip->is_damage_all != FALSE)
+		{
+			blob->item_flags2 |= SYNETRB_ITEM_FLAG2_DAMAGE_ALL;
 		}
 #ifdef PORT
 		if (ip->kind == nITKindLinkBomb)
@@ -10434,6 +10737,13 @@ static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob
 		return;
 	}
 	ip->kind = blob->kind;
+	/*
+	 * Restore the per-spawn identity so a respawned item (which itManagerMakeItem just
+	 * gave a fresh counter value) recovers the original snapshot id, matching the weapon
+	 * path (syNetRbSnapApplyWeaponBlobToGObj). Keeps instance-id matching stable across
+	 * walk-backs that respawn items.
+	 */
+	ip->instance_id = blob->instance_id;
 	ip->type = blob->type;
 	ip->team = blob->team;
 	ip->player = blob->player;
@@ -10464,6 +10774,7 @@ static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob
 	ip->is_hold = ((blob->item_flags & 0x01U) != 0U) ? TRUE : FALSE;
 	ip->is_allow_pickup = ((blob->item_flags & 0x02U) != 0U) ? TRUE : FALSE;
 	ip->is_thrown = ((blob->item_flags & 0x04U) != 0U) ? TRUE : FALSE;
+	ip->is_damage_all = ((blob->item_flags2 & SYNETRB_ITEM_FLAG2_DAMAGE_ALL) != 0U) ? TRUE : FALSE;
 	if (dobj != NULL)
 	{
 		dobj->translate.vec.f = blob->translate;
@@ -10473,6 +10784,31 @@ static void syNetRbSnapApplyItemBlobToGObj(GObj *gobj, const SYNetRbSnapItemBlob
 	syNetRbSnapCanonicalizeLiveItemForNetplay(gobj);
 #endif
 	syNetRbSnapApplyItemPresentation(gobj, ip, blob);
+}
+
+/*
+ * Exact per-instance identity (mirrors syNetRbSnapFindWeaponBlobByInstanceId). All items
+ * share the nGCCommonKindItem GObj id, so instance_id is the only unambiguous key when
+ * multiple identical items are live (e.g. two Link bombs). instance_id 0 is "unset"
+ * (legacy / pre-id spawn) and never matches.
+ */
+static s32 syNetRbSnapFindItemBlobByInstanceId(const SYNetRbSnapshotSlot *slot, sb32 *matched, u32 instance_id)
+{
+	s32 si;
+
+	if ((slot == NULL) || (instance_id == 0U))
+	{
+		return -1;
+	}
+	for (si = 0; si < slot->item_count; si++)
+	{
+		if ((matched[si] == FALSE) && (slot->items[si].is_valid != FALSE) &&
+		    (slot->items[si].instance_id == instance_id))
+		{
+			return si;
+		}
+	}
+	return -1;
 }
 
 static s32 syNetRbSnapFindItemBlobByGobjId(const SYNetRbSnapshotSlot *slot, sb32 *matched, u32 gobj_id)
@@ -10506,6 +10842,35 @@ static s32 syNetRbSnapFindItemBlobByGobjIdAndKind(const SYNetRbSnapshotSlot *slo
 		}
 	}
 	return -1;
+}
+
+/*
+ * Count unmatched valid blobs sharing this (gobj_id, kind). All items share the
+ * nGCCommonKindItem category id (1013), so a single gobj_id+kind match is only an
+ * unambiguous identity when exactly one such blob remains. Two-plus identical
+ * instances (e.g. two Link bombs) must be paired by position/velocity instead of
+ * first-in-slot order, which is not stable across a walk-back that respawns items.
+ */
+static s32 syNetRbSnapCountUnmatchedItemBlobsByGobjIdKind(const SYNetRbSnapshotSlot *slot, sb32 *matched, u32 gobj_id,
+                                                          s32 kind)
+{
+	s32 si;
+	s32 count;
+
+	count = 0;
+	for (si = 0; si < slot->item_count; si++)
+	{
+		if ((matched != NULL) && (matched[si] != FALSE))
+		{
+			continue;
+		}
+		if ((slot->items[si].is_valid != FALSE) && (slot->items[si].gobj_id == gobj_id) &&
+		    (slot->items[si].kind == kind))
+		{
+			count++;
+		}
+	}
+	return count;
 }
 
 static s32 syNetRbSnapFindItemBlobByKindPos(const SYNetRbSnapshotSlot *slot, sb32 *matched, s32 kind, const Vec3f *pos)
@@ -10703,14 +11068,39 @@ static s32 syNetRbSnapFindItemBlobForLiveGobj(const SYNetRbSnapshotSlot *slot, s
 	{
 		return -1;
 	}
+	/*
+	 * Exact identity first: instance_id is unique per spawn, so it disambiguates two-plus
+	 * identical items (two Link bombs) without the order-dependent gobj_id fast-path or the
+	 * positional fallback below. Only items spawned before this snapshot tick carry a
+	 * matching id; newer or legacy (id 0) items fall through to the heuristic matchers.
+	 */
+	if (ip->instance_id != 0U)
+	{
+		found = syNetRbSnapFindItemBlobByInstanceId(slot, matched, ip->instance_id);
+		if (found >= 0)
+		{
+			if (slot->items[found].kind == ip->kind)
+			{
+				return found;
+			}
+			/* Same id, different kind => stale alias; let the heuristics below repair it. */
+			found = -1;
+		}
+	}
 	found = syNetRbSnapFindItemBlobByGobjId(slot, matched, gobj->id);
 	if (found >= 0)
 	{
 		/*
-		 * All items share nGCCommonKindItem (1013) — gobj_id match is only valid when kinds agree.
-		 * Otherwise fall through to kind+position (or Link bomb matcher).
+		 * All items share nGCCommonKindItem (1013) — gobj_id match is only valid when the
+		 * kinds agree AND the (id, kind) pair is unique among unmatched blobs. With two-plus
+		 * identical instances (e.g. two Link bombs both id 1013 / kind nITKindLinkBomb) the
+		 * first-in-slot pairing is order-dependent: after a respawn-in-window walk-back the
+		 * slot order no longer tracks live link order, so one bomb absorbs the other's blob
+		 * (owner_gobj resolves NULL -> orphan-hold -> gcRunGObjProcess SIGABRT on replay).
+		 * Defer those to the position/velocity matcher (Link bomb matcher or kind+pos) below.
 		 */
-		if (slot->items[found].kind == ip->kind)
+		if ((slot->items[found].kind == ip->kind) &&
+		    (syNetRbSnapCountUnmatchedItemBlobsByGobjIdKind(slot, matched, gobj->id, ip->kind) <= 1))
 		{
 			return found;
 		}
@@ -28364,11 +28754,25 @@ static GObj *syNetRbSnapSpawnWeaponFromBlob(const SYNetRbSnapWeaponBlob *blob)
 	}
 	owner_gobj = syNetRbSnapResolveWeaponOwnerFromBlob(blob);
 	parent_gobj = syNetRbSnapResolveWeaponSpawnParent(blob);
+	spawn_pos = blob->translate;
+#if defined(SSB64_NETMENU)
+	/*
+	 * Sector Z Arwing lasers are stage-owned weapons (owner_gobj == NULL by design), so they must be
+	 * respawned before the owner guard below. The blob-apply path restores physics/rotate afterward.
+	 */
+	if (blob->kind == nWPKindArwingLaser2D)
+	{
+		return grSectorArwingWeaponLaser2DRespawnAt(&spawn_pos);
+	}
+	if (blob->kind == nWPKindArwingLaser3D)
+	{
+		return grSectorArwingWeaponLaser3DRespawnAt(&spawn_pos);
+	}
+#endif
 	if (owner_gobj == NULL)
 	{
 		return NULL;
 	}
-	spawn_pos = blob->translate;
 	vel = blob->physics.vel_air;
 	vars = (union wpStatusVars *)blob->weapon_vars;
 	switch (blob->kind)
@@ -28486,6 +28890,12 @@ static GObj *syNetRbSnapSpawnWeaponFromBlob(const SYNetRbSnapWeaponBlob *blob)
 
 	case nWPKindFushigibanaRazor:
 		return itFushigibanaWeaponRazorMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindBulletNormal:
+		return wpBossBulletNormalMakeWeapon(owner_gobj, &spawn_pos);
+
+	case nWPKindBulletHard:
+		return wpBossBulletHardMakeWeapon(owner_gobj, &spawn_pos);
 
 	default:
 #ifdef PORT
@@ -30088,6 +30498,9 @@ void syNetRbSnapshotResetSession(void)
 	       sizeof(s_syNetRbSnapYoshiEggLayHatchShellParticlePending));
 #endif
 	wpManagerResetInstanceIds();
+#if defined(SSB64_NETMENU)
+	itManagerResetInstanceIds();
+#endif
 #else
 	(void)0;
 #endif
@@ -31648,7 +32061,7 @@ void syNetRbSnapshotPreSimUnhalfswapGameplayResimAnim(void)
 		{
 			continue;
 		}
-		syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
+		syNetRbSnapResimRenormalizeFighterFigatreeStreams(fp);
 	}
 #else
 	/* NETMENU-only: gameplay resim presentation repair. */
@@ -32468,7 +32881,7 @@ static void syNetRbSnapRefreshYoshiEggLayAttackPresentationFromSlot(const SYNetR
 		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
 		syNetRbSnapApplyFighterModelPartsCosmeticFromBlob(fighter_gobj, fp, blob);
 		ftMainRefreshFigatreeVisual(fighter_gobj);
-		syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
+		syNetRbSnapResimRenormalizeFighterFigatreeStreams(fp);
 		syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(fp, fighter_gobj, blob);
 		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, FALSE);
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
@@ -32517,7 +32930,7 @@ static void syNetRbSnapRefreshResidualShieldPresentationFromSlot(const SYNetRbSn
 		}
 		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
 		ftMainRefreshFigatreeVisual(fighter_gobj);
-		syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
+		syNetRbSnapResimRenormalizeFighterFigatreeStreams(fp);
 		syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(fp, fighter_gobj, blob);
 		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, FALSE);
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
@@ -32558,7 +32971,7 @@ static void syNetRbSnapRefreshGameplayAnimFragilePresentationFromSlot(const SYNe
 		}
 		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, blob, FALSE);
 		ftMainRefreshFigatreeVisual(fighter_gobj);
-		syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
+		syNetRbSnapResimRenormalizeFighterFigatreeStreams(fp);
 		syNetRbSnapApplyFighterJointPoseAndAnimFromBlob(fp, fighter_gobj, blob);
 		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, FALSE);
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
@@ -32612,7 +33025,7 @@ void syNetRbSnapshotReconcileAnchorProbeGameplayFromProbeSlot(u32 load_tick, u32
 		}
 		syNetRbSnapReconcileFighterJointPresenceFromBlob(fp, probe_blob);
 		syNetRbSnapReapplyFighterJointAnimFromBlob(fighter_gobj, fp, probe_blob, FALSE);
-		syNetRbSnapPreSimUnhalfswapIntroAppearFighter(fp);
+		syNetRbSnapResimRenormalizeFighterFigatreeStreams(fp);
 		syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, probe_blob, TRUE);
 		syNetRbSnapInvalidateFighterPartTransformCaches(fighter_gobj);
 		ftParamInvalidateFighterTransformFromRoot(fighter_gobj);
@@ -32877,6 +33290,31 @@ static void syNetRbSnapSyncFighterPresentationAfterJointPrep(const SYNetRbSnapsh
 	}
 #endif
 	syNetRbSnapshotSyncFighterPresentation();
+	/*
+	 * ftMainRefreshFigatreeVisual (inside syNetRbSnapshotSyncFighterPresentation) rewinds every joint's
+	 * EVENT32 cursor to the figatree start and resets anim_wait to a figatree re-init sentinel, discarding
+	 * the mid-animation cursor (anim_frame / anim_wait / event32) restored from the blob. Most joints
+	 * re-derive on the next resim parse, but a joint sitting on an animation-event boundary at the rollback
+	 * tick re-parses to anim_frame=0 / anim_wait=AOBJ_ANIM_NULL and freezes (post-resim joint stuck or
+	 * drifting). Re-pin the snapshot anim cursor AFTER the visual refresh so the authoritative sim cursor
+	 * survives; the intro-load-fidelity path above already re-pins per fighter, and
+	 * syNetRbSnapRefreshFigatreePresentationFromSlot re-pins via its own post-presentation pass — this
+	 * covers the remaining flows (escape-roll / thunder-shock) that called AfterJointPrep with no
+	 * post-presentation re-pin. Diagnosed via SSB64_NETPLAY_RESIM_CAPTURE_ANIM_DIAG (capture clean) +
+	 * RESIM_STREAM_DIGEST_DIAG (presync_post_reattach clobbers the cursor); presync_post_repin verifies.
+	 */
+	syNetRbSnapReapplyFighterJointAnimFromSlot(slot);
+#if defined(SSB64_NETMENU)
+	{
+		GObj *repin_gobj;
+
+		for (repin_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; repin_gobj != NULL;
+		     repin_gobj = repin_gobj->link_next)
+		{
+			syNetRbSnapDiagFighterStreamDigests(ftGetStruct(repin_gobj), "presync_post_repin");
+		}
+	}
+#endif
 }
 
 /*
@@ -33066,7 +33504,15 @@ void syNetRbSnapshotSyncFighterPresentation(void)
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
 	     fighter_gobj = fighter_gobj->link_next)
 	{
+#if defined(SSB64_NETMENU)
+		FTStruct *diag_fp = ftGetStruct(fighter_gobj);
+
+		syNetRbSnapDiagFighterStreamDigests(diag_fp, "presync_pre_reattach");
+#endif
 		ftMainRefreshFigatreeVisual(fighter_gobj);
+#if defined(SSB64_NETMENU)
+		syNetRbSnapDiagFighterStreamDigests(diag_fp, "presync_post_reattach");
+#endif
 	}
 #else
 	(void)0;

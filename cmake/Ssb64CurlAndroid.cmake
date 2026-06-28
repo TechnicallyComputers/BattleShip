@@ -99,6 +99,52 @@ function(ssb64_android_fetch_mbedtls)
     endif()
 endfunction()
 
+# c-ares async DNS resolver for curl. Replaces curl's threaded system resolver (Android
+# getaddrinfo -> netd/DnsResolver Binder), which double-closes Parcel-owned fds under
+# bionic fdsan during the matchmaking worker's back-to-back HTTPS requests
+# (docs/bugs/android_matchmaking_cares_dns_fdsan_2026-06-26.md). c-ares resolves over its
+# own UDP/TCP sockets, so no Binder/Parcel fds are involved.
+#
+# NOTE: c-ares cannot auto-discover DNS servers on Android (net.dns* sysprops removed in
+# Android 8+). The client supplies servers via CURLOPT_DNS_SERVERS (see mm_matchmaking.c);
+# a future hardening can call ares_library_init_android() to use the device's configured DNS.
+function(ssb64_android_fetch_cares)
+    if(TARGET c-ares::cares OR TARGET c-ares)
+        return()
+    endif()
+
+    set(CARES_STATIC ON CACHE BOOL "" FORCE)
+    set(CARES_SHARED OFF CACHE BOOL "" FORCE)
+    set(CARES_STATIC_PIC ON CACHE BOOL "" FORCE)
+    set(CARES_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(CARES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(CARES_BUILD_CONTAINER_TESTS OFF CACHE BOOL "" FORCE)
+    set(CARES_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        cares
+        GIT_REPOSITORY https://github.com/c-ares/c-ares.git
+        GIT_TAG        v1.34.5
+        GIT_SHALLOW    TRUE
+        CMAKE_ARGS
+            ${_SSB64_ANDROID_FC_CMAKE_ARGS}
+            -DCARES_STATIC=ON
+            -DCARES_SHARED=OFF
+            -DCARES_STATIC_PIC=ON
+            -DCARES_BUILD_TOOLS=OFF
+            -DCARES_BUILD_TESTS=OFF
+            -DCARES_BUILD_CONTAINER_TESTS=OFF
+            -DCARES_INSTALL=OFF
+    )
+    FetchContent_MakeAvailable(cares)
+
+    if(NOT (TARGET c-ares::cares OR TARGET c-ares))
+        message(FATAL_ERROR "ssb64_android_provide_curl: c-ares FetchContent did not define a c-ares target")
+    endif()
+
+    set(SSB64_CARES_SOURCE_DIR "${cares_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
+endfunction()
+
 function(ssb64_android_provide_curl)
     if(TARGET CURL::libcurl)
         return()
@@ -110,7 +156,11 @@ function(ssb64_android_provide_curl)
 
     ssb64_android_fetch_mbedtls()
 
-    # Visible to curl's patched FindMbedTLS.cmake when curl is a FetchContent subdir.
+    # c-ares async resolver — built before curl so the patched FindCares.cmake (and curl's
+    # find_package(Cares) during its add_subdirectory configure) sees the in-tree target.
+    ssb64_android_fetch_cares()
+
+    # Visible to curl's patched FindMbedTLS.cmake / FindCares.cmake when curl is a FetchContent subdir.
     set(SSB64_MBEDTLS_SOURCE_DIR "${mbedtls_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
 
     # Do not CACHE FORCE — that poisons SDL2 and other deps configured later in the same tree.
@@ -142,8 +192,10 @@ function(ssb64_android_provide_curl)
     set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
     set(CURL_USE_PKGCONFIG OFF CACHE BOOL "" FORCE)
-    set(ENABLE_ARES OFF CACHE BOOL "" FORCE)
-    set(ENABLE_THREADED_RESOLVER ON CACHE BOOL "" FORCE)
+    # c-ares async DNS instead of curl's threaded system resolver (Android getaddrinfo ->
+    # netd/DnsResolver Binder -> Parcel-owned fds -> fdsan double-close abort on the worker).
+    set(ENABLE_ARES ON CACHE BOOL "" FORCE)
+    set(ENABLE_THREADED_RESOLVER OFF CACHE BOOL "" FORCE)
 
     FetchContent_Declare(
         curl
@@ -154,6 +206,7 @@ function(ssb64_android_provide_curl)
             ${CMAKE_COMMAND}
                 -DPATCH_CURL_SOURCE_DIR=<SOURCE_DIR>
                 -DPATCH_FIND_MBEDTLS=${SSB64_CURL_FIND_MBEDTLS}
+                -DPATCH_FIND_CARES=${CMAKE_SOURCE_DIR}/cmake/curl/FindCares.cmake
                 -DPATCH_EMBED_FILE=${CMAKE_SOURCE_DIR}/cmake/curl/Ssb64CurlAndroidEmbed.cmake
                 -P ${CMAKE_SOURCE_DIR}/cmake/curl/patch_curl_android.cmake
         CMAKE_ARGS
@@ -167,8 +220,8 @@ function(ssb64_android_provide_curl)
             -DCURL_ENABLE_EXPORT_TARGET=OFF
             -DCURL_USE_LIBPSL=OFF
             -DCURL_USE_PKGCONFIG=OFF
-            -DENABLE_ARES=OFF
-            -DENABLE_THREADED_RESOLVER=ON
+            -DENABLE_ARES=ON
+            -DENABLE_THREADED_RESOLVER=OFF
     )
     FetchContent_MakeAvailable(curl)
     set(BUILD_SHARED_LIBS "${_ssb64_saved_build_shared_libs}")
@@ -181,5 +234,5 @@ function(ssb64_android_provide_curl)
     ssb64_android_harden_curl_targets()
 
     set(SSB64_CURL_SOURCE_DIR "${curl_SOURCE_DIR}" CACHE INTERNAL "" FORCE)
-    message(STATUS "SSB64 Android netmenu: CURL::libcurl (mbedTLS HTTPS, no pkg-config/c-ares)")
+    message(STATUS "SSB64 Android netmenu: CURL::libcurl (mbedTLS HTTPS, c-ares async DNS, no pkg-config)")
 endfunction()
