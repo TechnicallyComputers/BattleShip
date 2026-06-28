@@ -381,6 +381,20 @@ typedef struct SYNetRbSnapFighterBlob
 	u32 capture_gobj_id;
 	u32 item_gobj_id;
 	u32 search_gobj_id;
+	/*
+	 * All fighters share gobj->id == nGCCommonKindFighter (1000), so the *_gobj_id fields above resolve
+	 * ambiguously through gcFindGObjByID() -> the *first* fighter in the link list, never the real grab/throw
+	 * partner. After a rollback that mis-coupled catch/capture, the thrown-fighter collision
+	 * (ftCommon...Thrown -> mpCommonRunFighterCollisionDefault) feeds the wrong/inconsistent interact_fp as the
+	 * map-collision source and eventually dereferences a stale p_map_coll (SIGBUS/SIGSEGV in
+	 * mpProcessCheckTestLWallCollisionAdjNew). Persist the partner's sim player slot and resolve by slot, like
+	 * the camera zoom/follow targets already do. -1 == no coupling.
+	 * See docs/bugs/netrollback_fighter_coupling_gobjid_ambiguity_2026-06-27.md.
+	 */
+	s8 throw_gobj_player;
+	s8 catch_gobj_player;
+	s8 capture_gobj_player;
+	s8 search_gobj_player;
 	uintptr_t throw_desc_ptr;
 
 	FTMotionScript motion_scripts[2][2];
@@ -5617,6 +5631,11 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	blob->capture_gobj_id = syNetRbSnapGobjId(fp->capture_gobj);
 	blob->item_gobj_id = syNetRbSnapGobjId(fp->item_gobj);
 	blob->search_gobj_id = syNetRbSnapGobjId(fp->search_gobj);
+	/* Persist coupling partners by sim player slot; *_gobj_id (always 1000 for fighters) is ambiguous. */
+	blob->throw_gobj_player = syNetRbSnapFighterPlayerFromGobj(fp->throw_gobj);
+	blob->catch_gobj_player = syNetRbSnapFighterPlayerFromGobj(fp->catch_gobj);
+	blob->capture_gobj_player = syNetRbSnapFighterPlayerFromGobj(fp->capture_gobj);
+	blob->search_gobj_player = syNetRbSnapFighterPlayerFromGobj(fp->search_gobj);
 	blob->throw_desc_ptr = (fp->throw_desc != NULL) ? (uintptr_t)fp->throw_desc : 0U;
 
 	memcpy(blob->motion_scripts, fp->motion_scripts, sizeof(blob->motion_scripts));
@@ -7605,11 +7624,18 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	fp->damage_player = blob->damage_player;
 	fp->damage_kind = blob->damage_kind;
 
-	fp->throw_gobj = syNetRbSnapResolveLiveGobj(blob->throw_gobj_id);
-	fp->catch_gobj = syNetRbSnapResolveLiveGobj(blob->catch_gobj_id);
-	fp->capture_gobj = syNetRbSnapResolveLiveGobj(blob->capture_gobj_id);
+	/*
+	 * Resolve the fighter coupling by sim player slot, not by gobj->id. All fighters carry the same
+	 * gobj->id (nGCCommonKindFighter == 1000), so syNetRbSnapResolveLiveGobj() would hand back the first
+	 * fighter regardless of who the real partner was — corrupting catch/capture/throw after a rollback and
+	 * crashing the thrown-fighter collision on a stale p_map_coll.
+	 * See docs/bugs/netrollback_fighter_coupling_gobjid_ambiguity_2026-06-27.md.
+	 */
+	fp->throw_gobj = syNetRbSnapResolveFighterGobjByPlayer(blob->throw_gobj_player);
+	fp->catch_gobj = syNetRbSnapResolveFighterGobjByPlayer(blob->catch_gobj_player);
+	fp->capture_gobj = syNetRbSnapResolveFighterGobjByPlayer(blob->capture_gobj_player);
 	fp->item_gobj = syNetRbSnapResolveItemGobj(blob->item_gobj_id);
-	fp->search_gobj = syNetRbSnapResolveLiveGobj(blob->search_gobj_id);
+	fp->search_gobj = syNetRbSnapResolveFighterGobjByPlayer(blob->search_gobj_player);
 	fp->throw_desc = (blob->throw_desc_ptr != 0U) ? (FTThrowHitDesc *)blob->throw_desc_ptr : NULL;
 
 	memcpy(fp->motion_scripts, blob->motion_scripts, sizeof(fp->motion_scripts));
@@ -14606,8 +14632,9 @@ static sb32 syNetRbSnapBlobInLinkBombFighterScope(const SYNetRbSnapFighterBlob *
 static sb32 syNetRbSnapshotSlotInLinkBombEffectRepairScope(const SYNetRbSnapshotSlot *slot, u32 probe_tick)
 {
 	s32 pidx;
-	u32 sparkle_tick;
 	u32 sparkle_start;
+	u32 sparkle_span;
+	u32 sparkle_off;
 
 	if (slot == NULL)
 	{
@@ -14632,6 +14659,17 @@ static sb32 syNetRbSnapshotSlotInLinkBombEffectRepairScope(const SYNetRbSnapshot
 	{
 		probe_tick = slot->tick;
 	}
+	/*
+	 * The emergency-restore sentinel slot carries tick 0xFFFFFFFF (syNetRbSnapshotCaptureLiveEmergency).
+	 * Its historical sparkle ring window is meaningless, and the old `sparkle_tick <= probe_tick` walk
+	 * never terminates when probe_tick == UINT32_MAX (u32 wraps past 0xFFFFFFFF back to 0) — wedging the
+	 * game thread inside syNetRbSnapshotRestoreLiveEmergency on every stage (watchdog hang). Scan the live
+	 * tick window instead. See docs/bugs/netrollback_emergency_restore_sparkle_window_overflow_2026-06-27.md.
+	 */
+	if (probe_tick == 0xFFFFFFFFU)
+	{
+		probe_tick = syNetInputGetTick();
+	}
 	if (probe_tick < SYNETRB_LINK_BOMB_SPARKLE_REPLAY_WINDOW)
 	{
 		sparkle_start = 0U;
@@ -14640,9 +14678,14 @@ static sb32 syNetRbSnapshotSlotInLinkBombEffectRepairScope(const SYNetRbSnapshot
 	{
 		sparkle_start = probe_tick - SYNETRB_LINK_BOMB_SPARKLE_REPLAY_WINDOW;
 	}
-	for (sparkle_tick = sparkle_start; sparkle_tick <= probe_tick; sparkle_tick++)
+	/*
+	 * Count-bounded scan: sparkle_span is always <= SYNETRB_LINK_BOMB_SPARKLE_REPLAY_WINDOW, so the loop
+	 * counter never compares against UINT32_MAX and cannot wrap regardless of probe_tick.
+	 */
+	sparkle_span = probe_tick - sparkle_start;
+	for (sparkle_off = 0U; sparkle_off <= sparkle_span; sparkle_off++)
 	{
-		if (syNetRbSnapSlotTickHasExplodeSparkleReplay(sparkle_tick) != FALSE)
+		if (syNetRbSnapSlotTickHasExplodeSparkleReplay(sparkle_start + sparkle_off) != FALSE)
 		{
 			return TRUE;
 		}
@@ -15511,6 +15554,17 @@ static u32 syNetRbSnapFoldGroundPayloadHashForRollback(const SYNetRbSnapGroundBl
 			SYNetRbSnapGroundSector *sec = (SYNetRbSnapGroundSector *)payload_scratch;
 
 			sec->arwing_target_x = syNetplayQuantizeF32ForRollbackHash(sec->arwing_target_x);
+			/*
+			 * map_gobj_flags is a presentational GObj visibility flag (GOBJ_FLAG_HIDDEN /
+			 * GOBJ_FLAG_NONE). Apply does not restore the raw byte: grSectorSyncArwingMapGObjFlags()
+			 * re-derives live visibility on load from arwing_status / arwing_appear_timer / root
+			 * anim_wait — all already folded here. Capture stores the raw live flag, so the raw value
+			 * and the derived live value disagree at the intro->GO boundary, producing a fatal map
+			 * LOAD_HASH_DRIFT (map never soft-continues). Exclude it from the fold like Yoster
+			 * map_head; a real sim divergence is still caught via the hashed inputs it derives from.
+			 * See docs/bugs/netrollback_sector_map_gobj_flags_2026-06-27.md.
+			 */
+			sec->map_gobj_flags = 0U;
 		}
 		break;
 	case nGRKindYoster:
