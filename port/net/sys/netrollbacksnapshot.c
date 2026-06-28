@@ -30045,6 +30045,54 @@ static sb32 syNetRbSnapshotSynctestProbePupupuWhispyPostBlowFragile(u32 probe_ti
 	return TRUE;
 }
 
+/*
+ * First ring slot tick after a grab/throw coupling ends (prev slot grab/throw-coupled, probe slot
+ * not): the lingering catch/throw VFX is present and stable across the boundary, so
+ * effect_count_transition_probe misses it and the fighters have already left grab/throw status so
+ * grab_coupling_probe misses it too. That residual effect cannot round-trip an emergency->slot
+ * verify load — live eff folds to the FNV-empty seed (0x811C9DC5) while the slot captured a
+ * non-empty eff hash, producing a false SYNCTEST_FAIL (soak1 @2857, both peers identical).
+ * Skip the probe on the release boundary, the same way grab_coupling_probe covers mid-grab ticks.
+ * See docs/bugs/netplay_grab_throw_release_eff_drift_2026-06-27.md.
+ */
+static sb32 syNetRbSnapshotSynctestProbeGrabThrowReleaseBoundaryFragile(u32 probe_tick)
+{
+	SYNetRbSnapshotSlot *probe_slot;
+	SYNetRbSnapshotSlot *prev_slot;
+	s32 pidx;
+	sb32 prev_grab_coupled;
+
+	if (probe_tick == 0U)
+	{
+		return FALSE;
+	}
+	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
+	if ((probe_slot == NULL) || (probe_slot->is_valid == FALSE) || (probe_slot->tick != probe_tick) ||
+	    (probe_slot->effect_count <= 0))
+	{
+		return FALSE;
+	}
+	prev_slot = syNetRbSnapshotSlotForTick(probe_tick - 1U);
+	if ((prev_slot == NULL) || (prev_slot->is_valid == FALSE) || (prev_slot->tick != (probe_tick - 1U)))
+	{
+		return FALSE;
+	}
+	prev_grab_coupled = FALSE;
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		if (syNetRbSnapBlobInGrabThrowSynctestFragileScope(&probe_slot->fighters[pidx]) != FALSE)
+		{
+			/* Still grab/throw-coupled at the probe tick: grab_coupling_probe owns this case. */
+			return FALSE;
+		}
+		if (syNetRbSnapBlobInGrabThrowSynctestFragileScope(&prev_slot->fighters[pidx]) != FALSE)
+		{
+			prev_grab_coupled = TRUE;
+		}
+	}
+	return prev_grab_coupled;
+}
+
 sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **reason_out)
 {
 	SYNetRbSnapshotSlot *slot;
@@ -30310,6 +30358,14 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 				return TRUE;
 			}
 		}
+	}
+	if (syNetRbSnapshotSynctestProbeGrabThrowReleaseBoundaryFragile(probe_tick) != FALSE)
+	{
+		if (reason_out != NULL)
+		{
+			*reason_out = "grab_coupling_release_boundary_probe";
+		}
+		return TRUE;
 	}
 	if (syNetRbSnapshotSynctestSlotTransientOnlyEffects(slot) != FALSE)
 	{
