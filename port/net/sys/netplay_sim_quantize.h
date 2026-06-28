@@ -55,6 +55,15 @@ extern void syNetplayQuantizeDObjRotate(DObj *dobj);
 extern void syNetplayQuantizeDObjScale(DObj *dobj);
 /* Translate + rotate + scale after anim-joint evaluation. */
 extern void syNetplayQuantizeDObjAnimPose(DObj *dobj);
+/*
+ * Canonicalize the DObj's AObj interpolation node chain (length/length_invert/value_base/
+ * value_target/rate_base/rate_target) on the shared grid — the exact field set the rollback
+ * snapshot quantizes in syNetRbSnapCaptureAObjNode/syNetRbSnapApplyAObjNode. Without this the
+ * live forward-sim AObj state stays unquantized while a snapshot-restored replay does not, so a
+ * resim restarts joints from a slightly different interpolation track (visible joint drift), and
+ * the rollback anim hash forks cross-ISA. Call after gcPlayDObjAnimJoint advances the chain.
+ */
+extern void syNetplayQuantizeDObjAObjChain(DObj *dobj);
 
 extern sb32 syNetplayFighterInIntroSimScope(const struct FTStruct *fp);
 
@@ -75,6 +84,14 @@ extern void syNetplayQuantizeMPCollData(MPCollData *coll);
 extern void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj);
 /* Apply the shared-grid fighter pass to every active fighter at the accepted sim boundary. */
 extern void syNetplayCanonicalizeActiveFightersForNetplay(void);
+
+/*
+ * Forward-vs-resim per-joint AObj ground-truth probe (default off; SSB64_NETPLAY_AOBJ_LEG_TRACE=1,
+ * windowed by SSB64_NETPLAY_AOBJ_LEG_TRACE_TICK_MIN/_TICK_MAX). Logs chain digest, raw EVENT32 stream
+ * digest, anim cursor scalars and rotate output per active fighter joint, tagged phase=fwd|resim.
+ * Independent of SIM_F32_QUANTIZE. Call once per completed sim tick.
+ */
+extern void syNetplayTraceActiveFighterAObj(u32 tick);
 
 /* Fighter attack hitbox world positions (after gmCollisionGetFighterPartsWorldPosition). */
 extern void syNetplayQuantizeFTAttackColl(struct FTAttackColl *attack_coll);

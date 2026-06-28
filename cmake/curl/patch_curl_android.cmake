@@ -4,6 +4,10 @@
 #   PATCH_CURL_SOURCE_DIR
 #   PATCH_FIND_MBEDTLS   (BattleShip cmake/curl/FindMbedTLS.cmake)
 #   PATCH_EMBED_FILE     (BattleShip cmake/curl/Ssb64CurlAndroidEmbed.cmake)
+# Optional -D args:
+#   PATCH_FIND_CARES     (BattleShip cmake/curl/FindCares.cmake; overrides stock module so
+#                         curl's configure-time find_library does not fail on the not-yet-built
+#                         c-ares static lib — only passed when ENABLE_ARES is on)
 
 cmake_minimum_required(VERSION 3.20)
 
@@ -22,6 +26,15 @@ file(COPY "${PATCH_FIND_MBEDTLS}" DESTINATION "${PATCH_CURL_SOURCE_DIR}/CMake" F
     OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 file(COPY "${PATCH_EMBED_FILE}" DESTINATION "${PATCH_CURL_SOURCE_DIR}/CMake" FILE_PERMISSIONS
     OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+
+if(PATCH_FIND_CARES)
+    if(NOT EXISTS "${PATCH_FIND_CARES}")
+        message(FATAL_ERROR "patch_curl_android: missing ${PATCH_FIND_CARES}")
+    endif()
+    file(COPY "${PATCH_FIND_CARES}" DESTINATION "${PATCH_CURL_SOURCE_DIR}/CMake" FILE_PERMISSIONS
+        OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+    message(STATUS "patch_curl_android: installed SSB64 FindCares.cmake override (c-ares enabled)")
+endif()
 
 set(_root "${PATCH_CURL_SOURCE_DIR}/CMakeLists.txt")
 if(NOT EXISTS "${_root}")

@@ -6488,6 +6488,8 @@ void syNetRollbackAfterBattleUpdate(void)
 		return;
 	}
 #if defined(SSB64_NETMENU)
+	/* Ground-truth forward-vs-resim joint AObj probe (default off; independent of quantize). */
+	syNetplayTraceActiveFighterAObj(completed_tick);
 	if (syNetplaySimQuantizeActive() != FALSE)
 	{
 		syNetplayCanonicalizeActiveFightersForNetplay();
@@ -11247,6 +11249,11 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 			tick_inp = syNetRollbackEpisodeReplayLogTickInputDigest(t);
 			syNetRollbackEpisodeReplayLogAppend(t, tick_inp, tick_h.fighter, tick_h.item, tick_h.rng);
 		}
+#if defined(SSB64_NETMENU)
+		/* Per-replayed-tick AObj probe: AfterBattleUpdate's trace never fires during resim, so the
+		 * forward-vs-resim comparison was blind to the replay window. phase=resim here. */
+		syNetplayTraceActiveFighterAObj(t);
+#endif
 		syNetRollbackLogResimTickTrace(t);
 		t++;
 		ran++;

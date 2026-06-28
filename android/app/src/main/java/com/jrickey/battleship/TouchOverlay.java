@@ -382,6 +382,11 @@ public final class TouchOverlay {
                                       int marginEndDp, int marginVerticalDp) {
         View v = buildButton(ctx, root, /*label*/ null, drawableRes,
                              diameterDp, gravity, marginEndDp, marginVerticalDp);
+        // Hamburger floats over gameplay, so keep it semi-transparent at rest.
+        // The tag carries the resting alpha so setPressedVisuals restores to
+        // 50% (not the default 100%) on release.
+        v.setAlpha(0.5f);
+        v.setTag(0.5f);
         v.setOnTouchListener((view, ev) -> {
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -466,13 +471,18 @@ public final class TouchOverlay {
         return host;
     }
 
-    /** Visual feedback on touch: 92% scale + 70% alpha while held. */
+    /** Visual feedback on touch: 92% scale + 30% dim while held. The resting
+     *  alpha is per-view (View tag, default fully opaque) so buttons that sit
+     *  semi-transparent at rest — e.g. the menu hamburger — return to their
+     *  own alpha on release instead of snapping to 100%. */
     private static void setPressedVisuals(View v, boolean pressed) {
+        Object tag = v.getTag();
+        float rest = (tag instanceof Float) ? (Float) tag : 1.0f;
         if (pressed) {
-            v.animate().scaleX(0.92f).scaleY(0.92f).alpha(0.7f)
+            v.animate().scaleX(0.92f).scaleY(0.92f).alpha(rest * 0.7f)
                        .setDuration(40).start();
         } else {
-            v.animate().scaleX(1.0f).scaleY(1.0f).alpha(1.0f)
+            v.animate().scaleX(1.0f).scaleY(1.0f).alpha(rest)
                        .setDuration(80).start();
         }
     }

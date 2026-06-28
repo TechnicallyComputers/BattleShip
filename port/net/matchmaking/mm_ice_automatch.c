@@ -264,6 +264,120 @@ static sb32 mnVSNetAutomatchAMIcePollSuspendEnabled(void)
 #endif
 }
 
+/*
+ * Phase 1 (2026-06-26): keep the libjuice agent ALIVE across the queue-poll
+ * HTTPS window instead of destroying and rebuilding it. The destroy/rehydrate
+ * path discarded every gathered candidate — including the ephemeral TURN relay
+ * candidate that a CGNAT peer needs — and forced a full re-gather on connect,
+ * which never re-signalled the relay. Keeping the agent alive with libjuice I/O
+ * globally paused for the duration of the queue wait is just as fdsan-safe (the
+ * poll thread is parked, so worker curl can never race the agent UDP fds) while
+ * preserving all gathered candidates and the relay allocation.
+ *
+ * Default ON (Android). Set SSB64_MATCHMAKING_ICE_KEEP_AGENT=0 to A/B test the
+ * legacy destroy/rehydrate suspend path.
+ */
+static sb32 mnVSNetAutomatchAMIceKeepAgentOnSuspendEnabled(void)
+{
+#if defined(__ANDROID__)
+	const char *e;
+
+	if (mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE)
+	{
+		return FALSE;
+	}
+	e = getenv("SSB64_MATCHMAKING_ICE_KEEP_AGENT");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return (atoi(e) != 0) ? TRUE : FALSE;
+	}
+	return TRUE;
+#else
+	(void)0;
+	return FALSE;
+#endif
+}
+
+/*
+ * Phase 2 (2026-06-26): the controlled peer used to poll for the host's
+ * "controlling role_ready" with a BLOCKING sync HTTPS GET on the game thread
+ * every 16 ticks while deferring the peer SDP. Each GET stalled sim + audio for
+ * a full round-trip, so the queue/connect window ran at ~42-51 fps (audible
+ * music lag) for the ~0.8s it took the signal to arrive.
+ *
+ * When enabled, role_ready is fetched by an ASYNC worker trickle GET and the
+ * connect tick only reads the cached flag — the sim keeps running at 60 Hz. The
+ * historical connected->completed stall (worker pausing libjuice I/O while the
+ * game thread polled a nominated pair) does NOT apply here because this path is
+ * strictly PRE-SDP: libjuice has no remote description yet, so there is no
+ * candidate pair to starve and nothing to receive. Once the SDP is applied the
+ * code falls back to the existing connect-phase behavior unchanged.
+ *
+ * Default ON. Set SSB64_MATCHMAKING_ICE_ASYNC_ROLE_READY=0 to fall back to the
+ * legacy blocking main-thread sync trickle for A/B testing.
+ */
+static sb32 mnVSNetAutomatchAMIceAsyncRoleReadyEnabled(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_MATCHMAKING_ICE_ASYNC_ROLE_READY");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return (atoi(e) != 0) ? TRUE : FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * Aggressive early-SDP (opt-in, default OFF as of 2026-06-26).
+ *
+ * When enabled, the controlled (guest) side applies the host SDP and starts
+ * connectivity checks immediately at BeginConnect instead of waiting for the
+ * host's "controlling role_ready". That removes the host-rendezvous wait, but it
+ * lets the guest send controlled checks before the host has promoted to
+ * controlling — so for a brief window both ends are controlled and libjuice logs
+ * `ICE role conflict (both controlled)`. The conflict self-heals via the RFC 8445
+ * tiebreaker (the host re-randomizes on promotion and converges to controlling),
+ * but it is noisy and the race widens on higher-RTT/relay paths, churning
+ * candidate-pair state. See docs/bugs/ice_role_ready_coordination_2026-05-27.md.
+ *
+ * Default path (this flag OFF) gates the immediate apply on observed
+ * peer_controlling_ready: apply now if role_ready already arrived (fast, no
+ * conflict), otherwise defer onto the async, non-blocking role_ready wait (Phase
+ * 2) which no longer stalls the sim. SSB64_MATCHMAKING_ICE_EARLY_SDP=1 restores
+ * the aggressive immediate-apply for A/B testing.
+ */
+static sb32 mnVSNetAutomatchAMIceEarlySdpEnabled(void)
+{
+	const char *e;
+
+	e = getenv("SSB64_MATCHMAKING_ICE_EARLY_SDP");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		return (atoi(e) != 0) ? TRUE : FALSE;
+	}
+	return FALSE;
+}
+
+/*
+ * Async role_ready re-poll cadence (ticks). Used only on the legacy deferral
+ * path (early-SDP disabled). Each enqueue is also gated by an outstanding-poll
+ * check, so this just bounds the re-arm rate and backs off the longer the host
+ * takes, to avoid hammering /v1/match when many guests wait at once.
+ */
+static u32 mnVSNetAutomatchAMIceRoleReadyAsyncPollInterval(u32 wait_ticks)
+{
+	if (wait_ticks < 60U) /* first ~1s: responsive */
+	{
+		return 4U;
+	}
+	if (wait_ticks < 180U) /* ~1-3s */
+	{
+		return 16U;
+	}
+	return 32U; /* beyond ~3s: gentle */
+}
+
 static void mnVSNetAutomatchAMIceSaveServerConfig(const MmIceServerConfig *cfg)
 {
 	sIceSavedStunHost[0] = '\0';
@@ -754,7 +868,15 @@ void mnVSNetAutomatchAMIceOnTicketAssigned(const char *ticket)
 		return;
 	}
 	snprintf(sIceTicket, sizeof(sIceTicket), "%s", ticket);
-	if (mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE)
+	/*
+	 * Flush queued pre-ticket candidates now that the ticket exists. With the
+	 * legacy destroy-on-suspend path the agent (and its candidates) is gone, so
+	 * we wait for the post-resume re-gather; but in keep-agent mode the agent is
+	 * still live with its gathered candidates (incl. the relay), so signal them
+	 * here so a CGNAT peer receives the relay candidate promptly.
+	 */
+	if ((mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE) ||
+	    ((mnVSNetAutomatchAMIceKeepAgentOnSuspendEnabled() != FALSE) && (mmIceAgentLive() != FALSE)))
 	{
 		mnVSNetAutomatchAMIceFlushPreTicketCandidates();
 	}
@@ -762,6 +884,8 @@ void mnVSNetAutomatchAMIceOnTicketAssigned(const char *ticket)
 
 void mnVSNetAutomatchAMIceSuspendForQueuePoll(void)
 {
+	sb32 keep_agent;
+
 	if (mnVSNetAutomatchAMIcePollSuspendEnabled() == FALSE)
 	{
 		return;
@@ -770,6 +894,41 @@ void mnVSNetAutomatchAMIceSuspendForQueuePoll(void)
 	{
 		return;
 	}
+
+	keep_agent = mnVSNetAutomatchAMIceKeepAgentOnSuspendEnabled();
+	if ((keep_agent != FALSE) && (mmIceAgentLive() != FALSE))
+	{
+		/*
+		 * Keep-alive suspend: park libjuice I/O for the whole queue wait so the
+		 * worker's HTTPS polls can't race the agent UDP fds, but DO NOT destroy
+		 * the agent. Gathered candidates (host/srflx/relay) and the TURN relay
+		 * allocation survive. Do NOT flush pre-ticket candidates here — suspend
+		 * runs in MN_AM_BIND, before the ticket is assigned (MM_POLL_QUEUED), so
+		 * flushing would POST to /v1/match//ice (empty ticket -> HTTP 400) and
+		 * drain the relay candidate from the pre-ticket queue. The candidates
+		 * stay queued and are flushed by OnTicketAssigned once the ticket exists.
+		 */
+#if defined(__ANDROID__)
+		if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() != FALSE)
+		{
+			(void)pthread_mutex_lock(&sIceNetSerializeMutex);
+		}
+#endif
+		mmIceEnsureIoResumed();
+		(void)mmIcePoll();
+		mmIcePauseIo();
+		sIcePollSuspended = TRUE;
+#if defined(__ANDROID__)
+		if (mnVSNetAutomatchAMIceHttpsSerializeEnabled() != FALSE)
+		{
+			(void)pthread_mutex_unlock(&sIceNetSerializeMutex);
+		}
+#endif
+		port_log("SSB64 ICE: suspended (agent kept alive, I/O paused) for queue HTTPS\n");
+		return;
+	}
+
+	/* Legacy destroy/rehydrate suspend (keep-agent disabled or no live agent). */
 	sPreTicketCandHead = 0U;
 	sPreTicketCandCount = 0U;
 	mmMatchmakingIceSignalsClear();
@@ -807,6 +966,19 @@ sb32 mnVSNetAutomatchAMIceResumeForConnect(void)
 
 	if (sIcePollSuspended == FALSE)
 	{
+		return TRUE;
+	}
+	/*
+	 * Keep-alive resume: the agent and all its gathered candidates / relay
+	 * allocation are still live; just un-park libjuice I/O and continue. No
+	 * re-init, no re-gather, no lost relay candidate.
+	 */
+	if (mmIceAgentLive() != FALSE)
+	{
+		sIcePollSuspended = FALSE;
+		mnVSNetAutomatchAMQueuePollReset();
+		mmIceEnsureIoResumed();
+		port_log("SSB64 ICE: resumed (agent kept alive) for connect\n");
 		return TRUE;
 	}
 	if (sIceQueueSdp[0] == '\0')
@@ -1183,8 +1355,23 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 		else
 		{
 			peer_ready = (mr->ice_peer_controlling_ready != FALSE) ? TRUE : mmMatchmakingIcePeerControllingReady();
-			if (peer_ready != FALSE)
+			/*
+			 * Apply the host SDP immediately only once the host is known to be
+			 * controlling (peer_ready). Applying before that lets the guest send
+			 * controlled checks while the host is still controlled -> "ICE role
+			 * conflict (both controlled)". When role_ready has not arrived we fall
+			 * through to the async, non-blocking deferral below. The opt-in
+			 * early-SDP flag forces the immediate apply regardless (accepts the
+			 * transient role conflict for lower match-start latency).
+			 */
+			if ((peer_ready != FALSE) || (mnVSNetAutomatchAMIceEarlySdpEnabled() != FALSE))
 			{
+				if (peer_ready == FALSE)
+				{
+					/* Opt-in early-SDP path: start checks before the host promotes;
+					 * they retransmit (and may role-conflict) until the host is up. */
+					port_log("SSB64 ICE: applying peer SDP immediately (early-SDP opt-in, role_ready not yet observed)\n");
+				}
 				desc_applied = FALSE;
 				if (mnVSNetAutomatchAMIceApplyPeerSdp(mr->peer_ice_sdp, &desc_applied) == FALSE)
 				{
@@ -1199,7 +1386,19 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 			{
 				snprintf(sIceDeferredPeerSdp, sizeof(sIceDeferredPeerSdp), "%s", mr->peer_ice_sdp);
 				sIceAwaitPeerControllingReady = TRUE;
-				mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
+				if (mnVSNetAutomatchAMIceAsyncRoleReadyEnabled() != FALSE)
+				{
+					/* Drive role_ready via an async worker trickle GET (non-blocking);
+					 * the connect tick just reads the cached flag at 60 Hz. */
+					if (sIceTicket[0] != '\0')
+					{
+						mmMatchmakingEnqueuePollIceTrickle(FALSE, sIceTicket);
+					}
+				}
+				else
+				{
+					mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
+				}
 				port_log("SSB64 ICE: deferring peer SDP until controlling role_ready\n");
 			}
 		}
@@ -1257,10 +1456,51 @@ void mnVSNetAutomatchAMIceHttpsUnlockAfterRequest(void)
 #endif
 }
 
+/*
+ * TRUE while we want NON-BLOCKING async worker trickle GETs (no serialize-mutex
+ * hold across the connect tick, skip a concurrent game-thread mmIcePoll while a
+ * worker GET is outstanding). Two windows qualify:
+ *   1. Pre-SDP role_ready wait — no remote description applied yet (Phase 2).
+ *   2. Post-SDP CONNECTING — remote description applied but not yet CONNECTED.
+ *      Needed so late remote candidates (esp. the TURN relay, which the soak
+ *      logs show arriving via trickle, not in the queue SDP) are still received
+ *      while connectivity checks run.
+ * It deliberately stops at CONNECTED: once a pair is nominated the
+ * connected->completed window must stay main-thread only (a worker juice_pause_io
+ * there causes the recv blackout that strands ICE at state=connected).
+ */
+static sb32 mnVSNetAutomatchAMIceConnectingTrickleAsyncActive(void)
+{
+	if (mnVSNetAutomatchAMIceAsyncRoleReadyEnabled() == FALSE)
+	{
+		return FALSE;
+	}
+	if ((sIceAwaitPeerControllingReady != FALSE) && (sIceRemoteDescApplied == FALSE))
+	{
+		return TRUE;
+	}
+	if ((sIceRemoteDescApplied != FALSE) && (sIceConnectPhaseActive != FALSE) && (mmIceAgentLive() != FALSE) &&
+	    (mmIceIsConnected() == FALSE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 sb32 mnVSNetAutomatchAMIceWorkerMatchPollBlocked(sb32 trickle_only)
 {
-	(void)trickle_only;
-	/* Worker GET /v1/match overlaps live ICE; role_ready uses main-thread sync trickle. */
+	/*
+	 * Allow trickle-only worker GETs in the non-blocking async window (pre-SDP
+	 * role_ready wait + post-SDP CONNECTING) so remote candidates — including a
+	 * late TURN relay — keep arriving. Connectivity checks before nomination
+	 * just retransmit across a brief juice_pause_io, so there is no nominated
+	 * pair to starve here.
+	 */
+	if ((trickle_only != FALSE) && (mnVSNetAutomatchAMIceConnectingTrickleAsyncActive() != FALSE))
+	{
+		return FALSE;
+	}
+	/* CONNECTED..COMPLETED (and full match polls): main-thread trickle only. */
 	if ((sIceConnectPhaseActive != FALSE) && (mmIceAgentLive() != FALSE) && (mmIceIsCompleted() == FALSE))
 	{
 		return TRUE;
@@ -1326,8 +1566,14 @@ sb32 mnVSNetAutomatchAMIceConnectTickEnter(void)
 		return TRUE;
 	}
 	sIceConnectTickInside = TRUE;
-	/* role_ready wait uses main-thread sync trickle; mutex skipped until post-SDP connect poll. */
-	if (sIceAwaitPeerControllingReady == FALSE)
+	/*
+	 * In the async trickle window (role_ready wait + CONNECTING) leave the
+	 * serialize mutex free so the worker can run its non-blocking trickle GET;
+	 * the connect tick coordinates by skipping mmIcePoll while one is in flight.
+	 * Once CONNECTED, hold the mutex so the connected->completed phase serializes
+	 * worker HTTPS against the main-thread poll (recv-blackout fix).
+	 */
+	if (mnVSNetAutomatchAMIceConnectingTrickleAsyncActive() == FALSE)
 	{
 		(void)pthread_mutex_lock(&sIceNetSerializeMutex);
 		sIceConnectTickMutexHeld = TRUE;
@@ -1371,11 +1617,27 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 		sb32 desc_applied;
 		sb32 peer_ready;
 
+		sb32 async_role_ready;
+
+		async_role_ready = mnVSNetAutomatchAMIceAsyncRoleReadyEnabled();
 		peer_ready = mmMatchmakingIcePeerControllingReady();
 		if (peer_ready == FALSE)
 		{
 			sIceRoleReadyWaitTicks++;
-			if ((sIceTicket[0] != '\0') && (((sIceRoleReadyWaitTicks % 16U) == 1U)))
+			if (async_role_ready != FALSE)
+			{
+				/* Non-blocking: re-arm an async worker trickle GET when none is in
+				 * flight. The sim keeps advancing at 60 Hz while we wait; the
+				 * cadence backs off the longer the host takes. */
+				if ((sIceTicket[0] != '\0') &&
+				    (mmMatchmakingPollMatchOutstanding(sIceTicket) == FALSE) &&
+				    ((sIceRoleReadyWaitTicks %
+				      mnVSNetAutomatchAMIceRoleReadyAsyncPollInterval(sIceRoleReadyWaitTicks)) == 1U))
+				{
+					mmMatchmakingEnqueuePollIceTrickle(FALSE, sIceTicket);
+				}
+			}
+			else if ((sIceTicket[0] != '\0') && (((sIceRoleReadyWaitTicks % 16U) == 1U)))
 			{
 				mnVSNetAutomatchAMIceRoleReadyTricklePollSync();
 			}
@@ -1387,14 +1649,28 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 					port_log("SSB64 ICE: waiting for peer controlling role_ready\n");
 					sIceAwaitPeerRoleReadyLogged = TRUE;
 				}
-				(void)mmIcePoll();
+				/* Pre-SDP: skip the game-thread poll while an async worker trickle
+				 * GET is in flight (avoids poll-mode fd overlap; nothing to recv
+				 * before the remote description is applied). */
+				if ((async_role_ready == FALSE) || (mmMatchmakingPollMatchOutstanding(sIceTicket) == FALSE))
+				{
+					(void)mmIcePoll();
+				}
 				mnVSNetAutomatchAMIceDrainRemoteCandidates();
 				ret = 0;
 				goto ice_connect_done;
 			}
-			port_log(
-			    "SSB64 ICE: peer_controlling_ready timeout (%u ticks) — applying deferred peer SDP (check host role-ready / trickle polls)\n",
-			    (unsigned int)sIceRoleReadyWaitTicks);
+			if (peer_ready != FALSE)
+			{
+				port_log("SSB64 ICE: controlling role_ready received (%u ticks) — applying deferred peer SDP\n",
+				         (unsigned int)sIceRoleReadyWaitTicks);
+			}
+			else
+			{
+				port_log(
+				    "SSB64 ICE: peer_controlling_ready TIMEOUT (%u ticks) — applying deferred peer SDP anyway (check host role-ready / trickle polls)\n",
+				    (unsigned int)sIceRoleReadyWaitTicks);
+			}
 		}
 		if (sIceDeferredPeerSdp[0] == '\0')
 		{
@@ -1414,11 +1690,33 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 			}
 			sIceDeferredPeerSdp[0] = '\0';
 			sIceAwaitPeerControllingReady = FALSE;
+			/* Clear pre-SDP queued polls at the transition; the CONNECTING phase
+			 * re-drives its own trickle cadence (ConnectTricklePollInterval) so a
+			 * late remote relay still arrives. Worker GETs stop only at CONNECTED
+			 * (see mnVSNetAutomatchAMIceConnectingTrickleAsyncActive). */
+			if ((async_role_ready != FALSE) && (sIceTicket[0] != '\0'))
+			{
+				mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
+			}
 			mnVSNetAutomatchAMIceDrainRemoteCandidates();
 			port_log("SSB64 ICE: peer SDP applied after controlling role_ready\n");
 		}
 	}
 #if defined(__ANDROID__)
+	/*
+	 * CONNECTING async window: a worker trickle GET pauses libjuice I/O on this
+	 * agent, so don't poll concurrently this tick — skip it and let the in-flight
+	 * GET land remote candidates (incl. a late relay). The serialize mutex was
+	 * left free by ConnectTickEnter, so the worker isn't blocked by the game
+	 * thread and the sim keeps advancing.
+	 */
+	if ((mnVSNetAutomatchAMIceConnectingTrickleAsyncActive() != FALSE) &&
+	    (mmMatchmakingPollMatchOutstanding(sIceTicket) != FALSE))
+	{
+		mnVSNetAutomatchAMIceDrainRemoteCandidates();
+		ret = 0;
+		goto ice_connect_done;
+	}
 	mnVSNetAutomatchAMIceConnectTickAcquireMutex();
 #endif
 	st = mmIcePoll();

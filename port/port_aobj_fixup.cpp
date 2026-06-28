@@ -21,6 +21,15 @@ namespace {
 std::unordered_set<uintptr_t> sUnswappedHeads;
 std::unordered_set<uintptr_t> sRejectedHeads;  /* walked once, didn't look like EVENT32 — don't retry */
 
+/* Pre-evict snapshot of native (un-halfswapped) heads, captured immediately
+ * before a range eviction wipes sUnswappedHeads.  The double-swap detector in
+ * netrollbacksnapshot.c runs *after* the eviction (the snapshot restore path
+ * evicts the whole figatree heap before re-walking), so reading sUnswappedHeads
+ * there always returns "not native" and the detector is structurally blind.
+ * This set preserves the native verdict across the evict so the detector can
+ * tell that a head the heuristic just re-swapped was actually native. */
+std::unordered_set<uintptr_t> sPreEvictNativeHeads;
+
 /* Registered fighter-figatree file ranges (base, end).  The walker only
  * operates on head pointers that fall within one of these — this guards
  * against a stream from a non-halfswapped file being un-halfswapped,
@@ -355,7 +364,7 @@ static const char *walk_outcome_name(WalkOutcome outcome)
     return "unknown";
 }
 
-void walk_and_diag(uint32_t *head, bool force_range)
+WalkOutcome walk_and_diag(uint32_t *head, bool force_range)
 {
     WalkOutcome outcome;
     walk(head, force_range, &outcome);
@@ -366,6 +375,7 @@ void walk_and_diag(uint32_t *head, bool force_range)
                  (void *)head, raw, is_in_halfswapped_range(head) ? 1 : 0, force_range ? 1 : 0,
                  walk_outcome_name(outcome));
     }
+    return outcome;
 }
 
 static void evict_caches_in_range(uintptr_t b, uintptr_t e)
@@ -410,6 +420,37 @@ extern "C" void port_aobj_event32_unhalfswap_stream(void *head) {
 
 extern "C" void port_aobj_event32_unhalfswap_stream_force(void *head) {
     walk_and_diag(static_cast<uint32_t *>(head), true);
+}
+
+extern "C" int port_aobj_event32_unhalfswap_stream_force_applied(void *head) {
+    return (walk_and_diag(static_cast<uint32_t *>(head), true) == WalkOutcome::Applied) ? 1 : 0;
+}
+
+extern "C" int port_aobj_event32_head_is_unswapped(const void *head) {
+    if (head == nullptr) return 0;
+    return sUnswappedHeads.count(reinterpret_cast<uintptr_t>(head)) ? 1 : 0;
+}
+
+extern "C" void port_aobj_event32_capture_native_in_range(void *base, unsigned long size) {
+    sPreEvictNativeHeads.clear();
+    if (base == nullptr || size == 0) return;
+    uintptr_t b = reinterpret_cast<uintptr_t>(base);
+    uintptr_t e = b + static_cast<uintptr_t>(size);
+    for (uintptr_t key : sUnswappedHeads) {
+        if (key >= b && key < e) sPreEvictNativeHeads.insert(key);
+    }
+}
+
+extern "C" int port_aobj_event32_head_was_native_preevict(const void *head) {
+    if (head == nullptr) return 0;
+    return sPreEvictNativeHeads.count(reinterpret_cast<uintptr_t>(head)) ? 1 : 0;
+}
+
+extern "C" void port_aobj_event32_head_mark_unswapped(void *head) {
+    if (head == nullptr) return;
+    uintptr_t key = reinterpret_cast<uintptr_t>(head);
+    sRejectedHeads.erase(key);
+    sUnswappedHeads.insert(key);
 }
 
 extern "C" void port_aobj_event32_unhalfswap_forget(void *head) {

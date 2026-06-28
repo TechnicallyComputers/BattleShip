@@ -20,6 +20,7 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | Netplay rollback boundary + decomp gating pattern | `docs/netplay_rollback_refactor_contracts.md` |
 | FTStatusVars union overlays, witness, stomp diagnosis | `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` |
 | Android port status + offline/netplay APK CI | `docs/android_port_status_2026-05-01.md` |
+| Android orientation/landscape lock + surface geometry (SDL overrides manifest; BLAST resize abort) | `docs/android_orientation_landscape_lock.md` |
 
 Ongoing investigations and handoff notes are loose `.md` files at the top level of `docs/` — check there before starting work on rendering, collision, or animation issues so you don't duplicate prior effort.
 
