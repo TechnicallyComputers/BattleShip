@@ -21,7 +21,7 @@ import android.widget.TextView;
  * On-screen touch controls for the SSB64 port.
  *
  * Layout (landscape):
- *   - Left half: floating-anchor virtual analog stick ({@link AnalogStickView}).
+ *   - Left half: fixed-anchor virtual analog stick ({@link AnalogStickView}).
  *   - Right half: face-button cluster.
  *   - Top corners: shoulder/trigger buttons (Z, R) and the menu hamburger.
  *
@@ -143,15 +143,27 @@ public final class TouchOverlay {
             ViewGroup.LayoutParams.MATCH_PARENT));
         FrameLayout stickHost = new FrameLayout(activity);
         stickHost.addView(stick);
-        stickHost.post(() -> {
-            ViewGroup.LayoutParams lp = stickHost.getLayoutParams();
-            lp.width = ((ViewGroup) stickHost.getParent()).getWidth() / 2;
-            stickHost.setLayoutParams(lp);
-        });
         gameplayLayer.addView(stickHost, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
             Gravity.START | Gravity.FILL_VERTICAL));
+        // Pin the stick capture region to the left half of the screen, and
+        // re-derive it on every layout. BattleShipActivity survives
+        // screenSize/smallestScreenSize config changes (see manifest
+        // android:configChanges), so a one-shot width goes stale on a live
+        // resize (multi-window, foldable, free-form), leaving the fixed anchor
+        // centered in a dead or oversized region. Listening on the parent's
+        // layout keeps the half-width correct across resizes; the width guard
+        // ignores pre-layout 0-width passes and prevents a re-layout loop.
+        gameplayLayer.addOnLayoutChangeListener(
+            (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+                int half = (right - left) / 2;
+                ViewGroup.LayoutParams lp = stickHost.getLayoutParams();
+                if (half > 0 && lp.width != half) {
+                    lp.width = half;
+                    stickHost.setLayoutParams(lp);
+                }
+            });
 
         // ── Face cluster (right thumb) ──────────────────────────────────
         addBtnButton(activity, gameplayLayer, "A",     SDL_CONTROLLER_BUTTON_A,

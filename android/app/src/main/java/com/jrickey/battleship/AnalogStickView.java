@@ -8,15 +8,9 @@ import android.view.MotionEvent;
 import android.view.View;
 
 /**
- * Floating-anchor virtual analog stick. The stick "appears" wherever the
- * user first touches inside its hosting region; subsequent drag delta
- * (clamped to a configurable radius) sets SDL_CONTROLLER_AXIS_LEFTX/Y.
- * On release, the axes return to centered.
- *
- * Floating over fixed: SSB64 movement is expressive (grace-of-the-stick
- * matters), and a fixed-position stick forces the user to keep their
- * thumb on a small target. A floating stick anchored at the touch-down
- * point is the standard mobile fighting-game convention.
+ * Fixed-anchor virtual analog stick. The ring stays in the same place inside
+ * its hosting region; touch delta from that anchor sets
+ * SDL_CONTROLLER_AXIS_LEFTX/Y. On release, the axes return to centered.
  */
 public final class AnalogStickView extends View {
 
@@ -37,10 +31,11 @@ public final class AnalogStickView extends View {
 
     /** Active touch pointer ID, or -1 when idle. */
     private int  mActivePointerId = -1;
-    /** Anchor (touch-down position). */
+    /** Stable anchor inside the left-stick region. */
     private float mAnchorX, mAnchorY;
-    /** Current touch position. */
+    /** Clamped thumb position. */
     private float mTouchX, mTouchY;
+    private boolean mAnchorInitialized = false;
 
     public AnalogStickView(Context ctx) {
         super(ctx);
@@ -59,8 +54,30 @@ public final class AnalogStickView extends View {
     }
 
     @Override
-    protected void onDraw(Canvas canvas) {
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+
+        if (mAnchorInitialized && oldw > 0 && oldh > 0) {
+            mAnchorX = Math.max(0f, Math.min(w, mAnchorX * w / oldw));
+            mAnchorY = Math.max(0f, Math.min(h, mAnchorY * h / oldh));
+        } else {
+            mAnchorX = w * 0.5f;
+            mAnchorY = h * 0.5f;
+            mAnchorInitialized = true;
+        }
+
         if (mActivePointerId < 0) {
+            centerThumb();
+        }
+        invalidate();
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        if (!mAnchorInitialized) {
             return;
         }
         canvas.drawCircle(mAnchorX, mAnchorY, mRingPx,  mRingPaint);
@@ -77,31 +94,16 @@ public final class AnalogStickView extends View {
                     return true;
                 }
                 int idx = ev.getActionIndex();
+                ensureAnchor();
                 mActivePointerId = ev.getPointerId(idx);
-                mAnchorX = ev.getX(idx);
-                mAnchorY = ev.getY(idx);
-                mTouchX  = mAnchorX;
-                mTouchY  = mAnchorY;
-                emitAxis(0f, 0f);
+                updateTouch(ev.getX(idx), ev.getY(idx));
                 invalidate();
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
                 int idx = ev.findPointerIndex(mActivePointerId);
                 if (idx < 0) return true;
-                mTouchX = ev.getX(idx);
-                mTouchY = ev.getY(idx);
-
-                float dx = mTouchX - mAnchorX;
-                float dy = mTouchY - mAnchorY;
-                float len = (float) Math.hypot(dx, dy);
-                float clampedDx = dx, clampedDy = dy;
-                if (len > mDeflectionPx) {
-                    clampedDx = dx * mDeflectionPx / len;
-                    clampedDy = dy * mDeflectionPx / len;
-                }
-                emitAxis(clampedDx / mDeflectionPx,
-                         clampedDy / mDeflectionPx);
+                updateTouch(ev.getX(idx), ev.getY(idx));
                 invalidate();
                 return true;
             }
@@ -111,7 +113,7 @@ public final class AnalogStickView extends View {
                 // pointer, an ID check would skip the reset and leave the
                 // stick stuck at its last deflection. Reset unconditionally.
                 mActivePointerId = -1;
-                emitAxis(0f, 0f);
+                resetInput();
                 invalidate();
                 return true;
             }
@@ -122,13 +124,50 @@ public final class AnalogStickView extends View {
                     return true;
                 }
                 mActivePointerId = -1;
-                emitAxis(0f, 0f);
+                resetInput();
                 invalidate();
                 return true;
             }
             default:
                 return false;
         }
+    }
+
+    private void ensureAnchor() {
+        if (mAnchorInitialized) {
+            return;
+        }
+        int w = getWidth();
+        int h = getHeight();
+        mAnchorX = w > 0 ? w * 0.5f : 0f;
+        mAnchorY = h > 0 ? h * 0.5f : 0f;
+        mAnchorInitialized = true;
+        centerThumb();
+    }
+
+    private void updateTouch(float x, float y) {
+        float dx = x - mAnchorX;
+        float dy = y - mAnchorY;
+        float len = (float) Math.hypot(dx, dy);
+        float clampedDx = dx, clampedDy = dy;
+        if (len > mDeflectionPx) {
+            clampedDx = dx * mDeflectionPx / len;
+            clampedDy = dy * mDeflectionPx / len;
+        }
+        mTouchX = mAnchorX + clampedDx;
+        mTouchY = mAnchorY + clampedDy;
+        emitAxis(clampedDx / mDeflectionPx,
+                 clampedDy / mDeflectionPx);
+    }
+
+    private void resetInput() {
+        centerThumb();
+        emitAxis(0f, 0f);
+    }
+
+    private void centerThumb() {
+        mTouchX = mAnchorX;
+        mTouchY = mAnchorY;
     }
 
     /** @param nx,ny normalized [-1, 1]; positive Y is downward (matches SDL). */
