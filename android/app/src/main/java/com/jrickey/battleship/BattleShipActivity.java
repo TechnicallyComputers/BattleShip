@@ -37,12 +37,35 @@ public class BattleShipActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        // Orientation is forced landscape via setRequestedOrientation() below,
+        // which intercepts SDLActivity's own request — no explicit call here.
         super.onCreate(savedInstanceState);
         // Lay the touch overlay on top of SDL's GLES surface. Has to come
         // after super.onCreate so SDLActivity has already installed its
         // surface as the root content view.
         TouchOverlay.install(this);
+    }
+
+    /**
+     * Lock the game to landscape.
+     *
+     * The manifest pins this activity to {@code landscape}, but SDLActivity
+     * re-asserts orientation at runtime from {@code setOrientationBis()}. Our
+     * SDL window is resizable (for wide-aspect presentation), and SSB64 sets no
+     * {@code SDL_HINT_ORIENTATIONS}, so SDL hits the "resizable + no hint" branch
+     * and requests {@link ActivityInfo#SCREEN_ORIENTATION_FULL_USER} — which lets
+     * the device's physical rotation win and overrides the manifest. On a
+     * portrait-held device the game then renders portrait with the landscape
+     * touch overlay squished.
+     *
+     * SSB64 is landscape-only, so coerce every orientation request (SDL's and
+     * any system call) to sensor-landscape. SENSOR_LANDSCAPE keeps the window
+     * wide (preserving the wide-aspect/letterbox behavior) while allowing either
+     * landscape facing.
+     */
+    @Override
+    public void setRequestedOrientation(int requestedOrientation) {
+        super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     }
 
     @Override
