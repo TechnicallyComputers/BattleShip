@@ -38,9 +38,17 @@
 
 namespace {
 
-constexpr uint32_t kRelocTableRomAddr = 0x1AC870;
-constexpr uint32_t kRelocDataStart = 0x1AEAA0;
-constexpr uint32_t kRelocTableEntrySize = 12;
+constexpr uint32_t kRelocTableRomAddr = 0x1AC870;   // US v1.0 (NALE) reloc table base
+constexpr uint32_t kRelocTableEntrySize = 12;       // RELOC_TABLE_ENTRY_SIZE
+constexpr uint32_t kRelocFileCount = 2132;          // US v1.0 reloc file count
+// The data region begins right after the table, which includes a trailing +1
+// sentinel entry. This mirrors torch SSB64::GetRelocLayout:
+//   dataStart = tableRomAddr + (fileCount + 1) * entrySize
+//             = 0x1AC870 + 2133 * 12 = 0x1B2C6C
+// (The previous hardcoded 0x1AEAA0 was wrong, so every VPK0-compressed stage
+//  file was read from the wrong ROM offset and failed to decode.)
+constexpr uint32_t kRelocDataStart =
+    kRelocTableRomAddr + (kRelocFileCount + 1) * kRelocTableEntrySize;
 constexpr int kIconW = 48;
 constexpr int kIconH = 36;
 constexpr int kSpriteSize = 68;

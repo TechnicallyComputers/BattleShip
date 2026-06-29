@@ -60,3 +60,52 @@ Any future port-only CSS asset should answer two questions separately:
 1. How desktop derives or stages the file.
 2. How Android derives it from the user's picked ROM without bundling the
    derived bytes in the APK.
+
+## Follow-up: on-device verification (2026-06-29)
+
+The wiring above was correct, but the feature had **never been run on a
+device** — and it did not actually work. End-to-end testing on an `arm64-v8a`
+emulator (clean install → `dev_rom` extraction) showed:
+
+```
+CSS stage assets: VPK0 decode failed for reloc file 96
+CSS stage assets: VPK0 decode failed for reloc file 98
+CSS stage assets: VPK0 decode failed for reloc file 97
+CSS stage assets: derived 0/3 stage asset sets
+```
+
+### Root cause
+
+`port/android_torch_bridge.cpp` hardcoded the reloc **data region** start as
+`kRelocDataStart = 0x1AEAA0`. The correct value for US v1.0 (NALE) is
+`0x1B2C6C`: the data region begins immediately after the reloc table, which
+contains `(fileCount + 1)` entries including a trailing sentinel:
+
+```
+dataStart = tableRomAddr + (fileCount + 1) * entrySize
+          = 0x1AC870 + (2132 + 1) * 12 = 0x1B2C6C
+```
+
+This matches torch's `SSB64::GetRelocLayout` and the desktop
+`tools/derive_stage_assets.py` (`RELOC_DATA_START = 0x1B2C6C`). With the wrong
+base, `file_data` pointed `0x41CC` bytes short of the real VPK0 stream, so
+every compressed stage file failed to decode and `0/3` icons were produced —
+i.e. the icons would still have been question marks on Android.
+
+### Fix
+
+Derive `kRelocDataStart` from the file count instead of hardcoding it (so it
+can't silently drift from torch's layout again). After the fix, the same
+emulator run reports `derived 3/3 stage asset sets`, and all six PNGs
+(`{final_destination,metal_cavern,battlefield}_{background,small}.png`) are
+**pixel-identical** to the desktop `derive_stage_assets.py` output (verified
+with `ImageChops.difference`; byte sizes differ only because lodepng and PIL
+encode the same pixels differently).
+
+### Audit hook
+
+Any reloc-table offsets duplicated outside torch (`tableRomAddr`, `dataStart`,
+`entrySize`, `fileCount`) must match `SSB64::GetRelocLayout`. Prefer deriving
+`dataStart` from `tableRomAddr + (fileCount + 1) * entrySize` over a hardcoded
+constant. A wrong `dataStart` reads as "VPK0 decode failed" for every
+compressed file, not as a crash.
