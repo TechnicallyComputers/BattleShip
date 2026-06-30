@@ -165,6 +165,9 @@ LOAD_HASH_DRIFT_RE = re.compile(
     r"SSB64 NetRollback: LOAD_HASH_DRIFT tick=(\d+) .+ item=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+)"
 )
 SYNCTEST_FAIL_RE = re.compile(r"SSB64 NetRollback: SYNCTEST_FAIL tick=(\d+)")
+FORCE_MISMATCH_INJECT_RE = re.compile(
+    r"SSB64 NetRollback: (?:debug inject tamper at remote tick|FORCE_MISMATCH on wire tick) (\d+)"
+)
 RESIM_SIM_CORE_RE = re.compile(
     r"SSB64 NetRollback: LOAD_HASH_DRIFT resim-sim-core-ok"
 )
@@ -2793,6 +2796,40 @@ def collect_sim_state_by_tick(lines: list[str]) -> dict[str, dict[str, str]]:
     return by_tick
 
 
+def collect_force_mismatch_inject_tick(lines: list[str]) -> int | None:
+    """First wire tick where rollback debug injected an input tamper (both peers log it)."""
+    ticks: list[int] = []
+    for ln in lines:
+        m = FORCE_MISMATCH_INJECT_RE.search(ln)
+        if m is not None:
+            ticks.append(int(m.group(1)))
+    return min(ticks) if ticks else None
+
+
+def _pair_force_mismatch_inject_tick(lines_a: list[str], lines_b: list[str]) -> int | None:
+    ta = collect_force_mismatch_inject_tick(lines_a)
+    tb = collect_force_mismatch_inject_tick(lines_b)
+    if ta is not None and tb is not None:
+        return min(ta, tb)
+    return ta if ta is not None else tb
+
+
+def _sim_state_item_skew_expected_force_mismatch(
+    tick: str,
+    diffs: list[str],
+    fa: dict[str, str],
+    fb: dict[str, str],
+    force_inject: int | None,
+) -> bool:
+    """Item-only cross-peer sim_state skew after FORCE_MISMATCH while core partitions match."""
+    if force_inject is None or int(tick) < force_inject:
+        return False
+    if set(diffs) != {"item"}:
+        return False
+    core_keys = ("figh", "world", "rng", "wpn", "mph")
+    return all(fa.get(k) == fb.get(k) and k in fa and k in fb for k in core_keys)
+
+
 def diff_sync_report_pair(
     metrics_a: SyncReportMetrics,
     lines_a: list[str],
@@ -2808,8 +2845,11 @@ def diff_sync_report_pair(
         out.append("  pair: no overlapping sim_state_tick rows")
         return out, False
 
+    force_inject = _pair_force_mismatch_inject_tick(lines_a, lines_b)
     compare_keys = ["figh", "item", "anim", "eff", "world", "wpn"]
     skipped_gen = 0
+    expected_item_skew = 0
+    first_expected_note: str | None = None
     for tick in common:
         fa, fb = by_a[tick], by_b[tick]
         # Compare like-with-like only. If one peer re-logged this tick during a
@@ -2820,15 +2860,33 @@ def diff_sync_report_pair(
             skipped_gen += 1
             continue
         diffs = [k for k in compare_keys if fa.get(k) != fb.get(k) and k in fa and k in fb]
-        if diffs:
-            out.append(f"  pair: first sim_state mismatch tick={tick} fields={','.join(diffs)}")
-            for k in diffs:
-                out.append(f"    {k}: {metrics_a.label}={fa.get(k)} {metrics_b.label}={fb.get(k)}")
-            return out, True
+        if not diffs:
+            continue
+        if _sim_state_item_skew_expected_force_mismatch(tick, diffs, fa, fb, force_inject):
+            expected_item_skew += 1
+            if first_expected_note is None:
+                first_expected_note = (
+                    f"  pair: sim_state item-only skew tick={tick} expected "
+                    f"(FORCE_MISMATCH inject={force_inject}; core partitions match)"
+                )
+            continue
+        out.append(f"  pair: first sim_state mismatch tick={tick} fields={','.join(diffs)}")
+        for k in diffs:
+            out.append(f"    {k}: {metrics_a.label}={fa.get(k)} {metrics_b.label}={fb.get(k)}")
+        if first_expected_note is not None:
+            out.append(first_expected_note)
+        return out, True
 
     note = f"  pair: sim_state_tick aligned on {len(common)} overlapping ticks"
     if skipped_gen:
         note += f" ({skipped_gen} skipped: resim/forward generation mismatch)"
+    if expected_item_skew:
+        note += (
+            f"; {expected_item_skew} tick(s) item-only skew expected "
+            f"(FORCE_MISMATCH inject={force_inject})"
+        )
+        if first_expected_note is not None:
+            out.append(first_expected_note)
     out.append(note)
     return out, False
 
@@ -3055,6 +3113,7 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
     out.append(
         f"=== sim_state_tick diff ({log_a.label} vs {log_b.label}) ==="
     )
+    force_inject = _pair_force_mismatch_inject_tick(log_a.kept, log_b.kept)
     common = sorted(set(by_tick_a.keys()) & set(by_tick_b.keys()), key=int)
     compare_keys = [
         "figh",
@@ -3067,9 +3126,22 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
         "commit_gen",
     ]
     item_first: tuple[str, str, str] | None = None
+    item_first_expected = False
+    expected_item_skew = 0
     pacing_first: tuple[str, list[str]] | None = None
     for tick in common:
         fa, fb = by_tick_a[tick], by_tick_b[tick]
+        diffs = [
+            k for k in compare_keys if fa.get(k) != fb.get(k) and k in fa and k in fb
+        ]
+        if diffs and _sim_state_item_skew_expected_force_mismatch(
+            tick, diffs, fa, fb, force_inject
+        ):
+            expected_item_skew += 1
+            if item_first is None:
+                item_first = (tick, fa.get("item", "?"), fb.get("item", "?"))
+                item_first_expected = True
+            continue
         if item_first is None and fa.get("item") != fb.get("item") and "item" in fa and "item" in fb:
             item_first = (tick, fa.get("item", "?"), fb.get("item", "?"))
         if pacing_first is None:
@@ -3078,9 +3150,6 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
             ]
             if pacing_diffs:
                 pacing_first = (tick, pacing_diffs)
-        diffs = [
-            k for k in compare_keys if fa.get(k) != fb.get(k) and k in fa and k in fb
-        ]
         if diffs and item_first is None and pacing_first is None:
             out.append(f"  first mismatch tick={tick} fields={','.join(diffs)}")
             for k in diffs:
@@ -3089,8 +3158,18 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
     else:
         if item_first is not None:
             tick, ia, ib = item_first
-            out.append(f"  first item mismatch tick={tick}")
+            if item_first_expected and force_inject is not None:
+                out.append(
+                    f"  first item mismatch tick={tick} expected "
+                    f"(FORCE_MISMATCH inject={force_inject}; core partitions match)"
+                )
+            else:
+                out.append(f"  first item mismatch tick={tick}")
             out.append(f"    item: {log_a.label}={ia} {log_b.label}={ib}")
+            if expected_item_skew > 1:
+                out.append(
+                    f"  ({expected_item_skew} total item-only skew ticks suppressed as expected)"
+                )
         if pacing_first is not None:
             tick, fields = pacing_first
             fa, fb = by_tick_a[tick], by_tick_b[tick]
@@ -3098,7 +3177,13 @@ def diff_sim_state_ticks(log_a: LabeledLog, log_b: LabeledLog) -> list[str]:
             for k in fields:
                 out.append(f"    {k}: {log_a.label}={fa.get(k)} {log_b.label}={fb.get(k)}")
         if item_first is None and pacing_first is None:
-            out.append("  no field mismatch on overlapping sim_state_tick rows")
+            note = "  no field mismatch on overlapping sim_state_tick rows"
+            if expected_item_skew:
+                note += (
+                    f" ({expected_item_skew} item-only skew ticks expected "
+                    f"FORCE_MISMATCH inject={force_inject})"
+                )
+            out.append(note)
     out.append("")
     return out
 
