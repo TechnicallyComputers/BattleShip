@@ -5947,7 +5947,13 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		    load_tick);
 		return TRUE;
 	}
-	syNetRbSnapshotResyncLiveFightersFromSlotForSim(load_tick);
+	/*
+	 * Post-load oracle must run on the PrepareLoaded product only. ResyncLiveFightersFromSlotForSim
+	 * re-runs joint topology / anchor-probe prep (VsLoadJointFidelityRepair, knockdown coll refresh)
+	 * for the upcoming +1 sim — that deliberately perturbs figh fold fields and caused spurious
+	 * postload_figh_fail with step_figh_ok on every tick (soak2 DK throw @503: 16-step walkback to
+	 * load-16; Android follower anchored @487 vs Linux initiator @503).
+	 */
 	ring_load_f = syNetRbSnapshotGetSlotHashFighter(load_tick);
 	ring_load_a = syNetRbSnapshotGetSlotHashAnimation(load_tick);
 	live = syNetRollbackCollectHashes();
@@ -6009,6 +6015,7 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 		}
 	}
 #endif
+	syNetRbSnapshotResyncLiveFightersFromSlotForSim(load_tick);
 	/*
 	 * Reseed published/remote input slots from history at load_tick before the +1 probe step.
 	 * BeginResim calls syNetInputRollbackPrepareForResim only after the walkback loop; without
@@ -6123,6 +6130,26 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 			}
 			step_anim_mismatch = FALSE;
 			step_mismatch = FALSE;
+		}
+		/*
+		 * Load landed one tick ahead of ring@load (postload figh drift) but +1 probe matches
+		 * ring@probe — shared finalize path mints N+1 gameplay while slot digest still tags N.
+		 * Accept: walkback would never find a better anchor (soak2 @503..504, postload_f step_f).
+		 */
+		if ((postload_figh_mismatch != FALSE) && (postload_anim_mismatch == FALSE) &&
+		    (step_figh_mismatch == FALSE) && (step_anim_mismatch == FALSE))
+		{
+			if (log_verbose != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: RESIM_ANCHOR_PROBE_POSTLOAD_BYPASS load=%u probe_tick=%u reason=postload_ahead_step_ok ring_figh=0x%08X live_figh=0x%08X\n",
+				    load_tick,
+				    probe_tick,
+				    ring_load_f,
+				    live.fighter);
+			}
+			postload_figh_mismatch = FALSE;
+			postload_mismatch = FALSE;
 		}
 	}
 #endif

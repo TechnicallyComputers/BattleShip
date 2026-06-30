@@ -4,6 +4,7 @@
 
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netrollbacksnapshot.h>
 #include <sys/netsync.h>
 #include <sys/objman.h>
 
@@ -15,6 +16,8 @@
 #include <ft/ftparam.h>
 #include <ft/fttypes.h>
 #include <sc/scene.h>
+
+#include <ef/efmanager.h>
 
 #include <stdlib.h>
 
@@ -164,11 +167,19 @@ void syNetplayRebirthSimDiagLogTick(u32 tick)
 		}
 		if (syNetplayRebirthFighterIsRebirthStatus(fp->status_id) != FALSE)
 		{
+			/*
+			 * halo_effect_present: does the live effect pool actually hold the rebirth-halo (respawn
+			 * platform) effect coupled to this fighter? is_effect_attach only records that one was made
+			 * at RebirthDown; if a restore drops the halo effect the platform goes invisible while the
+			 * fighter still behaves correctly. A 1->0 transition here names the tick the platform vanished.
+			 */
+			u32 halo_effect_present = (syNetRbSnapLiveFighterHasRebirthHalo(fighter_gobj) != FALSE) ? 1U : 0U;
+
 			port_log(
 			    "SSB64 Netplay: death_rebirth_sim tick=%u player=%d fkind=%d scope=%s status=%d motion=%d "
 			    "motion_flag1=%d stock=%d hitlag=%u fhash_light=0x%08X fhash_full=0x%08X anim=0x%08X "
 			    "gobj_tx=0x%08X gobj_ty=0x%08X gobj_tz=0x%08X vel_air_x=0x%08X vel_air_y=0x%08X vel_air_z=0x%08X "
-			    "camera_mode=%u is_invisible=%u is_ghost=%u is_rebirth=%u "
+			    "camera_mode=%u is_invisible=%u is_ghost=%u is_rebirth=%u is_effect_attach=%u halo_effect_present=%u "
 			    "halo_lower=%d halo_despawn=%d halo_num=%d rebirth_pos_y=0x%08X rebirth_halo_y=0x%08X\n",
 			    tick,
 			    (int)fp->player,
@@ -192,6 +203,8 @@ void syNetplayRebirthSimDiagLogTick(u32 tick)
 			    (unsigned int)(fp->is_invisible != FALSE),
 			    (unsigned int)(fp->is_ghost != FALSE),
 			    (unsigned int)(fp->is_rebirth != FALSE),
+			    (unsigned int)(fp->is_effect_attach != FALSE),
+			    halo_effect_present,
 			    (int)ftStatusVarsRebirth(fp)->halo_lower_wait,
 			    (int)ftStatusVarsRebirth(fp)->halo_despawn_wait,
 			    (int)ftStatusVarsRebirth(fp)->halo_number,
@@ -399,6 +412,64 @@ static void syNetplayRebirthGateLogLifecycleCatchUp(GObj *fighter_gobj, FTStruct
 	    (int)ftStatusVarsRebirth(fp)->halo_number);
 }
 
+/*
+ * Forward sim can enter RebirthDown with lifecycle timers live but no halo GObj (MakeEffect failed
+ * once, rollback skipped attach, etc.). Snapshot ensure only runs on load — mint the platform here.
+ */
+static void syNetplayRebirthEnsureLiveHaloIfDue(GObj *fighter_gobj, FTStruct *fp)
+{
+	GObj *effect_gobj;
+
+	if ((fighter_gobj == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	if (syNetplayRebirthFighterIsRebirthStatus(fp->status_id) == FALSE)
+	{
+		return;
+	}
+	if (syNetRbSnapLiveFighterHasRebirthHalo(fighter_gobj) != FALSE)
+	{
+		return;
+	}
+	{
+		s32 reclaimed = 0;
+		s32 ef_free_before = 0;
+		s32 ef_free_after = 0;
+
+		syNetRbSnapReclaimStaleEffectShellsForRebirthHalo(&reclaimed, &ef_free_before);
+		effect_gobj = efManagerRebirthHaloMakeEffect(fighter_gobj, fp->attr->halo_size);
+		ef_free_after = efManagerGetEffectStructFreeCount();
+		if (effect_gobj != NULL)
+		{
+			fp->is_effect_attach = TRUE;
+			if (syNetplayRebirthGateDiagEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 Netplay: REBIRTH_GATE tick=%u event=halo_ensure player=%d status=%d gobj_id=%u reclaimed=%d ef_free=%d->%d\n",
+				    syNetplayRebirthGateSimTick(),
+				    (int)fp->player,
+				    (int)fp->status_id,
+				    (unsigned int)effect_gobj->id,
+				    (int)reclaimed,
+				    (int)ef_free_before,
+				    (int)ef_free_after);
+			}
+		}
+		else if (syNetplayRebirthGateDiagEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 Netplay: REBIRTH_GATE tick=%u event=halo_ensure_fail player=%d status=%d reclaimed=%d ef_free=%d->%d\n",
+			    syNetplayRebirthGateSimTick(),
+			    (int)fp->player,
+			    (int)fp->status_id,
+			    (int)reclaimed,
+			    (int)ef_free_before,
+			    (int)ef_free_after);
+		}
+	}
+}
+
 void syNetplayRebirthCatchUpLifecycleIfDue(GObj *fighter_gobj, FTStruct *fp)
 {
 	if ((fighter_gobj == NULL) || (fp == NULL))
@@ -457,6 +528,7 @@ void syNetplayRebirthCatchUpFightersTick(void)
 		}
 		syNetplayRebirthCatchUpDeadGateIfDue(fighter_gobj, fp);
 		syNetplayRebirthCatchUpLifecycleIfDue(fighter_gobj, fp);
+		syNetplayRebirthEnsureLiveHaloIfDue(fighter_gobj, fp);
 	}
 }
 

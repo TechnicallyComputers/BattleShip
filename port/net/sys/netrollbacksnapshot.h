@@ -128,6 +128,13 @@ extern sb32 syNetRbSnapThunderJoltProcAccessoryWillRun(struct GObj *fighter_gobj
 extern sb32 syNetRbSnapThunderJoltOwnedByFighter(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderJoltFromAccessory(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderFromSpecialLw(struct GObj *fighter_gobj);
+/* TRUE when the live effect pool currently holds the rebirth-halo (respawn platform) effect coupled to
+ * this fighter. Diagnostic use: catch the tick a restore drops the halo so the platform goes invisible. */
+extern sb32 syNetRbSnapLiveFighterHasRebirthHalo(struct GObj *fighter_gobj);
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* Eject dead/orphan effect shells so rebirth-halo MakeEffect can allocate. */
+extern void syNetRbSnapReclaimStaleEffectShellsForRebirthHalo(s32 *ejected_out, s32 *ef_struct_free_out);
+#endif
 /* Skip held-item spawn when rollback already restored a matching projectile at this pose. */
 extern sb32 syNetRbSnapHeldItemWeaponNeedsSpawn(struct GObj *owner_gobj, s32 kind, const Vec3f *spawn_pos,
                                                 const Vec3f *spawn_vel);

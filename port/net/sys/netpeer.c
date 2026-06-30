@@ -11371,6 +11371,19 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 		}
 	}
 
+	/*
+	 * Per-tick fighter diagnostics that self-gate on their OWN envs
+	 * (SSB64_NETPLAY_DEATH_REBIRTH_SIM_DIAG / SSB64_NETPLAY_PKTHUNDER_HOLD_DIAG) must run on
+	 * every committed sim tick, independent of the SIM_STATE_TICK_INTERVAL sampling gate below.
+	 * They used to be nested under that gate, so enabling only the rebirth env produced no output
+	 * (the function returned early when SIM_STATE_TICK_INTERVAL was unset) and, when the interval
+	 * was set, the diag was sampled every N ticks and could miss the exact tick a halo dropped.
+	 * Each callee is a cheap cached-getenv no-op when its env is off. See
+	 * docs/bugs/netplay_link_bomb_effect_desc_sigsegv_2026-06-30.md.
+	 */
+	syNetplayRebirthSimDiagLogTick(tick);
+	syNetSyncLogPKThunderHoldDiag(tick);
+
 	e = getenv("SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL");
 	if ((e == NULL) || (e[0] == '\0'))
 	{
@@ -11535,8 +11548,11 @@ static void syNetPeerMaybeLogSimStateTickTrace(void)
 			    remote_cap,
 			    (hr > 0U) ? (int)((s32)tick - (s32)remote_cap) : 0);
 			syNetSyncLogFighterSlotHashes(tick);
-			syNetplayRebirthSimDiagLogTick(tick);
-			syNetSyncLogPKThunderHoldDiag(tick);
+			/*
+			 * syNetplayRebirthSimDiagLogTick / syNetSyncLogPKThunderHoldDiag were hoisted above the
+			 * SIM_STATE_TICK_INTERVAL gate so they run every committed sim tick from their own envs.
+			 * Do not re-call them here or interval ticks would double-log.
+			 */
 		}
 	}
 }

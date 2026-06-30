@@ -91,6 +91,74 @@ Built clean (offline `ssb64`, `SSB64_NETMENU=OFF`).
   `0xFFFFFFFF` stamp comes from a netplay path or vanilla effect/stale-GObj
   lifetime.
 
+## Post-guard soak — crash gone, two effect-fidelity issues surfaced
+
+The defensive guard held: the next Link-bomb soak had **no SIGSEGV** and no
+`FRAME_COMMIT_*`. Two effect-partition problems remained:
+
+1. **`SYNCTEST_FAIL` at tick 3675**, isolated to `eff` (`drift=eff -> UNRESOLVED`).
+   A single bomb-quake effect's fold hash diverged save→verify
+   (`0x305A769D` save vs `0xC2406A1A` verify).
+2. **Respawn platform invisible** — on rebirth the rebirth-halo effect (the
+   platform graphic) did not appear. Behaviorally correct, presentationally wrong.
+
+### Tooling blind spot (fixed here)
+
+`eff_fold_diag` (`syNetSyncLogActiveEffectsFoldDiag`) folds the **live** effect
+pool field-for-field, but the only caller wired to `SSB64_NETPLAY_EFFECT_FOLD_DIAG`
+was the **verify** side (`netrollback.c`). The capture/`"save"` side dump lives in
+`syNetRbSnapLogRingSaveDiag` gated behind a *different* env
+(`syNetRbSnapRingSaveDiagEnabled`), so enabling `EFFECT_FOLD_DIAG` alone produced
+only one side — nothing to diff, so the divergent field could not be named.
+
+**Fix:** the effect-capture path
+(`netrollbacksnapshot.c`, after `slot->effect_count = written`) now also calls
+`syNetSyncLogActiveEffectsFoldDiag("capture", slot->tick)` under the **same**
+`SSB64_NETPLAY_EFFECT_FOLD_DIAG` env, emitted only when `effect_count > 0` (no
+per-tick spam in the common count==0 case). One env now yields both
+`tag=capture` and `tag=verify` per-effect breakdowns; a save-vs-verify diff at the
+failing tick pins the exact quake field (bank / respawn / parent_id / anim_frame /
+quake_pri / pos).
+
+### Rebirth-halo presence diagnostic (added here)
+
+`syNetRbSnapLiveFighterHasRebirthHalo` (was `static` in `netrollbacksnapshot.c`)
+is now exported (decl in `netrollbacksnapshot.h`) and called from the per-tick
+rebirth diag (`syNetplayRebirthSimDiagLogTick`, `netplay_rebirth_gate.c`). The
+`death_rebirth_sim` line now carries `is_effect_attach=` and
+`halo_effect_present=`: `is_effect_attach` only records that a halo was *made* at
+RebirthDown, while `halo_effect_present` reflects whether the halo effect gobj is
+*actually live in the pool*. A `1 -> 0` transition names the exact tick a restore
+dropped the platform effect while the fighter kept behaving correctly. Gated on
+`SSB64_NETPLAY_DEATH_REBIRTH_SIM_DIAG`.
+
+### Re-soak with
+
+```
+SSB64_NETPLAY_EFFECT_FOLD_DIAG=1
+SSB64_NETPLAY_DEATH_REBIRTH_SIM_DIAG=1
+```
+
+Then diff `eff_fold_diag tag=capture tick=3675` vs `tag=verify tick=3675` for the
+quake field, and grep `death_rebirth_sim` for the `halo_effect_present=1 -> 0`
+tick.
+
+### Quake synctest fail @1470 (SkipLinkBomb blocked EnsureQuake) — fixed 2026-06-30
+
+**Symptom:** SYNCTEST_FAIL at tick 1470, `eff` partition only. Capture had one
+`respawn=1` bomb quake (`hash=0xB15239D4`); verify ended `count=0`
+(`hash=0x811C9DC5`). Link bomb item (`kind=23`) was live on stage.
+
+**Cause:** `syNetRbSnapEnsureQuakeEffectsFromSlot` was nested under
+`SkipLinkBombExplodeCosmeticReplayOnLoad == FALSE`. That skip is correct for
+sparkle replay while a live bomb is on stage, but it also suppressed
+slot-authoritative quake restore during synctest verify.
+
+**Fix:** `syNetRbSnapShouldEnsureQuakeEffectsFromSlot` — when the slot lists a
+quake blob, always call EnsureQuake regardless of SkipLinkBomb; otherwise keep
+the skip gate for forward hygiene. Used from finalize-verify, finalize-load, and
+Link-bomb reconcile paths.
+
 ## Audit hook
 
 A deterministic cross-ISA SIGSEGV with `fault_addr` low 32 bits = `0xFFFFFFFF`
