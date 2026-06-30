@@ -165,9 +165,6 @@ LOAD_HASH_DRIFT_RE = re.compile(
     r"SSB64 NetRollback: LOAD_HASH_DRIFT tick=(\d+) .+ item=0x([0-9A-Fa-f]+)/0x([0-9A-Fa-f]+)"
 )
 SYNCTEST_FAIL_RE = re.compile(r"SSB64 NetRollback: SYNCTEST_FAIL tick=(\d+)")
-FRAME_COMMIT_DIVERGE_RE = re.compile(
-    r"SSB64 NetRollback: FRAME_COMMIT_STATE_DIVERGE validation=(\d+) .+ item=0x([0-9A-Fa-f]+) .+ item=0x([0-9A-Fa-f]+)"
-)
 RESIM_SIM_CORE_RE = re.compile(
     r"SSB64 NetRollback: LOAD_HASH_DRIFT resim-sim-core-ok"
 )
@@ -187,8 +184,21 @@ ITEM_HASH_WALK_BEGIN_RE = re.compile(
 RNG_HASH_WALK_BEGIN_RE = re.compile(
     r"SSB64 NetSync: rng_hash_walk begin sim_tick=(\d+) .+ reason=(\S+)"
 )
-FRAME_COMMIT_RNG_DIVERGE_RE = re.compile(
-    r"SSB64 NetRollback: FRAME_COMMIT_STATE_DIVERGE validation=(\d+) .+ rng=0x([0-9A-Fa-f]+) .+ rng=0x([0-9A-Fa-f]+)"
+# Unified FRAME_COMMIT_STATE_DIVERGE parse. The line carries EVERY partition for both
+# peers as "local figh=.. world=.. item=.. rng=.. eff=.. | peer figh=.. ... inp_local=..
+# inp_peer=..". This replaces the older field-specific regexes (item-only, rng-only): each
+# independently matched this same line, whichever fired first did a `continue` and
+# short-circuited the rest, AND neither checked figh. Result: a real cross-peer figh/item
+# divergence reported fc_item_div=0 fc_rng_div=0 (STABLE) whenever rng happened to match.
+# Parse the whole line once and compare all partitions.
+FRAME_COMMIT_DIVERGE_LINE_RE = re.compile(
+    r"FRAME_COMMIT_STATE_DIVERGE\s+validation=(\d+)\s+local\s+(.*?)\s+\|\s+peer\s+(.*)"
+)
+_FC_PARTITION_RE = re.compile(r"\b(figh|world|item|wpn|map|rng|cam|anim|eff)=0x([0-9A-Fa-f]+)")
+_FC_INPUTS_RE = re.compile(r"inp_local=0x([0-9A-Fa-f]+)\s+inp_peer=0x([0-9A-Fa-f]+)")
+# Recovery aborted: the deferred resim could not reanchor and gave up — terminal desync.
+PEER_BASELINE_RESYNC_STORM_RE = re.compile(
+    r"PEER_BASELINE_RESYNC_STORM\b.*?load_tick=(\d+).*?sim=(\d+).*?aborting"
 )
 DEATH_REBIRTH_SIM_RE = re.compile(r"SSB64 Netplay: death_rebirth_sim tick=(\d+) player=(\d+) (.+)")
 REBIRTH_GATE_RE = re.compile(
@@ -1803,20 +1813,19 @@ def collect_hash_drift_summary(lines: list[str]) -> list[str]:
         if m is not None:
             load_drifts.append((m.group(1), "", "", "synctest_fail"))
             continue
-        m = FRAME_COMMIT_DIVERGE_RE.search(ln)
-        if m is not None:
-            out.append(
-                f"    frame_commit_item_diverge: validation={m.group(1)} "
-                f"local_item=0x{m.group(2)} peer_item=0x{m.group(3)}"
-            )
-            continue
-        m = FRAME_COMMIT_RNG_DIVERGE_RE.search(ln)
-        if m is not None:
-            local_rng, peer_rng = m.group(2), m.group(3)
-            if local_rng.lower() != peer_rng.lower():
+        fc = parse_frame_commit_diverge(ln)
+        if fc is not None:
+            fc_tick, fc_fields, fc_inputs_match = fc
+            if fc_fields:
+                if fc_inputs_match is True:
+                    inp = " inputs=MATCH(cross-ISA determinism failure)"
+                elif fc_inputs_match is False:
+                    inp = " inputs=DIFFER(input/pairing skew)"
+                else:
+                    inp = ""
                 out.append(
-                    f"    frame_commit_rng_diverge: validation={m.group(1)} "
-                    f"local_rng=0x{local_rng} peer_rng=0x{peer_rng}"
+                    f"    FRAME_COMMIT_STATE_DIVERGE: validation={fc_tick} "
+                    f"diverged={','.join(sorted(fc_fields))}{inp}"
                 )
             continue
         m = ITEM_HASH_WALK_BEGIN_RE.search(ln)
@@ -2295,6 +2304,17 @@ class SyncReportMetrics:
     resim_sim_core_reject: int = 0
     frame_commit_item_diverge: int = 0
     frame_commit_rng_diverge: int = 0
+    # Cross-peer FRAME_COMMIT_STATE_DIVERGE (any partition). Counted once per line via
+    # the unified parser so figh/world/item/etc. are no longer missed.
+    frame_commit_state_diverge: int = 0
+    frame_commit_figh_diverge: int = 0
+    # Divergences where inp_local == inp_peer: identical inputs, different state = a
+    # genuine cross-ISA determinism failure (not packet loss / input skew).
+    frame_commit_diverge_inputs_match: int = 0
+    frame_commit_first_tick: int | None = None
+    frame_commit_diverged_fields: set[str] = field(default_factory=set)
+    # Deferred resim could not reanchor and aborted -> terminal, unrecoverable desync.
+    peer_baseline_resync_storm: int = 0
     peer_snapshot_diverge: int = 0
     session_stop: int = 0
     css_return: int = 0
@@ -2312,6 +2332,31 @@ def _sync_report_bump_tick(current: int | None, tick_s: str) -> int | None:
     if current is None or tick > current:
         return tick
     return current
+
+
+def parse_frame_commit_diverge(line: str) -> tuple[int, set[str], bool | None] | None:
+    """Parse a FRAME_COMMIT_STATE_DIVERGE line into (validation_tick, diverged_fields, inputs_match).
+
+    Compares every partition present on both the local and peer side of the line so no
+    field is missed. inputs_match is True/False when inp_local/inp_peer are present, else
+    None. Returns None if the line is not a frame-commit divergence.
+    """
+    m = FRAME_COMMIT_DIVERGE_LINE_RE.search(line)
+    if m is None:
+        return None
+    tick = int(m.group(1))
+    local_fields = {name: val for name, val in _FC_PARTITION_RE.findall(m.group(2))}
+    peer_fields = {name: val for name, val in _FC_PARTITION_RE.findall(m.group(3))}
+    diverged: set[str] = set()
+    for name, lval in local_fields.items():
+        pval = peer_fields.get(name)
+        if pval is not None and lval.lower() != pval.lower():
+            diverged.add(name)
+    im = _FC_INPUTS_RE.search(line)
+    inputs_match: bool | None = None
+    if im is not None:
+        inputs_match = im.group(1).lower() == im.group(2).lower()
+    return tick, diverged, inputs_match
 
 
 def read_raw_log_lines(path: Path) -> list[str]:
@@ -2371,14 +2416,28 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
                 m.resim_sim_core_reject += 1
             continue
 
-        fc_rng_m = FRAME_COMMIT_RNG_DIVERGE_RE.search(ln)
-        if fc_rng_m is not None:
-            if fc_rng_m.group(2).lower() != fc_rng_m.group(3).lower():
-                m.frame_commit_rng_diverge += 1
+        fc = parse_frame_commit_diverge(ln)
+        if fc is not None:
+            fc_tick, fc_fields, fc_inputs_match = fc
+            if fc_fields:
+                m.frame_commit_state_diverge += 1
+                m.frame_commit_diverged_fields |= fc_fields
+                if m.frame_commit_first_tick is None:
+                    m.frame_commit_first_tick = fc_tick
+                if "figh" in fc_fields:
+                    m.frame_commit_figh_diverge += 1
+                if "item" in fc_fields:
+                    m.frame_commit_item_diverge += 1
+                if "rng" in fc_fields:
+                    m.frame_commit_rng_diverge += 1
+                # Identical inputs but divergent state = real determinism failure.
+                if fc_inputs_match:
+                    m.frame_commit_diverge_inputs_match += 1
             continue
 
-        if FRAME_COMMIT_DIVERGE_RE.search(ln) is not None:
-            m.frame_commit_item_diverge += 1
+        storm_m = PEER_BASELINE_RESYNC_STORM_RE.search(ln)
+        if storm_m is not None:
+            m.peer_baseline_resync_storm += 1
             continue
 
         if PEER_SNAPSHOT_DIVERGE_RE.search(ln) is not None:
@@ -2652,10 +2711,23 @@ def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
             )
         else:
             reasons.append(f"item LOAD_HASH_DRIFT x{m.load_hash_item_mismatch}{suffix}")
-    if m.frame_commit_item_diverge:
-        reasons.append(f"frame_commit_item_diverge x{m.frame_commit_item_diverge}")
-    if m.frame_commit_rng_diverge:
-        reasons.append(f"frame_commit_rng_diverge x{m.frame_commit_rng_diverge}")
+    if m.frame_commit_state_diverge:
+        fields = ",".join(sorted(m.frame_commit_diverged_fields)) or "?"
+        tick = m.frame_commit_first_tick
+        suffix = f" first={tick}" if tick is not None else ""
+        det = (
+            f" ({m.frame_commit_diverge_inputs_match} with identical inputs)"
+            if m.frame_commit_diverge_inputs_match
+            else ""
+        )
+        reasons.append(
+            f"FRAME_COMMIT_STATE_DIVERGE x{m.frame_commit_state_diverge} "
+            f"[{fields}]{det}{suffix}"
+        )
+    if m.peer_baseline_resync_storm:
+        reasons.append(
+            f"PEER_BASELINE_RESYNC_STORM x{m.peer_baseline_resync_storm} (recovery aborted)"
+        )
     if m.resim_sim_core_reject:
         reasons.append(f"resim-sim-core-reject x{m.resim_sim_core_reject}")
     if m.desync_report:
@@ -2667,8 +2739,8 @@ def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
         or m.peer_snapshot_diverge
         or m.synctest_fail
         or m.resim_sim_core_reject
-        or m.frame_commit_item_diverge
-        or m.frame_commit_rng_diverge
+        or m.frame_commit_state_diverge
+        or m.peer_baseline_resync_storm
         or (m.load_hash_item_mismatch and not m.resim_sim_core_ok)
     )
     if hard:
@@ -2690,12 +2762,34 @@ def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
     return "UNKNOWN (no battle sim_state_tick)", []
 
 
+def _rb_applied_int(fields: dict[str, str]) -> int:
+    try:
+        return int(fields.get("rb_applied", "0"))
+    except ValueError:
+        return 0
+
+
 def collect_sim_state_by_tick(lines: list[str]) -> dict[str, dict[str, str]]:
     by_tick: dict[str, dict[str, str]] = {}
     for ln in lines:
         fields = parse_sim_state_fields(ln)
-        if fields and "tick" in fields:
-            by_tick[fields["tick"]] = fields
+        if not (fields and "tick" in fields):
+            continue
+        tick = fields["tick"]
+        prev = by_tick.get(tick)
+        # A tick can be logged more than once:
+        #   * the forward commit(s) (rb_applied=0), re-emitted as more confirmed
+        #     remote input arrives (each later one is more authoritative), and
+        #   * resim replay re-logs (rb_applied>=1), which are transient mid-
+        #     rollback states one peer may emit and the other may not.
+        # Settled value = latest forward commit. Prefer a forward row over any
+        # resim row; among same-class rows keep the latest. Last-write-wins (the
+        # old behavior) let a one-sided resim re-log clobber the forward commit
+        # and compared the host's post-rollback value against the guest's
+        # forward value, reporting a phantom desync.
+        if prev is not None and _rb_applied_int(fields) != 0 and _rb_applied_int(prev) == 0:
+            continue  # keep the forward commit; ignore the resim re-log
+        by_tick[tick] = fields
     return by_tick
 
 
@@ -2715,8 +2809,16 @@ def diff_sync_report_pair(
         return out, False
 
     compare_keys = ["figh", "item", "anim", "eff", "world", "wpn"]
+    skipped_gen = 0
     for tick in common:
         fa, fb = by_a[tick], by_b[tick]
+        # Compare like-with-like only. If one peer re-logged this tick during a
+        # resim (rb_applied>=1) but the other did not, the surviving rows are at
+        # different rollback generations and must not be diffed against each
+        # other — that is the phantom-desync this report used to emit.
+        if _rb_applied_int(fa) != _rb_applied_int(fb):
+            skipped_gen += 1
+            continue
         diffs = [k for k in compare_keys if fa.get(k) != fb.get(k) and k in fa and k in fb]
         if diffs:
             out.append(f"  pair: first sim_state mismatch tick={tick} fields={','.join(diffs)}")
@@ -2724,7 +2826,10 @@ def diff_sync_report_pair(
                 out.append(f"    {k}: {metrics_a.label}={fa.get(k)} {metrics_b.label}={fb.get(k)}")
             return out, True
 
-    out.append(f"  pair: sim_state_tick aligned on {len(common)} overlapping ticks")
+    note = f"  pair: sim_state_tick aligned on {len(common)} overlapping ticks"
+    if skipped_gen:
+        note += f" ({skipped_gen} skipped: resim/forward generation mismatch)"
+    out.append(note)
     return out, False
 
 
@@ -2755,6 +2860,13 @@ def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
             f"fc_item_div={m.frame_commit_item_diverge} fc_rng_div={m.frame_commit_rng_diverge}"
         ),
     ]
+    if m.frame_commit_state_diverge or m.peer_baseline_resync_storm:
+        fields = ",".join(sorted(m.frame_commit_diverged_fields)) or "-"
+        parts.append(
+            f"    fc_state_div={m.frame_commit_state_diverge} fc_figh_div={m.frame_commit_figh_diverge} "
+            f"fc_div_inputs_match={m.frame_commit_diverge_inputs_match} "
+            f"resync_storm={m.peer_baseline_resync_storm} fc_div_fields=[{fields}]"
+        )
     if m.resim_sim_core_ok or m.resim_sim_core_reject:
         parts.append(
             f"    resim_core_ok={m.resim_sim_core_ok} resim_core_reject={m.resim_sim_core_reject}"

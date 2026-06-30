@@ -8,6 +8,15 @@ Focuses on the failure classes that indicate a resim capture/reload hole:
                                (also catches the related "respawn failed" lines)
   * SYNCTEST_FAIL            - periodic save/load/verify probe failed
                                (SSB64_NETPLAY_ROLLBACK_SYNCTEST=1)
+  * FRAME_COMMIT_STATE_DIVERGE - the AUTHORITATIVE cross-peer check. SYNCTEST only
+                               verifies a peer-LOCAL save->reload round trip; this is the
+                               actual host-vs-guest committed-state comparison. A partition
+                               delta with inp_local==inp_peer (identical inputs) is a hard
+                               cross-ISA determinism failure even if a deferred resim later
+                               "recovers" it. Without this check a run that visibly desynced
+                               could still print RESULT: WARN.
+  * PEER_BASELINE_RESYNC_STORM - the deferred resim could not reanchor and aborted
+                               (terminal, unrecoverable desync -> usually VS session stop)
 
 It also surfaces, without failing the run:
   * SYNCTEST_OK count        - proves synctest actually probed (0 == it never ran)
@@ -43,7 +52,8 @@ Options:
   -q / --quiet        Only print the final RESULT line.
 
 Exit code: 0 = PASS, 1 = WARN, 2 = FAIL.
-  FAIL  = a fatal/blocked drift, any unsupported/failed respawn, or SYNCTEST_FAIL.
+  FAIL  = a fatal/blocked drift, any unsupported/failed respawn, SYNCTEST_FAIL, a
+          cross-peer FRAME_COMMIT_STATE_DIVERGE, or an aborted baseline resync storm.
   WARN  = only recovered drift (soft-continue, repair-ok, presentational-only).
   PASS  = none of the above.
 """
@@ -86,6 +96,25 @@ RESPAWN_RE = re.compile(
 SYNCTEST_RE = re.compile(
     r"SYNCTEST_(FAIL|OK|SKIP)\b(?:\s+tick=(\d+))?(?:.*?\breason=(\S+))?"
 )
+
+# Cross-peer frame-commit validation. The snapshot SYNCTEST only verifies a peer-LOCAL
+# save->reload round trip; FRAME_COMMIT_STATE_DIVERGE is the AUTHORITATIVE cross-peer check
+# (the peer's committed hashes arrive over the wire). The line carries every partition for
+# both sides: "validation=N local figh=0x.. ... | peer figh=0x.. ... inp_local=0x.. inp_peer=0x..".
+# A divergence here with identical inputs is a hard determinism failure even if a deferred
+# resim later "recovers" it. This scan previously ignored these lines entirely (it only read
+# LOAD_HASH_DRIFT / SYNCTEST), so a run that desynced cross-peer could still print RESULT: WARN.
+FC_DIVERGE_RE = re.compile(
+    r"FRAME_COMMIT_STATE_DIVERGE\s+validation=(\d+)\s+local\s+(.*?)\s+\|\s+peer\s+(.*)"
+)
+FC_PARTITION_RE = re.compile(r"\b(figh|world|item|wpn|map|rng|cam|anim|eff)=0x([0-9A-Fa-f]+)")
+FC_INPUTS_RE = re.compile(r"inp_local=0x([0-9A-Fa-f]+)\s+inp_peer=0x([0-9A-Fa-f]+)")
+# Deferred resim could not reanchor and gave up -> terminal, unrecoverable desync.
+RESYNC_STORM_RE = re.compile(
+    r"PEER_BASELINE_RESYNC_STORM\b.*?load_tick=(\d+).*?sim=(\d+).*?aborting"
+)
+# Session teardown markers (terminal): a local stop or a received END.
+SESSION_STOP_RE = re.compile(r"VS session stop\b|received VS_SESSION_END\b")
 
 # Pair-session identity (mirror of netplay-trim-logs.py regexes).
 MM_POLL_MATCHED_RE = re.compile(r"MM_POLL_MATCHED .+ session=(\d+) host=(\d+)")
@@ -130,6 +159,15 @@ class TickDrift:
 
 
 @dataclass
+class FCDiverge:
+    """A cross-peer FRAME_COMMIT_STATE_DIVERGE occurrence."""
+    tick: int
+    diverged: set[str]
+    inputs_match: bool | None  # True/False if inp_local/inp_peer present, else None
+    raw: str
+
+
+@dataclass
 class Respawn:
     domain: str  # weapon | item
     status: str  # unsupported | failed
@@ -148,6 +186,9 @@ class FileScan:
     synctest_ok: int = 0
     synctest_fail: list[int] = field(default_factory=list)
     synctest_skip: dict[str, int] = field(default_factory=dict)
+    fc_diverges: list[FCDiverge] = field(default_factory=list)
+    resync_storms: list[tuple[int, int]] = field(default_factory=list)  # (load_tick, sim)
+    session_stops: int = 0
     session_id: str | None = None
     seed: str | None = None
 
@@ -158,6 +199,12 @@ class FileScan:
         if self.respawns:
             sev = max(sev, SEV_FAIL)
         if self.synctest_fail:
+            sev = max(sev, SEV_FAIL)
+        # A cross-peer frame-commit divergence (with a real partition diff) is a hard
+        # determinism failure regardless of recovery; an aborted resync is terminal.
+        if any(fc.diverged for fc in self.fc_diverges):
+            sev = max(sev, SEV_FAIL)
+        if self.resync_storms:
             sev = max(sev, SEV_FAIL)
         return sev
 
@@ -216,6 +263,34 @@ def scan_file(label: str, path: str) -> FileScan:
                 else:  # SKIP
                     reason = sm.group(3) or "(unknown)"
                     scan.synctest_skip[reason] = scan.synctest_skip.get(reason, 0) + 1
+                continue
+
+            fcm = FC_DIVERGE_RE.search(line)
+            if fcm:
+                tick = int(fcm.group(1))
+                local_fields = dict(FC_PARTITION_RE.findall(fcm.group(2)))
+                peer_fields = dict(FC_PARTITION_RE.findall(fcm.group(3)))
+                diverged = {
+                    name
+                    for name, lval in local_fields.items()
+                    if name in peer_fields and lval.lower() != peer_fields[name].lower()
+                }
+                im = FC_INPUTS_RE.search(line)
+                inputs_match = (
+                    im.group(1).lower() == im.group(2).lower() if im else None
+                )
+                scan.fc_diverges.append(
+                    FCDiverge(tick=tick, diverged=diverged, inputs_match=inputs_match, raw=line)
+                )
+                continue
+
+            stm = RESYNC_STORM_RE.search(line)
+            if stm:
+                scan.resync_storms.append((int(stm.group(1)), int(stm.group(2))))
+                continue
+
+            if SESSION_STOP_RE.search(line):
+                scan.session_stops += 1
                 continue
 
             if DRIFT_TOKEN in line:
@@ -363,6 +438,41 @@ def report(scans: list[FileScan], strict: bool, show_lines: bool, quiet: bool) -
                 "  synctest: no probes seen "
                 "(SSB64_NETPLAY_ROLLBACK_SYNCTEST not set, or never reached a probe tick)"
             )
+
+        # Cross-peer frame-commit validation (the authoritative inter-peer check that the
+        # peer-local SYNCTEST round trip cannot see). Any real partition delta is a desync.
+        real_fc = [fc for fc in s.fc_diverges if fc.diverged]
+        if real_fc:
+            overall = max(overall, SEV_FAIL)
+            body.append(f"  frame-commit cross-peer diverge: {len(real_fc)} line(s)")
+            for fc in real_fc[:20]:
+                fields = ",".join(sorted(fc.diverged))
+                if fc.inputs_match is True:
+                    note = "inputs=MATCH (genuine cross-ISA determinism failure)"
+                elif fc.inputs_match is False:
+                    note = "inputs=DIFFER (input/pairing skew)"
+                else:
+                    note = "inputs=?"
+                body.append(f"    [FAIL] tick {fc.tick}: diverged={fields} {note}")
+                if show_lines:
+                    body.append(f"        | {fc.raw}")
+            if len(real_fc) > 20:
+                body.append(f"    ... (+{len(real_fc) - 20} more)")
+        elif s.fc_diverges:
+            body.append(
+                f"  frame-commit cross-peer diverge: {len(s.fc_diverges)} line(s) "
+                "(no field delta parsed)"
+            )
+
+        if s.resync_storms:
+            overall = max(overall, SEV_FAIL)
+            body.append(f"  baseline resync storm (recovery ABORTED): {len(s.resync_storms)}")
+            for load_tick, sim in s.resync_storms[:10]:
+                body.append(f"    [FAIL] load_tick={load_tick} sim={sim}")
+
+        if s.session_stops:
+            body.append(f"  session stop / VS_SESSION_END: {s.session_stops}")
+
         body.append("")
 
     # Cross-peer view: ticks where both peers report drift.
@@ -376,6 +486,27 @@ def report(scans: list[FileScan], strict: bool, show_lines: bool, quiet: bool) -
             )
         else:
             body.append("  drift ticks on both peers: none")
+
+        # Frame-commit divergences are inherently cross-peer; surface any tick where either
+        # peer logged a real partition delta so it cannot be lost in the per-file noise.
+        fc_per_label = {
+            s.label: sorted({fc.tick for fc in s.fc_diverges if fc.diverged})
+            for s in scans
+            if s.exists
+        }
+        if any(fc_per_label.values()):
+            for label, ticks in fc_per_label.items():
+                if ticks:
+                    body.append(
+                        f"  !! [{label}] FRAME_COMMIT cross-peer diverge ticks: "
+                        + ", ".join(str(t) for t in ticks)
+                    )
+        if any(s.resync_storms for s in scans if s.exists):
+            for s in scans:
+                if s.exists and s.resync_storms:
+                    body.append(
+                        f"  !! [{s.label}] recovery ABORTED (baseline resync storm) x{len(s.resync_storms)}"
+                    )
         for s in scans:
             if not s.exists:
                 continue

@@ -86,6 +86,15 @@ extern void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj);
 extern void syNetplayCanonicalizeActiveFightersForNetplay(void);
 
 /*
+ * Shared-grid pass over a live item's folded sim state: ITPhysics (vel_ground/vel_air) and the root
+ * DObj translate (the position syNetSyncFoldItemState hashes). Movable items (Peach's Castle GBumper)
+ * otherwise accumulate cross-ISA f32 position drift that forces an unrecoverable deep resim.
+ */
+extern void syNetplayCanonicalizeItemSimState(GObj *item_gobj);
+/* Apply the shared-grid item pass to every active item at the accepted sim boundary. */
+extern void syNetplayCanonicalizeActiveItemsForNetplay(void);
+
+/*
  * Forward-vs-resim per-joint AObj ground-truth probe (default off; SSB64_NETPLAY_AOBJ_LEG_TRACE=1,
  * windowed by SSB64_NETPLAY_AOBJ_LEG_TRACE_TICK_MIN/_TICK_MAX). Logs chain digest, raw EVENT32 stream
  * digest, anim cursor scalars and rotate output per active fighter joint, tagged phase=fwd|resim.

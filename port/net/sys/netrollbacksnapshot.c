@@ -83,6 +83,7 @@ extern wpSamusChargeShotAttributes dWPSamusChargeShotWeaponAttributes[];
 #include <sys/netrollback.h>
 #if defined(SSB64_NETMENU)
 #include <sys/netinput.h>
+#include <sys/netpeer.h>
 #include <sys/netrollback_episode.h>
 #endif
 #include <stdint.h>
@@ -1305,7 +1306,8 @@ static void syNetRbSnapEjectGObj(GObj *gobj)
 	if (ep != NULL)
 	{
 		gcEjectGObj(gobj);
-		efManagerSetPrevStructAlloc(ep);
+		efManagerNetSafeFreeStruct(ep, gobj, "snap_eject");
+		gobj->user_data.p = NULL;
 		return;
 	}
 	gcEjectGObj(gobj);
@@ -2902,32 +2904,6 @@ static sb32 syNetRbSnapshotAnyFighterGuardScopeActive(void)
 	return FALSE;
 }
 
-static sb32 syNetRbSnapBlobInGrabThrowSynctestFragileScope(const SYNetRbSnapFighterBlob *blob)
-{
-	if ((blob == NULL) || (blob->is_valid == FALSE))
-	{
-		return FALSE;
-	}
-	if ((blob->catch_gobj_id != 0U) || (blob->capture_gobj_id != 0U))
-	{
-		return TRUE;
-	}
-	if ((blob->status_id >= nFTCommonStatusCatch) && (blob->status_id <= nFTCommonStatusThrowB))
-	{
-		return TRUE;
-	}
-	if ((blob->status_id >= nFTCommonStatusCapturePulled) &&
-	    (blob->status_id <= nFTCommonStatusThrownDonkeyUnk))
-	{
-		return TRUE;
-	}
-	if ((blob->status_id >= nFTCommonStatusThrownStart) && (blob->status_id <= nFTCommonStatusThrownEnd))
-	{
-		return TRUE;
-	}
-	return FALSE;
-}
-
 static sb32 syNetRbSnapFighterInGrabThrowSynctestFragileScope(const FTStruct *fp)
 {
 	if (fp == NULL)
@@ -4201,14 +4177,13 @@ sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out)
 		}
 		return TRUE;
 	}
-	if (syNetRbSnapshotAnyFighterGrabCouplingActive() != FALSE)
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "grab_coupling";
-		}
-		return TRUE;
-	}
+	/*
+	 * grab/throw-coupling is intentionally NOT skipped here. The skip + load-anchor fragility used
+	 * to hide that catch/capture coupling does not survive a snapshot save->restore (it resimmed to
+	 * a whiff with no synctest_fail). Removed permanently so the coupling round-trip gap surfaces as
+	 * a real SYNCTEST_FAIL / fhash divergence while it is being fixed.
+	 * See docs/bugs/netplay_grab_coupling_skip_anchor_masking_2026-06-29.md.
+	 */
 	if (syNetRbSnapshotAnyFighterItemThrowActive() != FALSE)
 	{
 		if (reason_out != NULL)
@@ -4517,15 +4492,26 @@ void syNetRbSnapshotRefreshGrabCouplingGeometry(void)
 		{
 			ftParamsUpdateFighterPartsTransformAll(grabber_fp->joints[nFTPartsJointTopN]);
 		}
-		if (grabber_fp->proc_map != NULL)
-		{
-			grabber_fp->proc_map(grabber_gobj);
-		}
-		else
-		{
-			mpCommonRunFighterCollisionDefault(grabber_gobj, &DObjGetStruct(grabber_gobj)->translate.vec.f,
-			                                   &grabber_fp->coll_data);
-		}
+		/*
+		 * Do NOT run the grabber's gameplay map proc here.
+		 *
+		 * This routine only needs the grabber's *geometry* (the joint world transforms refreshed
+		 * immediately above) so the captive below can be re-anchored to the throw joint. The grabber's
+		 * gameplay state (status, motion, position, coll_data, physics) is already restored faithfully
+		 * from the slot blob. Calling grabber_fp->proc_map(grabber_gobj) additionally runs a full
+		 * collision pass on the grabber, which for a fighter mid-carry executes a landing check and can
+		 * fire a status transition (e.g. DK ThrowFFall(241) -> ThrowFLanding(242)) during a *restore*.
+		 * That advances the grabber's sim one tick past the snapshot: the synctest verify then sees the
+		 * loaded slot mutate (LOAD status_id/motion_id/anim drift -> SYNCTEST_FAIL), and a real rollback
+		 * load lands the grabber a tick early relative to the authoritative resim (a desync source).
+		 * Same class as the yakumono "anim advanced during restore" bug
+		 * (docs/bugs/netrollback_yakumono_anim_snapshot_2026-05-19.md).
+		 *
+		 * This was latent before: the is_coll_end latch made the landing check a no-op every tick of a
+		 * carry, so proc_map here never actually transitioned. Fixing that latch (mpCommonSetFighterAir)
+		 * exposed this load-path sim-advance. Geometry-only refresh is the correct restore behavior.
+		 * See docs/bugs/netplay_grab_coupling_skip_anchor_masking_2026-06-29.md.
+		 */
 
 		if (fp->status_id == nFTCommonStatusCaptureWait)
 		{
@@ -5406,6 +5392,15 @@ static void syNetRbSnapRefreshFighterBlobSimScalarsFromLive(SYNetRbSnapFighterBl
 
 static sb32 syNetRbSnapFighterDiagEnabled(void);
 static sb32 syNetRbSnapFighterStatusTrailEnabled(void);
+/*
+ * Live (not blob) fighter status/pose trail for the rollback load path. The blob status trail
+ * ("capture"/"apply_after") logs the SAVED blob value, so it can't show the post-apply re-derivation
+ * that flips DK ThrowFFall(241)->ThrowFLanding(242) during a synctest reload (the LOAD_HASH_DRIFT
+ * status_id live=242/blob=241 class). This logs the *live* fighter at each load-path phase so the first
+ * phase that reports the flipped status names the culprit (per-fighter canonicalize/anim, grab-coupling
+ * geometry refresh, or finalize). Gated by SSB64_NETPLAY_FIGHTER_STATUS_TRAIL.
+ */
+static void syNetRbSnapshotLogFighterLiveLandingTrail(const char *tag, GObj *fighter_gobj);
 static SYNetRbSnapshotSlot *syNetRbSnapshotSlotForTick(u32 tick);
 static sb32 syNetRbSnapFighterLiveSanityOk(GObj *fighter_gobj, FTStruct *fp, const SYNetRbSnapFighterBlob *blob,
 					   const char **out_fail);
@@ -7523,6 +7518,7 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	}
 	fp->status_id = blob->status_id;
 	fp->motion_id = blob->motion_id;
+	syNetRbSnapshotLogFighterLiveLandingTrail("A_apply_status_restore", fighter_gobj);
 	fp->percent_damage = blob->percent_damage;
 	fp->damage_resist = blob->damage_resist;
 	fp->shield_health = blob->shield_health;
@@ -7713,6 +7709,7 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	}
 #endif
 	syNetRbSnapshotLogFighterBlobStatusTrail("apply_after", syNetInputGetTick(), fp->player, blob);
+	syNetRbSnapshotLogFighterLiveLandingTrail("B_apply_fighter_end", fighter_gobj);
 	{
 		const char *blob_fail;
 		const char *live_fail;
@@ -7911,6 +7908,57 @@ void syNetRbSnapshotLogFighterBlobStatusTrail(const char *tag, u32 tick, s32 pla
 	    (int)blob->motion_id,
 	    (int)blob->shield_health,
 	    (int)blob->is_valid);
+}
+
+static void syNetRbSnapshotLogFighterLiveLandingTrail(const char *tag, GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+	f32 tx;
+	f32 ty;
+	f32 tz;
+	u32 bx;
+	u32 by;
+	u32 bz;
+	u32 bfd;
+
+	if ((syNetRbSnapFighterStatusTrailEnabled() == FALSE) || (tag == NULL) || (fighter_gobj == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (fp == NULL)
+	{
+		return;
+	}
+	topn = fp->coll_data.p_translate;
+	tx = (topn != NULL) ? topn->x : 0.0F;
+	ty = (topn != NULL) ? topn->y : 0.0F;
+	tz = (topn != NULL) ? topn->z : 0.0F;
+	/* Inline reinterpret: syNetRbSnapF32RawBits is SSB64_NETMENU-only; this trail is general PORT. */
+	memcpy(&bx, &tx, sizeof(bx));
+	memcpy(&by, &ty, sizeof(by));
+	memcpy(&bz, &tz, sizeof(bz));
+	memcpy(&bfd, &fp->coll_data.floor_dist, sizeof(bfd));
+	port_log(
+	    "SSB64 NetRbSnapshot: status_trail tag=%s tick=%u phase=live player=%d fkind=%d status=%d motion=%d ga=%d "
+	    "topn_x=0x%08X topn_y=0x%08X topn_z=0x%08X floor_line=%d floor_dist=0x%08X mask_curr=0x%04X mask_stat=0x%04X "
+	    "is_coll_end=%d\n",
+	    tag,
+	    (unsigned int)syNetInputGetTick(),
+	    (int)fp->player,
+	    (int)fp->fkind,
+	    (int)fp->status_id,
+	    (int)fp->motion_id,
+	    (int)fp->ga,
+	    bx,
+	    by,
+	    bz,
+	    (int)fp->coll_data.floor_line_id,
+	    bfd,
+	    (unsigned int)fp->coll_data.mask_curr,
+	    (unsigned int)fp->coll_data.mask_stat,
+	    (int)fp->coll_data.is_coll_end);
 }
 
 void syNetRbSnapshotLogFighterStatusTrail(const char *tag, u32 tick)
@@ -16699,6 +16747,177 @@ static void syNetRbSnapshotLogMapHashSaveCompactDiag(u32 tick, u32 hash_map, con
 	    (unsigned int)((ground != NULL) ? ground->gkind : 0U));
 }
 
+#if defined(SSB64_NETMENU)
+static sb32 syNetRbSnapFighterCargoDiagEnabled(void)
+{
+	static int s_env_cache = -999;
+	const char *e;
+
+	if (s_env_cache != -999)
+	{
+		return (s_env_cache != 0) ? TRUE : FALSE;
+	}
+	e = getenv("SSB64_NETPLAY_FIGHTER_CARGO_DIAG");
+	s_env_cache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	return (s_env_cache != 0) ? TRUE : FALSE;
+}
+
+/*
+ * Optional [min,max] tick gate. Default (max==0) logs every tick. Set
+ * SSB64_NETPLAY_FIGHTER_CARGO_DIAG_TICK_MIN / _MAX to bound output to the carry window.
+ */
+static sb32 syNetRbSnapFighterCargoDiagTickInWindow(u32 tick)
+{
+	static int s_init = 0;
+	static u32 s_min = 0U;
+	static u32 s_max = 0U;
+	const char *e;
+
+	if (s_init == 0)
+	{
+		s_init = 1;
+		e = getenv("SSB64_NETPLAY_FIGHTER_CARGO_DIAG_TICK_MIN");
+		s_min = ((e != NULL) && (e[0] != '\0')) ? (u32)atoi(e) : 0U;
+		e = getenv("SSB64_NETPLAY_FIGHTER_CARGO_DIAG_TICK_MAX");
+		s_max = ((e != NULL) && (e[0] != '\0')) ? (u32)atoi(e) : 0U;
+	}
+	if (s_max == 0U)
+	{
+		return TRUE;
+	}
+	return ((tick >= s_min) && (tick <= s_max)) ? TRUE : FALSE;
+}
+
+static u32 syNetRbSnapF32RawBits(f32 v)
+{
+	u32 bits;
+
+	memcpy(&bits, &v, sizeof(bits));
+	return bits;
+}
+
+/*
+ * Per-committed-tick cargo-carry determinism trace. Emits each live fighter's position / velocity /
+ * floor-collision inputs as raw IEEE-754 bit patterns (not %f, so cross-ISA epsilon is visible) so a
+ * cross-peer diff of two soak logs names the first tick and field where the cargo walk forks ground/air
+ * (DK ThrowFFall vs ThrowFTurn). Companion to the joint-rotate quantize fix
+ * (docs/bugs/netplay_fighter_child_joint_rotate_quantize_2026-06-29.md): that closed the pose leak;
+ * this hunts the remaining edge/position drift. Gated by SSB64_NETPLAY_FIGHTER_CARGO_DIAG
+ * (+ optional _TICK_MIN/_TICK_MAX). Netmenu-only, no-op offline; runs at the per-tick forward save.
+ */
+static void syNetRbSnapshotLogFighterCargoWalkDiag(u32 tick)
+{
+	GObj *fighter_gobj;
+
+	if (syNetRbSnapFighterCargoDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if (syNetRbSnapFighterCargoDiagTickInWindow(tick) == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		Vec3f *ptr;
+		f32 pos_x;
+		f32 pos_y;
+		f32 pos_z;
+
+		if (fp == NULL)
+		{
+			continue;
+		}
+		ptr = fp->coll_data.p_translate;
+		pos_x = (ptr != NULL) ? ptr->x : fp->coll_data.pos_prev.x;
+		pos_y = (ptr != NULL) ? ptr->y : fp->coll_data.pos_prev.y;
+		pos_z = (ptr != NULL) ? ptr->z : fp->coll_data.pos_prev.z;
+		port_log(
+		    "SSB64 NetRbSnapshot: fighter_cargo_diag tick=%u player=%d fkind=%d status=%d motion=%d "
+		    "ga=%d lr=%d pos_x=0x%08X pos_y=0x%08X pos_z=0x%08X "
+		    "pprev_x=0x%08X pprev_y=0x%08X pprev_z=0x%08X pdiff_x=0x%08X pdiff_y=0x%08X pdiff_z=0x%08X "
+		    "vg_x=0x%08X vg_z=0x%08X va_x=0x%08X va_y=0x%08X "
+		    "floor_line=%d floor_flags=0x%08X floor_dist=0x%08X cliff_id=%d "
+		    "mask_prev=0x%04X mask_curr=0x%04X mask_stat=0x%04X is_coll_end=%d\n",
+		    (unsigned int)tick, (int)fp->player, (int)fp->fkind, (int)fp->status_id,
+		    (int)fp->motion_id, (int)fp->ga, (int)fp->lr, syNetRbSnapF32RawBits(pos_x),
+		    syNetRbSnapF32RawBits(pos_y), syNetRbSnapF32RawBits(pos_z),
+		    syNetRbSnapF32RawBits(fp->coll_data.pos_prev.x), syNetRbSnapF32RawBits(fp->coll_data.pos_prev.y),
+		    syNetRbSnapF32RawBits(fp->coll_data.pos_prev.z), syNetRbSnapF32RawBits(fp->coll_data.pos_diff.x),
+		    syNetRbSnapF32RawBits(fp->coll_data.pos_diff.y), syNetRbSnapF32RawBits(fp->coll_data.pos_diff.z),
+		    syNetRbSnapF32RawBits(fp->physics.vel_ground.x), syNetRbSnapF32RawBits(fp->physics.vel_ground.z),
+		    syNetRbSnapF32RawBits(fp->physics.vel_air.x), syNetRbSnapF32RawBits(fp->physics.vel_air.y),
+		    (int)fp->coll_data.floor_line_id, (unsigned int)fp->coll_data.floor_flags,
+		    syNetRbSnapF32RawBits(fp->coll_data.floor_dist), (int)fp->coll_data.cliff_id,
+		    (unsigned int)fp->coll_data.mask_prev, (unsigned int)fp->coll_data.mask_curr,
+		    (unsigned int)fp->coll_data.mask_stat, (int)fp->coll_data.is_coll_end);
+		/*
+		 * Second line: the coll_data + per-status fields the landing/collision path READS but
+		 * syNetSyncHashBattleFightersFull does NOT fold (vel_speed only folds in the Arwing block;
+		 * vel_push / line_coll_dist / floor_angle / wall+ceil ids never fold). A sub-grid drift in
+		 * any of these is invisible to figh (so peers "match through" the tick before the split) yet
+		 * still steers mpCommonCheckFighterLanding's epsilon tests. Also dumps DK's ThrowF cargo
+		 * status-vars and the grab-coupling (captive gobj id + captive-relative offset) since the
+		 * captive's pos_z forks one tick after DK's landing split. Cross-peer diff this line at the
+		 * first diverging tick to name the unhashed field; whatever differs is the hash-fold target.
+		 */
+		{
+			/*
+			 * Read the throwf overlay bytes directly, NOT via ftStatusVarsThrowF(): the accessor
+			 * calls ftStatusVarsNoteAccess(..ThrowF) which trips the statusvars witness for every
+			 * fighter dumped here that is not actually in a ThrowF status (e.g. the captive in a
+			 * thrown/capture status), producing hundreds of bogus "witness stomp" lines. This is a
+			 * read-only diagnostic dump, so alias the union member without tagging an access.
+			 */
+			const ftCommonThrowFStatusVars *tf = &fp->status_vars.common.throwf;
+			GObj *cap_gobj = fp->catch_gobj;
+			FTStruct *cap_fp = (cap_gobj != NULL) ? ftGetStruct(cap_gobj) : NULL;
+			Vec3f *cap_ptr = (cap_fp != NULL) ? cap_fp->coll_data.p_translate : NULL;
+			f32 cap_dx = (cap_ptr != NULL && ptr != NULL) ? (cap_ptr->x - ptr->x) : 0.0F;
+			f32 cap_dy = (cap_ptr != NULL && ptr != NULL) ? (cap_ptr->y - ptr->y) : 0.0F;
+			f32 cap_dz = (cap_ptr != NULL && ptr != NULL) ? (cap_ptr->z - ptr->z) : 0.0F;
+
+			port_log(
+			    "SSB64 NetRbSnapshot: fighter_cargo_diag2 tick=%u player=%d status=%d "
+			    "vspd_x=0x%08X vspd_y=0x%08X vspd_z=0x%08X vpush_x=0x%08X vpush_y=0x%08X vpush_z=0x%08X "
+			    "lcd_x=0x%08X lcd_y=0x%08X lcd_z=0x%08X fang_x=0x%08X fang_y=0x%08X fang_z=0x%08X "
+			    "mask_unk=0x%04X update_tic=%u ewall=%d lwall=%d rwall=%d ceil=%d ignore=%d "
+			    "tf_jf=0x%08X tf_kb=0x%08X tf_src=%d tf_sh=%d "
+			    "catch_id=%d capture_id=%d cap_dx=0x%08X cap_dy=0x%08X cap_dz=0x%08X\n",
+			    (unsigned int)tick, (int)fp->player, (int)fp->status_id,
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_speed.x),
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_speed.y),
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_speed.z),
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_push.x),
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_push.y),
+			    syNetRbSnapF32RawBits(fp->coll_data.vel_push.z),
+			    syNetRbSnapF32RawBits(fp->coll_data.line_coll_dist.x),
+			    syNetRbSnapF32RawBits(fp->coll_data.line_coll_dist.y),
+			    syNetRbSnapF32RawBits(fp->coll_data.line_coll_dist.z),
+			    syNetRbSnapF32RawBits(fp->coll_data.floor_angle.x),
+			    syNetRbSnapF32RawBits(fp->coll_data.floor_angle.y),
+			    syNetRbSnapF32RawBits(fp->coll_data.floor_angle.z),
+			    (unsigned int)fp->coll_data.mask_unk, (unsigned int)fp->coll_data.update_tic,
+			    (int)fp->coll_data.ewall_line_id, (int)fp->coll_data.lwall_line_id,
+			    (int)fp->coll_data.rwall_line_id, (int)fp->coll_data.ceil_line_id,
+			    (int)fp->coll_data.ignore_line_id,
+			    syNetRbSnapF32RawBits(tf->jump_force), syNetRbSnapF32RawBits(tf->kneebend_anim_frame),
+			    (int)tf->input_source, (int)tf->is_shorthop,
+			    (cap_gobj != NULL) ? (int)cap_gobj->id : -1,
+			    (fp->capture_gobj != NULL) ? (int)fp->capture_gobj->id : -1,
+			    syNetRbSnapF32RawBits(cap_dx), syNetRbSnapF32RawBits(cap_dy),
+			    syNetRbSnapF32RawBits(cap_dz));
+		}
+	}
+}
+#endif
+
 void syNetRbSnapshotLogMapHashSaveSelfTest(u32 tick)
 {
 	SYNetRbSnapshotSlot *slot;
@@ -24186,7 +24405,8 @@ static void syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate(GObj *effect_gobj)
 			syNetRbSnapReplayCosmeticYoshiEggExplode(&s_syNetRbSnapYoshiEggLayHatchShellParticlePos[player]);
 			s_syNetRbSnapYoshiEggLayHatchShellParticlePending[player] = FALSE;
 		}
-		efManagerSetPrevStructAlloc(ep);
+		efManagerNetSafeFreeStruct(ep, effect_gobj, "yoshi_egg_lay_hatch");
+		effect_gobj->user_data.p = NULL;
 		gcEjectGObj(effect_gobj);
 	}
 }
@@ -30045,54 +30265,6 @@ static sb32 syNetRbSnapshotSynctestProbePupupuWhispyPostBlowFragile(u32 probe_ti
 	return TRUE;
 }
 
-/*
- * First ring slot tick after a grab/throw coupling ends (prev slot grab/throw-coupled, probe slot
- * not): the lingering catch/throw VFX is present and stable across the boundary, so
- * effect_count_transition_probe misses it and the fighters have already left grab/throw status so
- * grab_coupling_probe misses it too. That residual effect cannot round-trip an emergency->slot
- * verify load — live eff folds to the FNV-empty seed (0x811C9DC5) while the slot captured a
- * non-empty eff hash, producing a false SYNCTEST_FAIL (soak1 @2857, both peers identical).
- * Skip the probe on the release boundary, the same way grab_coupling_probe covers mid-grab ticks.
- * See docs/bugs/netplay_grab_throw_release_eff_drift_2026-06-27.md.
- */
-static sb32 syNetRbSnapshotSynctestProbeGrabThrowReleaseBoundaryFragile(u32 probe_tick)
-{
-	SYNetRbSnapshotSlot *probe_slot;
-	SYNetRbSnapshotSlot *prev_slot;
-	s32 pidx;
-	sb32 prev_grab_coupled;
-
-	if (probe_tick == 0U)
-	{
-		return FALSE;
-	}
-	probe_slot = syNetRbSnapshotSlotForTick(probe_tick);
-	if ((probe_slot == NULL) || (probe_slot->is_valid == FALSE) || (probe_slot->tick != probe_tick) ||
-	    (probe_slot->effect_count <= 0))
-	{
-		return FALSE;
-	}
-	prev_slot = syNetRbSnapshotSlotForTick(probe_tick - 1U);
-	if ((prev_slot == NULL) || (prev_slot->is_valid == FALSE) || (prev_slot->tick != (probe_tick - 1U)))
-	{
-		return FALSE;
-	}
-	prev_grab_coupled = FALSE;
-	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
-	{
-		if (syNetRbSnapBlobInGrabThrowSynctestFragileScope(&probe_slot->fighters[pidx]) != FALSE)
-		{
-			/* Still grab/throw-coupled at the probe tick: grab_coupling_probe owns this case. */
-			return FALSE;
-		}
-		if (syNetRbSnapBlobInGrabThrowSynctestFragileScope(&prev_slot->fighters[pidx]) != FALSE)
-		{
-			prev_grab_coupled = TRUE;
-		}
-	}
-	return prev_grab_coupled;
-}
-
 sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **reason_out)
 {
 	SYNetRbSnapshotSlot *slot;
@@ -30340,33 +30512,14 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 	 * lands inside the same tech-chase span with worse joint poison (soak1 Donkey vs Link @520:
 	 * 519→487, resim_load_fail). Load + forward-resim presentation repair handles figatree drift instead.
 	 */
-	{
-		s32 pidx;
-
-		/*
-		 * Live grab_coupling skip uses current fighters; probe loads a historical slot that can
-		 * still be Catch/Throw while live has moved on — avoid finalize/verify on those ticks.
-		 */
-		for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
-		{
-			if (syNetRbSnapBlobInGrabThrowSynctestFragileScope(&slot->fighters[pidx]) != FALSE)
-			{
-				if (reason_out != NULL)
-				{
-					*reason_out = "grab_coupling_probe";
-				}
-				return TRUE;
-			}
-		}
-	}
-	if (syNetRbSnapshotSynctestProbeGrabThrowReleaseBoundaryFragile(probe_tick) != FALSE)
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "grab_coupling_release_boundary_probe";
-		}
-		return TRUE;
-	}
+	/*
+	 * grab/throw-coupling probe + release-boundary probe removed permanently (formerly gated by
+	 * syNetRbSnapGrabCouplingSkipDisabled): they skipped the probe-tick save->restore->re-hash and,
+	 * because syNetRbSnapshotIsLoadAnchorFragile reuses this predicate, steered the resim load anchor
+	 * away from grab ticks — masking the coupling save->restore round-trip gap. Left in deliberately
+	 * so the gap surfaces as a real SYNCTEST_FAIL / fhash divergence.
+	 * See docs/bugs/netplay_grab_coupling_skip_anchor_masking_2026-06-29.md.
+	 */
 	if (syNetRbSnapshotSynctestSlotTransientOnlyEffects(slot) != FALSE)
 	{
 		/* Resim anchor: one-shot VFX are replayed/pruned by load repair when a Link bomb owns the window. */
@@ -30909,6 +31062,9 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	syNetRbSnapshotLogMapHashSaveCompactDiag(
 	    completed_sim_tick, slot->hash_map, (slot->ground_captured != FALSE) ? &slot->ground : NULL);
 	syNetRbSnapshotLogMapHashSaveSelfTest(completed_sim_tick);
+#if defined(SSB64_NETMENU)
+	syNetRbSnapshotLogFighterCargoWalkDiag(completed_sim_tick);
+#endif
 #else
 	slot->hash_map = syNetSyncHashMapCollisionKinematicsForRollback();
 #endif
@@ -31078,6 +31234,15 @@ static void syNetRbSnapApplySlotToLive(const SYNetRbSnapshotSlot *slot)
 	syNetRbSnapRebindFighterCoupledGObjs(slot, FALSE);
 	syNetRbSnapRebindFighterGrabCoupling();
 	syNetRbSnapRebindFighterItemHoldCoupling();
+	{
+		GObj *fighter_gobj_ct;
+
+		for (fighter_gobj_ct = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj_ct != NULL;
+		     fighter_gobj_ct = fighter_gobj_ct->link_next)
+		{
+			syNetRbSnapshotLogFighterLiveLandingTrail("C_grab_coupling_rebind", fighter_gobj_ct);
+		}
+	}
 #if defined(SSB64_NETMENU)
 	syNetplayNessSanitizeAllFightersAfterSlotApply();
 	syNetplayPikachuSanitizeAllFightersAfterSlotApply();
@@ -33829,6 +33994,15 @@ static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot,
 	if (sSYNetRbSnapDeferWeaponEjectUntilVerify == FALSE)
 	{
 		syNetRbSnapEjectUnmatchedWeaponsAfterCoupling(slot);
+	}
+	{
+		GObj *fighter_gobj_fin;
+
+		for (fighter_gobj_fin = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj_fin != NULL;
+		     fighter_gobj_fin = fighter_gobj_fin->link_next)
+		{
+			syNetRbSnapshotLogFighterLiveLandingTrail("D_finalize_end", fighter_gobj_fin);
+		}
 	}
 	/* Load finalize must not leave gameplay RNG advanced relative to the saved slot blob. */
 	syUtilsSetRandomSeed(slot->world.rng_seed);
