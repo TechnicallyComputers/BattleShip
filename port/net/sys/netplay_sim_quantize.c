@@ -19,6 +19,7 @@
 #include <ft/ftchar/ftness/ftness.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftdef.h>
+#include <it/item.h>
 #include <wp/weapon.h>
 #include <wp/wpdef.h>
 #include <wp/wpvars.h>
@@ -1006,7 +1007,14 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 		{
 			if (fp->joints[ji] != NULL)
 			{
-				syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+				/* Full pose (translate + rotate + scale), not translate only: child joint rotate
+				 * is folded into fhash_full / the FC fighter_digest, but is grid-aligned in-sim only
+				 * when gcPlayDObjAnimJoint plays that joint's track this frame. Joints that don't
+				 * advance (DK heavy-throw/cargo carry, the Shouldered captive posed via coupling, any
+				 * held pose) kept a raw cross-ISA value here, which leaked into the snapshot blob and
+				 * forked the frame-commit digest. The intro/appear pass already does rotate+scale; do
+				 * it for every scope. See docs/bugs/netplay_fighter_child_joint_rotate_quantize_2026-06-29.md. */
+				syNetplayQuantizeDObjAnimPose(fp->joints[ji]);
 				syNetplayQuantizeDObjAnimScalars(fp->joints[ji]);
 			}
 		}
@@ -1020,7 +1028,8 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 		{
 			if (fp->joints[ji] != NULL)
 			{
-				syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+				/* Full pose (translate + rotate + scale): see rationale in the root_dobj branch above. */
+				syNetplayQuantizeDObjAnimPose(fp->joints[ji]);
 				syNetplayQuantizeDObjAnimScalars(fp->joints[ji]);
 			}
 		}
@@ -1091,6 +1100,67 @@ void syNetplayCanonicalizeGMCameraSimState(void)
 	cobj->projection.persp.fovy = syNetplayQuantizeF32(cobj->projection.persp.fovy);
 }
 
+static void syNetplayQuantizeItemPhysics(ITStruct *ip)
+{
+	if ((ip == NULL) || (syNetplaySimQuantizeActive() == FALSE))
+	{
+		return;
+	}
+	ip->physics.vel_ground = syNetplayQuantizeF32(ip->physics.vel_ground);
+	syNetplayQuantizeVec3f(&ip->physics.vel_air);
+}
+
+void syNetplayCanonicalizeItemSimState(GObj *item_gobj)
+{
+	ITStruct *ip;
+	DObj *dobj;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if ((item_gobj == NULL) || (item_gobj->user_data.p == NULL))
+	{
+		return;
+	}
+	ip = itGetStruct(item_gobj);
+	if (ip == NULL)
+	{
+		return;
+	}
+	syNetplayQuantizeItemPhysics(ip);
+	/*
+	 * The item's folded position IS its root DObj translate (syNetSyncFoldItemState hashes
+	 * dobj->translate.vec.f directly). Item forward-sim position integration is never quantized, so
+	 * on a stage with a movable item that gets knocked by a hit (Peach's Castle GBumper, atk_state!=off)
+	 * the per-tick cross-ISA f32 drift accumulates — observed ~5 units apart Linux↔Android — until
+	 * frame_commit_item_diverge fires and forces an unrecoverable deep resim (perceived as a hard lock).
+	 * Snap translate to the shared grid each accepted tick exactly as fighters do, so both peers integrate
+	 * from identical inputs and the item hash stops forking. See
+	 * docs/bugs/netplay_castle_bumper_item_resim_diverge_2026-06-28.md.
+	 */
+	dobj = DObjGetStruct(item_gobj);
+	if (dobj != NULL)
+	{
+		syNetplayQuantizeDObjTranslate(dobj);
+	}
+}
+
+void syNetplayCanonicalizeActiveItemsForNetplay(void)
+{
+	GObj *item_gobj;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	for (item_gobj = gGCCommonLinks[nGCCommonLinkIDItem]; item_gobj != NULL;
+	     item_gobj = item_gobj->link_next)
+	{
+		syNetplayCanonicalizeItemSimState(item_gobj);
+	}
+}
+
 void syNetplayCanonicalizeActiveFightersForNetplay(void)
 {
 	GObj *fighter_gobj;
@@ -1104,6 +1174,7 @@ void syNetplayCanonicalizeActiveFightersForNetplay(void)
 	{
 		syNetplayCanonicalizeFighterSimState(fighter_gobj);
 	}
+	syNetplayCanonicalizeActiveItemsForNetplay();
 	syNetplayCanonicalizeGMCameraSimState();
 }
 

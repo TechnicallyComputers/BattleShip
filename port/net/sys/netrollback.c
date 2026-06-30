@@ -4444,6 +4444,19 @@ static void syNetRollbackHandleFrameCommitStateMismatchCore(u32 validation_tick,
 			mismatch_tick = syNetRollbackReanchorMismatchTick(mismatch_tick, probe);
 		}
 	}
+	/*
+	 * Seed capture: the FC drill-down at syNetRollbackOnPeerFrameCommitStateMismatch fires at the
+	 * validation frontier (post-cascade), where every fighter field already differs. When inputs agree
+	 * the real fork is one tick after the last agreed state (mismatch_tick) — e.g. a 1-tick cross-ISA
+	 * divergence in a DK cargo-carry fall. The resim that overwrites the forward-sim snapshots is
+	 * deferred (set below, run later), so slot[mismatch_tick] here still holds the forward-sim blob.
+	 * Dump the per-fighter blob at the seed tick so the two peers' logs name the forking slot/field at
+	 * its origin (compare the blob_* columns cross-peer). Env-gated by SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF.
+	 */
+	if ((local->input_digest == peer->input_digest) && (mismatch_tick > 0U))
+	{
+		syNetRbSnapshotLogFighterFieldDiffAtTick(mismatch_tick, "frame_commit_seed");
+	}
 	if ((local->input_digest == peer->input_digest) && (syNetRollbackEpisodeAuthorityEnabled() != FALSE))
 	{
 		target_tick = syNetRollbackComputeAuthoritativeFcTarget(mismatch_tick, validation_tick);
@@ -4501,6 +4514,22 @@ void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNe
 		    local->input_digest,
 		    peer->input_digest);
 		sSYNetRollbackStateHashLogsRemaining--;
+	}
+	if (local->fighter_digest != peer->fighter_digest)
+	{
+		u32 snap_tick;
+
+		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
+		/*
+		 * figh was the one cross-peer frame-commit partition with no drill-down: item and
+		 * rng each name the diverging field/walk below, but a fighter fork (e.g. DK cargo
+		 * carry cross-ISA drift) printed only the aggregate digests, so the offending slot
+		 * and field could not be identified. Mirror the item/rng path: per-slot fighter
+		 * hashes localize which player forked (compare host vs guest logs side by side),
+		 * and the field diff (gated by SSB64_NETPLAY_FIGHTER_FIELD_DIFF=1) names the field.
+		 */
+		syNetSyncLogFighterSlotHashes(snap_tick);
+		syNetRbSnapshotLogFighterFieldDiffAtTick(snap_tick, "frame_commit_figh_diverge");
 	}
 	if (local->item_digest != peer->item_digest)
 	{

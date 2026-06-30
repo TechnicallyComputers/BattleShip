@@ -119,3 +119,11 @@ test.zip
 .cursor/debug-3b7f79.log
 /.cursor
 .cursor/debug-3b7f79.log
+*.env
+*.env
+debug-resimtest.env
+debug-rollback.env
+debug-resimtest.env
+debug-rollback.env
+.cursor/debug-3b7f79.log
+/.cursor
