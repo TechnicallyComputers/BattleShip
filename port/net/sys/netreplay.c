@@ -1,3 +1,8 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
 #include <sys/netreplay.h>
 
 #include <ft/fighter.h>
@@ -8,14 +13,21 @@
 #include <sys/netpeer.h>
 #include <sys/utils.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #ifdef PORT
 extern void port_log(const char *fmt, ...);
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
+#if defined(SSB64_NETMENU)
+#include <ssb64_paths_capi.h>
+#include <errno.h>
+#ifndef _WIN32
+#include <dirent.h>
+#include <sys/stat.h>
+#else
+#include <direct.h>
+#include <windows.h>
+#endif
+#endif
 #endif
 
 #define SYNETREPLAY_DEFAULT_RECORD_FRAMES 1800
@@ -34,6 +46,12 @@ typedef struct SYNetReplayFileHeader
 
 const char *sSYNetReplayRecordPath;
 const char *sSYNetReplayPlayPath;
+#if defined(PORT) && defined(SSB64_NETMENU)
+static char sSYNetReplayUserRecordPath[SYNETREPLAY_USER_PATH_MAX];
+static char sSYNetReplayUserPlaybackPath[SYNETREPLAY_USER_PATH_MAX];
+static sb32 sSYNetReplayIsUserPlaybackPending;
+static sb32 sSYNetReplayIsUserPlaybackHalted;
+#endif
 u32 sSYNetReplayRecordFrameLimit = SYNETREPLAY_DEFAULT_RECORD_FRAMES;
 u32 sSYNetReplayLoadedFrameCount;
 u32 sSYNetReplayLoadedInputChecksum;
@@ -158,6 +176,25 @@ void syNetReplayApplyBattleMetadata(const SYNetInputReplayMetadata *metadata)
 	gSCManagerSceneData.gkind = metadata->stage_kind;
 }
 
+static void syNetReplayStartRecordingInternal(const char *path, const SYNetInputReplayMetadata *metadata)
+{
+	if ((path == NULL) || (metadata == NULL))
+	{
+		return;
+	}
+	syNetInputClearReplayFrames();
+	syNetInputSetReplayMetadata(metadata);
+	syNetInputSetRecordingEnabled(TRUE);
+	sSYNetReplayRecordPath = path;
+	sSYNetReplayIsRecording = TRUE;
+	sSYNetReplayIsRecordWritten = FALSE;
+
+#ifdef PORT
+	port_log("SSB64 Replay: recording start path=%s limit=%u stage=%u seed=%u players=%u\n", path,
+	         sSYNetReplayRecordFrameLimit, metadata->stage_kind, metadata->rng_seed, metadata->player_count);
+#endif
+}
+
 void syNetReplayInitDebugEnv(void)
 {
 #ifdef PORT
@@ -214,6 +251,9 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 		}
 		sSYNetReplayIsPlaybackActive = TRUE;
 		sSYNetReplayIsPlaybackVerified = FALSE;
+#if defined(SSB64_NETMENU)
+		sSYNetReplayIsUserPlaybackPending = FALSE;
+#endif
 
 #ifdef PORT
 		port_log("SSB64 Replay: playback start path=%s frames=%u checksum=0x%08X stage=%u seed=%u\n",
@@ -224,18 +264,11 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 	}
 	if (sSYNetReplayRecordPath != NULL)
 	{
-		syNetReplayCaptureBattleMetadata(battle_state, &metadata);
-		syNetInputClearReplayFrames();
-		syNetInputSetReplayMetadata(&metadata);
-		syNetInputSetRecordingEnabled(TRUE);
-		sSYNetReplayIsRecording = TRUE;
-		sSYNetReplayIsRecordWritten = FALSE;
-
-#ifdef PORT
-		port_log("SSB64 Replay: recording start path=%s limit=%u stage=%u seed=%u players=%u\n",
-		         sSYNetReplayRecordPath, sSYNetReplayRecordFrameLimit, metadata.stage_kind,
-		         metadata.rng_seed, metadata.player_count);
-#endif
+		if (sSYNetReplayIsRecording == FALSE)
+		{
+			syNetReplayCaptureBattleMetadata(battle_state, &metadata);
+			syNetReplayStartRecordingInternal(sSYNetReplayRecordPath, &metadata);
+		}
 	}
 }
 
@@ -391,3 +424,413 @@ sb32 syNetReplayLoadDebugFile(const char *path)
 #endif
 	return TRUE;
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+
+static void syNetReplayStrCopyN(char *out, size_t cap, const char *src)
+{
+	size_t i;
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return;
+	}
+	if (src == NULL)
+	{
+		out[0] = '\0';
+		return;
+	}
+	for (i = 0U; (i < (cap - 1U)) && (src[i] != '\0'); i++)
+	{
+		out[i] = src[i];
+	}
+	out[i] = '\0';
+}
+
+static void syNetReplayJoinPath(char *out, size_t cap, const char *dir, const char *filename)
+{
+	size_t dlen;
+
+	if ((out == NULL) || (cap == 0U) || (dir == NULL) || (filename == NULL))
+	{
+		if ((out != NULL) && (cap > 0U))
+		{
+			out[0] = '\0';
+		}
+		return;
+	}
+	dlen = strlen(dir);
+	if ((dlen > 0U) && ((dir[dlen - 1U] == '/') || (dir[dlen - 1U] == '\\')))
+	{
+		snprintf(out, cap, "%s%s", dir, filename);
+	}
+	else
+	{
+		snprintf(out, cap, "%s/%s", dir, filename);
+	}
+}
+
+static sb32 syNetReplayEnsureDirRecursive(const char *fullpath)
+{
+	char dir[SYNETREPLAY_USER_PATH_MAX];
+	const char *slash;
+	size_t i;
+
+	slash = strrchr(fullpath, '/');
+#ifdef _WIN32
+	{
+		const char *bslash = strrchr(fullpath, '\\');
+
+		if ((bslash != NULL) && ((slash == NULL) || (bslash > slash)))
+		{
+			slash = bslash;
+		}
+	}
+#endif
+	if (slash == NULL)
+	{
+		return TRUE;
+	}
+	if (((size_t)(slash - fullpath) + 1U) >= sizeof(dir))
+	{
+		return FALSE;
+	}
+	memcpy(dir, fullpath, (size_t)(slash - fullpath));
+	dir[slash - fullpath] = '\0';
+	for (i = 1; dir[i] != '\0'; i++)
+	{
+		if ((dir[i] == '/') || (dir[i] == '\\'))
+		{
+			dir[i] = '\0';
+#ifdef _WIN32
+			if (_mkdir(dir) != 0)
+#else
+			if (mkdir(dir, 0755) != 0)
+#endif
+			{
+				if (errno != EEXIST)
+				{
+					return FALSE;
+				}
+			}
+			dir[i] = '/';
+		}
+	}
+#ifdef _WIN32
+	return (_mkdir(dir) == 0) || (errno == EEXIST);
+#else
+	return (mkdir(dir, 0755) == 0) || (errno == EEXIST);
+#endif
+}
+
+void syNetReplayResolveUserDir(char *out, size_t cap)
+{
+	char base[SYNETREPLAY_USER_PATH_MAX];
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return;
+	}
+	out[0] = '\0';
+	if ((ssb64_UserDataDirUtf8(base, sizeof(base)) != 0) && (base[0] != '\0'))
+	{
+		syNetReplayJoinPath(out, cap, base, SYNETREPLAY_USER_DIR_NAME "/");
+		return;
+	}
+	snprintf(out, cap, "./%s/", SYNETREPLAY_USER_DIR_NAME);
+}
+
+sb32 syNetReplayEnsureUserDir(void)
+{
+	char dir[SYNETREPLAY_USER_PATH_MAX];
+
+	syNetReplayResolveUserDir(dir, sizeof(dir));
+	return syNetReplayEnsureDirRecursive(dir);
+}
+
+sb32 syNetReplayMakeTimestampFilename(char *out, size_t cap)
+{
+	time_t now;
+	struct tm local_tm;
+	struct tm *tm_out;
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return FALSE;
+	}
+	now = time(NULL);
+#ifdef _WIN32
+	tm_out = (localtime_s(&local_tm, &now) == 0) ? &local_tm : NULL;
+#else
+	tm_out = localtime_r(&now, &local_tm);
+#endif
+	if (tm_out == NULL)
+	{
+		return FALSE;
+	}
+	if (strftime(out, cap, "%Y%m%d_%H%M%S" SYNETREPLAY_USER_FILE_EXT, tm_out) == 0U)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static sb32 syNetReplayIsReplayBasename(const char *name)
+{
+	size_t len;
+	size_t ext_len;
+
+	if (name == NULL)
+	{
+		return FALSE;
+	}
+	len = strlen(name);
+	ext_len = strlen(SYNETREPLAY_USER_FILE_EXT);
+	if ((len <= ext_len) || (len >= SYNETREPLAY_USER_FILENAME_MAX))
+	{
+		return FALSE;
+	}
+	return (strcmp(name + len - ext_len, SYNETREPLAY_USER_FILE_EXT) == 0) ? TRUE : FALSE;
+}
+
+static void syNetReplaySortNamesNewestFirst(char names[][SYNETREPLAY_USER_FILENAME_MAX], s32 count)
+{
+	s32 i;
+	s32 j;
+	char temp[SYNETREPLAY_USER_FILENAME_MAX];
+
+	for (i = 0; i < (count - 1); i++)
+	{
+		for (j = i + 1; j < count; j++)
+		{
+			if (strcmp(names[i], names[j]) < 0)
+			{
+				memcpy(temp, names[i], sizeof(temp));
+				memcpy(names[i], names[j], sizeof(temp));
+				memcpy(names[j], temp, sizeof(temp));
+			}
+		}
+	}
+}
+
+sb32 syNetReplayEnumerateUserFiles(char out_names[][SYNETREPLAY_USER_FILENAME_MAX], s32 max_count, s32 *out_count)
+{
+	char dir[SYNETREPLAY_USER_PATH_MAX];
+	s32 count;
+
+	if ((out_names == NULL) || (max_count <= 0) || (out_count == NULL))
+	{
+		return FALSE;
+	}
+	*out_count = 0;
+	count = 0;
+	syNetReplayResolveUserDir(dir, sizeof(dir));
+
+#ifndef _WIN32
+	{
+		DIR *dp;
+		struct dirent *entry;
+
+		dp = opendir(dir);
+		if (dp == NULL)
+		{
+			return TRUE;
+		}
+		while ((entry = readdir(dp)) != NULL)
+		{
+			if (syNetReplayIsReplayBasename(entry->d_name) == FALSE)
+			{
+				continue;
+			}
+			if (count >= max_count)
+			{
+				break;
+			}
+			syNetReplayStrCopyN(out_names[count], SYNETREPLAY_USER_FILENAME_MAX, entry->d_name);
+			count++;
+		}
+		closedir(dp);
+	}
+#else
+	{
+		WIN32_FIND_DATAA find_data;
+		HANDLE handle;
+		char pattern[SYNETREPLAY_USER_PATH_MAX];
+
+		snprintf(pattern, sizeof(pattern), "%s*" SYNETREPLAY_USER_FILE_EXT, dir);
+		handle = FindFirstFileA(pattern, &find_data);
+		if (handle != INVALID_HANDLE_VALUE)
+		{
+			do
+			{
+				if (syNetReplayIsReplayBasename(find_data.cFileName) == FALSE)
+				{
+					continue;
+				}
+				if (count >= max_count)
+				{
+					break;
+				}
+				syNetReplayStrCopyN(out_names[count], SYNETREPLAY_USER_FILENAME_MAX, find_data.cFileName);
+				count++;
+			} while (FindNextFileA(handle, &find_data) != 0);
+			FindClose(handle);
+		}
+	}
+#endif
+
+	syNetReplaySortNamesNewestFirst(out_names, count);
+	*out_count = count;
+	return TRUE;
+}
+
+sb32 syNetReplayResolveUserFilePath(const char *basename, char *out, size_t cap)
+{
+	char dir[SYNETREPLAY_USER_PATH_MAX];
+
+	if ((basename == NULL) || (out == NULL) || (cap == 0U) || (syNetReplayIsReplayBasename(basename) == FALSE))
+	{
+		return FALSE;
+	}
+	syNetReplayResolveUserDir(dir, sizeof(dir));
+	syNetReplayJoinPath(out, cap, dir, basename);
+	return TRUE;
+}
+
+sb32 syNetReplayReadMetadataOnly(const char *path, SYNetInputReplayMetadata *out_metadata)
+{
+	SYNetReplayFileHeader header;
+	FILE *fp;
+
+	if ((path == NULL) || (out_metadata == NULL))
+	{
+		return FALSE;
+	}
+	fp = fopen(path, "rb");
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	if (fread(&header, sizeof(header), 1, fp) != 1)
+	{
+		fclose(fp);
+		return FALSE;
+	}
+	if ((header.magic != SYNETINPUT_REPLAY_MAGIC) || (header.version != SYNETINPUT_REPLAY_VERSION) ||
+	    (header.metadata_size != sizeof(SYNetInputReplayMetadata)))
+	{
+		fclose(fp);
+		return FALSE;
+	}
+	if (fread(out_metadata, sizeof(*out_metadata), 1, fp) != 1)
+	{
+		fclose(fp);
+		return FALSE;
+	}
+	fclose(fp);
+	return TRUE;
+}
+
+sb32 syNetReplayBeginUserAutomatchRecording(const char *path)
+{
+	SYNetInputReplayMetadata metadata;
+
+	if ((path == NULL) || (path[0] == '\0'))
+	{
+		return FALSE;
+	}
+	if (syNetPeerGetCommittedBootstrapMetadata(&metadata) == FALSE)
+	{
+		return FALSE;
+	}
+	syNetReplayStrCopyN(sSYNetReplayUserRecordPath, sizeof(sSYNetReplayUserRecordPath), path);
+	syNetReplayStartRecordingInternal(sSYNetReplayUserRecordPath, &metadata);
+	return TRUE;
+}
+
+sb32 syNetReplayBeginUserPlayback(const char *path)
+{
+	if ((path == NULL) || (path[0] == '\0'))
+	{
+		return FALSE;
+	}
+	syNetPeerEndVSSessionLocally();
+	sSYNetReplayIsPlaybackLoaded = FALSE;
+	sSYNetReplayIsUserPlaybackPending = FALSE;
+	if (syNetReplayLoadDebugFile(path) == FALSE)
+	{
+		return FALSE;
+	}
+	syNetReplayStrCopyN(sSYNetReplayUserPlaybackPath, sizeof(sSYNetReplayUserPlaybackPath), path);
+	syNetReplayApplyBattleMetadata(&sSYNetReplayLoadedMetadata);
+	syUtilsSetRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+	sSYNetReplayPlayPath = sSYNetReplayUserPlaybackPath;
+	sSYNetReplayIsUserPlaybackPending = TRUE;
+	gSCManagerSceneData.is_vs_replay_playback = (ub8)TRUE;
+	gSCManagerSceneData.is_vs_automatch_battle = (ub8)FALSE;
+	gSCManagerSceneData.vs_net_automatch_post_battle_scene = (u8)nSCKindVSReplays;
+	return TRUE;
+}
+
+sb32 syNetReplayIsUserPlaybackPending(void)
+{
+	return sSYNetReplayIsUserPlaybackPending;
+}
+
+sb32 syNetReplayIsPlaybackLoaded(void)
+{
+	return sSYNetReplayIsPlaybackLoaded;
+}
+
+void syNetReplaySetUserPlaybackHalted(sb32 halted)
+{
+	sSYNetReplayIsUserPlaybackHalted = halted;
+}
+
+sb32 syNetReplayIsUserPlaybackHalted(void)
+{
+	return sSYNetReplayIsUserPlaybackHalted;
+}
+
+void syNetReplayAbortUserPlayback(void)
+{
+	syNetReplayFinishVSSession();
+	syNetReplayClearLoadedFrames();
+	sSYNetReplayIsPlaybackLoaded = FALSE;
+	sSYNetReplayIsPlaybackActive = FALSE;
+	sSYNetReplayIsPlaybackVerified = FALSE;
+	sSYNetReplayIsUserPlaybackPending = FALSE;
+	sSYNetReplayIsUserPlaybackHalted = FALSE;
+	sSYNetReplayPlayPath = NULL;
+	sSYNetReplayUserPlaybackPath[0] = '\0';
+	syNetInputClearReplayFrames();
+	gSCManagerSceneData.is_vs_replay_playback = (ub8)FALSE;
+	gSCManagerSceneData.vs_net_automatch_post_battle_scene = (u8)0;
+}
+
+sb32 syNetReplayDeleteUserFile(const char *basename)
+{
+	char path[SYNETREPLAY_USER_PATH_MAX];
+
+	if (syNetReplayResolveUserFilePath(basename, path, sizeof(path)) == FALSE)
+	{
+		return FALSE;
+	}
+#if defined(_WIN32)
+	if (DeleteFileA(path) == FALSE)
+	{
+		return FALSE;
+	}
+#else
+	if (remove(path) != 0)
+	{
+		return FALSE;
+	}
+#endif
+#ifdef PORT
+	port_log("SSB64 Replay: deleted path=%s\n", path);
+#endif
+	return TRUE;
+}
+
+#endif /* PORT && SSB64_NETMENU */

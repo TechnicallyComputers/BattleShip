@@ -3,6 +3,8 @@
 **Scope:** PORT netmenu rollback synctest verify + emergency restore  
 **Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, soak pending)
 
+**3404 follow-up (same soak class, post-509 fix):** verify `eff_fold_diag count=2` with **two identical** `respawn=1` / `quake_pri=2` quakes at the same position and **same ring gobj_id** (`1011`) while slot `effect_count=1`. `slot_effect_enforce` ejected one orphan but blob-matching id-collision duplicate survived enforce + retrack.
+
 ## Symptom
 
 Cross-ISA synctest soak with **no inject** (`SYNCTEST=1`, `resim=0`): peers stay aligned through forward sim, but the first Link-bomb / grab window probed at tick **509** hits `SYNCTEST_FAIL` with **eff-only** `LOAD_HASH_DRIFT` (`slot=0x9B837CA4`, `live=0xC4E1223D`). `eff_fold_diag tag=verify` shows `count=2` vs capture `count=1`: two live quakes at the same position — one with `quake_pri=2` (matches slot blob), one stale shell with `quake_pri=0` that fails `MatchesBlob`. Match continues ~570 ticks, then SIGSEGV near soak end (effect pool / stale XF class).
@@ -26,8 +28,19 @@ Existing duplicate/excess quake pruners only eject live quakes that **match** a 
 | `syNetRbSnapEjectAllNonCanonicalEffectsForVerify` | Check `canonical_gobj_ptrs` **before** quake blob-match eject (3595 had `count=0` when canonical quake failed post-freeze `MatchesBlob`) |
 | `syNetRbSnapEnforceSlotAuthoritativeEffectSet` | Eject reconciled-id quake orphans with wrong priority |
 | Emergency restore + sanitize | Shell prune only after enforce (not full unmatched) |
+| `syNetRbSnapEnforceSlotAuthoritativeEffectSet` eject pass | Eject **any** reconciled-id effect whose ptr is not canonical (not only pri-mismatched quakes) |
+| `syNetRbSnapResolveLiveEffectGobjForBlobApply` | Prefer already-tracked canonical quake ptr before `gcFindGObjByID` on id collisions |
+| `syNetRbSnapRetrackCanonicalSlotEffectsBeforeVerifyEject` | Drop verify TryRespawn (enforce already respawned); adopt via FindLiveQuake only |
+| `syNetRbSnapPruneSurplusBlobMatchedQuakesForVerify` | Pre-final-eject: one live quake per slot blob (prefer canonical ptr) |
+| `syNetRbSnapEjectAllNonCanonicalEffectsForVerify` | Eject all non-canonical quakes when slot owns a quake blob |
 
 Built clean (`build-netmenu` Debug).
+
+### 3404 identical-quake follow-up (2026-06-30)
+
+| Helper / site | Change |
+|---------------|--------|
+| (see rows above) | Collapse N blob-matching quakes sharing reconciled gobj_id → 1 before verify hash |
 
 ## Verification
 

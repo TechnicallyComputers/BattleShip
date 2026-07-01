@@ -23,7 +23,18 @@
 
 #define SSB64_NETPLAY_SAVE_FILENAME "ssb64_netplaysave.bin"
 #define SSB64_NETPLAY_SAVE_MAGIC 0x53534E50u /* "SSNP" */
-#define SSB64_NETPLAY_SAVE_VERSION 1u
+#define SSB64_NETPLAY_SAVE_VERSION 2u
+#define SSB64_NETPLAY_SAVE_VERSION_V1 1u
+
+typedef struct SSB64NetplaySaveV2
+{
+	u32 magic;
+	u32 version;
+	u32 checksum;
+	u16 stage_ban_mask;
+	u8 replay_save_enabled;
+	u8 reserved;
+} SSB64NetplaySaveV2;
 
 typedef struct SSB64NetplaySaveV1
 {
@@ -34,10 +45,8 @@ typedef struct SSB64NetplaySaveV1
 	u16 reserved;
 } SSB64NetplaySaveV1;
 
-static u32 syNetplaySaveChecksumV1(const SSB64NetplaySaveV1 *blob)
+static u32 syNetplaySaveChecksumPayload(const u8 *p, size_t n)
 {
-	const u8 *p = (const u8 *)&blob->stage_ban_mask;
-	size_t n = sizeof(blob->stage_ban_mask) + sizeof(blob->reserved);
 	u32 sum;
 	size_t i;
 
@@ -48,6 +57,21 @@ static u32 syNetplaySaveChecksumV1(const SSB64NetplaySaveV1 *blob)
 		sum ^= (u32)p[i];
 	}
 	return sum;
+}
+
+static u32 syNetplaySaveChecksumV1(const SSB64NetplaySaveV1 *blob)
+{
+	const u8 *p = (const u8 *)&blob->stage_ban_mask;
+
+	return syNetplaySaveChecksumPayload(p, sizeof(blob->stage_ban_mask) + sizeof(blob->reserved));
+}
+
+static u32 syNetplaySaveChecksumV2(const SSB64NetplaySaveV2 *blob)
+{
+	const u8 *p = (const u8 *)&blob->stage_ban_mask;
+
+	return syNetplaySaveChecksumPayload(p, sizeof(blob->stage_ban_mask) + sizeof(blob->replay_save_enabled) +
+	                                           sizeof(blob->reserved));
 }
 
 static void syNetplaySaveJoinPath(char *out, size_t cap, const char *dir, const char *filename)
@@ -163,49 +187,79 @@ static sb32 syNetplaySaveEnsureParentDir(const char *fullpath)
 #endif
 }
 
-void syNetplaySaveLoad(void)
+static void syNetplaySaveApplyLoadedBlob(u16 stage_ban_mask, u8 replay_save_enabled)
+{
+	u16 mask;
+
+	mask = mnVSNetLevelPrefsMapsSanitizeUserBanMask(stage_ban_mask);
+	gSCManagerSceneData.vs_net_stage_ban_mask = mask;
+	gSCManagerSceneData.vs_net_replay_save_enabled = (replay_save_enabled != 0U) ? (ub8)TRUE : (ub8)FALSE;
+}
+
+static sb32 syNetplaySaveReadBlob(SSB64NetplaySaveV2 *out_blob)
 {
 	FILE *fp;
 	char path[512];
-	SSB64NetplaySaveV1 blob;
-	u16 mask;
+	SSB64NetplaySaveV1 blob_v1;
+	SSB64NetplaySaveV2 blob;
 
 	syNetplaySaveResolvePath(path, sizeof(path));
 	fp = fopen(path, "rb");
 	if (fp == NULL)
 	{
-		return;
+		return FALSE;
 	}
-	if (fread(&blob, 1, sizeof(blob), fp) != sizeof(blob))
+	if (fread(&blob_v1, 1, sizeof(blob_v1), fp) != sizeof(blob_v1))
 	{
 		fclose(fp);
-		return;
+		return FALSE;
 	}
 	fclose(fp);
 
-	if ((blob.magic != SSB64_NETPLAY_SAVE_MAGIC) || (blob.version != SSB64_NETPLAY_SAVE_VERSION))
+	if (blob_v1.magic != SSB64_NETPLAY_SAVE_MAGIC)
 	{
-		return;
+		return FALSE;
 	}
-	if (blob.checksum != syNetplaySaveChecksumV1(&blob))
+	if (blob_v1.version == SSB64_NETPLAY_SAVE_VERSION_V1)
+	{
+		if (blob_v1.checksum != syNetplaySaveChecksumV1(&blob_v1))
+		{
+			port_log("SSB64 NetplaySave: v1 checksum mismatch (%s) — ignoring\n", path);
+			return FALSE;
+		}
+		out_blob->magic = blob_v1.magic;
+		out_blob->version = SSB64_NETPLAY_SAVE_VERSION;
+		out_blob->stage_ban_mask = blob_v1.stage_ban_mask;
+		out_blob->replay_save_enabled = 0U;
+		out_blob->reserved = 0U;
+		out_blob->checksum = syNetplaySaveChecksumV2(out_blob);
+		return TRUE;
+	}
+	if (blob_v1.version != SSB64_NETPLAY_SAVE_VERSION)
+	{
+		return FALSE;
+	}
+	memcpy(&blob, &blob_v1, sizeof(blob));
+	if (blob.checksum != syNetplaySaveChecksumV2(&blob))
 	{
 		port_log("SSB64 NetplaySave: checksum mismatch (%s) — ignoring\n", path);
-		return;
+		return FALSE;
 	}
-
-	mask = mnVSNetLevelPrefsMapsSanitizeUserBanMask(blob.stage_ban_mask);
-	gSCManagerSceneData.vs_net_stage_ban_mask = mask;
+	*out_blob = blob;
+	return TRUE;
 }
 
-void syNetplaySaveWriteStageBanMask(u16 user_mask)
+static void syNetplaySaveWriteBlob(const SSB64NetplaySaveV2 *blob_in)
 {
 	FILE *fp;
 	char path[512];
-	SSB64NetplaySaveV1 blob;
-	u16 mask;
+	SSB64NetplaySaveV2 blob;
 
-	mask = mnVSNetLevelPrefsMapsSanitizeUserBanMask(user_mask);
-	gSCManagerSceneData.vs_net_stage_ban_mask = mask;
+	blob = *blob_in;
+	blob.magic = SSB64_NETPLAY_SAVE_MAGIC;
+	blob.version = SSB64_NETPLAY_SAVE_VERSION;
+	blob.reserved = 0U;
+	blob.checksum = syNetplaySaveChecksumV2(&blob);
 
 	syNetplaySaveResolvePath(path, sizeof(path));
 	if (syNetplaySaveEnsureParentDir(path) == FALSE)
@@ -213,12 +267,6 @@ void syNetplaySaveWriteStageBanMask(u16 user_mask)
 		port_log("SSB64 NetplaySave: could not create directory for %s\n", path);
 		return;
 	}
-
-	blob.magic = SSB64_NETPLAY_SAVE_MAGIC;
-	blob.version = SSB64_NETPLAY_SAVE_VERSION;
-	blob.stage_ban_mask = mask;
-	blob.reserved = 0U;
-	blob.checksum = syNetplaySaveChecksumV1(&blob);
 
 	fp = fopen(path, "wb");
 	if (fp == NULL)
@@ -231,6 +279,54 @@ void syNetplaySaveWriteStageBanMask(u16 user_mask)
 		port_log("SSB64 NetplaySave: short write (%s)\n", path);
 	}
 	fclose(fp);
+}
+
+void syNetplaySaveLoad(void)
+{
+	SSB64NetplaySaveV2 blob;
+
+	if (syNetplaySaveReadBlob(&blob) == FALSE)
+	{
+		gSCManagerSceneData.vs_net_replay_save_enabled = (ub8)FALSE;
+		return;
+	}
+	syNetplaySaveApplyLoadedBlob(blob.stage_ban_mask, blob.replay_save_enabled);
+}
+
+void syNetplaySaveWriteStageBanMask(u16 user_mask)
+{
+	SSB64NetplaySaveV2 blob;
+	u16 mask;
+
+	mask = mnVSNetLevelPrefsMapsSanitizeUserBanMask(user_mask);
+	gSCManagerSceneData.vs_net_stage_ban_mask = mask;
+
+	if (syNetplaySaveReadBlob(&blob) == FALSE)
+	{
+		memset(&blob, 0, sizeof(blob));
+	}
+	blob.stage_ban_mask = mask;
+	blob.replay_save_enabled = (gSCManagerSceneData.vs_net_replay_save_enabled != FALSE) ? 1U : 0U;
+	syNetplaySaveWriteBlob(&blob);
+}
+
+sb32 syNetplaySaveGetReplaySaveEnabled(void)
+{
+	return (gSCManagerSceneData.vs_net_replay_save_enabled != FALSE) ? TRUE : FALSE;
+}
+
+void syNetplaySaveWriteReplaySaveEnabled(sb32 enabled)
+{
+	SSB64NetplaySaveV2 blob;
+
+	if (syNetplaySaveReadBlob(&blob) == FALSE)
+	{
+		memset(&blob, 0, sizeof(blob));
+	}
+	gSCManagerSceneData.vs_net_replay_save_enabled = (enabled != FALSE) ? (ub8)TRUE : (ub8)FALSE;
+	blob.replay_save_enabled = (enabled != FALSE) ? 1U : 0U;
+	blob.stage_ban_mask = gSCManagerSceneData.vs_net_stage_ban_mask;
+	syNetplaySaveWriteBlob(&blob);
 }
 
 #endif /* PORT && SSB64_NETMENU */

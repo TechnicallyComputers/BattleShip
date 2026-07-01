@@ -92,6 +92,10 @@ extern u32 syNetPeerGetVsContractViHz(void);
  * Safe to call once before syNetReplayStartVSSession from scVSBattleStartBattle. Idempotent.
  */
 extern void syNetPeerCommitStagedBootstrapMetadataForBattleStart(void);
+#if defined(SSB64_NETMENU)
+#include <sys/netinput.h>
+extern sb32 syNetPeerGetCommittedBootstrapMetadata(SYNetInputReplayMetadata *out_metadata);
+#endif
 /*
  * Host-frame barrier pump (`PortPushFrame`): keeps UDP recv + clock/barrier state moving during VS load
  * or taskman net-freeze. Disable with `SSB64_NETPLAY_HOSTFRAME_GATE_PUMP=0`.

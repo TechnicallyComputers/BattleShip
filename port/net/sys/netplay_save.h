@@ -18,6 +18,12 @@ void syNetplaySaveLoad(void);
 /** Persist current automatch stage ban mask (user bits only). */
 void syNetplaySaveWriteStageBanMask(u16 user_mask);
 
+/** Runtime mirror of persisted replay auto-save toggle. */
+sb32 syNetplaySaveGetReplaySaveEnabled(void);
+
+/** Persist replay auto-save toggle (read-modify-write with stage ban mask). */
+void syNetplaySaveWriteReplaySaveEnabled(sb32 enabled);
+
 const char *syNetplaySaveGetPath(void);
 
 #endif /* PORT && SSB64_NETMENU */
