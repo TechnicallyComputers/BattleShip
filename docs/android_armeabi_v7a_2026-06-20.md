@@ -79,13 +79,13 @@ The ABI list is configurable via a Gradle property (default `arm64-v8a`):
 
 ```sh
 cd android
-git -C ../decomp apply ../tools/patches/android-v7a-ilp32-decomp.patch
 ./gradlew assembleDebug -Pssb64.abis=armeabi-v7a
 # or build both: -Pssb64.abis=arm64-v8a,armeabi-v7a
 ```
 
-The patch step is temporary. Once the decomp submodule pointer includes the
-ILP32 fixes, skip it and remove the CI bridge step.
+The ILP32 decomp fixes are carried by the pinned `decomp` submodule
+(`armeabi-v7a-ilp32` = `port-patches` + ILP32, all guarded by `sizeof(uintptr_t)`),
+so no patch step is needed.
 
 For local emulator setup, the newest SDK-provided `armeabi-v7a` Google APIs
 image is API 25. Build that test APK with a matching temporary minSdk:
@@ -113,8 +113,8 @@ cmake --build build-android-v7a -j
 `.github/workflows/android-v7a.yml` builds the armeabi-v7a APK with the real
 NDK r29 on GitHub's runners (which can reach `dl.google.com`; the dev sandbox
 cannot, so the NDK can't be fetched there). It triggers on pull requests that
-touch Android/native port/ILP32 patch inputs, pushes to `main`, pushes to the
-staging feature branch, and via `workflow_dispatch`. It is the authoritative
+touch Android/native/port inputs, pushes to `main`, pushes to the staging
+feature branch, and via `workflow_dispatch`. It is the authoritative
 real-toolchain check for the per-ABI dependency build.
 
 ### Emulator
@@ -171,7 +171,7 @@ arm64-v8a (LP64), with their fixes:
   `decomp/include/stdlib.h` declared `malloc` with an `unsigned long` size
   param. On LP64 that equals `size_t`; on ILP32 `size_t` is `unsigned int`, so
   clang's `-Werror=incompatible-library-redeclaration` fired against the
-  builtin `void *(unsigned int)`. The fix lives in the decomp patch: under
+  builtin `void *(unsigned int)`. The fix lives in the decomp submodule: under
   `PORT`, include `<stddef.h>` and declare `malloc(size_t)`, keeping the strict
   diagnostic enabled.
 
@@ -194,16 +194,14 @@ arm64-v8a (LP64), with their fixes:
   **Compile-validated** (the ILP32 offsets are exactly the actuals clang
   computed); the panning byte-poke still wants on-device audio verification.
 
-### Decomp patch bridge
+### Decomp ILP32 fixes
 
-The dev environment can only push to `JRickey/BattleShip` (the git proxy and
-the GitHub tools are both scoped to it), not to the `ssb-decomp-re` fork, so
-the decomp fix can't be pushed and the submodule pointer can't be bumped to it
-from here. The canonical fix is committed on the isolated decomp branch
-`agent/armeabi-v7a-ilp32` (ready for someone with decomp push access to land +
-bump the submodule). As a bridge, the CI workflow applies the same diff
-(`tools/patches/android-v7a-ilp32-decomp.patch`) to the checked-out decomp tree
-before building. Remove the patch step once the submodule pointer is bumped.
+The ILP32 decomp fixes are committed on the `ssb-decomp-re` branch
+`armeabi-v7a-ilp32` (rebased onto `port-patches`, so it is `port-patches` + the
+four `sizeof(uintptr_t)`-guarded changes) and the `decomp` submodule pointer is
+pinned to it. CI builds the submodule as-is; there is no patch step. Because the
+changes are guarded by pointer width, arm64-v8a / LP64 / matching-ROM builds are
+byte-for-byte unaffected.
 
 ## Caveats
 
