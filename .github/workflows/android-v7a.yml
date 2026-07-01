@@ -16,7 +16,6 @@ on:
       - 'decomp'
       - 'libultraship'
       - 'torch'
-      - 'tools/patches/**'
       - '.github/workflows/android-v7a.yml'
   push:
     branches:
@@ -29,7 +28,6 @@ on:
       - 'decomp'
       - 'libultraship'
       - 'torch'
-      - 'tools/patches/**'
       - '.github/workflows/android-v7a.yml'
   workflow_dispatch:
 
@@ -55,13 +53,6 @@ jobs:
       - name: Generate f3d.o2r (Fast3D shaders staged at repo root)
         working-directory: libultraship/src/fast
         run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
-      - name: Apply decomp ILP32 patches (pending upstream merge)
-        # The 32-bit ARM decomp fixes live on the isolated decomp branch
-        # agent/armeabi-v7a-ilp32 (ssb-decomp-re). Until that lands in the
-        # pinned submodule SHA, apply the same diffs to the checked-out decomp
-        # tree so the armeabi-v7a build can proceed. Remove this step once the
-        # submodule pointer is bumped. See docs/android_armeabi_v7a_2026-06-20.md.
-        run: git -C decomp apply -v "$GITHUB_WORKSPACE/tools/patches/android-v7a-ilp32-decomp.patch"
       - name: Build armeabi-v7a APK (debug-signed)
         # assembleDebug avoids the release keystore. The -Pssb64.abis property
         # drives AGP's externalNativeBuild to configure + compile the full
