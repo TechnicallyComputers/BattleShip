@@ -132,3 +132,6 @@ debug-rollback.env
 debug-resimtest.env
 debug-rollback.env
 *.env
+debug-rollback.env
+debug-resimtest.env
+.cursor/debug-3b7f79.log
