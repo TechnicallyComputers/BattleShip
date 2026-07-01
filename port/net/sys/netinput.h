@@ -349,6 +349,10 @@ extern void syNetInputExportPeerConnectStatus(s32 *out_last_tick, u8 *out_discon
 
 #ifdef PORT
 extern void syNetInputDebugXorPublishedHistoryButtons(s32 player, u32 tick, u16 xor_mask);
+extern void syNetInputRefreshPortHardwareUiLatch(void);
+extern s32 syNetInputGetPortHardwareTapButtons(u32 buttons);
+extern s32 syNetInputGetPortHardwareHoldButtons(u32 buttons);
+extern s32 syNetInputGetPortHardwareStickUD(s8 range, sb32 up_or_down);
 #endif
 
 #endif /* _SYNETINPUT_H_ */

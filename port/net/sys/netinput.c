@@ -4521,6 +4521,102 @@ void syNetInputDebugXorPublishedHistoryButtons(s32 player, u32 tick, u16 xor_mas
 }
 #endif
 
+#ifdef PORT
+static sb32 syNetInputCheckPortHardwareConnected(s32 player)
+{
+	s32 i;
+
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return FALSE;
+	}
+	for (i = 0; i < (s32)ARRAY_COUNT(gSYControllerDeviceStatuses); i++)
+	{
+		if (player == gSYControllerDeviceStatuses[i])
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+void syNetInputRefreshPortHardwareUiLatch(void)
+{
+	SYController replay_backup[MAXCONTROLLERS];
+	s32 player;
+
+	memcpy(replay_backup, gSYControllerDevices, sizeof(replay_backup));
+	syControllerFuncRead();
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		sSYNetInputHardwareLatch[player] = gSYControllerDevices[player];
+	}
+	memcpy(gSYControllerDevices, replay_backup, sizeof(replay_backup));
+	syNetInputPublishMainController();
+}
+
+s32 syNetInputGetPortHardwareTapButtons(u32 buttons)
+{
+	s32 player;
+	u16 matched;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (syNetInputCheckPortHardwareConnected(player) == FALSE)
+		{
+			continue;
+		}
+		matched = (u16)(sSYNetInputHardwareLatch[player].button_tap & buttons);
+		if (matched != 0)
+		{
+			/* Consume matched tap edges so UI does not re-fire while sim tick is frozen (replay halt). */
+			sSYNetInputHardwareLatch[player].button_tap &= (u16)~matched;
+			return player + 1;
+		}
+	}
+	return 0;
+}
+
+s32 syNetInputGetPortHardwareHoldButtons(u32 buttons)
+{
+	s32 player;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if ((syNetInputCheckPortHardwareConnected(player) != FALSE) &&
+		    (sSYNetInputHardwareLatch[player].button_hold & buttons))
+		{
+			return player + 1;
+		}
+	}
+	return 0;
+}
+
+s32 syNetInputGetPortHardwareStickUD(s8 range, sb32 up_or_down)
+{
+	s32 player;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (syNetInputCheckPortHardwareConnected(player) != FALSE)
+		{
+			if (up_or_down != 0)
+			{
+				if (range < sSYNetInputHardwareLatch[player].stick_range.y)
+				{
+					return sSYNetInputHardwareLatch[player].stick_range.y;
+				}
+			}
+			else if (range > sSYNetInputHardwareLatch[player].stick_range.y)
+			{
+				return sSYNetInputHardwareLatch[player].stick_range.y;
+			}
+		}
+	}
+	return 0;
+}
+#endif
+
 SYController *syNetInputGetSimController(s32 player)
 {
 	if (syNetInputCheckPlayer(player) == FALSE)

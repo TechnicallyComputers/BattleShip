@@ -2843,6 +2843,22 @@ void syNetPeerCommitStagedBootstrapMetadataForBattleStart(void)
 	/* StartBattle runs before the VS tick loop; barrier only freezes updates. Must not wait on barrier. */
 	syNetPeerCommitStagedBootstrapMetadataNow(TRUE);
 }
+
+#if defined(SSB64_NETMENU)
+sb32 syNetPeerGetCommittedBootstrapMetadata(SYNetInputReplayMetadata *out_metadata)
+{
+	if (out_metadata == NULL)
+	{
+		return FALSE;
+	}
+	if (sSYNetPeerBootstrapMetadataApplied == FALSE)
+	{
+		return FALSE;
+	}
+	*out_metadata = sSYNetPeerBootstrapMetadata;
+	return TRUE;
+}
+#endif
 #endif
 
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -6813,6 +6829,12 @@ static void syNetPeerApplySimSlotInputSources(void)
 
 void syNetPeerReapplySimSlotInputSources(void)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetReplayIsPlaybackLoaded() != FALSE)
+	{
+		return;
+	}
+#endif
 	if ((sSYNetPeerIsEnabled == FALSE) || (sSYNetPeerIsConfigured == FALSE) || (sSYNetPeerIsActive == FALSE))
 	{
 		return;
@@ -6865,6 +6887,12 @@ static void syNetPeerLogCrossIsaSessionBanner(void)
 
 void syNetPeerStartVSSession(void)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetReplayIsPlaybackLoaded() != FALSE)
+	{
+		return;
+	}
+#endif
 #if defined(PORT)
 	if ((sSYNetPeerIsEnabled == FALSE) || (sSYNetPeerIsConfigured == FALSE))
 	{

@@ -59,6 +59,14 @@ Synctest-on run: shields still looked correct (translucent) but `SYNCTEST_FAIL` 
 
 **Verify:** Sustained hold should show monotonic `shield_decay_wait` countdown and periodic `shield_health` drops in `guard_shield_stamina` lines; zero `guard_ptr_mismatch`; at most one `guard_shield_ensure path=ok` per GuardOn entry; no `player_slot_bubble_exists` spam during hold.
 
+### Phase 39 (2026-06-30) — shield bubble clipped through fighter after rollback load
+
+**Symptom:** During guard windows in netplay rollback, the shield bubble renders intersecting the fighter model (neither clearly in front nor behind the body) after snapshot load / figatree re-pin.
+
+**Cause:** `syNetRbSnapRefreshFigatreePresentationFromSlot` and verify finalize re-stamp fighter joint pose without re-pinning the guard bubble's `user_data.p` YRotN attach or invalidating part transform caches, so the bubble draws with a stale attach matrix.
+
+**Fix:** `syNetRbSnapRefreshGuardShieldJointAttachFromFighters()` — repin shield `user_data.p` to `joints[nFTPartsJointYRotN]`, refresh guard coupling, invalidate fighter part transforms. Called after figatree refresh, guard shield patch, and verify effect finalize joint reapply.
+
 ## Impact
 
 | Area | Before Phase 37 | After Phase 37 |
