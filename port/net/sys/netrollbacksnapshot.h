@@ -10,6 +10,7 @@
 #include <ssb_types.h>
 
 struct GObj;
+struct EFStruct;
 
 #define SYNETRB_SNAPSHOT_RING_DEFAULT 64
 #define SYNETRB_SNAPSHOT_RING_MAX     128
@@ -103,6 +104,8 @@ extern sb32 syNetRbSnapPupupuWhispySlotIsBlow(u32 tick);
 extern void syNetRbSnapshotLogGuardShieldLoadDriftDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* Eject hollow/dead quake shells after synctest emergency restore (efManagerQuakeProcUpdate crash guard). */
 extern void syNetRbSnapshotSanitizeLiveQuakeEffectsAfterEmergencyRestore(void);
+/* Quake predicate for the sync-hash layer: gates folding effect_vars.quake.priority to genuine quakes. */
+extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const struct EFStruct *ep);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);

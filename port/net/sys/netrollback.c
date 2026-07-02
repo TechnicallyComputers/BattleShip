@@ -11338,6 +11338,26 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		syNetInputPublishSynchronizedTick(t);
 		scVSBattleFuncUpdateBattleSimOnly();
 #if defined(SSB64_NETMENU)
+		/*
+		 * Resim must reproduce the forward sim's *canonicalized* per-tick state. Accepted forward ticks
+		 * grid-snap fighters/items/camera in syNetRollbackAfterBattleUpdate (quantize active) before the
+		 * post-tick snapshot save, so committed history is on-grid -- the fix that keeps the movable
+		 * Castle bumper (the one item fighters can knock; itgbumper.c) deterministic. During resim,
+		 * AfterBattleUpdate early-returns (resim pending) and never canonicalizes, yet this loop still
+		 * saves snapshots and collects hashes below. So the bumper and any fighter it contacts integrate
+		 * un-snapped and drift cross-ISA, diverging resim output from the canonicalized forward baseline:
+		 * soak2 @357459419 committed figh,item,rng at tick 600 after a FORCE_MISMATCH resim (519->522) --
+		 * bumper contact pulled Fox's Firefox-setup position off, so the host drew hit RNG @533/539 that
+		 * the guest never did, and item stayed diverged through 600 (again at 2040). Snap here, at the
+		 * same point relative to the save/hash as the accepted path, so both peers' replay is bit-
+		 * identical to their canonicalized forward sim.
+		 * See docs/bugs/netplay_castle_bumper_resim_uncanonicalized_drift_2026-07-02.md.
+		 */
+		if (syNetplaySimQuantizeActive() != FALSE)
+		{
+			syNetplayCanonicalizeActiveFightersForNetplay();
+			syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
+		}
 		if (syNetRollbackResimSnapshotRefreshEnabled() != FALSE)
 		{
 			(void)syNetRbSnapshotSave(t);

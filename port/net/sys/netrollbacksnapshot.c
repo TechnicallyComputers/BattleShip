@@ -640,6 +640,7 @@ typedef struct SYNetRbSnapWeaponBlob
 #define SYNETRB_EFFECT_RESPAWN_NESS_PSYCHIC_MAGNET   9U
 #define SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT       10U
 #define SYNETRB_EFFECT_RESPAWN_YOSHI_EGG_ESCAPE     11U
+#define SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE          12U
 
 #define SYNETRB_SNAPSHOT_GROUND_PAYLOAD_MAX 128U
 
@@ -865,6 +866,7 @@ typedef struct SYNetRbSnapEffectBlob
 	u32 proc_update_fingerprint;
 	/* World DObj translate at save (quantized on netmenu capture when applicable). */
 	Vec3f translate;
+	Vec3f rotate;
 	/* Sanitized copy of `EFStruct::effect_vars` (pointer slots cleared on capture). */
 	u8 effect_vars[sizeof(((EFStruct){0}).effect_vars)];
 
@@ -2989,7 +2991,6 @@ static void syNetRbSnapSanitizeSlotEffectGobjIdCollisions(SYNetRbSnapshotSlot *s
 static void syNetRbSnapCompactSlotEffects(SYNetRbSnapshotSlot *slot);
 static u32 syNetRbSnapHashCanonicalSlotEffects(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapshotSlotGuardEscapeOverlapFragile(const SYNetRbSnapshotSlot *slot);
-static sb32 syNetRbSnapshotSlotEffectCountTransitionFragile(u32 probe_tick, const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapshotSlotAnyFighterRebirthScope(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b);
 static sb32 syNetRbSnapSlotHasQuakeEffectBlob(const SYNetRbSnapshotSlot *slot);
@@ -3020,31 +3021,6 @@ static sb32 syNetRbSnapFighterInRebirthScope(const FTStruct *fp)
 	return ((fp->status_id >= nFTCommonStatusRebirthDown) && (fp->status_id <= nFTCommonStatusRebirthWait))
 	           ? TRUE
 	           : FALSE;
-}
-
-static sb32 syNetRbSnapFighterInDeadScope(const FTStruct *fp)
-{
-	if (fp == NULL)
-	{
-		return FALSE;
-	}
-	return ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall)) ? TRUE
-	                                                                                                 : FALSE;
-}
-
-static sb32 syNetRbSnapshotAnyFighterDeadScopeActive(void)
-{
-	GObj *fighter_gobj;
-
-	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
-	     fighter_gobj = fighter_gobj->link_next)
-	{
-		if (syNetRbSnapFighterInDeadScope(ftGetStruct(fighter_gobj)) != FALSE)
-		{
-			return TRUE;
-		}
-	}
-	return FALSE;
 }
 
 static sb32 syNetRbSnapshotAnyFighterRebirthScopeActive(void)
@@ -3305,6 +3281,7 @@ static void syNetRbSnapRefreshGameplayAnimFragilePresentationFromSlot(const SYNe
 static void syNetRbSnapRefreshFoxResimPresentationFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapReconcileFoxFirefoxImpactWavesFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapEjectOrphanFoxFirefoxImpactWaves(void);
+static sb32 syNetRbSnapLiveEffectIsImpactWave(const GObj *gobj, const EFStruct *ep);
 #endif
 
 /*
@@ -4466,22 +4443,12 @@ sb32 syNetRbSnapshotSynctestShouldSkip(const char **reason_out)
 		}
 		return TRUE;
 	}
-	if (syNetRbSnapshotAnyFighterDeadScopeActive() != FALSE)
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "dead";
-		}
-		return TRUE;
-	}
-	if (syNetRbSnapshotAnyFighterRebirthScopeActive() != FALSE)
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "rebirth";
-		}
-		return TRUE;
-	}
+	/*
+	 * Dead/rebirth are no longer blanket synctest skips. The rollback load path now has explicit
+	 * dead-gate catch-up, rebirth lifecycle catch-up, and halo/pose restore passes; if any of those
+	 * fail to round-trip, synctest should localize the exact figh/eff field instead of deferring the
+	 * oracle through the whole KO window. See docs/bugs/netplay_dead_rebirth_synctest_unskip_2026-07-02.md.
+	 */
 	if (syNetRbSnapshotAnyFighterFoxReflectorScopeActive() != FALSE)
 	{
 		if (reason_out != NULL)
@@ -10603,10 +10570,58 @@ static sb32 syNetRbSnapEffectHiddenFromRollback(const GObj *gobj, const EFStruct
 	{
 		return FALSE;
 	}
-	return ((ep->bank_id == SYNETRB_YOSHI_EGG_LAY_HATCH_COSMETIC_BANK_ID) &&
-	        (ep->proc_update == syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate))
-	           ? TRUE
-	           : FALSE;
+	if ((ep->bank_id == SYNETRB_YOSHI_EGG_LAY_HATCH_COSMETIC_BANK_ID) &&
+	    (ep->proc_update == syNetRbSnapYoshiEggLayHatchCosmeticProcUpdate))
+	{
+		return TRUE;
+	}
+	/*
+	 * Firefox ImpactWave shells are short-lived, purely cosmetic VFX (alpha decays over ~11 frames)
+	 * spawned deterministically from fighter state. Multiple can be live at once sharing a recycled
+	 * effect gobj_id (soak2 @212585156 tick 1950: two ImpactWaves + one quake all id=1011), which the
+	 * id-keyed snapshot cannot canonicalize -- the live fold counted 3 effects while save/load could
+	 * only store 2, and the surviving shell's impact_wave.index round-tripped as 0, a deterministic
+	 * eff-only SYNCTEST_FAIL on both peers. Respawning them through efManagerImpactWaveMakeEffect also
+	 * churned the recycled-id effect pool, stranding an unrelated DefaultProcUpdate particle's xf owner
+	 * (owner_mismatch spam @2010-2041) into a host SIGSEGV. They carry no gameplay state, so exclude
+	 * them from the rollback hash + snapshot entirely (matching the Yoshi-egg-hatch cosmetic pattern);
+	 * both peers spawn them identically in forward sim and the presentation reconcilers keep the visual
+	 * aligned. See docs/bugs/netplay_impact_wave_cosmetic_rollback_exclusion_2026-07-02.md.
+	 */
+	if (syNetRbSnapLiveEffectIsImpactWave(gobj, ep) != FALSE)
+	{
+		return TRUE;
+	}
+	/*
+	 * Quakes are camera-shake VFX: efManagerQuakeProcUpdate's only side effect is gmCameraSetVelAt()
+	 * (already suppressed on speculative/resim frames), and the shell carries no fighter/item/world/rng
+	 * state -- only effect_vars.quake.priority, which is 3 - magnitude derived from the collision that
+	 * spawned it (bumper/item hit). That upstream cause is already hashed in item/rng/world, so folding
+	 * the quake adds no real coverage. Meanwhile the id-keyed snapshot cannot canonicalize multiple
+	 * simultaneous quakes sharing a recycled gobj_id: soak2 @736861014 tick 1949 had two live
+	 * respawn=1 priority=1 quakes both gobj_id=1011 (Castle bumpers spawning a pair the same tick).
+	 * Same priority means priority-matching can't disambiguate them, so verify collapsed 2->1 and the
+	 * survivor's priority round-tripped 1->0 (non-idempotent, two different verify hashes -> guest
+	 * eff SYNCTEST_FAIL), while the respawn/enforce churn of recycled id=1011 (repeated gobj_alloc
+	 * id=1011 link=6) stranded a proc into a host SIGSEGV (fault_addr=0xc8, x0=0). Both peers spawn
+	 * quakes deterministically in forward sim and the camera stays aligned, so exclude them from the
+	 * rollback hash + snapshot entirely, matching the Firefox ImpactWave and Yoshi-egg-hatch cosmetic
+	 * pattern. See docs/bugs/netplay_quake_cosmetic_rollback_exclusion_2026-07-02.md.
+	 *
+	 * Match only by reliable proc identity (func_run pending, GObj process list, or ep->proc_update),
+	 * NOT the syNetRbSnapLiveEffectIsQuake "stamped/frozen" heuristic branch: that branch reads the
+	 * effect_vars.quake.priority union byte for any fighter_gobj==NULL / anim_frame>0 / func_run==NULL
+	 * effect, which only exists to keep OUR snapshot-restored quakes classified. Since quakes are now
+	 * excluded from the snapshot we never stamp them, so live quakes always carry a genuine quake proc;
+	 * using the heuristic here would risk hiding an unrelated cosmetic VFX whose union byte aliases <=3.
+	 */
+	if ((syNetRbSnapEffectGObjHasUpdateProc((GObj *)gobj, efManagerQuakeProcUpdate) != FALSE) ||
+	    (ep->proc_update == efManagerQuakeProcUpdate) ||
+	    (gobj->func_run == efManagerQuakeFuncRun))
+	{
+		return TRUE;
+	}
+	return FALSE;
 #else
 	(void)gobj;
 	(void)ep;
@@ -12955,6 +12970,23 @@ static sb32 syNetRbSnapLiveEffectIsShockSmall(const GObj *gobj, const EFStruct *
 	return ((gobj != NULL) && (ep != NULL) && (ep->proc_update == efManagerVelAddDestroyAnimEnd)) ? TRUE : FALSE;
 }
 
+static sb32 syNetRbSnapLiveEffectIsImpactWave(const GObj *gobj, const EFStruct *ep)
+{
+	if ((gobj == NULL) || (ep == NULL))
+	{
+		return FALSE;
+	}
+	if (ep->proc_update == efManagerImpactWaveProcUpdate)
+	{
+		return TRUE;
+	}
+	if (syNetRbSnapEffectGObjHasUpdateProc((GObj *)gobj, efManagerImpactWaveProcUpdate) != FALSE)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static sb32 syNetRbSnapLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
 {
 	GObj *gobj_mut;
@@ -12981,12 +13013,21 @@ static sb32 syNetRbSnapLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
 	 * effect_vars.quake.priority and pose remain authoritative until the shell expires.
 	 */
 	if ((ep != NULL) && (ep->fighter_gobj == NULL) && (gobj->anim_frame > 0.0F) &&
-	    (ep->effect_vars.quake.priority <= 4U) && (gobj->func_run == NULL) &&
+	    (ep->effect_vars.quake.priority <= 3U) && (gobj->func_run == NULL) &&
 	    (syNetRbSnapEffectGObjHasUpdateProc(gobj_mut, efManagerQuakeFuncRun) == FALSE))
 	{
 		return TRUE;
 	}
 	return FALSE;
+}
+
+/*
+ * Public quake predicate for the sync-hash layer: netsync folds effect_vars.quake.priority only
+ * when the union member is authoritative, matching how the snapshot layer classifies quakes.
+ */
+sb32 syNetRbSnapshotLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
+{
+	return syNetRbSnapLiveEffectIsQuake(gobj, ep);
 }
 
 static u8 syNetRbSnapQuakePriorityFromEffectBlob(const SYNetRbSnapEffectBlob *blob)
@@ -13000,6 +13041,19 @@ static u8 syNetRbSnapQuakePriorityFromEffectBlob(const SYNetRbSnapEffectBlob *bl
 	memset(&scratch, 0, sizeof(scratch));
 	memcpy(&scratch.effect_vars, blob->effect_vars, sizeof(scratch.effect_vars));
 	return scratch.effect_vars.quake.priority;
+}
+
+static u8 syNetRbSnapImpactWaveIndexFromEffectBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	EFStruct scratch;
+
+	if (blob == NULL)
+	{
+		return 0xFFU;
+	}
+	memset(&scratch, 0, sizeof(scratch));
+	memcpy(&scratch.effect_vars, blob->effect_vars, sizeof(scratch.effect_vars));
+	return scratch.effect_vars.impact_wave.index;
 }
 
 static sb32 syNetRbSnapLiveEffectIsUserdataJointAttach(const GObj *gobj, const EFStruct *ep)
@@ -13294,6 +13348,16 @@ static void syNetRbSnapRescheduleQuakeProcIfActive(GObj *gobj, EFStruct *ep)
 	{
 		return;
 	}
+	/*
+	 * Snapshot matching treats priority-4 shells as quake-like so same-id impact/quake pairs round-trip,
+	 * but efManagerQuakeProcUpdate interprets DObj translate as a camera shake velocity. Pri-4 shells can
+	 * carry world-space impact positions there, so binding the camera proc would add a huge one-frame
+	 * camera offset after resim. Keep them inert for presentation while preserving them in effect hashing.
+	 */
+	if (ep->effect_vars.quake.priority > 3U)
+	{
+		return;
+	}
 	if (syNetRbSnapEffectGObjHasUpdateProc(gobj, efManagerQuakeProcUpdate) == FALSE)
 	{
 		gcAddGObjProcess(gobj, efManagerQuakeProcUpdate, nGCProcessKindFunc, ep->effect_vars.quake.priority);
@@ -13415,26 +13479,33 @@ static GObj *syNetRbSnapFindLiveQuakeEffectForBlob(const SYNetRbSnapshotSlot *sl
 
 static GObj *syNetRbSnapRespawnQuakeEffectForBlob(const SYNetRbSnapEffectBlob *blob)
 {
-	u8 blob_priority;
-
 	if ((blob == NULL) || (blob->is_valid == FALSE) || (blob->respawn_kind != SYNETRB_EFFECT_RESPAWN_QUAKE))
 	{
 		return NULL;
 	}
-	if (blob->quake_magnitude != 0xFFU)
+	if (blob->quake_magnitude == 0xFFU)
 	{
-		return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+		return NULL;
 	}
-	blob_priority = syNetRbSnapQuakePriorityFromEffectBlob(blob);
-	if (blob_priority <= 4U)
+	return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+}
+
+static GObj *syNetRbSnapRespawnImpactWaveEffectForBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	u8 index;
+	Vec3f pos;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE) || (blob->respawn_kind != SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE))
 	{
-		/*
-		 * Priority 4 serializes as magnitude 0xFF (same as the unknown sentinel). Mint a harmless
-		 * quake shell and let ApplyEffectBlob stamp the captured priority/pose immediately.
-		 */
-		return efManagerQuakeMakeEffect(0);
+		return NULL;
 	}
-	return NULL;
+	index = syNetRbSnapImpactWaveIndexFromEffectBlob(blob);
+	if (index == 0xFFU)
+	{
+		return NULL;
+	}
+	pos = blob->translate;
+	return efManagerImpactWaveMakeEffect(&pos, (s32)index, blob->rotate.z);
 }
 
 #if defined(SSB64_NETMENU)
@@ -15786,6 +15857,10 @@ u8 syNetRbSnapEffectRespawnKindFromLive(const GObj *gobj, const EFStruct *ep)
 	{
 		return SYNETRB_EFFECT_RESPAWN_NONE;
 	}
+	if (syNetRbSnapLiveEffectIsImpactWave(gobj, ep) != FALSE)
+	{
+		return SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE;
+	}
 	if (syNetRbSnapLiveEffectIsQuake(gobj, ep) != FALSE)
 	{
 		return SYNETRB_EFFECT_RESPAWN_QUAKE;
@@ -17837,6 +17912,11 @@ static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b)
 	{
 		return TRUE;
 	}
+	if (((kind_a == SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE) && (kind_b == SYNETRB_EFFECT_RESPAWN_QUAKE)) ||
+	    ((kind_a == SYNETRB_EFFECT_RESPAWN_QUAKE) && (kind_b == SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE)))
+	{
+		return TRUE;
+	}
 	if (((kind_a == SYNETRB_EFFECT_RESPAWN_REBIRTH_HALO) && (kind_b == SYNETRB_EFFECT_RESPAWN_QUAKE)) ||
 	    ((kind_a == SYNETRB_EFFECT_RESPAWN_QUAKE) && (kind_b == SYNETRB_EFFECT_RESPAWN_REBIRTH_HALO)))
 	{
@@ -18117,22 +18197,6 @@ static sb32 syNetRbSnapshotSlotGuardEscapeOverlapFragile(const SYNetRbSnapshotSl
 	return ((syNetRbSnapSlotAnyFighterInGuardScope(slot) != FALSE) &&
 	        (syNetRbSnapSlotAnyFighterInYoshiShieldEscapeScope(slot) != FALSE)) ? TRUE
 	                                                                            : FALSE;
-}
-
-static sb32 syNetRbSnapshotSlotEffectCountTransitionFragile(u32 probe_tick, const SYNetRbSnapshotSlot *slot)
-{
-	SYNetRbSnapshotSlot *prev_slot;
-
-	if ((slot == NULL) || (probe_tick == 0U))
-	{
-		return FALSE;
-	}
-	prev_slot = syNetRbSnapshotSlotForTick(probe_tick - 1U);
-	if ((prev_slot == NULL) || (prev_slot->is_valid == FALSE) || (prev_slot->tick != (probe_tick - 1U)))
-	{
-		return FALSE;
-	}
-	return (slot->effect_count != prev_slot->effect_count) ? TRUE : FALSE;
 }
 
 static sb32 syNetRbSnapSlotEffectBlobConflictsWithShieldRespawn(const SYNetRbSnapshotSlot *slot,
@@ -20281,12 +20345,11 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 		{
 			return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
 		}
-		if (syNetRbSnapQuakePriorityFromEffectBlob(blob) <= 4U)
-		{
-			return syNetRbSnapRespawnQuakeEffectForBlob(blob);
-		}
 		break;
 	}
+	case SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE:
+		return syNetRbSnapRespawnImpactWaveEffectForBlob(blob);
+
 	case SYNETRB_EFFECT_RESPAWN_SHIELD:
 		if (fighter_gobj != NULL)
 		{
@@ -20687,10 +20750,12 @@ static void syNetRbSnapApplyEffectBlobTranslate(GObj *gobj, const SYNetRbSnapEff
 		return;
 	}
 	dobj->translate.vec.f = blob->translate;
+	dobj->rotate.vec.f = blob->rotate;
 #if defined(SSB64_NETMENU)
 	if (skip_quantize == FALSE)
 	{
 		syNetplayQuantizeDObjTranslate(dobj);
+		syNetplayQuantizeVec3f(&dobj->rotate.vec.f);
 	}
 #endif
 }
@@ -21279,13 +21344,28 @@ static void syNetRbSnapRebindFighterEffectGobjs(const SYNetRbSnapFighterBlob *bl
 		ftStatusVarsCaptureYoshi(fp)->effect_gobj = NULL;
 	}
 	syNetRbSnapSanitizeCaptureYoshiEffectGobj(fp);
-	reflector_gobj = syNetRbSnapResolveCoupledEffectGobj(syNetRbSnapFoxSpecialLwEffectIdFromBlob(blob));
-	if ((reflector_gobj == NULL) && (syNetRbSnapBlobFoxInReflectorScope(blob) != FALSE))
+	/*
+	 * status_vars.fox.speciallw.effect_gobj aliases specialhi.decelerate_wait (union offset 16) AND
+	 * specialhi.pass_timer (offset 20) on LP64: the GObj* is 8 bytes there, where the N64 build had a
+	 * 4-byte pointer that only overlapped anim_frames. Writing this pointer (reflector or NULL) on a Fox
+	 * mid-Firefox (specialhi) fighter — or on any non-Fox fighter, whose union those bytes belong to —
+	 * zeroes both deterministic Firefox physics timers. The capture side only records
+	 * fox_speciallw_effect_gobj_id in SpecialLw scope (see above), so restore must mirror that: bind the
+	 * reflector pointer only when the blob is actually in Fox SpecialLw scope, otherwise leave the union
+	 * untouched. Stomping decel/pass makes save/load non-idempotent (synctest figh drift) and corrupts
+	 * post-rollback Firefox deceleration/velocity identically on both peers (deterministic but wrong).
+	 * See docs/bugs/netplay_fox_firefox_speciallw_union_alias_decel_stomp_2026-07-02.md.
+	 */
+	if (syNetRbSnapBlobFoxInReflectorScope(blob) != FALSE)
 	{
-		/* Respawned reflector has a new GObj id; recover via the effect->fighter back-pointer. */
-		reflector_gobj = syNetRbSnapFindLiveFoxReflectorEffectForFighter(fighter_gobj);
+		reflector_gobj = syNetRbSnapResolveCoupledEffectGobj(syNetRbSnapFoxSpecialLwEffectIdFromBlob(blob));
+		if (reflector_gobj == NULL)
+		{
+			/* Respawned reflector has a new GObj id; recover via the effect->fighter back-pointer. */
+			reflector_gobj = syNetRbSnapFindLiveFoxReflectorEffectForFighter(fighter_gobj);
+		}
+		fp->status_vars.fox.speciallw.effect_gobj = reflector_gobj;
 	}
-	fp->status_vars.fox.speciallw.effect_gobj = reflector_gobj;
 }
 
 #ifdef PORT
@@ -23961,7 +24041,7 @@ static sb32 syNetRbSnapLiveEffectMatchesBlob(const SYNetRbSnapshotSlot *slot, co
 			return FALSE;
 		}
 		blob_priority = syNetRbSnapQuakePriorityFromEffectBlob(blob);
-		if ((blob_priority <= 4U) && (ep->effect_vars.quake.priority != blob_priority))
+		if ((blob_priority <= 3U) && (ep->effect_vars.quake.priority != blob_priority))
 		{
 			return FALSE;
 		}
@@ -23973,6 +24053,22 @@ static sb32 syNetRbSnapLiveEffectMatchesBlob(const SYNetRbSnapshotSlot *slot, co
 		 * fingerprint 0 vs the blob's captured nonzero value). That false negative made every
 		 * reapply/freeze/retrack pass re-mint a duplicate quake (save 2 -> verify 4). Match on priority.
 		 */
+		return TRUE;
+	}
+	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_IMPACT_WAVE)
+	{
+		if (syNetRbSnapLiveEffectIsImpactWave(gobj, ep) == FALSE)
+		{
+			return FALSE;
+		}
+		if (ep->effect_vars.impact_wave.index != syNetRbSnapImpactWaveIndexFromEffectBlob(blob))
+		{
+			return FALSE;
+		}
+		if (ep->bank_id != blob->bank_id)
+		{
+			return FALSE;
+		}
 		return TRUE;
 	}
 	if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
@@ -29898,6 +29994,10 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 			if (dobj_cap != NULL)
 			{
 				blob->translate = dobj_cap->translate.vec.f;
+				blob->rotate = dobj_cap->rotate.vec.f;
+#if defined(SSB64_NETMENU)
+				syNetplayQuantizeVec3f(&blob->rotate);
+#endif
 				blob->snap_flags |= SYNETRB_EFFECT_SNAP_TRANSLATE;
 			}
 		}
@@ -31389,34 +31489,19 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 		return TRUE;
 	}
 	/*
-	 * Resim anchor: an effect-count transition (e.g. Fox Firefox charge ImpactWave spawning/
-	 * despawning) is exactly the class of cosmetic drift that load repair replays/reconciles
-	 * (syNetRbSnapReconcileFoxFirefoxImpactWavesFromSlot / EjectOrphanFoxFirefoxImpactWaves,
-	 * syNetRbSnapRefreshFoxResimPresentationFromSlot). Unlike its siblings above, this probe was
-	 * missing the tolerant-flag gate, so every resim-anchor walk near a Firefox charge transition
-	 * kept classifying load_tick as fragile and walking back 2+ steps into a stale anchor whose
-	 * restored status_vars didn't match the original forward-sim trajectory (soak2 @2047424634:
-	 * 518->517->516 walkback, load=515, then resim replayed Fox Hold->Travel one tick early,
-	 * producing a same-peer forward-vs-resim figh/map divergence and PEER_SNAPSHOT_DIVERGE at
-	 * load_tick=518). See docs/bugs/netplay_fox_appear_firefox_charge_soak2_2026-07-01.md.
+	 * (Removed) effect_count_transition_probe synctest skip: it suppressed the synctest self-check
+	 * on any tick whose effect_count differed from the prior tick (e.g. Fox Firefox charge ImpactWave
+	 * spawn/despawn), masking real save/load fidelity gaps rather than diagnosing them. The resim-anchor
+	 * path never used it anyway (it runs with s_syNetRbSnapResimAnchorEffectRepairTolerant == TRUE, which
+	 * gated the block off), so removal only re-enables full synctest coverage on effect-count transitions.
+	 * See docs/bugs/netplay_effect_quake_priority_union_fold_2026-07-02.md.
 	 */
-	if ((s_syNetRbSnapResimAnchorEffectRepairTolerant == FALSE) &&
-	    (syNetRbSnapshotSlotEffectCountTransitionFragile(probe_tick, slot) != FALSE))
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "effect_count_transition_probe";
-		}
-		return TRUE;
-	}
-	if (syNetRbSnapshotSlotAnyFighterRebirthScope(slot) != FALSE)
-	{
-		if (reason_out != NULL)
-		{
-			*reason_out = "rebirth_probe";
-		}
-		return TRUE;
-	}
+	/*
+	 * (Removed) rebirth_probe synctest skip: rebirth probe loads now rely on the same explicit
+	 * restore/catch-up passes as live rebirth loads. A failing probe is actionable save/load drift,
+	 * not a reason to walk the anchor deeper into the KO window.
+	 * See docs/bugs/netplay_dead_rebirth_synctest_unskip_2026-07-02.md.
+	 */
 	/*
 	 * Fox Firefox (SpecialHiStart..SpecialAirHiBound): no longer a synctest/resim-load fragile
 	 * probe — same failure shape as the Yoshi egg-lay window below (soak2 @520: 519→503→487,
@@ -31624,17 +31709,18 @@ sb32 syNetRbSnapshotSynctestShouldSkipProbeTick(u32 probe_tick, const char **rea
 			return TRUE;
 		}
 #endif
-		/* Resim anchor: live-vs-slot effect count compares sim-frontier live to the anchor slot —
-		 * always divergent mid-rollback; load repair enforces the slot-authoritative effect set. */
-		if ((s_syNetRbSnapResimAnchorEffectRepairTolerant == FALSE) ||
-		    (syNetRbSnapshotSlotInLinkBombEffectRepairScope(slot, probe_tick) == FALSE))
-		{
-			if (reason_out != NULL)
-			{
-				*reason_out = "effect_probe_mismatch";
-			}
-			return TRUE;
-		}
+		/*
+		 * effect_probe_mismatch skip removed permanently. It suppressed the probe-tick
+		 * save->restore->re-hash whenever live effect count differed from the anchor slot,
+		 * which masks the generic effect save/load round-trip (the last class of soak skip
+		 * outside intro_wait). With quakes and Firefox impact waves now excluded from the
+		 * rollback effect set as cosmetic (syNetRbSnapEffectHiddenFromRollback) and the
+		 * per-effect capture/respawn paths idempotent, this window no longer diverges — the
+		 * one remaining fire (soak2 @1182615431 x1) was benign transient churn. Left removed
+		 * so any real effect save/load gap surfaces as a SYNCTEST_FAIL / eff divergence rather
+		 * than being silently skipped. The yamabuki monster/gate probes above stay: they cover
+		 * a distinct ground-object liveness window, not the effect round-trip.
+		 */
 	}
 	return FALSE;
 }

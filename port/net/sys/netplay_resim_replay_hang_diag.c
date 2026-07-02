@@ -9,6 +9,7 @@
 #include <sys/netrollback.h>
 #include <sys/objdef.h>
 #include <sys/objman.h>
+#include <sys/objman_gcport.h>
 #include <sys/objtypes.h>
 
 #include <stdio.h>
@@ -232,15 +233,22 @@ void syNetplayResimReplayHangDiagNoteBattleSimOnlyEnd(void)
 
 void syNetplayResimReplayHangDiagNoteGcRunGObj(GObj *gobj)
 {
-	if ((syNetplayResimReplayHangDiagEnabled() == FALSE) || (gobj == NULL))
+	if (gobj == NULL)
 	{
 		return;
 	}
+	/*
+	 * Record the last-run GObj UNCONDITIONALLY (cheap field stores, no logging) so the
+	 * watchdog hang snapshot can name the culprit even when verbose replay logging is off.
+	 * gcRunAll/gcRunGObjProcess watchdog hangs (07-01 free-list/list-splice class) leave the
+	 * cycling gobj/proc here; without this the hang_snapshot printed stale zeros unless the
+	 * SSB64_NETPLAY_RESIM_REPLAY_HANG_DIAG env was pre-set, which soak captures rarely are.
+	 */
 	s_syNetplayResimReplayHangDiagLastGobjId = gobj->id;
 	s_syNetplayResimReplayHangDiagLastGobjLink = gobj->link_id;
 	s_syNetplayResimReplayHangDiagLastGobjKind = gobj->obj_kind;
 	s_syNetplayResimReplayHangDiagLastFuncRun = gobj->func_run;
-	if (syNetplayResimReplayHangDiagVerbose() != FALSE)
+	if ((syNetplayResimReplayHangDiagEnabled() != FALSE) && (syNetplayResimReplayHangDiagVerbose() != FALSE))
 	{
 		port_log(
 		    "SSB64 Netplay: RESIM_REPLAY_HANG_DIAG gc_run_gobj id=%u link=%u kind=%u func_run=%p tick=%u replay=%u\n",
@@ -257,10 +265,13 @@ void syNetplayResimReplayHangDiagNoteGcRunGObjProcessBegin(GObjProcess *gobjproc
 {
 	GObj *parent;
 
-	if ((syNetplayResimReplayHangDiagEnabled() == FALSE) || (gobjproc == NULL))
+	if (gobjproc == NULL)
 	{
 		return;
 	}
+	/* Record the last-run gobjproc UNCONDITIONALLY (see syNetplayResimReplayHangDiagNoteGcRunGObj):
+	 * the process-queue priority_next cycle that pins gcRunAll lands here, so the watchdog snapshot
+	 * needs this populated regardless of the verbose env gate. */
 	parent = gobjproc->parent_gobj;
 	s_syNetplayResimReplayHangDiagLastProcKind = gobjproc->kind;
 	s_syNetplayResimReplayHangDiagLastProcPriority = (u8)gobjproc->priority;
@@ -276,7 +287,7 @@ void syNetplayResimReplayHangDiagNoteGcRunGObjProcessBegin(GObjProcess *gobjproc
 	{
 		s_syNetplayResimReplayHangDiagLastThreadState = -1;
 	}
-	if (syNetplayResimReplayHangDiagVerbose() != FALSE)
+	if ((syNetplayResimReplayHangDiagEnabled() != FALSE) && (syNetplayResimReplayHangDiagVerbose() != FALSE))
 	{
 		port_log(
 		    "SSB64 Netplay: RESIM_REPLAY_HANG_DIAG gc_proc_begin parent_id=%u kind=%u pri=%u func=%p func_id=%p mesg_valid=%d tick=%u replay=%u\n",
@@ -329,12 +340,19 @@ void syNetplayResimReplayHangDiagLogHangSnapshot(void)
 	u32 mismatch_tick;
 	u32 target_tick;
 	u32 next_tick;
+	char cycle_diag[192];
+	char head_pairs[256];
 
-	if (syNetplayResimReplayHangDiagEnabled() == FALSE)
-	{
-		return;
-	}
+	/*
+	 * Always dump on a watchdog trip -- this is only reached from port_watchdog after >3s of
+	 * no frame/yield progress, so there is no hot-path cost, and the last-gobj/last-proc fields
+	 * are now recorded unconditionally. Naming the wedged parent effect/proc (07-01 free-list
+	 * cycle class) is the whole point of the hang snapshot; gating it behind an env var that soak
+	 * runs don't set defeated it (soak2 @1182615431 / @279353420 hung with no hang_gobj line).
+	 */
 	syNetRollbackResimReplayHangDiagExportEpisode(&pending, &load_tick, &mismatch_tick, &target_tick, &next_tick);
+	gcPortSnprintGcRunAllTraversalCycleDiag(cycle_diag, sizeof(cycle_diag));
+	gcPortSnprintGcRunAllTraversalHeadPairs(head_pairs, sizeof(head_pairs), 48);
 	port_log(
 	    "SSB64 Netplay: RESIM_REPLAY_HANG_DIAG hang_snapshot ingress=%d battle_sim_depth=%d caller=%s sim=%u replay_tick=%u pending=%u load=%u mismatch=%u target=%u next=%u resim=%d gc_status=%d\n",
 	    s_syNetplayResimReplayHangDiagIngressDepth,
@@ -364,6 +382,7 @@ void syNetplayResimReplayHangDiagLogHangSnapshot(void)
 	    s_syNetplayResimReplayHangDiagLastGcMesgValid,
 	    (void *)gGCCurrentCommon,
 	    (void *)gGCCurrentProcess);
+	port_log("SSB64 Netplay: RESIM_REPLAY_HANG_DIAG hang_cycle %s heads=%s\n", cycle_diag, head_pairs);
 	syNetplayResimReplayHangDiagLogFoxFirefoxContext(syNetInputGetTick(), "hang_snapshot");
 }
 

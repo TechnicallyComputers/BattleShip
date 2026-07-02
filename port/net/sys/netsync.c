@@ -2485,8 +2485,29 @@ static u32 syNetSyncFoldGBumperItemExtras(GObj *gobj, const ITStruct *ip, u32 fo
 		return fold;
 	}
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->multi);
-	fold = syNetSyncFnvAccumulateU32(fold, (u32)ip->item_vars.bumper.hit_anim_length);
 	dobj = DObjGetStruct(gobj);
+	{
+		/*
+		 * bumper.hit_anim_length is only live during the hit flash. itGBumperCommonProcUpdate reads it
+		 * exactly once -- `if (hit_anim_length == 0 && palette_id == 1.0F) palette_id = 0; else
+		 * hit_anim_length--;` -- so once the flash ends (palette cleared to 0) the counter takes the
+		 * else branch forever, underflowing 0 -> 0xFFFF and free-running down every frame with no
+		 * gameplay effect (scale is driven by `multi`, and the read guard requires palette_id==1.0F,
+		 * which never recurs). Folding that dead free-run into the item hash made a single 1-tick
+		 * discrepancy in bumper ProcUpdate count across a resim diverge permanently: soak2 @736861014
+		 * tick 599 had palette_id==0 / multi==0 on both peers with every folded float bit-identical,
+		 * but hit_anim_length host=64935 vs guest=64936 (off-by-one free-run) -> item,rng
+		 * FRAME_COMMIT_STATE_DIVERGE with matching inputs. Fold it only while the flash is actually
+		 * live (palette_id==1.0F, the same liveness test the sim uses; palette_id is itself folded and
+		 * agrees cross-peer), and a stable sentinel otherwise, so the dead counter can't drift the hash
+		 * while a genuine mid-flash divergence is still caught.
+		 * See docs/bugs/netplay_castle_bumper_hit_anim_length_free_run_fold_2026-07-02.md.
+		 */
+		sb32 flash_active = ((dobj != NULL) && (dobj->mobj != NULL) && (dobj->mobj->palette_id == 1.0F));
+
+		fold = syNetSyncFnvAccumulateU32(
+		    fold, flash_active ? (u32)ip->item_vars.bumper.hit_anim_length : 0U);
+	}
 	if (dobj != NULL)
 	{
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(dobj->scale.vec.f.x));
@@ -3572,6 +3593,12 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.shield.player);
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)(ep->effect_vars.shield.is_damage_shield != FALSE));
 	}
+	if (ep->proc_update == efManagerImpactWaveProcUpdate)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.impact_wave.index);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ep->effect_vars.impact_wave.alpha));
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(ep->effect_vars.impact_wave.decay));
+	}
 	if ((ep->proc_update == gcPlayAnimAll) && (ep->fighter_gobj != NULL))
 	{
 		FTStruct *fp_halo;
@@ -3624,7 +3651,19 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 	{
 		ness_shock_effect = TRUE;
 	}
-	fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
+	/*
+	 * effect_vars is a union; effect_vars.quake.priority is only the live member for genuine
+	 * quake shells. Folding it unconditionally read incidental union bytes for non-quake effects
+	 * (e.g. the rebirth halo coupling, proc=gcPlayAnimAll, fighter_gobj!=NULL), which are not
+	 * guaranteed to agree cross-ISA -- soak2 @1855301997 tick 2160 hashed quake_pri=1 (host) vs
+	 * 197 (guest) for a REBIRTH_HALO effect, producing an eff-only FRAME_COMMIT_STATE_DIVERGE with
+	 * matching inputs. Gate on the same quake predicate the snapshot layer uses so the priority is
+	 * folded only when it is authoritative. See docs/bugs/netplay_effect_quake_priority_union_fold_2026-07-02.md.
+	 */
+	if (syNetRbSnapshotLiveEffectIsQuake(gobj, ep) != FALSE)
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
+	}
 	dobj = DObjGetStruct(gobj);
 	if ((dobj != NULL) && (rebirth_halo_effect == FALSE) && (ness_pkwave_effect == FALSE) &&
 	    (ness_psychic_magnet_effect == FALSE) && (ness_shock_effect == FALSE))
