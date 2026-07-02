@@ -195,7 +195,7 @@ void syNetplayFoxSanitizeFirefoxStatusVars(FTStruct *fp)
 	{
 		return;
 	}
-	specialhi = &fp->status_vars.fox.specialhi;
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
 	if (in_hold != FALSE)
 	{
 		if (specialhi->launch_delay < 0)
@@ -276,15 +276,17 @@ void syNetplayFoxFirefoxGateLogFieldDecrement(GObj *fighter_gobj, FTStruct *fp, 
 void syNetplayFoxFirefoxTravelSpanOnInit(FTStruct *fp)
 {
 	s32 player;
+	ftFoxSpecialHiStatusVars *specialhi;
 
 	player = syNetplayFoxTravelSpanPlayer(fp);
 	if (player < 0)
 	{
 		return;
 	}
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
 	sSYNetplayFoxTravelSpan[player].active = TRUE;
 	sSYNetplayFoxTravelSpan[player].entry_tick = (s32)syNetInputGetTick();
-	sSYNetplayFoxTravelSpan[player].entry_frames = fp->status_vars.fox.specialhi.anim_frames;
+	sSYNetplayFoxTravelSpan[player].entry_frames = specialhi->anim_frames;
 	sSYNetplayFoxTravelSpan[player].sim_decrements = 0;
 	sSYNetplayFoxTravelSpan[player].last_decrement_tick = -1;
 	sSYNetplayFoxTravelEndPathPending[player] = 0;
@@ -292,8 +294,8 @@ void syNetplayFoxFirefoxTravelSpanOnInit(FTStruct *fp)
 	{
 		port_log(
 		    "SSB64 Netplay: FOX_FIREFOX_GATE tick=%u event=travel_span_init player=%d status=%d entry_frames=%d expected=%d resim=%d\n",
-		    syNetInputGetTick(), (int)player, (int)fp->status_id,
-		    (int)fp->status_vars.fox.specialhi.anim_frames, (int)FTFOX_FIREFOX_TRAVEL_TIME,
+		    syNetInputGetTick(), (int)player, (int)fp->status_id, (int)specialhi->anim_frames,
+		    (int)FTFOX_FIREFOX_TRAVEL_TIME,
 		    (int)(syNetRollbackIsResimulating() != FALSE));
 	}
 }
@@ -303,19 +305,21 @@ void syNetplayFoxFirefoxTravelSpanOnSimDecrement(FTStruct *fp)
 	s32 player;
 	s32 tick;
 	s32 dtick;
+	ftFoxSpecialHiStatusVars *specialhi;
 
 	player = syNetplayFoxTravelSpanPlayer(fp);
 	if (player < 0)
 	{
 		return;
 	}
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
 	tick = (s32)syNetInputGetTick();
 	if (sSYNetplayFoxTravelSpan[player].active == FALSE)
 	{
 		/* Decrement seen without a tracked entry (span began before trace armed): back-fill entry. */
 		sSYNetplayFoxTravelSpan[player].active = TRUE;
 		sSYNetplayFoxTravelSpan[player].entry_tick = tick;
-		sSYNetplayFoxTravelSpan[player].entry_frames = fp->status_vars.fox.specialhi.anim_frames + 1;
+		sSYNetplayFoxTravelSpan[player].entry_frames = specialhi->anim_frames + 1;
 		sSYNetplayFoxTravelSpan[player].sim_decrements = 0;
 		sSYNetplayFoxTravelSpan[player].last_decrement_tick = -1;
 		sSYNetplayFoxTravelEndPathPending[player] = 0;
@@ -329,8 +333,8 @@ void syNetplayFoxFirefoxTravelSpanOnSimDecrement(FTStruct *fp)
 	{
 		port_log(
 		    "SSB64 Netplay: FOX_FIREFOX_GATE tick=%u event=proc_decrement player=%d status=%d field=anim_frames after=%d count=%d dtick=%d resim=%d\n",
-		    (unsigned int)tick, (int)player, (int)fp->status_id,
-		    (int)fp->status_vars.fox.specialhi.anim_frames, (int)sSYNetplayFoxTravelSpan[player].sim_decrements,
+		    (unsigned int)tick, (int)player, (int)fp->status_id, (int)specialhi->anim_frames,
+		    (int)sSYNetplayFoxTravelSpan[player].sim_decrements,
 		    (int)dtick, (int)(syNetRollbackIsResimulating() != FALSE));
 	}
 }
@@ -354,6 +358,7 @@ void syNetplayFoxFirefoxTravelSpanOnEnd(FTStruct *fp)
 	s32 span_ticks;
 	s32 path;
 	const char *path_str;
+	ftFoxSpecialHiStatusVars *specialhi;
 
 	player = syNetplayFoxTravelSpanPlayer(fp);
 	if (player < 0)
@@ -364,6 +369,7 @@ void syNetplayFoxFirefoxTravelSpanOnEnd(FTStruct *fp)
 	{
 		return;
 	}
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
 	end_tick = (s32)syNetInputGetTick();
 	span_ticks = end_tick - sSYNetplayFoxTravelSpan[player].entry_tick;
 	path = sSYNetplayFoxTravelEndPathPending[player];
@@ -375,7 +381,7 @@ void syNetplayFoxFirefoxTravelSpanOnEnd(FTStruct *fp)
 		    (unsigned int)end_tick, (int)player, (int)fp->status_id, path_str,
 		    (int)sSYNetplayFoxTravelSpan[player].entry_tick, (int)end_tick, (int)span_ticks,
 		    (int)sSYNetplayFoxTravelSpan[player].sim_decrements, (int)sSYNetplayFoxTravelSpan[player].entry_frames,
-		    (int)fp->status_vars.fox.specialhi.anim_frames, (int)FTFOX_FIREFOX_TRAVEL_TIME,
+		    (int)specialhi->anim_frames, (int)FTFOX_FIREFOX_TRAVEL_TIME,
 		    (int)(FTFOX_FIREFOX_TRAVEL_TIME - span_ticks),
 		    (int)(FTFOX_FIREFOX_TRAVEL_TIME - sSYNetplayFoxTravelSpan[player].sim_decrements),
 		    (int)(syNetRollbackIsResimulating() != FALSE));
@@ -386,6 +392,8 @@ void syNetplayFoxFirefoxTravelSpanOnEnd(FTStruct *fp)
 
 void syNetplayFoxCatchUpFirefoxLaunchIfDue(GObj *fighter_gobj, FTStruct *fp)
 {
+	ftFoxSpecialHiStatusVars *specialhi;
+
 	if ((fighter_gobj == NULL) || (fp == NULL) || (fp->fkind != nFTKindFox))
 	{
 		return;
@@ -395,15 +403,16 @@ void syNetplayFoxCatchUpFirefoxLaunchIfDue(GObj *fighter_gobj, FTStruct *fp)
 	{
 		return;
 	}
-	syNetplayFoxFirefoxGateLogCheck("launch_check", fp, (s32)fp->status_vars.fox.specialhi.launch_delay);
-	if (fp->status_vars.fox.specialhi.launch_delay > 0)
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
+	syNetplayFoxFirefoxGateLogCheck("launch_check", fp, (s32)specialhi->launch_delay);
+	if (specialhi->launch_delay > 0)
 	{
 		return;
 	}
 	if (syNetplayFoxFirefoxGateDiagEnabled() != FALSE)
 	{
 		port_log("SSB64 Netplay: FOX_FIREFOX_GATE tick=%u event=launch_delay_zero player=%d status=%d launch_delay=%d\n",
-		         syNetInputGetTick(), (int)fp->player, (int)fp->status_id, (int)fp->status_vars.fox.specialhi.launch_delay);
+		         syNetInputGetTick(), (int)fp->player, (int)fp->status_id, (int)specialhi->launch_delay);
 	}
 	if (fp->ga == nMPKineticsAir)
 	{
@@ -417,6 +426,8 @@ void syNetplayFoxCatchUpFirefoxLaunchIfDue(GObj *fighter_gobj, FTStruct *fp)
 
 void syNetplayFoxCatchUpFirefoxEndIfDue(GObj *fighter_gobj, FTStruct *fp)
 {
+	ftFoxSpecialHiStatusVars *specialhi;
+
 	if ((fighter_gobj == NULL) || (fp == NULL) || (fp->fkind != nFTKindFox))
 	{
 		return;
@@ -426,15 +437,16 @@ void syNetplayFoxCatchUpFirefoxEndIfDue(GObj *fighter_gobj, FTStruct *fp)
 	{
 		return;
 	}
-	syNetplayFoxFirefoxGateLogCheck("end_check", fp, (s32)fp->status_vars.fox.specialhi.anim_frames);
-	if (fp->status_vars.fox.specialhi.anim_frames > 0)
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
+	syNetplayFoxFirefoxGateLogCheck("end_check", fp, (s32)specialhi->anim_frames);
+	if (specialhi->anim_frames > 0)
 	{
 		return;
 	}
 	if (syNetplayFoxFirefoxGateDiagEnabled() != FALSE)
 	{
 		port_log("SSB64 Netplay: FOX_FIREFOX_GATE tick=%u event=anim_frames_zero player=%d status=%d anim_frames=%d\n",
-		         syNetInputGetTick(), (int)fp->player, (int)fp->status_id, (int)fp->status_vars.fox.specialhi.anim_frames);
+		         syNetInputGetTick(), (int)fp->player, (int)fp->status_id, (int)specialhi->anim_frames);
 	}
 	syNetplayFoxFirefoxTravelSpanNoteEndPath(fp, TRUE);
 	if (fp->ga == nMPKineticsAir)

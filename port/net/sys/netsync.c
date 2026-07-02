@@ -6,7 +6,9 @@
 #include <ft/ftdef.h>
 #include <ft/ftchar/ftness/ftness.h>
 #if defined(PORT) && defined(SSB64_NETMENU)
+#include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftchar/ftkirby/ftkirby.h>
+#include <sys/netplay_fox_firefox_gate.h>
 #endif
 #include <gm/gmdef.h>
 #include <gm/gmcamera.h>
@@ -285,6 +287,29 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_vars.kirby.speciallw.duration);
 		h = syNetSyncFnvAccumulateU32(h, (u32)(fp->is_damage_resist != FALSE));
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->damage_resist);
+	}
+	if (fp->fkind == nFTKindFox)
+	{
+		ftFoxSpecialHiStatusVars *specialhi;
+
+		if (syNetplayFoxFighterInFirefoxStartScope(fp->status_id) != FALSE)
+		{
+			specialhi = ftStatusVarsFoxSpecialHi(fp);
+			h = syNetSyncFnvAccumulateU32(h, (u32)specialhi->gravity_delay);
+		}
+		else if (syNetplayFoxFighterInFirefoxHoldScope(fp->status_id) != FALSE)
+		{
+			specialhi = ftStatusVarsFoxSpecialHi(fp);
+			h = syNetSyncFnvAccumulateU32(h, (u32)specialhi->launch_delay);
+		}
+		else if (syNetplayFoxFighterInFirefoxTravelScope(fp->status_id) != FALSE)
+		{
+			specialhi = ftStatusVarsFoxSpecialHi(fp);
+			h = syNetSyncFnvAccumulateU32(h, (u32)specialhi->anim_frames);
+			h = syNetSyncFnvAccumulateU32(h, (u32)specialhi->decelerate_wait);
+			h = syNetSyncFnvAccumulateU32(h, (u32)specialhi->pass_timer);
+			h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(specialhi->angle));
+		}
 	}
 #endif
 #if defined(PORT) && defined(SSB64_NETMENU)

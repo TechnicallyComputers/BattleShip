@@ -3,6 +3,7 @@
 #if defined(PORT) && defined(SSB64_NETMENU)
 
 #include <ft/fighter.h>
+#include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftdef.h>
 #include <ft/ftstatusvars.h>
 
@@ -126,6 +127,8 @@ static const char *syNetplayStatusVarsWitnessOverlayName(FTStatusVarsOverlay ove
         return "attack4";
     case nFTStatusVarsOverlayAttackAir:
         return "attackair";
+    case nFTStatusVarsOverlayFoxSpecialHi:
+        return "fox_specialhi";
     default:
         return "none";
     }
@@ -216,6 +219,7 @@ static void syNetplayStatusVarsWitnessInitOwnershipTable(void)
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusThrownKirbyStar, nFTCommonStatusThrownCopyStar, nFTStatusVarsOverlayThrown);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttack11, nFTCommonStatusAttackDash, nFTStatusVarsOverlayAttack1);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackAirStart, nFTCommonStatusAttackAirEnd, nFTStatusVarsOverlayAttackAir);
+    syNetplayStatusVarsWitnessFillRange(nFTFoxStatusSpecialHiStart, nFTFoxStatusSpecialAirHi, nFTStatusVarsOverlayFoxSpecialHi);
 }
 
 static FTStatusVarsOverlay syNetplayStatusVarsWitnessExpectedOverlay(const FTStruct *fp)

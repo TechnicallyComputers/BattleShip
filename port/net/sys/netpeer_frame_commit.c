@@ -3,8 +3,11 @@
 #include <sys/netinput.h>
 #include <sys/netsync.h>
 
-#ifdef PORT
+#if defined(PORT)
 #include <sys/netrollbacksnapshot.h>
+#if defined(SSB64_NETMENU)
+extern void syNetRbSnapshotCollectFrameCommitFighterDiagAtTick(u32 tick, SYNetFrameCommitFighterDiag *out_diag);
+#endif
 #endif
 
 #include <string.h>
@@ -73,6 +76,8 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 		u32 snap_i;
 		u32 snap_r;
 		u32 snap_ef;
+		u32 slot_hash[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
+		s32 si;
 
 		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
 		if (syNetRbSnapshotGetStoredSubsystemHashesEx(snap_tick, &snap_f, &snap_w, &snap_i, &snap_r, &snap_ef) !=
@@ -83,6 +88,16 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 			out->item_digest = snap_i;
 			out->rng_digest = snap_r;
 			out->effect_digest = snap_ef;
+#if defined(SSB64_NETMENU)
+			syNetRbSnapshotCollectFighterSlotHashesAtTick(snap_tick, slot_hash);
+			syNetRbSnapshotCollectFrameCommitFighterDiagAtTick(snap_tick, out->fighter_diag);
+#else
+			syNetSyncCollectFighterSlotHashes(slot_hash);
+#endif
+			for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+			{
+				out->fighter_slot_digest[si] = slot_hash[si];
+			}
 		}
 		else
 		{
@@ -91,6 +106,11 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 			out->item_digest = syNetSyncHashActiveItemsForRollback();
 			out->rng_digest = syNetSyncHashRNGSeed();
 			out->effect_digest = syNetSyncHashActiveEffectsForRollback();
+			syNetSyncCollectFighterSlotHashes(slot_hash);
+			for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+			{
+				out->fighter_slot_digest[si] = slot_hash[si];
+			}
 		}
 	}
 #else

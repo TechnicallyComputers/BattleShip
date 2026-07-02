@@ -1,6 +1,7 @@
 #include <sys/netrollbacksnapshot.h>
 
 #include <sys/netsync.h>
+#include <sys/netpeer_frame_commit.h>
 #include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
@@ -2622,6 +2623,18 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 }
 
 #if defined(SSB64_NETMENU)
+static u32 syNetRbSnapFoxFirefoxProbeF32Bits(f32 value)
+{
+	union
+	{
+		f32 f;
+		u32 u;
+	} bits;
+
+	bits.f = value;
+	return bits.u;
+}
+
 static s32 syNetRbSnapFoxFirefoxBlobAnimFrames(const SYNetRbSnapFighterBlob *blob)
 {
 	union FTStatusVars status_vars;
@@ -2632,6 +2645,18 @@ static s32 syNetRbSnapFoxFirefoxBlobAnimFrames(const SYNetRbSnapFighterBlob *blo
 	}
 	memcpy(&status_vars, blob->status_vars, sizeof(status_vars));
 	return status_vars.fox.specialhi.anim_frames;
+}
+
+static ftFoxSpecialHiStatusVars syNetRbSnapFoxFirefoxBlobSpecialHiVars(const SYNetRbSnapFighterBlob *blob)
+{
+	union FTStatusVars status_vars;
+
+	memset(&status_vars, 0, sizeof(status_vars));
+	if (blob != NULL)
+	{
+		memcpy(&status_vars, blob->status_vars, sizeof(status_vars));
+	}
+	return status_vars.fox.specialhi;
 }
 
 static void syNetRbSnapLogFoxFirefoxAnimFramesProbe(const char *phase, const FTStruct *fp,
@@ -2645,6 +2670,14 @@ static void syNetRbSnapLogFoxFirefoxAnimFramesProbe(const char *phase, const FTS
 	s32 fkind;
 	s32 live_anim_frames;
 	s32 blob_anim_frames;
+	s32 live_decelerate_wait;
+	s32 blob_decelerate_wait;
+	s32 live_pass_timer;
+	s32 blob_pass_timer;
+	u32 live_angle_bits;
+	u32 blob_angle_bits;
+	ftFoxSpecialHiStatusVars *live_specialhi;
+	ftFoxSpecialHiStatusVars blob_specialhi;
 
 	if ((phase == NULL) || (syNetplayFoxFirefoxGateDiagEnabled() == FALSE))
 	{
@@ -2665,12 +2698,22 @@ static void syNetRbSnapLogFoxFirefoxAnimFramesProbe(const char *phase, const FTS
 	player = (fp != NULL) ? fp->player : ((blob != NULL) ? blob->player : -1);
 	live_motion = (fp != NULL) ? fp->motion_id : -1;
 	blob_motion = (blob != NULL) ? blob->motion_id : -1;
-	live_anim_frames = (fp != NULL) ? fp->status_vars.fox.specialhi.anim_frames : 0;
+	live_specialhi = (fp != NULL) ? ftStatusVarsFoxSpecialHi(fp) : NULL;
+	blob_specialhi = syNetRbSnapFoxFirefoxBlobSpecialHiVars(blob);
+	live_anim_frames = (live_specialhi != NULL) ? live_specialhi->anim_frames : 0;
 	blob_anim_frames = (blob != NULL) ? syNetRbSnapFoxFirefoxBlobAnimFrames(blob) : 0;
+	live_decelerate_wait = (live_specialhi != NULL) ? live_specialhi->decelerate_wait : 0;
+	blob_decelerate_wait = blob_specialhi.decelerate_wait;
+	live_pass_timer = (live_specialhi != NULL) ? live_specialhi->pass_timer : 0;
+	blob_pass_timer = blob_specialhi.pass_timer;
+	live_angle_bits = (live_specialhi != NULL) ? syNetRbSnapFoxFirefoxProbeF32Bits(live_specialhi->angle) : 0U;
+	blob_angle_bits = syNetRbSnapFoxFirefoxProbeF32Bits(blob_specialhi.angle);
 	port_log(
-	    "SSB64 NetRbSnapshot: FOX_FIREFOX_ANIM_PROBE tick=%u phase=%s player=%d live_status=%d blob_status=%d live_motion=%d blob_motion=%d live_anim=%d blob_anim=%d hitlag=%d status_tics=%u is_attack=%d damage_queue=%d resim=%d\n",
+	    "SSB64 NetRbSnapshot: FOX_FIREFOX_ANIM_PROBE tick=%u phase=%s player=%d live_status=%d blob_status=%d live_motion=%d blob_motion=%d live_anim=%d blob_anim=%d live_decel=%d blob_decel=%d live_pass=%d blob_pass=%d live_angle=0x%08X blob_angle=0x%08X hitlag=%d status_tics=%u is_attack=%d damage_queue=%d resim=%d\n",
 	    syNetInputGetTick(), phase, (int)player, (int)live_status, (int)blob_status, (int)live_motion,
-	    (int)blob_motion, (int)live_anim_frames, (int)blob_anim_frames,
+	    (int)blob_motion, (int)live_anim_frames, (int)blob_anim_frames, (int)live_decelerate_wait,
+	    (int)blob_decelerate_wait, (int)live_pass_timer, (int)blob_pass_timer,
+	    (unsigned int)live_angle_bits, (unsigned int)blob_angle_bits,
 	    (int)((fp != NULL) ? fp->hitlag_tics : ((blob != NULL) ? blob->hitlag_tics : 0)),
 	    (unsigned int)((fp != NULL) ? fp->status_total_tics : ((blob != NULL) ? blob->status_total_tics : 0)),
 	    (int)((fp != NULL) ? fp->is_attack_active : ((blob != NULL) ? blob->is_attack_active : 0)),
@@ -2839,6 +2882,8 @@ static void syNetRbSnapSweepZombieKirbyInhaleWindEffects(void);
 static void syNetRbSnapPruneStaleKirbyInhaleWindEffects(const SYNetRbSnapshotSlot *slot);
 static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot,
                                                  const SYNetRbSnapEffectBlob *blob);
+static sb32 syNetRbSnapReconciledEffectGobjPtrListed(GObj * const *reconciled_gobj_ptrs,
+                                                     s32 reconciled_gobj_count, const GObj *gobj);
 static sb32 syNetRbSnapBlobInGuardScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapFighterInGuardScope(const FTStruct *fp);
 static sb32 syNetRbSnapFighterGuardEffectUnionOwned(const FTStruct *fp);
@@ -9828,6 +9873,7 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 		{
 			u32 live_fox_eff_id;
 			u32 blob_fox_eff_id;
+			ftFoxSpecialHiStatusVars *live_specialhi;
 
 			live_fox_eff_id = syNetRbSnapGobjId(fp->status_vars.fox.speciallw.effect_gobj);
 			if (syNetRbSnapFighterInFoxReflectorScope(fp) == FALSE)
@@ -9837,32 +9883,35 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 			blob_fox_eff_id = syNetRbSnapFoxSpecialLwEffectIdFromBlob(blob);
 			syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "fox_speciallw_effect_gobj_id",
 			                              live_fox_eff_id, blob_fox_eff_id);
+			live_specialhi = NULL;
 			if (syNetplayFoxFighterInFirefoxHoldScope(fp->status_id) != FALSE)
 			{
 				union FTStatusVars blob_fox_vars;
 
+				live_specialhi = ftStatusVarsFoxSpecialHi(fp);
 				memcpy(&blob_fox_vars, blob->status_vars, sizeof(blob_fox_vars));
 				syNetRbSnapLogFieldDiffScalar(
 				    reason, tick, slot_index, "fox_launch_delay",
-				    (u32)fp->status_vars.fox.specialhi.launch_delay,
-				    (u32)blob_fox_vars.fox.specialhi.launch_delay);
+				    (u32)live_specialhi->launch_delay, (u32)blob_fox_vars.fox.specialhi.launch_delay);
 			}
 			if (syNetplayFoxFighterInFirefoxTravelScope(fp->status_id) != FALSE)
 			{
 				union FTStatusVars blob_fox_vars;
 
+				if (live_specialhi == NULL)
+				{
+					live_specialhi = ftStatusVarsFoxSpecialHi(fp);
+				}
 				memcpy(&blob_fox_vars, blob->status_vars, sizeof(blob_fox_vars));
 				syNetRbSnapLogFieldDiffScalar(
 				    reason, tick, slot_index, "fox_anim_frames",
-				    (u32)fp->status_vars.fox.specialhi.anim_frames,
-				    (u32)blob_fox_vars.fox.specialhi.anim_frames);
+				    (u32)live_specialhi->anim_frames, (u32)blob_fox_vars.fox.specialhi.anim_frames);
 				syNetRbSnapLogFieldDiffScalar(
 				    reason, tick, slot_index, "fox_decelerate_wait",
-				    (u32)fp->status_vars.fox.specialhi.decelerate_wait,
-				    (u32)blob_fox_vars.fox.specialhi.decelerate_wait);
+				    (u32)live_specialhi->decelerate_wait, (u32)blob_fox_vars.fox.specialhi.decelerate_wait);
 				syNetRbSnapLogFieldDiffScalar(
 				    reason, tick, slot_index, "fox_angle",
-				    syNetRbSnapF32DiagBits(fp->status_vars.fox.specialhi.angle),
+				    syNetRbSnapF32DiagBits(live_specialhi->angle),
 				    syNetRbSnapF32DiagBits(blob_fox_vars.fox.specialhi.angle));
 			}
 		}
@@ -12932,12 +12981,25 @@ static sb32 syNetRbSnapLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
 	 * effect_vars.quake.priority and pose remain authoritative until the shell expires.
 	 */
 	if ((ep != NULL) && (ep->fighter_gobj == NULL) && (gobj->anim_frame > 0.0F) &&
-	    (ep->effect_vars.quake.priority <= 3U) && (gobj->func_run == NULL) &&
+	    (ep->effect_vars.quake.priority <= 4U) && (gobj->func_run == NULL) &&
 	    (syNetRbSnapEffectGObjHasUpdateProc(gobj_mut, efManagerQuakeFuncRun) == FALSE))
 	{
 		return TRUE;
 	}
 	return FALSE;
+}
+
+static u8 syNetRbSnapQuakePriorityFromEffectBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	EFStruct scratch;
+
+	if (blob == NULL)
+	{
+		return 0xFFU;
+	}
+	memset(&scratch, 0, sizeof(scratch));
+	memcpy(&scratch.effect_vars, blob->effect_vars, sizeof(scratch.effect_vars));
+	return scratch.effect_vars.quake.priority;
 }
 
 static sb32 syNetRbSnapLiveEffectIsUserdataJointAttach(const GObj *gobj, const EFStruct *ep)
@@ -13305,8 +13367,10 @@ static void syNetRbSnapFreezeSlotQuakeEffectsFromSlot(const SYNetRbSnapshotSlot 
 	}
 }
 
-static GObj *syNetRbSnapFindLiveQuakeEffectForBlob(const SYNetRbSnapshotSlot *slot,
-                                                   const SYNetRbSnapEffectBlob *blob)
+static GObj *syNetRbSnapFindLiveQuakeEffectForBlobExcept(const SYNetRbSnapshotSlot *slot,
+                                                         const SYNetRbSnapEffectBlob *blob,
+                                                         GObj * const *excluded_gobj_ptrs,
+                                                         s32 excluded_gobj_count)
 {
 	s32 pass;
 	GObj *gobj;
@@ -13325,6 +13389,10 @@ static GObj *syNetRbSnapFindLiveQuakeEffectForBlob(const SYNetRbSnapshotSlot *sl
 		{
 			EFStruct *ep;
 
+			if (syNetRbSnapReconciledEffectGobjPtrListed(excluded_gobj_ptrs, excluded_gobj_count, gobj) != FALSE)
+			{
+				continue;
+			}
 			ep = efGetStruct(gobj);
 			if (syNetRbSnapEffectHiddenFromRollback(gobj, ep) != FALSE)
 			{
@@ -13335,6 +13403,36 @@ static GObj *syNetRbSnapFindLiveQuakeEffectForBlob(const SYNetRbSnapshotSlot *sl
 				return gobj;
 			}
 		}
+	}
+	return NULL;
+}
+
+static GObj *syNetRbSnapFindLiveQuakeEffectForBlob(const SYNetRbSnapshotSlot *slot,
+                                                   const SYNetRbSnapEffectBlob *blob)
+{
+	return syNetRbSnapFindLiveQuakeEffectForBlobExcept(slot, blob, NULL, 0);
+}
+
+static GObj *syNetRbSnapRespawnQuakeEffectForBlob(const SYNetRbSnapEffectBlob *blob)
+{
+	u8 blob_priority;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE) || (blob->respawn_kind != SYNETRB_EFFECT_RESPAWN_QUAKE))
+	{
+		return NULL;
+	}
+	if (blob->quake_magnitude != 0xFFU)
+	{
+		return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+	}
+	blob_priority = syNetRbSnapQuakePriorityFromEffectBlob(blob);
+	if (blob_priority <= 4U)
+	{
+		/*
+		 * Priority 4 serializes as magnitude 0xFF (same as the unknown sentinel). Mint a harmless
+		 * quake shell and let ApplyEffectBlob stamp the captured priority/pose immediately.
+		 */
+		return efManagerQuakeMakeEffect(0);
 	}
 	return NULL;
 }
@@ -17735,6 +17833,10 @@ static sb32 syNetRbSnapEffectRespawnKindGobjCollisionPriority(u8 respawn_kind)
  */
 static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b)
 {
+	if ((kind_a == SYNETRB_EFFECT_RESPAWN_QUAKE) && (kind_b == SYNETRB_EFFECT_RESPAWN_QUAKE))
+	{
+		return TRUE;
+	}
 	if (((kind_a == SYNETRB_EFFECT_RESPAWN_REBIRTH_HALO) && (kind_b == SYNETRB_EFFECT_RESPAWN_QUAKE)) ||
 	    ((kind_a == SYNETRB_EFFECT_RESPAWN_QUAKE) && (kind_b == SYNETRB_EFFECT_RESPAWN_REBIRTH_HALO)))
 	{
@@ -20178,6 +20280,10 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 		if (blob->quake_magnitude != 0xFFU)
 		{
 			return efManagerQuakeMakeEffect((s32)blob->quake_magnitude);
+		}
+		if (syNetRbSnapQuakePriorityFromEffectBlob(blob) <= 4U)
+		{
+			return syNetRbSnapRespawnQuakeEffectForBlob(blob);
 		}
 		break;
 	}
@@ -23848,24 +23954,25 @@ static sb32 syNetRbSnapLiveEffectMatchesBlob(const SYNetRbSnapshotSlot *slot, co
 	}
 	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
 	{
+		u8 blob_priority;
+
 		if (syNetRbSnapLiveEffectIsQuake(gobj, ep) == FALSE)
 		{
 			return FALSE;
 		}
-		if (blob->quake_magnitude != 0xFFU)
-		{
-			u8 live_mag = (u8)(3 - ep->effect_vars.quake.priority);
-
-			if (live_mag != blob->quake_magnitude)
-			{
-				return FALSE;
-			}
-		}
-		if ((blob->proc_update_fingerprint != 0U) &&
-		    (syNetRbSnapGObjFuncProcFingerprint(gobj) != blob->proc_update_fingerprint))
+		blob_priority = syNetRbSnapQuakePriorityFromEffectBlob(blob);
+		if ((blob_priority <= 4U) && (ep->effect_vars.quake.priority != blob_priority))
 		{
 			return FALSE;
 		}
+		/*
+		 * Quake identity is the captured priority alone. Every live quake runs the same
+		 * efManagerQuakeProcUpdate, so its func-proc fingerprint cannot discriminate two quakes; the
+		 * only thing the fingerprint gate did was reject a quake whose proc was ended by stamp/freeze
+		 * during the verify-only repair stage (RescheduleQuakeProcIfActive bails out there, leaving
+		 * fingerprint 0 vs the blob's captured nonzero value). That false negative made every
+		 * reapply/freeze/retrack pass re-mint a duplicate quake (save 2 -> verify 4). Match on priority.
+		 */
 		return TRUE;
 	}
 	if (syNetRbSnapEffectBlobIsShieldKind(blob) != FALSE)
@@ -24065,11 +24172,14 @@ static void syNetRbSnapReapplyEffectBlobsFromSlot(const SYNetRbSnapshotSlot *slo
 		}
 		if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
 		{
+			/*
+			 * Re-stamp an existing live quake only. Enforce's canonical loop already respawns and
+			 * tracks any missing quake blob before this reapply pass runs, so minting here would create
+			 * an untracked quake that the (already-completed) eject loop cannot reconcile — it survives
+			 * straight to the verify fold as a duplicate. Materialization + tracking is enforce/retrack's
+			 * job; reapply only refreshes pose/anim on quakes that are already live.
+			 */
 			match = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
-			if (match == NULL)
-			{
-				match = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
-			}
 			if (match != NULL)
 			{
 				(void)syNetRbSnapApplyEffectBlobToGObj(slot, match, blob);
@@ -24276,18 +24386,19 @@ static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotS
 				if ((canon != NULL) &&
 				    (syNetRbSnapLiveEffectMatchesBlob(slot, blob, canon, canon_ep) != FALSE))
 				{
-					return canon;
+					return NULL;
 				}
 			}
 		}
-		gobj = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+		gobj = syNetRbSnapFindLiveQuakeEffectForBlobExcept(slot, blob, reconciled_gobj_ptrs,
+		                                                   reconciled_gobj_count);
 		if ((gobj != NULL) &&
 		    (syNetRbSnapReconciledEffectGobjPtrListed(reconciled_gobj_ptrs, reconciled_gobj_count, gobj) ==
-		     FALSE) &&
-		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+		     FALSE))
 		{
 			return gobj;
 		}
+		return NULL;
 	}
 	gobj = gcFindGObjByID(blob->gobj_id);
 	ep = (gobj != NULL) ? efGetStruct(gobj) : NULL;
@@ -24316,9 +24427,11 @@ static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotS
 	}
 	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
 	{
-		gobj = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+		gobj = syNetRbSnapFindLiveQuakeEffectForBlobExcept(slot, blob, reconciled_gobj_ptrs,
+		                                                   reconciled_gobj_count);
 		if ((gobj != NULL) &&
-		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+		    (syNetRbSnapReconciledEffectGobjPtrListed(reconciled_gobj_ptrs, reconciled_gobj_count, gobj) ==
+		     FALSE))
 		{
 			return gobj;
 		}
@@ -29348,7 +29461,12 @@ static void syNetRbSnapRetrackCanonicalSlotEffectsBeforeVerifyEject(SYNetRbSnaps
 		                                                    *canonical_gobj_count);
 		if ((live == NULL) && (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE))
 		{
-			live = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+			live = syNetRbSnapFindLiveQuakeEffectForBlobExcept(slot, blob, canonical_gobj_ptrs,
+			                                                   *canonical_gobj_count);
+			if (live == NULL)
+			{
+				live = syNetRbSnapRespawnQuakeEffectForBlob(blob);
+			}
 		}
 		if (live != NULL)
 		{
@@ -29411,7 +29529,14 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(SYNetRbSnapshotSlot *sl
 		live = syNetRbSnapResolveLiveEffectGobjForBlobApply(slot, blob, canonical_ids, canonical_count,
 		                                                    &canonical_shield_mask, canonical_gobj_ptrs,
 		                                                    canonical_gobj_count);
-		live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
+		if ((live == NULL) && (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE))
+		{
+			live = syNetRbSnapRespawnQuakeEffectForBlob(blob);
+		}
+		if ((live != NULL) || (blob->respawn_kind != SYNETRB_EFFECT_RESPAWN_QUAKE))
+		{
+			live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
+		}
 		if (live == NULL)
 		{
 #if defined(SSB64_NETMENU)
@@ -29464,10 +29589,11 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(SYNetRbSnapshotSlot *sl
 				}
 				else if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_QUAKE)
 				{
-					live = syNetRbSnapFindLiveQuakeEffectForBlob(slot, blob);
+					live = syNetRbSnapFindLiveQuakeEffectForBlobExcept(slot, blob, canonical_gobj_ptrs,
+					                                                   canonical_gobj_count);
 					if (live == NULL)
 					{
-						live = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
+						live = syNetRbSnapRespawnQuakeEffectForBlob(blob);
 					}
 					if (live != NULL)
 					{
@@ -37674,6 +37800,67 @@ void syNetRbSnapshotCollectFighterSlotHashesAtTick(u32 tick, u32 *out_slot_hash)
 		if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
 		{
 			out_slot_hash[player] = syNetRbSnapHashFighterBlobLight(blob);
+		}
+	}
+}
+
+void syNetRbSnapshotCollectFrameCommitFighterDiagAtTick(u32 tick, SYNetFrameCommitFighterDiag *out_diag)
+{
+	SYNetRbSnapshotSlot *slot;
+	s32 si;
+	s32 pidx;
+
+	if (out_diag == NULL)
+	{
+		return;
+	}
+	memset(out_diag, 0, sizeof(out_diag[0]) * SYNET_FRAME_COMMIT_FIGHTER_SLOTS);
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return;
+	}
+	for (pidx = 0; pidx < GMCOMMON_PLAYERS_MAX; pidx++)
+	{
+		const SYNetRbSnapFighterBlob *blob;
+		SYNetFrameCommitFighterDiag *diag;
+		s32 player;
+
+		blob = &slot->fighters[pidx];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		player = blob->player;
+		if ((player < 0) || (player >= SYNET_FRAME_COMMIT_FIGHTER_SLOTS))
+		{
+			continue;
+		}
+		diag = &out_diag[player];
+		diag->valid = TRUE;
+		diag->fkind = (u32)blob->fkind;
+		diag->status_id = (u32)blob->status_id;
+		diag->motion_id = (u32)blob->motion_id;
+		diag->status_total_tics = (u32)blob->status_total_tics;
+		diag->hitlag_tics = blob->hitlag_tics;
+		diag->ga = (u32)(blob->ga != FALSE);
+		diag->is_attack_active = (u32)(blob->is_attack_active != FALSE);
+		diag->damage_queue = (u32)blob->damage_queue;
+		diag->topn_tx = syNetRbSnapHashF32ForFold(blob->joint_translate[nFTPartsJointTopN].x);
+		diag->topn_ty = syNetRbSnapHashF32ForFold(blob->joint_translate[nFTPartsJointTopN].y);
+		diag->coll_pos_diff_x = syNetRbSnapHashF32ForFold(blob->coll.pos_diff.x);
+		diag->coll_pos_diff_y = syNetRbSnapHashF32ForFold(blob->coll.pos_diff.y);
+		diag->vel_damage_air_x = syNetRbSnapHashF32ForFold(blob->physics.vel_damage_air.x);
+		diag->vel_damage_air_y = syNetRbSnapHashF32ForFold(blob->physics.vel_damage_air.y);
+		diag->fox_anim_frames = (blob->fkind == nFTKindFox) ? (u32)syNetRbSnapFoxFirefoxBlobAnimFrames(blob) : 0U;
+	}
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		if (out_diag[si].valid == FALSE)
+		{
+			out_diag[si].fkind = 0xFFFFFFFFU;
+			out_diag[si].status_id = 0xFFFFFFFFU;
+			out_diag[si].motion_id = 0xFFFFFFFFU;
 		}
 	}
 }

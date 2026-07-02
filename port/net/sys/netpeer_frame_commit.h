@@ -8,6 +8,29 @@
  * Cross-peer frame commit token: compact digest of what this peer believes was committed for the NetSync
  * validation window ending at `validation_tick` (same cadence as `syNetPeerLogNetSyncValidation`).
  */
+#define SYNET_FRAME_COMMIT_FIGHTER_SLOTS 4
+
+typedef struct SYNetFrameCommitFighterDiag
+{
+	u32 valid;
+	u32 fkind;
+	u32 status_id;
+	u32 motion_id;
+	u32 status_total_tics;
+	u32 hitlag_tics;
+	u32 ga;
+	u32 is_attack_active;
+	u32 damage_queue;
+	u32 topn_tx;
+	u32 topn_ty;
+	u32 coll_pos_diff_x;
+	u32 coll_pos_diff_y;
+	u32 vel_damage_air_x;
+	u32 vel_damage_air_y;
+	u32 fox_anim_frames;
+
+} SYNetFrameCommitFighterDiag;
+
 typedef struct SYNetFrameCommitToken
 {
 	s32 frame_id;
@@ -20,6 +43,9 @@ typedef struct SYNetFrameCommitToken
 	u32 item_digest;
 	u32 rng_digest;
 	u32 effect_digest;
+	/* Per-slot commit diagnostics; light slot hashes name the diverging player, fields name likely fork source. */
+	u32 fighter_slot_digest[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
+	SYNetFrameCommitFighterDiag fighter_diag[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
 
 } SYNetFrameCommitToken;
 

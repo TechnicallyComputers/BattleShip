@@ -5,6 +5,27 @@
 **Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, soak pending). The `item_fold_floats` instrument named the field on the 06-29 Castle soak: **it is the bumper's position (root DObj translate), not any of the five folded extras** — those are bit-identical cross-peer. Fix quantizes live item position + physics each accepted tick (fighter precedent).
 **Class:** item-domain cross-peer **forward-sim** divergence (un-quantized movable item position accumulating cross-ISA f32 drift), surfacing as a late `frame_commit_item_diverge` → oversized recovery resim (perceived as a hard lock). Different object than the grab/throw coupling.
 
+## 2026-07-02 update — Firefox hit escalates bumper drift to `figh,item`
+
+Fox Firefox vs Castle bumper soak (`session=168691998`, Android/Linux, `AUTOMATCH_STAGE_KIND=0`)
+reproduced a stronger form at `FRAME_COMMIT_STATE_DIVERGE validation=600`: both peers agreed on inputs,
+world, RNG, and effects, but disagreed in `figh,item`. The live item field dump again named the Castle
+bumper (`kind=gbumper`, `atk_state=3`), so the remaining fork is likely the fighter↔bumper collision
+boundary rather than a standalone item-position drift.
+
+Added frame-commit token diagnostics so the next soak carries per-player fighter-slot hashes and a compact
+slot snapshot (`status`, `motion`, `status_total_tics`, hitlag, attack flag, TopN position, collision
+delta, damage-air velocity, and Fox `anim_frames`). On aggregate `figh` divergence the receiver logs:
+
+```
+SSB64 NetPeer: FRAME_COMMIT_FIGHTER_SLOT_DIVERGE validation=... snap_tick=... player=...
+SSB64 NetPeer: FRAME_COMMIT_FIGHTER_FIELD_PEER_DIFF validation=... snap_tick=... player=... field=... local=... peer=...
+```
+
+Use those rows to identify whether Firefox diverges first in position (`topn_*` / `coll_pos_diff_*`),
+damage impulse (`vel_damage_air_*`), timing (`status_total_tics` / `hitlag_tics` / `fox_anim_frames`), or
+status/motion itself before changing the quantization or collision path.
+
 ## 2026-06-29 update — field identified (position) and fixed
 
 A fresh Castle soak (Link-vs-DK, `SSB64_NETPLAY_DISABLE_GRAB_COUPLING_SKIP=1`, `SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1`) reproduced the divergence at **tick 719** and the `item_fold_floats` instrument fired on both peers. Side-by-side, **all five folded extras are bit-identical**:

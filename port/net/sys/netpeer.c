@@ -383,8 +383,12 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_INPUT_DELAY_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
-/* Frame commit token (NetSync validation cadence): header(12) + validation_tick + 9 token u32s + checksum(4) = 52. */
-#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
+/* Frame commit token (NetSync validation cadence): header + validation + token + checksum. */
+#define SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S 16
+#define SYNETPEER_FRAME_COMMIT_TOKEN_U32S \
+	(9 + SYNET_FRAME_COMMIT_FIGHTER_SLOTS + \
+	 (SYNET_FRAME_COMMIT_FIGHTER_SLOTS * SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S))
+#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + (SYNETPEER_FRAME_COMMIT_TOKEN_U32S * 4) + 4)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_V1 (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (72)
@@ -9287,6 +9291,170 @@ static sb32 syNetPeerFrameCommitDiagEnabled(void)
 	return (syNetPeerFrameCommitDiagLevel() >= 1) ? TRUE : FALSE;
 }
 
+static void syNetPeerWriteFrameCommitFighterDiag(u8 **cursor, const SYNetFrameCommitFighterDiag *diag)
+{
+	syNetPeerWriteU32(cursor, diag->valid);
+	syNetPeerWriteU32(cursor, diag->fkind);
+	syNetPeerWriteU32(cursor, diag->status_id);
+	syNetPeerWriteU32(cursor, diag->motion_id);
+	syNetPeerWriteU32(cursor, diag->status_total_tics);
+	syNetPeerWriteU32(cursor, diag->hitlag_tics);
+	syNetPeerWriteU32(cursor, diag->ga);
+	syNetPeerWriteU32(cursor, diag->is_attack_active);
+	syNetPeerWriteU32(cursor, diag->damage_queue);
+	syNetPeerWriteU32(cursor, diag->topn_tx);
+	syNetPeerWriteU32(cursor, diag->topn_ty);
+	syNetPeerWriteU32(cursor, diag->coll_pos_diff_x);
+	syNetPeerWriteU32(cursor, diag->coll_pos_diff_y);
+	syNetPeerWriteU32(cursor, diag->vel_damage_air_x);
+	syNetPeerWriteU32(cursor, diag->vel_damage_air_y);
+	syNetPeerWriteU32(cursor, diag->fox_anim_frames);
+}
+
+static void syNetPeerReadFrameCommitFighterDiag(const u8 **cursor, SYNetFrameCommitFighterDiag *diag)
+{
+	diag->valid = syNetPeerReadU32(cursor);
+	diag->fkind = syNetPeerReadU32(cursor);
+	diag->status_id = syNetPeerReadU32(cursor);
+	diag->motion_id = syNetPeerReadU32(cursor);
+	diag->status_total_tics = syNetPeerReadU32(cursor);
+	diag->hitlag_tics = syNetPeerReadU32(cursor);
+	diag->ga = syNetPeerReadU32(cursor);
+	diag->is_attack_active = syNetPeerReadU32(cursor);
+	diag->damage_queue = syNetPeerReadU32(cursor);
+	diag->topn_tx = syNetPeerReadU32(cursor);
+	diag->topn_ty = syNetPeerReadU32(cursor);
+	diag->coll_pos_diff_x = syNetPeerReadU32(cursor);
+	diag->coll_pos_diff_y = syNetPeerReadU32(cursor);
+	diag->vel_damage_air_x = syNetPeerReadU32(cursor);
+	diag->vel_damage_air_y = syNetPeerReadU32(cursor);
+	diag->fox_anim_frames = syNetPeerReadU32(cursor);
+}
+
+static void syNetPeerLogFrameCommitFighterFieldDiff(u32 vtick, u32 snap_tick, s32 player, const char *field,
+						    u32 local_value, u32 peer_value)
+{
+	if (local_value == peer_value)
+	{
+		return;
+	}
+	port_log(
+	    "SSB64 NetPeer: FRAME_COMMIT_FIGHTER_FIELD_PEER_DIFF validation=%u snap_tick=%u player=%d field=%s local=0x%08X peer=0x%08X\n",
+	    vtick,
+	    snap_tick,
+	    (int)player,
+	    field,
+	    local_value,
+	    peer_value);
+}
+
+static sb32 syNetPeerFrameCommitFighterDiagDiffers(const SYNetFrameCommitFighterDiag *local,
+						   const SYNetFrameCommitFighterDiag *peer)
+{
+	if ((local == NULL) || (peer == NULL))
+	{
+		return FALSE;
+	}
+	if ((local->valid != peer->valid) || (local->fkind != peer->fkind) ||
+	    (local->status_id != peer->status_id) || (local->motion_id != peer->motion_id) ||
+	    (local->status_total_tics != peer->status_total_tics) || (local->hitlag_tics != peer->hitlag_tics) ||
+	    (local->ga != peer->ga) || (local->is_attack_active != peer->is_attack_active) ||
+	    (local->damage_queue != peer->damage_queue) || (local->topn_tx != peer->topn_tx) ||
+	    (local->topn_ty != peer->topn_ty) || (local->coll_pos_diff_x != peer->coll_pos_diff_x) ||
+	    (local->coll_pos_diff_y != peer->coll_pos_diff_y) ||
+	    (local->vel_damage_air_x != peer->vel_damage_air_x) ||
+	    (local->vel_damage_air_y != peer->vel_damage_air_y) ||
+	    (local->fox_anim_frames != peer->fox_anim_frames))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static void syNetPeerLogFrameCommitFighterDiagDiff(u32 vtick, const SYNetFrameCommitToken *local,
+						   const SYNetFrameCommitToken *peer)
+{
+	u32 snap_tick;
+	s32 si;
+	s32 logged_slots;
+
+	if ((local == NULL) || (peer == NULL))
+	{
+		return;
+	}
+	snap_tick = (vtick > 0U) ? (vtick - 1U) : 0U;
+	logged_slots = 0;
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		const SYNetFrameCommitFighterDiag *ld;
+		const SYNetFrameCommitFighterDiag *pd;
+
+		ld = &local->fighter_diag[si];
+		pd = &peer->fighter_diag[si];
+		if ((local->fighter_slot_digest[si] == peer->fighter_slot_digest[si]) &&
+		    (syNetPeerFrameCommitFighterDiagDiffers(ld, pd) == FALSE))
+		{
+			continue;
+		}
+		logged_slots++;
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_FIGHTER_SLOT_DIVERGE validation=%u snap_tick=%u player=%d local_slot=0x%08X peer_slot=0x%08X local_valid=%u peer_valid=%u local_status=%u peer_status=%u local_motion=%u peer_motion=%u\n",
+		    vtick,
+		    snap_tick,
+		    (int)si,
+		    local->fighter_slot_digest[si],
+		    peer->fighter_slot_digest[si],
+		    ld->valid,
+		    pd->valid,
+		    ld->status_id,
+		    pd->status_id,
+		    ld->motion_id,
+		    pd->motion_id);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "valid", ld->valid, pd->valid);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "fkind", ld->fkind, pd->fkind);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "status_id", ld->status_id, pd->status_id);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "motion_id", ld->motion_id, pd->motion_id);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "status_total_tics",
+		                                        ld->status_total_tics, pd->status_total_tics);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "hitlag_tics", ld->hitlag_tics,
+		                                        pd->hitlag_tics);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "ga", ld->ga, pd->ga);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "is_attack_active",
+		                                        ld->is_attack_active, pd->is_attack_active);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "damage_queue", ld->damage_queue,
+		                                        pd->damage_queue);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "topn_tx", ld->topn_tx, pd->topn_tx);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "topn_ty", ld->topn_ty, pd->topn_ty);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "coll_pos_diff_x",
+		                                        ld->coll_pos_diff_x, pd->coll_pos_diff_x);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "coll_pos_diff_y",
+		                                        ld->coll_pos_diff_y, pd->coll_pos_diff_y);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "vel_damage_air_x",
+		                                        ld->vel_damage_air_x, pd->vel_damage_air_x);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "vel_damage_air_y",
+		                                        ld->vel_damage_air_y, pd->vel_damage_air_y);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "fox_anim_frames",
+		                                        ld->fox_anim_frames, pd->fox_anim_frames);
+	}
+	if (logged_slots == 0)
+	{
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_FIGHTER_DIAG_NO_FIELD_DIFF validation=%u snap_tick=%u local_figh=0x%08X peer_figh=0x%08X local_slots=[0x%08X,0x%08X,0x%08X,0x%08X] peer_slots=[0x%08X,0x%08X,0x%08X,0x%08X]\n",
+		    vtick,
+		    snap_tick,
+		    local->fighter_digest,
+		    peer->fighter_digest,
+		    local->fighter_slot_digest[0],
+		    local->fighter_slot_digest[1],
+		    local->fighter_slot_digest[2],
+		    local->fighter_slot_digest[3],
+		    peer->fighter_slot_digest[0],
+		    peer->fighter_slot_digest[1],
+		    peer->fighter_slot_digest[2],
+		    peer->fighter_slot_digest[3]);
+	}
+}
+
 static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void)
 {
 	if (syNetPeerFrameCommitDiagEnabled() != FALSE)
@@ -9682,6 +9850,10 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			    peer->input_digest);
 		}
 		sSYNetPeerFrameCommitDiag.fc_state_diverge++;
+		if (local->fighter_digest != peer->fighter_digest)
+		{
+			syNetPeerLogFrameCommitFighterDiagDiff(vtick, local, peer);
+		}
 		syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
 		syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
 		return;
@@ -9724,6 +9896,7 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	u8 buf[SYNETPEER_FRAME_COMMIT_BYTES];
 	u8 *cursor;
 	u32 chk;
+	s32 si;
 
 	if ((syNetPeerDatagramSocketIsUsable() == FALSE) || (syNetPeerFrameCommitGetEnv() == 0))
 	{
@@ -9744,6 +9917,14 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	syNetPeerWriteU32(&cursor, t->item_digest);
 	syNetPeerWriteU32(&cursor, t->rng_digest);
 	syNetPeerWriteU32(&cursor, t->effect_digest);
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		syNetPeerWriteU32(&cursor, t->fighter_slot_digest[si]);
+	}
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		syNetPeerWriteFrameCommitFighterDiag(&cursor, &t->fighter_diag[si]);
+	}
 	chk = syNetPeerChecksumBytes(buf, (u32)(cursor - buf));
 	syNetPeerWriteU32(&cursor, chk);
 	if (syNetPeerSendControlDatagram(buf, (u32)sizeof(buf)) != (int)sizeof(buf))
@@ -9767,6 +9948,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	SYNetFrameCommitToken local;
 	u32 checksum;
 	u32 expected;
+	s32 si;
 
 	if (size != (s32)SYNETPEER_FRAME_COMMIT_BYTES)
 	{
@@ -9790,6 +9972,14 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	peer.item_digest = syNetPeerReadU32(&c);
 	peer.rng_digest = syNetPeerReadU32(&c);
 	peer.effect_digest = syNetPeerReadU32(&c);
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		peer.fighter_slot_digest[si] = syNetPeerReadU32(&c);
+	}
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		syNetPeerReadFrameCommitFighterDiag(&c, &peer.fighter_diag[si]);
+	}
 	checksum = syNetPeerReadU32(&c);
 	peer.frame_id = (s32)frame_id_u;
 	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
