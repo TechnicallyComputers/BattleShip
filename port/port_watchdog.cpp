@@ -36,6 +36,9 @@ unsigned char port_diag_get_scene_curr(void);
 unsigned char port_diag_get_scene_prev(void);
 const char *port_diag_get_scene_name(unsigned char id);
 int port_log_get_fd(void);
+#if defined(SSB64_NETMENU)
+void syNetplayResimReplayHangDiagLogHangSnapshot(void);
+#endif
 }
 
 /* GFX stale-DL diag dump (libultraship public API — fast/interpreter.h).
@@ -474,6 +477,10 @@ void WatchdogLoop() {
                          (unsigned long long)fc,
                          (unsigned long long)yc);
             std::fflush(stderr);
+
+#if defined(SSB64_NETMENU)
+            syNetplayResimReplayHangDiagLogHangSnapshot();
+#endif
 
 #if !defined(_WIN32)
             /* Ask the main thread to dump its own backtrace via SIGUSR1. One

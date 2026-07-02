@@ -51,10 +51,9 @@ The other two effect scopes also miss this tick:
 - `effect_count_transition_probe` only fires when `slot->effect_count !=
   prev->effect_count`. The lingering grab/throw VFX is present and **stable**
   across 2856→2857, so the count does not change.
-- `transient_effect_probe` (`syNetRbSnapshotSynctestSlotTransientOnlyEffects`)
-  only fires when *every* captured effect is `respawn_kind=NONE`. The grab VFX
-  coexists with a respawnable effect (e.g. a shield bubble), so
-  `has_respawnable == TRUE` and it does not skip.
+- the former `transient_effect_probe` only fired when *every* captured effect
+  was `respawn_kind=NONE`. The grab VFX coexists with a respawnable effect
+  (e.g. a shield bubble), so the transient-only condition did not apply.
 
 The residual grab/throw spark cannot survive the emergency→slot verify load, so
 the live fold collapses to the empty seed even though `gobj_link_audit` still

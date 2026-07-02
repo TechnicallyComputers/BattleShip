@@ -22,6 +22,7 @@
 #if defined(SSB64_NETMENU)
 #include <sys/netfighterphase.h>
 #include <sys/netplay_rebirth_gate.h>
+#include <sys/netplay_resim_replay_hang_diag.h>
 #endif
 #include <sys/utils.h>
 #include <sys/taskman.h>
@@ -8977,7 +8978,13 @@ void syNetPeerReceiveRemoteInput(void)
 			}
 			break;
 		}
+#if defined(SSB64_NETMENU)
+		syNetplayResimReplayHangDiagNotePacketIngressEnter();
+#endif
 		syNetPeerHandlePacket(buffer, (s32)size);
+#if defined(SSB64_NETMENU)
+		syNetplayResimReplayHangDiagNotePacketIngressExit();
+#endif
 	}
 #endif
 }
@@ -11315,7 +11322,7 @@ void syNetPeerUpdateBattleGate(void)
  * Optional `SSB64_NETPLAY_SIM_TRACE_NEEDLE_LEVEL` (default 2): 1 = CRC lines only, 2 = per-slot frame detail.
  * Works without SIM_STATE_TICK_INTERVAL; combine with INTERVAL=1 to correlate hashes and needles on the same ticks.
  */
-static void syNetPeerMaybeLogSimStateTickTrace(void)
+void syNetPeerMaybeLogSimStateTickTrace(void)
 {
 	const char *e;
 	const char *e_min;
@@ -11665,9 +11672,19 @@ void syNetPeerUpdate(void)
 	}
 #endif
 	syNetRollbackUpdate();
-#if defined(PORT)
-	syNetPeerMaybeLogSimStateTickTrace();
-#endif
+	/*
+	 * syNetPeerMaybeLogSimStateTickTrace() intentionally NOT called here anymore: this point in
+	 * syNetPeerUpdate() runs before syNetRollbackAfterBattleUpdate()'s
+	 * syNetplayCanonicalizeActiveFightersForNetplay() quantize pass for the completed tick, so the
+	 * live fighter hash it logged (fighter_slot_hash / sim_state_tick figh) was the raw, pre-quantize
+	 * value — not what syNetFrameCommitBuildToken actually compares (which reads the post-quantize,
+	 * ring-stored digest via syNetRbSnapshotGetStoredSubsystemHashesEx). That gap made the diagnostic
+	 * trace show a spurious cross-peer "first mismatch" at the same tick on every soak (a transient
+	 * prediction-vs-confirmed-input disagreement that self-corrects before quantize/ring-capture),
+	 * masking the real post-quantize divergence. The call now happens in scVSBattleFuncUpdate right
+	 * after syNetRollbackAfterBattleUpdate() so the trace reflects the same canonicalized state the
+	 * frame-commit token uses. See docs/bugs/netplay_sim_state_trace_pre_quantize_diag_2026-07-01.md.
+	 */
 }
 
 void syNetPeerStopVSSession(void)

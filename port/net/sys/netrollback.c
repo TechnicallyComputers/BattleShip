@@ -34,7 +34,9 @@ extern void syTaskmanSetIntervals(u16 update, u16 framedraw);
 #include <gr/ground.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
+#include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_rebirth_gate.h>
+#include <sys/netplay_resim_replay_hang_diag.h>
 #include <sys/netplay_sim_quantize.h>
 #endif
 
@@ -1442,6 +1444,15 @@ sb32 syNetRollbackIsActive(void)
 	return (sSYNetRollbackModuleEnabled != FALSE) && (sSYNetRollbackSessionActive != FALSE);
 }
 
+sb32 syNetRollbackLoadHashVerifyEnabled(void)
+{
+#ifdef PORT
+	return sSYNetRollbackLoadHashVerify;
+#else
+	return FALSE;
+#endif
+}
+
 sb32 syNetRollbackIsResimulating(void)
 {
 #ifdef PORT
@@ -1458,6 +1469,23 @@ sb32 syNetRollbackIsResimulating(void)
 	}
 #endif
 	return sSYNetRollbackResimDepth != 0;
+}
+
+sb32 syNetRollbackResimGateCatchUpAllowed(void)
+{
+#ifdef PORT
+#if defined(SSB64_NETMENU)
+	if (sSYNetRollbackBeginResimInitialLoad != FALSE)
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackResimPending != FALSE) || (syNetRollbackIsResimulating() != FALSE))
+	{
+		return (sSYNetRollbackResimBaselineGateOpen != FALSE) ? TRUE : FALSE;
+	}
+#endif
+#endif
+	return TRUE;
 }
 
 void syNetRollbackApplySessionNegotiated(const SYNetSessionParams *params)
@@ -5646,7 +5674,16 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	live_w = syNetSyncHashRollbackWorld();
 	live_i = syNetSyncHashActiveItemsForRollback();
 	live_wp = syNetSyncHashActiveWeaponsForRollback();
-	live_m = syNetRbSnapshotComputeMapHashLive();
+#if defined(SSB64_NETMENU)
+	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	{
+		live_m = syNetRbSnapshotComputeMapHashLiveForVerify(tick);
+	}
+	else
+#endif
+	{
+		live_m = syNetRbSnapshotComputeMapHashLive();
+	}
 	live_r = syNetSyncHashRNGSeed();
 	live_c = syNetSyncHashGMCamera();
 	live_a = syNetSyncHashFighterAnimationStateForRollback();
@@ -6247,7 +6284,18 @@ static sb32 syNetRollbackMaybeResimAnchorProbe(u32 load_tick)
 static void syNetRollbackLoadPostTickCommitSideEffects(u32 load_tick)
 {
 	syNetRbSnapshotCommitDeferredWeaponEject(load_tick);
-	syNetplayPikachuCatchUpAllAfterLoadVerify();
+	/*
+	 * Hold/Travel gate catch-up must not run on resim anchor loads or while awaiting peer baseline:
+	 * EndIfDue/LaunchIfDue advance Fox/Pikachu status during load+verify (sim tick often ahead of
+	 * load_tick), producing LOAD_SLOT_LIVE_DRIFT and PEER_SNAPSHOT_DIVERGE. Forward resim replays
+	 * catch-up via syNetRbSnapRefreshFoxResimPresentationFromSlot / ApplyFighterNetplayPost once
+	 * sSYNetRollbackResimBaselineGateOpen.
+	 */
+	if (syNetRollbackResimGateCatchUpAllowed() != FALSE)
+	{
+		syNetplayPikachuCatchUpAllAfterLoadVerify();
+		syNetplayFoxCatchUpAllAfterLoadVerify();
+	}
 }
 
 static void syNetRollbackWhispyPresentationAfterLoad(u32 tick, const char *reason)
@@ -6641,7 +6689,9 @@ void syNetRollbackAfterBattleUpdate(void)
 					if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 					{
 						syNetRbSnapshotPrepareLoadedSlotForVerify(probe_tick);
+						syNetRbSnapDiagLogGuardShieldJointPose("probe_loaded_pre_verify");
 						verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
+						syNetRbSnapDiagLogGuardShieldJointPose("probe_post_verify");
 					}
 					syNetRbSnapRepairStageSetVerifyOnly(FALSE);
 					if (emergency_ok != FALSE)
@@ -6649,8 +6699,10 @@ void syNetRollbackAfterBattleUpdate(void)
 						(void)syNetRbSnapshotRestoreLiveEmergency();
 						syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
 						syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
+						syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_recover");
 #if defined(SSB64_NETMENU)
 						syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
+						syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_whispy_presentation");
 #endif
 					}
 					if (verify_ok == FALSE)
@@ -8896,6 +8948,9 @@ void syNetRollbackTryOpenResimReplayGate(void)
 	    sSYNetRollbackResimLoadTick,
 	    sSYNetRollbackResimMismatchTick,
 	    sSYNetRollbackResimTargetTick);
+#if defined(SSB64_NETMENU)
+	syNetplayResimReplayHangDiagNoteReplayGateOpen("try_open_replay_gate");
+#endif
 	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
 	{
 		syNetRollbackEpisodeFreezePostInputDigest();
@@ -11277,6 +11332,7 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		{
 			syNetplayNessResimReplayHardeningAfterLoadStep();
 		}
+		syNetplayResimReplayHangDiagNoteReplayTickBegin(t, ran, limit);
 #endif
 		syNetInputSetTick(t);
 		syNetInputPublishSynchronizedTick(t);
@@ -11311,6 +11367,9 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		syNetplayTraceActiveFighterAObj(t);
 #endif
 		syNetRollbackLogResimTickTrace(t);
+#if defined(SSB64_NETMENU)
+		syNetplayResimReplayHangDiagNoteReplayTickEnd(t);
+#endif
 		t++;
 		ran++;
 	}
@@ -11830,3 +11889,30 @@ void syNetRollbackApplyPortSimPacing(u32 refresh_hz)
 	(void)refresh_hz;
 #endif
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+void syNetRollbackResimReplayHangDiagExportEpisode(u32 *out_pending, u32 *out_load, u32 *out_mismatch, u32 *out_target,
+                                                   u32 *out_next)
+{
+	if (out_pending != NULL)
+	{
+		*out_pending = (sSYNetRollbackResimPending != FALSE) ? 1U : 0U;
+	}
+	if (out_load != NULL)
+	{
+		*out_load = sSYNetRollbackResimLoadTick;
+	}
+	if (out_mismatch != NULL)
+	{
+		*out_mismatch = sSYNetRollbackResimMismatchTick;
+	}
+	if (out_target != NULL)
+	{
+		*out_target = sSYNetRollbackResimTargetTick;
+	}
+	if (out_next != NULL)
+	{
+		*out_next = sSYNetRollbackResimNextTick;
+	}
+}
+#endif

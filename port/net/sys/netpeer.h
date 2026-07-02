@@ -146,6 +146,12 @@ extern void syNetPeerTrySendResimPostDigest(u32 epoch_id, u32 load_tick, u32 mis
 					    u32 figh, u32 world, u32 item, u32 rng, u32 input_digest);
 extern void syNetPeerArmPostRecoveryConvergenceWatch(void);
 extern void syNetPeerFrameCommitAfterCompletedSimStep(void); /* Post-advance frame-commit token sample/send/compare. */
+/*
+ * Diagnostic sim-state/fighter-slot-hash trace (env-gated, no-op unless SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL
+ * or a sibling trace env is set). Must be called AFTER syNetRollbackAfterBattleUpdate() (post-quantize) so the
+ * logged hash matches what syNetFrameCommitBuildToken actually compares, not the pre-quantize live state.
+ */
+extern void syNetPeerMaybeLogSimStateTickTrace(void);
 extern void syNetPeerFrameCommitDiagNoteDeferredArmed(void);
 extern void syNetPeerFrameCommitDiagNoteRecoveryStarted(void);
 extern void syNetPeerFrameCommitDiagNoteRecoverySkippedNoSnap(void);

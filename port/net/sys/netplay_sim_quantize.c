@@ -1,4 +1,5 @@
 #include <sys/netplay_sim_quantize.h>
+#include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
 #include <sys/netinput.h>
@@ -15,6 +16,7 @@
 
 #include <lb/lbcommon.h>
 
+#include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftchar/ftkirby/ftkirby.h>
 #include <ft/ftchar/ftness/ftness.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
@@ -533,6 +535,48 @@ void syNetplayCanonicalizePikachuQuickAttackSimState(GObj *fighter_gobj)
 	base_joint->scale.vec.f.z = syNetplayQuantizeF32(base_joint->scale.vec.f.z);
 }
 
+void syNetplayCanonicalizeFoxFirefoxSimState(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	DObj *root_dobj;
+	s32 ji;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (fp->fkind != nFTKindFox) || (syNetplayFoxFighterInResimPresentationScope(fp) == FALSE))
+	{
+		return;
+	}
+	root_dobj = DObjGetStruct(fighter_gobj);
+	if (root_dobj != NULL)
+	{
+		syNetplayQuantizeVec3f(&root_dobj->rotate.vec.f);
+		syNetplayQuantizeVec3f(&root_dobj->scale.vec.f);
+	}
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			syNetplayQuantizeVec3f(&fp->joints[ji]->rotate.vec.f);
+			syNetplayQuantizeVec3f(&fp->joints[ji]->scale.vec.f);
+			syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+		}
+	}
+	if (syNetplayFoxFighterInFirefoxSynctestDeferScope(fp->status_id) != FALSE)
+	{
+		syNetplayFoxSanitizeFirefoxStatusVars(fp);
+		syNetplayQuantizeFighterPhysics(&fp->physics);
+		syNetplayQuantizeMPCollData(&fp->coll_data);
+	}
+}
+
 void syNetplayQuantizeNessPKJibakuStatusVars(FTStruct *fp, union FTStatusVars *status_vars)
 {
 	if ((fp == NULL) || (status_vars == NULL) || (syNetplaySimQuantizeActive() == FALSE) ||
@@ -1042,6 +1086,7 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	syNetplayQuantizeNessPKThunderLandingStatusVars(fp, &fp->status_vars);
 	syNetplayCanonicalizeNessSpecialLwSimState(fighter_gobj);
 	syNetplayCanonicalizePikachuQuickAttackSimState(fighter_gobj);
+	syNetplayCanonicalizeFoxFirefoxSimState(fighter_gobj);
 }
 
 void syNetplayQuantizeGMCameraState(GMCamera *camera, f32 *pause_eye_x, f32 *pause_eye_y)

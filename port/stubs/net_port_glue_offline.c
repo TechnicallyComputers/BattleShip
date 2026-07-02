@@ -6,10 +6,12 @@
 #include <PR/ultratypes.h>
 #include <ssb_types.h>
 
+#ifndef SSB64_UPSTREAM_DECOMP_NET_SYS
 u32 syNetInputGetTick(void)
 {
 	return 0U;
 }
+#endif
 
 void syNetPeerSendVsSessionEndNotifyPeer(void)
 {
@@ -49,6 +51,7 @@ void syNetRollbackApplyPortSimPacing(u32 refresh_hz)
 	(void)refresh_hz;
 }
 
+#ifndef SSB64_UPSTREAM_DECOMP_NET_SYS
 void syNetReplayInitDebugEnv(void)
 {
 }
@@ -56,6 +59,7 @@ void syNetReplayInitDebugEnv(void)
 void syNetPeerInitDebugEnv(void)
 {
 }
+#endif
 
 #ifdef PORT
 sb32 syNetPeerShouldPumpBattleGateOnHostFrame(void)

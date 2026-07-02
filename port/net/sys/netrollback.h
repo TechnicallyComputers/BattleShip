@@ -55,6 +55,8 @@ extern void syNetRollbackStartVSSession(void);
 extern void syNetRollbackStopVSSession(void);
 extern sb32 syNetRollbackIsActive(void);   /* Env enabled AND VS session flagged. */
 extern sb32 syNetRollbackIsResimulating(void); /* TRUE while nested `syNetRollbackRunResim` loop executes. */
+/* TRUE when Hold/Travel gate catch-up may advance fighter status (not resim anchor / baseline-wait loads). */
+extern sb32 syNetRollbackResimGateCatchUpAllowed(void);
 /* Max sim tick allowed for live forward commit during peer rollback epoch (~0 = no epoch cap). */
 extern sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source);
 /* TRUE when live battle advance must wait (peer epoch / pacing); replay uses AdvanceResimBudget. */
@@ -138,6 +140,8 @@ extern sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *
 						     u32 *out_camera, u32 *out_effect, u32 *out_fighter_slot,
 						     s32 fighter_slot_count);
 extern void syNetRollbackTryOpenResimReplayGate(void);
+/* TRUE when load+apply hash verify runs (SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY, default on). */
+extern sb32 syNetRollbackLoadHashVerifyEnabled(void);
 #endif
 
 #endif /* _SYNETROLLBACK_H_ */

@@ -35,6 +35,14 @@ foreach(_stock IN LISTS _ssb64_netplay_stock_remove)
     list(REMOVE_ITEM SSB64_DECOMP_SOURCES "${_stock}")
 endforeach()
 
+# Fork moved stock net transport/input/sync TUs to port/net/. When bisecting against an
+# upstream decomp pin that still lists them under src/sys/, drop the stock objects so
+# port/net headers and implementations are the single source of truth.
+foreach(_stock_net_sys IN ITEMS netinput netpeer netreplay netsync)
+    list(REMOVE_ITEM SSB64_DECOMP_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/${_stock_net_sys}.c")
+endforeach()
+
 list(APPEND SSB64_DECOMP_SOURCES ${_ssb64_netplay_c})
 
 set(SSB64_PORT_NETMENU_SOURCES ${_ssb64_port_net_c})

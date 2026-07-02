@@ -49,8 +49,8 @@ Sector Z netplay: Great Fox Arwing visually **jerks sideways** during patrol (es
 
 **Fix:**
 
-1. **`syNetRbSnapshotSectorArwingPatrolLiveSynctestFragile`** — skip synctest while `arwing_status == Patrol` and `arwing_pilot_curr != -2` (`reason=sector_arwing_patrol`).
-2. **`syNetRbSnapshotSectorArwingPatrolSlotSynctestFragile`** — skip probe when the ring slot at `probe_tick` is a patrol tick (`reason=sector_arwing_patrol_probe`).
+1. ~~**`syNetRbSnapshotSectorArwingPatrolLiveSynctestFragile`** — skip synctest while `arwing_status == Patrol`~~ **Removed 2026-07-01** — see [netplay_sector_z_arwing_patrol_synctest_unskip_2026-07-01.md](netplay_sector_z_arwing_patrol_synctest_unskip_2026-07-01.md).
+2. ~~**`syNetRbSnapshotSectorArwingPatrolSlotSynctestFragile`** — skip probe when the ring slot at `probe_tick` is a patrol tick~~ **Removed 2026-07-01** (same doc).
 3. **`syNetRbSnapEnsureSectorArwingAfterParticleReset`** — early-return when `s_syNetRbSnapRepairStageVerifyOnly` (belt-and-suspenders for patrol boundary ticks).
 
 Real rollback resims still apply full Arwing presentation; only the diagnostic load/restore cycle is gated.

@@ -5,14 +5,16 @@
 
 #ifdef PORT
 
+/* decomp/include/stdlib.h shadows libc — declare host libc helpers explicitly. */
+extern char *getenv(const char *name);
+extern int strcmp(const char *s1, const char *s2);
+extern long strtol(const char *nptr, char **endptr, int base);
+
 #include "port_log.h"
 
 #include <sys/obj.h>
 #include <sys/objdef.h>
 #include <sys/taskman.h>
-
-#include <stdlib.h>
-#include <string.h>
 
 /* mvOpeningRoom BSS — linked from decomp movie scene. Pointers are NOT cleared on
  * gcEjectGObj (see mvOpeningRoomEjectCameraGObjs / mvOpeningRoomEjectRoomGObjs). */

@@ -69,10 +69,12 @@ u32 syNetSyncNetplayEffectiveTimeLimitMinutes(void)
 	return 0U;
 }
 
+#ifndef SSB64_UPSTREAM_DECOMP_NET_SYS
 u32 syNetSyncHashBattleFighters(void)
 {
 	return 0U;
 }
+#endif
 
 u32 syNetSyncHashBattleFightersFull(void)
 {

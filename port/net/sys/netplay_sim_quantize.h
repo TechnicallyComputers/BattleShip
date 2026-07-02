@@ -143,4 +143,6 @@ extern void syNetplayQuantizeGMCameraState(struct GMCamera *camera, f32 *pause_e
 
 extern void syNetplayCanonicalizeGMCameraSimState(void);
 
+extern void syNetplayCanonicalizeFoxFirefoxSimState(struct GObj *fighter_gobj);
+
 #endif /* SYS_NETPLAY_SIM_QUANTIZE_H */

@@ -765,6 +765,12 @@ if(SSB64_NETMENU)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
 endif()
 
+# Upstream JRickey decomp still ships netreplay/netpeer/netsync under src/sys; the fork
+# removed them to port/net. When those stock TUs are present, omit overlapping offline stubs.
+if(NOT SSB64_NETMENU AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/netreplay.c")
+    list(APPEND SSB64_COMPILE_DEFS SSB64_UPSTREAM_DECOMP_NET_SYS=1)
+endif()
+
 if(SSB64_NETMENU AND SSB64_NETPLAY_ICE)
     list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_ICE=1)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64Libjuice.cmake")

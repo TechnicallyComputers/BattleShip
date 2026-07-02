@@ -81,6 +81,13 @@ extern void syNetRbSnapshotReconcileGuardShieldEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileGuardShieldEffectsLive(void);
 /* Live bubble/coupling repair after synctest emergency restore (dual-shield drain stall). */
 extern void syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest(void);
+
+/* Diagnostic only: logs joints[YRotN] local scale/translate/rotate for every shielding fighter, tagged
+ * by call site. Gated by SSB64_NETPLAY_GUARD_SHIELD_JOINT_POSE_DIAG=1. See
+ * docs/bugs/netplay_guard_shield_attach_refresh_diag_2026-07-01.md. */
+extern void syNetRbSnapDiagLogGuardShieldJointPose(const char *tag);
+/* Presentation-only: rebuild joints[YRotN] world matrix before shield draw (animlock-safe). */
+extern void syNetRbSnapRefreshGuardShieldYRotNDrawMatrix(struct GObj *fighter_gobj);
 /* Hidden hatch shell repair after synctest emergency restore (hash-excluded cosmetic). */
 extern void syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest(void);
 /* Fragile synctest probe skip on escape boundary — replay hatch on live tail when shell missing. */
@@ -239,6 +246,8 @@ extern s32 syNetRbEnumerateActiveEffectsSorted(struct GObj **out, s32 max, sb32 
 extern u32 syNetRbSnapshotFoldGroundHash(const void *slot_opaque);
 /* Live map digest: collision yakumono + ground fold (must match slot->hash_map at save). */
 extern u32 syNetRbSnapshotComputeMapHashLive(void);
+/* Verify-only: restore Sector Z patrol deck from slot Arwing partition before kin hash. */
+extern u32 syNetRbSnapshotComputeMapHashLiveForVerify(u32 tick);
 /* SSB64_NETPLAY_SNAPSHOT_MAP_HASH_DIAG=1: decompose kin vs ground fold on map load drift. */
 extern void syNetRbSnapshotLogMapHashDriftDiag(u32 tick);
 /* Same env: self-test immediately after ring save (stored hash vs ComputeMapHashLive). */

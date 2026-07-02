@@ -43,11 +43,23 @@ Synctest verify `LOAD_HASH_DRIFT` with **eff-only** mismatch (`figh`/`world`/`rn
 
 **Class B fix:** Quantize `anim_frame` into effect blobs at capture (generic effects use `syNetplayQuantizeF32`; Ness magnet keeps `QuantizeAnimScalar`). Apply path uses `syNetRbSnapApplyEffectBlobAnimFrame` after parent rebind (syncs DObj). `TryRepairEffectHashForVerify` runs a **final** `syNetRbSnapReapplyEffectBlobsFromSlot` after shield patch/prune so reconcile procs cannot leave stale anim/translate on verify.
 
-**Class A fix:** `syNetRbSnapshotSynctestShouldSkipProbeTick` skips when slot effects are **transient-only** (`respawn_kind=NONE` for every captured effect, none respawnable). Reason: `transient_effect_probe`. One-shot hit VFX cannot survive emergency→slot verify load reliably; skipping avoids false soft-continue drift counts.
+**Class A legacy mitigation:** `syNetRbSnapshotSynctestShouldSkipProbeTick` used to skip when slot
+effects were **transient-only** (`respawn_kind=NONE` for every captured effect, none respawnable).
+Reason: `transient_effect_probe`. This avoided false soft-continue drift counts while one-shot hit
+VFX could not survive emergency→slot verify load reliably.
+
+**2026-07-02 policy update:** the broad `transient_effect_probe` skip was removed. Transient-only
+effect ticks now run through synctest so any remaining `eff` drift is visible and can be fixed by
+classifying/adopting the specific effect family instead of masking the probe. Expected failure shape,
+if still present: `SYNCTEST_FAIL` / `LOAD_HASH_DRIFT` with `eff` only and live hash collapsed to the
+empty sentinel (`0x811C9DC5`).
 
 **Related:** Kirby ground Stone ~9-frame Hold — `ftKirbySpecialLwRollbackShouldSkipFullStoneReset` now requires `is_damage_resist` TRUE before skipping full reset ([netplay_kirby_stone_rollback_release_2026-06-06.md](netplay_kirby_stone_rollback_release_2026-06-06.md)).
 
-**Verify:** Re-soak cross-ISA synctest — expect 0 eff-only drift on transient-only probe ticks; Class B ticks should repair via final blob reapply or drop from drift set.
+**Verify:** Re-soak cross-ISA synctest — Class B ticks should repair via final blob reapply or drop
+from the drift set. Transient-only ticks should no longer appear as `SYNCTEST_SKIP
+reason=transient_effect_probe`; if they fail, use the captured effect blob fields to add a scoped
+respawn/adopt path.
 
 ### Phase 39 (2026-06-07) — quake proc freeze + dead shell hash exclude + load-verify pose
 
