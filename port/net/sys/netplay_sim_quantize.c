@@ -1302,11 +1302,24 @@ void syNetplayCanonicalizeRebirthFighterMapPose(GObj *fighter_gobj)
 	{
 		return;
 	}
-	apex_y = ftStatusVarsRebirth(fp)->pos.y;
-	base_y = ftStatusVarsRebirth(fp)->halo_offset.y;
-	wait_sq = (f32)SQUARE(ftStatusVarsRebirth(fp)->halo_lower_wait);
-	map_y = (((apex_y - base_y) / 8100.0F) * wait_sq) + base_y;
-	dobj->translate.vec.f.y = map_y;
+	/*
+	 * Vanilla only runs ftCommonRebirthCommonProcMap (the descending-platform Y derivation) during
+	 * RebirthDown. RebirthStand/RebirthWait never touch the root Y again — it stays static at the last
+	 * Down frame (== halo_offset.y once halo_lower_wait hit 0). Re-deriving it here on every rollback /
+	 * synctest-verify canonicalize pass forks the captured gobj_translate whenever this runs before the
+	 * rebirth union is restored (e.g. the verify-prep reapply path canonicalizes without restoring the
+	 * union first), collapsing the fighter to Y=0 and cascading a stale-halo prune. Match vanilla: only
+	 * re-derive during RebirthDown; trust the restored blob pose for Stand/Wait.
+	 * See docs/bugs/netplay_rebirth_wait_pose_derive_synctest_2026-07-02.md.
+	 */
+	if (fp->status_id == nFTCommonStatusRebirthDown)
+	{
+		apex_y = ftStatusVarsRebirth(fp)->pos.y;
+		base_y = ftStatusVarsRebirth(fp)->halo_offset.y;
+		wait_sq = (f32)SQUARE(ftStatusVarsRebirth(fp)->halo_lower_wait);
+		map_y = (((apex_y - base_y) / 8100.0F) * wait_sq) + base_y;
+		dobj->translate.vec.f.y = map_y;
+	}
 	if (syNetplaySimQuantizeActive() != FALSE)
 	{
 		syNetplayQuantizeDObjTranslate(dobj);

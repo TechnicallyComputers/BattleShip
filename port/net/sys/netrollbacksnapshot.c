@@ -1007,13 +1007,23 @@ static void syNetRbSnapEndEffectXfFuncProcs(GObj *gobj)
 static sb32 syNetRbSnapEffectGObjHasUpdateProc(const GObj *gobj, void (*proc_update)(GObj *))
 {
 	GObjProcess *gobjproc;
+	u32 guard;
 
 	if ((gobj == NULL) || (proc_update == NULL))
 	{
 		return FALSE;
 	}
-	for (gobjproc = gobj->gobjproc_head; gobjproc != NULL; gobjproc = gobjproc->link_next)
+	for (gobjproc = gobj->gobjproc_head, guard = 0U; gobjproc != NULL;
+	     gobjproc = gobjproc->link_next, guard++)
 	{
+		if (guard >= 256U)
+		{
+			port_log("SSB64 NetRbSnapshot: gobjproc_walk_cycle gobj=%p id=%u proc=%p - bail\n",
+			         (const void *)gobj,
+			         (unsigned int)gobj->id,
+			         (void *)gobjproc);
+			return FALSE;
+		}
 		if ((gobjproc->kind == nGCProcessKindFunc) && (gobjproc->exec.func == proc_update))
 		{
 			return TRUE;
@@ -1368,6 +1378,12 @@ static void syNetRbSnapEjectGObj(GObj *gobj)
 	if (ep != NULL)
 	{
 		gcEjectGObj(gobj);
+#ifdef PORT
+		if (gobj->obj_kind != 0xFE) /* gcEjectGObj deferred because this was the current GObj. */
+		{
+			return;
+		}
+#endif
 		efManagerNetSafeFreeStruct(ep, gobj, "snap_eject");
 		gobj->user_data.p = NULL;
 		return;
