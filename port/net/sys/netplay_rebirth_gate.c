@@ -210,6 +210,7 @@ void syNetplayRebirthSimDiagLogTick(u32 tick)
 			    (int)ftStatusVarsRebirth(fp)->halo_number,
 			    syNetplayRebirthSimDiagF32Bits(ftStatusVarsRebirth(fp)->pos.y),
 			    syNetplayRebirthSimDiagF32Bits(ftStatusVarsRebirth(fp)->halo_offset.y));
+			syNetRbSnapDiagLogRebirthHaloPose("death_rebirth_sim", tick, fighter_gobj);
 		}
 		else
 		{

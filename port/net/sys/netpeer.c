@@ -21,6 +21,7 @@
 #include <sys/objman_gcport.h>
 #if defined(SSB64_NETMENU)
 #include <sys/netfighterphase.h>
+#include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_rebirth_gate.h>
 #include <sys/netplay_resim_replay_hang_diag.h>
 #endif
@@ -9190,6 +9191,9 @@ static sb32 sSYNetPeerFrameCommitPeerEver;
 static int sSYNetPeerFrameCommitEnvCache = -999;
 static int sSYNetPeerFrameCommitDiagEnvCache = -999;
 static int sSYNetPeerFrameCommitLiveGuardEnvCache = -999;
+static u32 sSYNetPeerFrameCommitItemOnlySkewCount;
+static u32 sSYNetPeerFrameCommitItemOnlySkewFirstTick;
+#define SYNETPEER_FRAME_COMMIT_ITEM_ONLY_ESCALATE_COUNT 2U
 
 typedef struct SYNetPeerFrameCommitDiag
 {
@@ -9657,6 +9661,8 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerConvergenceMatchEpochs = 0U;
 	sSYNetPeerConvergenceFailEpochs = 0U;
 	sSYNetPeerFrameCommitMismatchLogCount = 0U;
+	sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
+	sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
 	sSYNetPeerFrameCommitCadenceLogged = FALSE;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
@@ -9793,13 +9799,39 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 		if ((local->input_digest == peer->input_digest) &&
 		    (syNetFrameCommitItemOnlyCosmeticDiverge(local, peer) != FALSE))
 		{
+			if (sSYNetPeerFrameCommitItemOnlySkewCount == 0U)
+			{
+				sSYNetPeerFrameCommitItemOnlySkewFirstTick = vtick;
+			}
+			if (sSYNetPeerFrameCommitItemOnlySkewCount < 0xFFFFU)
+			{
+				sSYNetPeerFrameCommitItemOnlySkewCount++;
+			}
+			if (sSYNetPeerFrameCommitItemOnlySkewCount >= SYNETPEER_FRAME_COMMIT_ITEM_ONLY_ESCALATE_COUNT)
+			{
+				port_log(
+				    "SSB64 NetPeer: FRAME_COMMIT_ITEM_PERSISTENT_DIVERGE validation=%u first=%u count=%u "
+				    "local item=0x%08X peer item=0x%08X figh/world/rng/eff agree inp=0x%08X — reanchoring before gameplay fork\n",
+				    vtick,
+				    sSYNetPeerFrameCommitItemOnlySkewFirstTick,
+				    sSYNetPeerFrameCommitItemOnlySkewCount,
+				    local->item_digest,
+				    peer->item_digest,
+				    local->input_digest);
+				sSYNetPeerFrameCommitDiag.fc_state_diverge++;
+				syNetPeerNotePostRecoveryConvergenceEpoch(FALSE, vtick);
+				syNetRollbackOnPeerFrameCommitStateMismatch(vtick, local, peer);
+				return;
+			}
 			if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
 			{
 				sSYNetPeerFrameCommitMismatchLogCount++;
 				port_log(
-				    "SSB64 NetPeer: FRAME_COMMIT_ITEM_COSMETIC_OK validation=%u local item=0x%08X peer item=0x%08X "
-				    "figh/world/rng/eff agree inp=0x%08X — continuing\n",
+				    "SSB64 NetPeer: FRAME_COMMIT_ITEM_COSMETIC_OK validation=%u first=%u count=%u "
+				    "local item=0x%08X peer item=0x%08X figh/world/rng/eff agree inp=0x%08X — continuing\n",
 				    vtick,
+				    sSYNetPeerFrameCommitItemOnlySkewFirstTick,
+				    sSYNetPeerFrameCommitItemOnlySkewCount,
 				    local->item_digest,
 				    peer->item_digest,
 				    local->input_digest);
@@ -9808,6 +9840,8 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
 			return;
 		}
+		sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
+		sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 		if (syNetPeerFrameCommitDiagLevel() >= 2)
 		{
 			u32 live_figh;
@@ -9886,6 +9920,11 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			syNetRollbackOnFrameCommitLiveHashGuard(vtick, local, peer, live_figh, live_world);
 			return;
 		}
+	}
+	else
+	{
+		sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
+		sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 	}
 	syNetRollbackNoteFrameCommitStateAgreed(vtick);
 	syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
@@ -10999,7 +11038,6 @@ void syNetPeerLogStats(void)
 void syNetPeerFrameCommitAfterCompletedSimStep(void)
 {
 #ifdef PORT
-	u32 tick;
 	u32 win_begin;
 	u32 win_length;
 
@@ -11011,46 +11049,52 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 	{
 		return;
 	}
-	tick = syNetInputGetTick();
 	{
+		u32 completed_tick;
+		u32 validation_tick;
 		u32 fc_interval;
 
+		completed_tick = syNetInputGetTick();
+		validation_tick = completed_tick + 1U;
 		fc_interval = syNetPeerNetSyncLogInterval();
 		fc_interval = syNetRbSnapshotFrameCommitIntervalCap(fc_interval);
-		if ((tick == 0U) || ((tick - sSYNetPeerLastFrameCommitValidationTick) < fc_interval))
+		if ((validation_tick == 0U) ||
+		    ((validation_tick - sSYNetPeerLastFrameCommitValidationTick) < fc_interval))
 		{
 			return;
 		}
-	}
-	sSYNetPeerLastFrameCommitValidationTick = tick;
-	{
-		u32 val_win;
-
-		val_win = syNetPeerValidationWindowTicks();
-		win_length = tick;
-		win_begin = 0U;
-		if (tick >= val_win)
+		sSYNetPeerLastFrameCommitValidationTick = validation_tick;
 		{
-			win_begin = tick - val_win;
-			win_length = val_win;
-		}
-	}
-	if (sSYNetPeerMpTicDiagAssertEnvCache == -999)
-	{
-		char *e = getenv("SSB64_NETPLAY_ASSERT_MP_TIC");
+			u32 val_win;
 
-		sSYNetPeerMpTicDiagAssertEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+			val_win = syNetPeerValidationWindowTicks();
+			win_length = validation_tick;
+			win_begin = 0U;
+			if (validation_tick >= val_win)
+			{
+				win_begin = validation_tick - val_win;
+				win_length = val_win;
+			}
+		}
+		if (sSYNetPeerMpTicDiagAssertEnvCache == -999)
+		{
+			char *e = getenv("SSB64_NETPLAY_ASSERT_MP_TIC");
+
+			sSYNetPeerMpTicDiagAssertEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+		}
+		if (sSYNetPeerMpTicDiagAssertEnvCache != 0)
+		{
+			port_log("SSB64 NetSync: mp_tic_diag sim_tick=%u mp_collision_tic=%u\n", completed_tick,
+			         (unsigned int)gMPCollisionUpdateTic);
+		}
+		/*
+		 * Sample frame-commit digests for validation_tick = completed_tick + 1 while
+		 * syNetInputGetTick() still names the completed boundary (snap tick = completed_tick).
+		 * scVSBattleFuncUpdate calls this before syNetInputAdvanceAuthoritativeSimTick so neither
+		 * peer gcRunAll's the next tick before FC compares the prior snapshot.
+		 */
+		syNetPeerFrameCommitAfterValidation(validation_tick, win_begin, win_length);
 	}
-	if (sSYNetPeerMpTicDiagAssertEnvCache != 0)
-	{
-		port_log("SSB64 NetSync: mp_tic_diag sim_tick=%u mp_collision_tic=%u\n", tick,
-		         (unsigned int)gMPCollisionUpdateTic);
-	}
-	/*
-	 * Sample frame-commit digests only after syNetInputAdvanceAuthoritativeSimTick so both peers
-	 * hash the same completed sim boundary (not mid-gcRunAll on the next step).
-	 */
-	syNetPeerFrameCommitAfterValidation(tick, win_begin, win_length);
 #endif
 }
 
@@ -11608,6 +11652,9 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 	 */
 	syNetplayRebirthSimDiagLogTick(tick);
 	syNetSyncLogPKThunderHoldDiag(tick);
+#if defined(SSB64_NETMENU)
+	syNetplayFoxFirefoxStateForkTraceTick(tick, "post_sim");
+#endif
 
 	e = getenv("SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL");
 	if ((e == NULL) || (e[0] == '\0'))

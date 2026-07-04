@@ -11,8 +11,10 @@
 #include <sys/netplay_sim_quantize.h>
 #include <sys/netrollback.h>
 #include <sys/netrollbacksnapshot.h>
+#include <sys/netsync.h>
 #include <sys/objman.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -47,6 +49,14 @@ typedef struct SYNetplayFoxTravelSpan
 static SYNetplayFoxTravelSpan sSYNetplayFoxTravelSpan[2];
 /* Latched by whoever triggers the End transition just before ftFox*EndSetStatus: 0 unknown / 1 sim / 2 gate. */
 static s32 sSYNetplayFoxTravelEndPathPending[2] = {0, 0};
+
+static u32 syNetplayFoxFloatBits(f32 value)
+{
+	u32 bits;
+
+	memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
 
 static s32 syNetplayFoxTravelSpanPlayer(const FTStruct *fp)
 {
@@ -388,6 +398,247 @@ void syNetplayFoxFirefoxTravelSpanOnEnd(FTStruct *fp)
 	}
 	sSYNetplayFoxTravelSpan[player].active = FALSE;
 	sSYNetplayFoxTravelEndPathPending[player] = 0;
+}
+
+void syNetplayFoxFirefoxTraceState(const char *event, FTStruct *fp, u32 map_mask, s32 result)
+{
+	DObj *topn;
+	ftFoxSpecialHiStatusVars *specialhi;
+
+	if ((event == NULL) || (fp == NULL) || (fp->fkind != nFTKindFox) ||
+	    (syNetplayFoxFirefoxGateDiagEnabled() == FALSE))
+	{
+		return;
+	}
+	if (syNetplayFoxFighterInFirefoxSynctestDeferScope(fp->status_id) == FALSE)
+	{
+		return;
+	}
+	topn = fp->joints[nFTPartsJointTopN];
+	specialhi = ftStatusVarsFoxSpecialHi(fp);
+	port_log(
+	    "SSB64 Netplay: FOX_FIREFOX_TRACE tick=%u event=%s player=%d status=%d motion=%d ga=%d lr=%d resim=%d "
+	    "map_mask=0x%04X result=%d anim_frames=%d decel=%d pass=%d angle=0x%08X "
+	    "top=(0x%08X,0x%08X,0x%08X) pos_prev=(0x%08X,0x%08X,0x%08X) pos_diff=(0x%08X,0x%08X,0x%08X) "
+	    "vel_air=(0x%08X,0x%08X,0x%08X) vel_dmg_air=(0x%08X,0x%08X,0x%08X) "
+	    "coll_masks=%04X/%04X/%04X/%04X floor=(0x%08X,0x%08X) ceil=(0x%08X,0x%08X) "
+	    "lwall=(0x%08X,0x%08X) rwall=(0x%08X,0x%08X)\n",
+	    syNetInputGetTick(), event, (int)fp->player, (int)fp->status_id, (int)fp->motion_id,
+	    (int)fp->ga, (int)fp->lr, (int)(syNetRollbackIsResimulating() != FALSE),
+	    (unsigned int)map_mask, (int)result, (int)specialhi->anim_frames,
+	    (int)specialhi->decelerate_wait, (int)specialhi->pass_timer,
+	    (unsigned int)syNetplayFoxFloatBits(specialhi->angle),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.x : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.y : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.z : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.z),
+	    (unsigned int)fp->coll_data.mask_prev, (unsigned int)fp->coll_data.mask_curr,
+	    (unsigned int)fp->coll_data.mask_stat, (unsigned int)fp->coll_data.mask_unk,
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.floor_angle.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.floor_angle.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.ceil_angle.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.ceil_angle.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.lwall_angle.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.lwall_angle.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.rwall_angle.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.rwall_angle.y));
+}
+
+static sb32 syNetplayFoxStateForkTraceTickInWindow(u32 tick)
+{
+	static sb32 s_cache = -999;
+	static u32 s_min = 0U;
+	static u32 s_max = 0xFFFFFFFFU;
+
+	if (s_cache == -999)
+	{
+		const char *env_min;
+		const char *env_max;
+
+		env_min = getenv("SSB64_NETPLAY_FOX_STATE_FORK_TRACE_TICK_MIN");
+		env_max = getenv("SSB64_NETPLAY_FOX_STATE_FORK_TRACE_TICK_MAX");
+		if ((env_min != NULL) && (env_min[0] != '\0'))
+		{
+			s_min = (u32)atoi(env_min);
+		}
+		if ((env_max != NULL) && (env_max[0] != '\0'))
+		{
+			s_max = (u32)atoi(env_max);
+		}
+		if (s_max < s_min)
+		{
+			s_max = s_min;
+		}
+		s_cache = 1;
+	}
+	return ((tick >= s_min) && (tick <= s_max)) ? TRUE : FALSE;
+}
+
+static sb32 syNetplayFoxStateForkTraceScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindFox))
+	{
+		return FALSE;
+	}
+	if (syNetplayFoxFighterInFirefoxSynctestDeferScope(fp->status_id) != FALSE)
+	{
+		return TRUE;
+	}
+	if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
+	{
+		return TRUE;
+	}
+	if ((fp->status_id == nFTCommonStatusDamageFall) || (fp->status_id == nFTCommonStatusFallSpecial) ||
+	    (fp->status_id == nFTCommonStatusLandingFallSpecial))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetplayFoxStateForkTraceShouldLog(const FTStruct *fp, const char *phase)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindFox))
+	{
+		return FALSE;
+	}
+	if (syNetplayFoxStateForkTraceScope(fp) != FALSE)
+	{
+		return TRUE;
+	}
+	/* Resim spans are short and may precede the damage/Firefox scope that later forks. */
+	if ((phase != NULL) && (strcmp(phase, "resim_post_sim") == 0))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static void syNetplayFoxLogStateForkTraceForFighter(u32 tick, const char *phase, GObj *fighter_gobj, FTStruct *fp)
+{
+	DObj *root_dobj;
+	DObj *topn;
+	sb32 firefox_scope;
+	sb32 damage_scope;
+	ftFoxSpecialHiStatusVars specialhi_zero;
+	ftFoxSpecialHiStatusVars *specialhi;
+	ftCommonDamageStatusVars damage_zero;
+	ftCommonDamageStatusVars *damage;
+
+	if ((phase == NULL) || (fighter_gobj == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	root_dobj = DObjGetStruct(fighter_gobj);
+	topn = fp->joints[nFTPartsJointTopN];
+	firefox_scope = syNetplayFoxFighterInFirefoxSynctestDeferScope(fp->status_id);
+	damage_scope = ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd)) ||
+	               (fp->status_id == nFTCommonStatusDamageFall);
+	memset(&specialhi_zero, 0, sizeof(specialhi_zero));
+	memset(&damage_zero, 0, sizeof(damage_zero));
+	specialhi = (firefox_scope != FALSE) ? ftStatusVarsFoxSpecialHi(fp) : &specialhi_zero;
+	damage = (damage_scope != FALSE) ? ftStatusVarsDamage(fp) : &damage_zero;
+	port_log(
+	    "SSB64 Netplay: FOX_STATE_FORK_TRACE tick=%u phase=%s player=%d status=%d motion=%d ga=%d lr=%d "
+	    "resim=%d hitlag=%u status_tics=%u anim_frame=0x%08X fhash_light=0x%08X fhash_full=0x%08X "
+	    "root=(0x%08X,0x%08X,0x%08X) top=(0x%08X,0x%08X,0x%08X) "
+	    "pos_prev=(0x%08X,0x%08X,0x%08X) pos_diff=(0x%08X,0x%08X,0x%08X) "
+	    "vel_air=(0x%08X,0x%08X,0x%08X) vel_dmg_air=(0x%08X,0x%08X,0x%08X) "
+	    "input_hold=0x%04X input_tap=0x%04X input_release=0x%04X stick=(%d,%d) stick_prev=(%d,%d) "
+	    "tap_stick=(%u,%u) hold_stick=(%u,%u) camera=%u damage_scope=%u dmg_hitstun=%d dmg_public=0x%08X "
+	    "dmg_status=%d dmg_knock_over=%d dmg_coll=%04X/%04X/%04X firefox_scope=%u "
+	    "launch=%d anim_frames=%d decel=%d pass=%d angle=0x%08X\n",
+	    (unsigned int)tick,
+	    phase,
+	    (int)fp->player,
+	    (int)fp->status_id,
+	    (int)fp->motion_id,
+	    (int)fp->ga,
+	    (int)fp->lr,
+	    (int)(syNetRollbackIsResimulating() != FALSE),
+	    (unsigned int)fp->hitlag_tics,
+	    (unsigned int)fp->status_total_tics,
+	    (unsigned int)syNetplayFoxFloatBits(fighter_gobj->anim_frame),
+	    syNetSyncHashFighterStructLight(fp),
+	    syNetSyncHashFighterSlotFull(fp),
+	    (unsigned int)syNetplayFoxFloatBits((root_dobj != NULL) ? root_dobj->translate.vec.f.x : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((root_dobj != NULL) ? root_dobj->translate.vec.f.y : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((root_dobj != NULL) ? root_dobj->translate.vec.f.z : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.x : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.y : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits((topn != NULL) ? topn->translate.vec.f.z : 0.0F),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_prev.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->coll_data.pos_diff.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_air.z),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.x),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.y),
+	    (unsigned int)syNetplayFoxFloatBits(fp->physics.vel_damage_air.z),
+	    (unsigned int)fp->input.pl.button_hold,
+	    (unsigned int)fp->input.pl.button_tap,
+	    (unsigned int)fp->input.pl.button_release,
+	    (int)fp->input.pl.stick_range.x,
+	    (int)fp->input.pl.stick_range.y,
+	    (int)fp->input.pl.stick_prev.x,
+	    (int)fp->input.pl.stick_prev.y,
+	    (unsigned int)fp->tap_stick_x,
+	    (unsigned int)fp->tap_stick_y,
+	    (unsigned int)fp->hold_stick_x,
+	    (unsigned int)fp->hold_stick_y,
+	    (unsigned int)fp->camera_mode,
+	    (unsigned int)(damage_scope != FALSE),
+	    (int)damage->hitstun_tics,
+	    (unsigned int)syNetplayFoxFloatBits(damage->public_knockback),
+	    (int)damage->status_id,
+	    (int)damage->is_knockback_over,
+	    (unsigned int)damage->coll_mask_curr,
+	    (unsigned int)damage->coll_mask_prev,
+	    (unsigned int)damage->coll_mask_ignore,
+	    (unsigned int)(firefox_scope != FALSE),
+	    (int)specialhi->launch_delay,
+	    (int)specialhi->anim_frames,
+	    (int)specialhi->decelerate_wait,
+	    (int)specialhi->pass_timer,
+	    (unsigned int)syNetplayFoxFloatBits(specialhi->angle));
+}
+
+void syNetplayFoxFirefoxStateForkTraceTick(u32 tick, const char *phase)
+{
+	GObj *fighter_gobj;
+
+	if ((phase == NULL) || (syNetplayFoxFirefoxGateDiagEnabled() == FALSE) ||
+	    (syNetplayFoxStateForkTraceTickInWindow(tick) == FALSE))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (syNetplayFoxStateForkTraceShouldLog(fp, phase) == FALSE)
+		{
+			continue;
+		}
+		syNetplayFoxLogStateForkTraceForFighter(tick, phase, fighter_gobj, fp);
+	}
 }
 
 void syNetplayFoxCatchUpFirefoxLaunchIfDue(GObj *fighter_gobj, FTStruct *fp)

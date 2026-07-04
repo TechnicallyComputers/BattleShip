@@ -998,7 +998,8 @@ if (SSB64_NETMENU)
     # stay bit-identical regardless, which is why Linux<->Linux was stable before quantization.
     # Sim-critical hash producers: ft (figh), ef (eff), wp (wpn), it (item), mp (map/collision),
     # lb (shared vector math used everywhere), gm (cam + collision/world-pose matrix math),
-    # sys/objanim (anim).
+    # sys/objanim (anim). Netmenu also keeps shared matrix/libultra gu helpers contraction-free so
+    # future relocated consumers cannot reintroduce cross-ISA fused-vs-unfused matrix drift.
     #
     # NOTE: stock decomp TUs (taskman, scvsbattle, lbcommon, scmanager, mnvsmode, mnvsresults) are
     # unified under decomp/src/ with compile gates. Net-only sources remain under decomp/src/netplay/.
@@ -1027,7 +1028,10 @@ if (SSB64_NETMENU)
     # docs/netplay_cross_isa_float_determinism.md and docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
     #
     # Class B gaps (2026-06-04): gr/ (Sector Arwing orientation), sys/utils.c (syUtilsArcTan /
-    # jibaku angle), sys/vector.c (syVectorAngleDiff3D); gu/sinf.c + cosf.c (double polynomial FMA).
+    # jibaku angle), sys/vector.c (syVectorAngleDiff3D); libultra/gu/sinf.c + cosf.c (double
+    # polynomial FMA). Defensive netmenu coverage: sys/matrix.c and all libultra/gu helpers
+    # (matrix normalize / transform helpers) are compiled contraction-free too; current known
+    # sys/matrix consumers are render/camera, but this prevents future hash writeback gaps.
     #
     # Class B gap (2026-06-04, Sector Z Arwing deck map-hash split): sys/interp.c. The Arwing flight
     # path drives map_dobjs[0]->translate through syInterpQuad/syInterpCubic, whose spline evaluators
@@ -1046,14 +1050,12 @@ if (SSB64_NETMENU)
             _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/gr/" OR
             _src MATCHES "/decomp/src/netplay/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
             _src MATCHES "/decomp/src/sys/utils\\.c$" OR _src MATCHES "/decomp/src/sys/vector\\.c$" OR
-            _src MATCHES "/decomp/src/sys/interp\\.c$")
+            _src MATCHES "/decomp/src/sys/interp\\.c$" OR _src MATCHES "/decomp/src/sys/matrix\\.c$")
             set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
         endif()
     endforeach()
     foreach(_src IN LISTS SSB64_LIBULTRA_PORT)
-        if (_src MATCHES "libultra/gu/sinf\\.c$" OR _src MATCHES "libultra/gu/cosf\\.c$")
-            set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
-        endif()
+        set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
     endforeach()
     foreach(_src IN LISTS SSB64_PORT_NETMENU_SOURCES)
         set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")

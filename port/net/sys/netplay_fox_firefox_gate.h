@@ -54,6 +54,11 @@ extern void syNetplayFoxFirefoxTravelSpanOnSimDecrement(struct FTStruct *fp);
 extern void syNetplayFoxFirefoxTravelSpanNoteEndPath(struct FTStruct *fp, sb32 from_gate);
 extern void syNetplayFoxFirefoxTravelSpanOnEnd(struct FTStruct *fp);
 
+/* Diagnostic only: raw trajectory fields for cross-ISA Firefox/knockback drift bisection. */
+extern void syNetplayFoxFirefoxTraceState(const char *event, struct FTStruct *fp, u32 map_mask, s32 result);
+/* Diagnostic only: per-tick forward-vs-resim witness for the pre-Firefox state fork. */
+extern void syNetplayFoxFirefoxStateForkTraceTick(u32 tick, const char *phase);
+
 #else
 
 #define syNetplayFoxFirefoxGateDiagEnabled() FALSE
@@ -75,6 +80,8 @@ extern void syNetplayFoxFirefoxTravelSpanOnEnd(struct FTStruct *fp);
 #define syNetplayFoxFirefoxTravelSpanOnSimDecrement(fp) ((void)0)
 #define syNetplayFoxFirefoxTravelSpanNoteEndPath(fp, from_gate) ((void)0)
 #define syNetplayFoxFirefoxTravelSpanOnEnd(fp) ((void)0)
+#define syNetplayFoxFirefoxTraceState(event, fp, map_mask, result) ((void)0)
+#define syNetplayFoxFirefoxStateForkTraceTick(tick, phase) ((void)0)
 
 #endif /* PORT && SSB64_NETMENU */
 

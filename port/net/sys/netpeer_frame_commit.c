@@ -66,8 +66,9 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	out->tick_anchor = syNetInputGetTick();
 #ifdef PORT
 	/*
-	 * Snapshot is saved in syNetRollbackAfterBattleUpdate for the tick completed before
-	 * syNetInputAdvanceAuthoritativeSimTick; frame-commit runs on the advanced tick.
+	 * Snapshot is saved in syNetRollbackAfterBattleUpdate for completed_tick; frame-commit runs
+	 * before syNetInputAdvanceAuthoritativeSimTick with validation_tick = completed_tick + 1, so
+	 * tick_anchor and snap_tick both name the completed boundary.
 	 */
 	{
 		u32 snap_tick;

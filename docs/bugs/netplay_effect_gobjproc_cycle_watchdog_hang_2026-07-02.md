@@ -1,8 +1,8 @@
-# Interface common-link cycle — WATCHDOG HANG in gcRunAll traversal
+# Interface/effect process-queue cycle — WATCHDOG HANG in gcRunAll traversal
 
 - **Date:** 2026-07-02
-- **Build scope:** `PORT && SSB64_NETMENU` (diagnostic + traversal hardening, so far)
-- **Status:** DIAGNOSTIC EXTENDED — root fix pending next soak's `hang_cycle` line
+- **Build scope:** `PORT && SSB64_NETMENU`
+- **Status:** FIX IMPLEMENTED (soak pending)
 
 ## Symptom
 
@@ -86,11 +86,58 @@ SSB64 Netplay: RESIM_REPLAY_HANG_DIAG hang_cycle common_cycle link=.. head=..:g.
 
 or `proc_cycle ...`, directly naming the cyclic chain and a bounded head sample.
 
+## 2026-07-03 root cause update
+
+The next Firefox + Castle-bumper soak (`session=78270984`) proved the bumper determinism fixes held
+(`RESULT: PASS`, 19/19 synctest OK, no frame-commit divergence), then hung on the first KO. The new
+diagnostic named the real corrupted list:
+
+```text
+RESIM_REPLAY_HANG_DIAG hang_cycle proc_cycle pri=3 head=...:p1000 meet=...:p1011 steps=3
+```
+
+The sampled backtrace sat in `gcPlayAnimAll` / `syNetplayQuantizeDObjAnimPose`, but the bounded cycle
+probe shows that was repeated work from a cyclic `sGCProcessQueue[3]`, not a DObj tree loop. The KO
+logs immediately before the hang show rebirth-halo reclaim ejecting and re-minting effect GObjs,
+including an EF pool audit repair:
+
+```text
+gcEjectGObj ... id=1011 ... gpr_head=...
+gcEjectGObj ... id=1011 ... gpr_head=0x0 obj=0x0
+EfManager: pool_audit mismatch site=rebirth_halo_reclaim ... -> repair
+gobj_alloc ... id=1011 link=6
+REBIRTH_GATE ... halo_ensure ... reclaimed=1
+```
+
+The process-cycle node's parent was the recycled `id=1011` effect while the queue sample also included
+interface `id=1016`, matching the earlier interface/public lead but moving the actual invariant break to
+the shared `GObjProcess` priority queue.
+
+Root cause: `GObjProcess` free-list nodes retained stale `priority_next` / `priority_prev` links. If
+rebirth/effect repair double-ended a process or recycled a free-list node whose priority links still
+pointed into `sGCProcessQueue`, `func_80007784` blindly trusted those stale links and spliced through
+live queue nodes. A later reinsert could then create a priority-queue cycle.
+
+Fix: harden `objman.c`'s process ownership boundary for netmenu builds:
+
+- `gcSetGObjProcessPrevAlloc` now unlinks by bounded queue scan and clears `priority_next` /
+  `priority_prev` before pushing a process onto the free list.
+- `gcGetGObjProcess` clears stale priority links on allocation and tries to detach the process from any
+  live queue by pointer identity before reuse.
+- `gcLinkGObjProcess` performs the same pre-link detach/clear, catching recycled nodes even if their
+  priority was overwritten before cleanup.
+- `func_80007784` no longer trusts `priority_prev` / `priority_next`; it scans all priority queues for
+  the process pointer and unlinks from the actual queue head, then clears the priority links. Stale links
+  on a non-member are logged and cleared instead of being used for blind splicing.
+
+Offline builds keep the vanilla queue operations.
+
 ## Next step
 
-Re-run the firefox + Castle-bumper soak. Read the `hang_cycle` line, then fix the double-link /
-free-list-splice at the identified interface/public lifecycle site (expected: extend the 07-01
-sentinel-first membership guard to the relevant interface/audience eject/relink path).
+Re-run the first-KO rebirth-halo soak. Expected: no `proc_cycle` watchdog hang after `REBIRTH_GATE
+halo_ensure`; if any stale process node is encountered, the log should show
+`gobjproc_priority_stale_links_cleared` / `gobjproc_priority_unlink_repaired` and the frame should
+continue.
 
 ## Verification
 

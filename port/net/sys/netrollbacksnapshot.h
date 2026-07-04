@@ -142,6 +142,8 @@ extern void syNetRbSnapTrySpawnThunderFromSpecialLw(struct GObj *fighter_gobj);
  * this fighter. Diagnostic use: catch the tick a restore drops the halo so the platform goes invisible. */
 extern sb32 syNetRbSnapLiveFighterHasRebirthHalo(struct GObj *fighter_gobj);
 #if defined(PORT) && defined(SSB64_NETMENU)
+/* Diagnostic only: logs live rebirth-halo effect pose and TopN coupling for a fighter. */
+extern void syNetRbSnapDiagLogRebirthHaloPose(const char *tag, u32 tick, struct GObj *fighter_gobj);
 /* Eject dead/orphan effect shells so rebirth-halo MakeEffect can allocate. */
 extern void syNetRbSnapReclaimStaleEffectShellsForRebirthHalo(s32 *ejected_out, s32 *ef_struct_free_out);
 #endif

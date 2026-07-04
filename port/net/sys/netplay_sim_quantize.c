@@ -1016,6 +1016,64 @@ void syNetplayCanonicalizeFighterAttackCollPositions(GObj *fighter_gobj)
 	}
 }
 
+static sb32 syNetplayFighterInPassPlatformGroundCollScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	if ((fp->coll_data.floor_flags & MAP_VERTEX_COLL_PASS) == 0U)
+	{
+		return FALSE;
+	}
+	if (fp->ga != nMPKineticsGround)
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTCommonStatusSquat:
+	case nFTCommonStatusSquatWait:
+	case nFTCommonStatusPass:
+	case nFTCommonStatusGuardPass:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static void syNetplayHardenPassPlatformCollForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInPassPlatformGroundCollScope(fp) == FALSE)
+	{
+		return;
+	}
+	if (fp->joints[nFTPartsJointTopN] == NULL)
+	{
+		return;
+	}
+	topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
 void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -1087,6 +1145,10 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	syNetplayCanonicalizeNessSpecialLwSimState(fighter_gobj);
 	syNetplayCanonicalizePikachuQuickAttackSimState(fighter_gobj);
 	syNetplayCanonicalizeFoxFirefoxSimState(fighter_gobj);
+	if (syNetplayFighterInPassPlatformGroundCollScope(fp) != FALSE)
+	{
+		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
+	}
 }
 
 void syNetplayQuantizeGMCameraState(GMCamera *camera, f32 *pause_eye_x, f32 *pause_eye_y)
@@ -1206,6 +1268,23 @@ void syNetplayCanonicalizeActiveItemsForNetplay(void)
 	}
 }
 
+void syNetplayHardenPassPlatformCollBeforeSim(void)
+{
+	GObj *fighter_gobj;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+#endif
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
+	}
+}
+
 void syNetplayCanonicalizeActiveFightersForNetplay(void)
 {
 	GObj *fighter_gobj;
@@ -1261,10 +1340,6 @@ void syNetplayCanonicalizeRebirthFighterMapPose(GObj *fighter_gobj)
 {
 	FTStruct *fp;
 	DObj *dobj;
-	f32 apex_y;
-	f32 base_y;
-	f32 wait_sq;
-	f32 map_y;
 	sb32 vs_active;
 
 	if (fighter_gobj == NULL)
@@ -1303,23 +1378,14 @@ void syNetplayCanonicalizeRebirthFighterMapPose(GObj *fighter_gobj)
 		return;
 	}
 	/*
-	 * Vanilla only runs ftCommonRebirthCommonProcMap (the descending-platform Y derivation) during
-	 * RebirthDown. RebirthStand/RebirthWait never touch the root Y again — it stays static at the last
-	 * Down frame (== halo_offset.y once halo_lower_wait hit 0). Re-deriving it here on every rollback /
-	 * synctest-verify canonicalize pass forks the captured gobj_translate whenever this runs before the
-	 * rebirth union is restored (e.g. the verify-prep reapply path canonicalizes without restoring the
-	 * union first), collapsing the fighter to Y=0 and cascading a stale-halo prune. Match vanilla: only
-	 * re-derive during RebirthDown; trust the restored blob pose for Stand/Wait.
-	 * See docs/bugs/netplay_rebirth_wait_pose_derive_synctest_2026-07-02.md.
+	 * Rebirth root Y is authoritative as captured pose. Vanilla forward sim derives RebirthDown Y in
+	 * ftCommonRebirthCommonProcMap before reaching this hook; rollback load/verify paths can call this
+	 * canonicalizer after the live rebirth union's halo_lower_wait has advanced past the loaded tick.
+	 * Re-deriving here then writes a newer platform Y over the snapshot pose even if the union is later
+	 * restored, producing figh-only LOAD_HASH_DRIFT. Quantize the restored/forward-derived pose instead.
+	 * See docs/bugs/netplay_rebirth_wait_pose_derive_synctest_2026-07-02.md and
+	 * docs/bugs/netplay_rebirth_down_pose_derive_load_cycle_2026-07-03.md.
 	 */
-	if (fp->status_id == nFTCommonStatusRebirthDown)
-	{
-		apex_y = ftStatusVarsRebirth(fp)->pos.y;
-		base_y = ftStatusVarsRebirth(fp)->halo_offset.y;
-		wait_sq = (f32)SQUARE(ftStatusVarsRebirth(fp)->halo_lower_wait);
-		map_y = (((apex_y - base_y) / 8100.0F) * wait_sq) + base_y;
-		dobj->translate.vec.f.y = map_y;
-	}
 	if (syNetplaySimQuantizeActive() != FALSE)
 	{
 		syNetplayQuantizeDObjTranslate(dobj);

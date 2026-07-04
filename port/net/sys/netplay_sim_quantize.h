@@ -86,6 +86,12 @@ extern void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj);
 extern void syNetplayCanonicalizeActiveFightersForNetplay(void);
 
 /*
+ * Before gcRunAll on pass-through platforms: re-anchor MPColl pos_prev to TopN for grounded
+ * Squat/SquatWait/Pass/GuardPass so Pass-entry diff-branch translate matches cross-ISA.
+ */
+extern void syNetplayHardenPassPlatformCollBeforeSim(void);
+
+/*
  * Shared-grid pass over a live item's folded sim state: ITPhysics (vel_ground/vel_air) and the root
  * DObj translate (the position syNetSyncFoldItemState hashes). Movable items (Peach's Castle GBumper)
  * otherwise accumulate cross-ISA f32 position drift that forces an unrecoverable deep resim.

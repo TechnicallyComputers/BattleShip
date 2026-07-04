@@ -2910,28 +2910,41 @@ void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, c
 		}
 		if (ip->kind == nITKindGBumper)
 		{
+			f32 px;
+			f32 py;
+			f32 pz;
 			f32 sx;
 			f32 sy;
 			f32 pal;
 
+			px = (dobj != NULL) ? dobj->translate.vec.f.x : 0.0F;
+			py = (dobj != NULL) ? dobj->translate.vec.f.y : 0.0F;
+			pz = (dobj != NULL) ? dobj->translate.vec.f.z : 0.0F;
 			sx = (dobj != NULL) ? dobj->scale.vec.f.x : 0.0F;
 			sy = (dobj != NULL) ? dobj->scale.vec.f.y : 0.0F;
 			pal = ((dobj != NULL) && (dobj->mobj != NULL)) ? dobj->mobj->palette_id : 0.0F;
 
 			/*
-			 * Raw vs quantized bit patterns for exactly the floats syNetSyncFoldGBumperItemExtras
-			 * folds (scale.x/y + palette_id) plus the integer fold inputs (multi, hit_anim_length).
-			 * Diff host vs guest line-by-line on a Peach's Castle cross-ISA soak: the first *_q
-			 * mismatch is the bumper field whose hashed bits diverge; a *_raw mismatch with matching
-			 * *_q means quantization absorbed it (not the desync source). unk_0x2/damage_all_delay
-			 * ride along (captured in item_vars, unfolded) to surface union aliasing.
+			 * Raw vs quantized bit patterns for the floats folded by the base item fold (position)
+			 * and syNetSyncFoldGBumperItemExtras (scale.x/y + palette_id), plus the integer fold
+			 * inputs. Diff host vs guest line-by-line on a Peach's Castle cross-ISA soak: the first
+			 * *_q mismatch is the field whose hashed bits diverge; a *_raw mismatch with matching *_q
+			 * means quantization absorbed it (not the desync source). unk_0x2/damage_all_delay ride
+			 * along (captured in item_vars, unfolded) to surface union aliasing.
 			 */
 			port_log(
 			    "SSB64 NetSync: item_fold_floats step=%u gobj_id=%u kind=gbumper "
+			    "px_raw=0x%08X py_raw=0x%08X pz_raw=0x%08X px_q=0x%08X py_q=0x%08X pz_q=0x%08X "
 			    "sx_raw=0x%08X sy_raw=0x%08X pal_raw=0x%08X sx_q=0x%08X sy_q=0x%08X pal_q=0x%08X "
 			    "multi=%u hit_anim_length=%u unk_0x2=%u damage_all_delay=%u\n",
 			    idx,
 			    (unsigned int)sorted[i]->id,
+			    syNetSyncF32RawBits(px),
+			    syNetSyncF32RawBits(py),
+			    syNetSyncF32RawBits(pz),
+			    syNetSyncHashF32(px),
+			    syNetSyncHashF32(py),
+			    syNetSyncHashF32(pz),
 			    syNetSyncF32RawBits(sx),
 			    syNetSyncF32RawBits(sy),
 			    syNetSyncF32RawBits(pal),

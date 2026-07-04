@@ -158,6 +158,13 @@ static u32 sSYNetRollbackResimBaselineDeeperAttempts;
 static sb32 sSYNetRollbackPreResimDeeperLoadUsed;
 static u32 sSYNetRollbackBaselineTimeoutStreak;
 static u32 sSYNetRollbackBaselineTimeoutWindowStartTick;
+/*
+ * load_tick at which this peer could not reproduce its own saved item hash during resim baseline
+ * post-load (figh/world/rng/weapon/map all agreed — item-only self load-fidelity drift, e.g. the
+ * Peach's Castle GBumper folding to a resting value on one ISA after a Firefox collision). Signals
+ * the baseline gate timeout to prefer a bounded deeper-load resync over a VS_SESSION_END teardown.
+ */
+static u32 sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = ~(u32)0;
 static s32 sSYNetRollbackResimCorrectionPlayer;
 static sb32 sSYNetRollbackPeerSnapshotAbort;
 static u32 sSYNetRollbackDebounceUntilSim;
@@ -1612,6 +1619,7 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackPreResimDeeperLoadUsed = FALSE;
 	sSYNetRollbackBaselineTimeoutStreak = 0U;
 	sSYNetRollbackBaselineTimeoutWindowStartTick = 0U;
+	sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = ~(u32)0;
 	sSYNetRollbackResimCorrectionPlayer = -1;
 	sSYNetRollbackLastPeerOutcomeValid = FALSE;
 	sSYNetRollbackLastPeerOutcomeTick = ~(u32)0;
@@ -1706,6 +1714,7 @@ void syNetRollbackStopVSSession(void)
 	sSYNetRollbackPeerBaselineResyncSteps = 0U;
 	sSYNetRollbackPeerBaselineResyncOriginMismatch = ~(u32)0;
 	sSYNetRollbackPeerBaselineResyncStormActive = FALSE;
+	sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = ~(u32)0;
 	syNetRollbackEpisodeReset();
 	syNetRollbackEpisodeFsmSessionReset();
 	sSYNetRollbackResimCorrectionPlayer = -1;
@@ -7531,6 +7540,8 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	sSYNetRollbackPeerBaselineSendPending = TRUE;
 	sSYNetRollbackResimBaselineDigestMatched = FALSE;
 	sSYNetRollbackResimSealRowsTimeoutRetries = 0U;
+	/* Fresh baseline arm: any item-only self load-fidelity drift is re-evaluated post-load below. */
+	sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = ~(u32)0;
 	sSYNetRollbackPeerBaselineLoadTick = load_tick;
 	/* Wire digests use ring slot hashes (saved at load_tick), not post-coupling live. */
 	sSYNetRollbackPeerBaselineFigh = wire.fighter;
@@ -7630,6 +7641,31 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 		    sSYNetRollbackPeerBaselineSlotFigh,
 		    live.world,
 		    sSYNetRollbackPeerBaselineSlotWorld);
+		/*
+		 * Item-only self load-fidelity drift: loading our own slot at load_tick did not reproduce our own
+		 * saved item hash (e.g. Peach's Castle GBumper during a Firefox collision folds to a resting value
+		 * on one ISA only). figh/world/rng already agree, so the divergent field is one the item fold reads
+		 * but the apply probe does not print. Emit the per-field item diff at the exact load-fidelity failure
+		 * point so a repro with SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1 pins the non-idempotent bumper field,
+		 * and record the load_tick so the baseline gate timeout backs off to an earlier clean slot rather
+		 * than freezing both peers into a VS_SESSION_END hard desync.
+		 * See docs/bugs/netplay_castle_bumper_resim_baseline_item_load_fidelity_2026-07-03.md.
+		 */
+		if (live.item != sSYNetRollbackPeerBaselineSlotItem)
+		{
+			syNetSyncLogItemHashDriftDiag(load_tick, sSYNetRollbackPeerBaselineSlotItem, live.item,
+						      "resim_baseline_item");
+			syNetSyncLogItemFieldDiffDiag(load_tick, sSYNetRollbackPeerBaselineSlotItem, live.item,
+						      "resim_baseline_item");
+			if ((live.fighter == sSYNetRollbackPeerBaselineSlotFigh) &&
+			    (live.world == sSYNetRollbackPeerBaselineSlotWorld) &&
+			    (live.rng == sSYNetRollbackPeerBaselineSlotRng) &&
+			    (live.weapon == sSYNetRollbackPeerBaselineSlotWeapon) &&
+			    (live.map == sSYNetRollbackPeerBaselineSlotMap))
+			{
+				sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = load_tick;
+			}
+		}
 	}
 	syNetPeerTrySendRollbackBaselineDigest();
 	syNetPeerTrySendEpisodeSealRows();
@@ -9309,6 +9345,39 @@ static void syNetRollbackOnBaselineGateTimeout(void)
 	}
 	if (sSYNetRollbackBaselineTimeoutStreak >= SYNETROLLBACK_BASELINE_TIMEOUT_STREAK_MAX)
 	{
+		/*
+		 * Before tearing the session down, back off to an earlier load-safe slot when the block is
+		 * recoverable: either this peer verified its own load (baseline digest matched — the peer is
+		 * stuck sealing) or this peer hit item-only self load-fidelity drift at this load_tick. A single
+		 * non-idempotent snapshot (Peach's Castle GBumper item hash folding to a resting value on one ISA
+		 * after a Firefox collision) poisons baseline agreement at THIS load_tick only; an earlier slot
+		 * predates the collision and reproduces cleanly, so a deeper resim converges over the poisoned tick
+		 * instead of freezing both peers into VS_SESSION_END. Bounded by DEEPER_MAX_ATTEMPTS and the ring;
+		 * if no clean earlier slot exists it falls through to the normal hard-desync teardown below.
+		 * See docs/bugs/netplay_castle_bumper_resim_baseline_item_load_fidelity_2026-07-03.md.
+		 */
+		if (((sSYNetRollbackResimBaselineDigestMatched != FALSE) ||
+		     (sSYNetRollbackBaselineItemOnlySelfDriftLoadTick == load_tick)) &&
+		    (sSYNetRollbackResimBaselineDeeperAttempts < SYNETROLLBACK_BASELINE_DEEPER_MAX_ATTEMPTS) &&
+		    (load_tick > 0U))
+		{
+			sSYNetRollbackResimBaselineDeeperAttempts++;
+			sSYNetRollbackResimAwaitingPeerBaseline = FALSE;
+			sSYNetRollbackResimBaselineGateOpen = FALSE;
+			sSYNetRollbackPeerBaselineSendPending = FALSE;
+			sSYNetRollbackResimPending = FALSE;
+			if (syNetRollbackTryRestartResimAtDeeperLoad(load_tick - 1U) != FALSE)
+			{
+				sSYNetRollbackBaselineTimeoutStreak = 0U;
+				sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = ~(u32)0;
+				port_log(
+				    "SSB64 NetRollback: RESIM_BASELINE_TIMEOUT streak — item/seal load-fidelity block, "
+				    "deeper-load resync from load_tick=%u attempt=%u (avoiding hard desync)\n",
+				    load_tick,
+				    (unsigned int)sSYNetRollbackResimBaselineDeeperAttempts);
+				return;
+			}
+		}
 		port_log(
 		    "SSB64 NetRollback: RESIM_BASELINE_TIMEOUT streak — hard desync recovery (load_tick=%u)\n",
 		    load_tick);
@@ -11385,6 +11454,7 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		/* Per-replayed-tick AObj probe: AfterBattleUpdate's trace never fires during resim, so the
 		 * forward-vs-resim comparison was blind to the replay window. phase=resim here. */
 		syNetplayTraceActiveFighterAObj(t);
+		syNetplayFoxFirefoxStateForkTraceTick(t, "resim_post_sim");
 #endif
 		syNetRollbackLogResimTickTrace(t);
 #if defined(SSB64_NETMENU)
