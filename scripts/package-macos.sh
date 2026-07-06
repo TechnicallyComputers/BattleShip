@@ -23,9 +23,10 @@
 # Notes:
 # - The .app does NOT include BattleShip.o2r — that's ROM-derived and gets
 #   extracted on first launch via the ImGui wizard.
-# - Code signing / notarization is not handled here; expect Gatekeeper to
-#   warn on first launch. A future pass should sign with `codesign --deep`
-#   and notarize via `notarytool`.
+# - Local builds ad-hoc sign the bundle with the mod-loader entitlements.
+#   CI sets MACOS_CODESIGN_IDENTITY + MACOS_NOTARY_* to Developer ID-sign
+#   the app, sign the DMG, submit it to Apple's notary service, and staple
+#   the returned ticket before upload.
 
 set -euo pipefail
 
@@ -53,6 +54,12 @@ JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "package-macos.sh runs on macOS only"
 
@@ -309,28 +316,64 @@ for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
     done
 done
 
-# ── 4b. Adhoc-sign the bundle as a unit ──
-# Modern Gatekeeper (Sequoia / 15.x+) flags downloaded adhoc-signed
-# bundles as "damaged" if the signature isn't deep enough to cover
-# every Mach-O inside. cp preserved each binary's linker-signature
-# individually, but the bundle as a whole isn't sealed — so the .app
-# refuses to install / launch from a quarantined DMG.
-#
-# `codesign --deep --force --sign -` walks the bundle, adhoc-signs
-# every executable and dylib, and writes a bundle-level signature
-# referencing all of them. Doesn't need an Apple Developer cert; it's
-# enough to satisfy Gatekeeper's structural check on a quarantined
-# download. For full "no warnings, no right-click-Open" we'd need a
-# real Developer ID Apple Distribution cert + notarization, but that
-# costs $99/yr and isn't tractable for an unsigned community port.
-#
-# Users who still hit "damaged" can run:
-#   xattr -dr com.apple.quarantine /Applications/BattleShip.app
-step "Adhoc-signing bundle"
-codesign --deep --force --sign - "$APP"
-codesign --verify --deep --strict "$APP" \
-    && echo "  signature verified" \
+# ── 4b. Sign the bundle as a unit ──
+# Sign after dylibbundler and install_name_tool because both mutate Mach-O
+# load commands. Developer ID CI uses hardened runtime + secure timestamp
+# for notarization; local builds keep an ad-hoc fallback so packaging stays
+# usable without Apple credentials. The main app signature always carries
+# the JIT / unsigned-executable-memory entitlements required by the mod
+# hook backend on Apple Silicon.
+SIGNING_IDENTITY="${MACOS_CODESIGN_IDENTITY:-}"
+SIGNING_MODE="developer-id"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+    SIGNING_MODE="ad-hoc"
+fi
+if [[ "$SIGNING_MODE" == "ad-hoc" ]] && truthy "${SSB64_REQUIRE_MACOS_SIGNING:-}"; then
+    fail "SSB64_REQUIRE_MACOS_SIGNING=1 but MACOS_CODESIGN_IDENTITY is empty"
+fi
+
+CODESIGN_KEYCHAIN_ARGS=()
+if [[ -n "${MACOS_CODESIGN_KEYCHAIN:-}" ]]; then
+    CODESIGN_KEYCHAIN_ARGS=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
+fi
+CODESIGN_RUNTIME_ARGS=()
+CODESIGN_TIMESTAMP_ARGS=(--timestamp=none)
+if [[ "$SIGNING_MODE" == "developer-id" ]]; then
+    CODESIGN_RUNTIME_ARGS=(--options runtime)
+    CODESIGN_TIMESTAMP_ARGS=(--timestamp)
+fi
+CODESIGN_BASE_ARGS=(
+    --force
+    --sign "$SIGNING_IDENTITY"
+    "${CODESIGN_KEYCHAIN_ARGS[@]+"${CODESIGN_KEYCHAIN_ARGS[@]}"}"
+    "${CODESIGN_RUNTIME_ARGS[@]+"${CODESIGN_RUNTIME_ARGS[@]}"}"
+    "${CODESIGN_TIMESTAMP_ARGS[@]}"
+)
+
+is_macho_file() {
+    file "$1" | grep -q 'Mach-O'
+}
+
+step "$([[ "$SIGNING_MODE" == "developer-id" ]] && echo "Developer ID-signing bundle" || echo "Ad-hoc signing bundle")"
+while IFS= read -r -d '' path; do
+    [[ "$path" == "$APP/Contents/MacOS/$APP_NAME" ]] && continue
+    if is_macho_file "$path"; then
+        printf '  signing nested code: %s\n' "${path#$APP/}"
+        codesign "${CODESIGN_BASE_ARGS[@]}" "$path"
+    fi
+done < <(find "$APP" -type f -print0)
+
+codesign "${CODESIGN_BASE_ARGS[@]}" \
+    --entitlements "$ROOT/cmake/macos_entitlements.plist" \
+    "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP" \
     || fail "codesign verify failed on $APP"
+if ! codesign -d --entitlements :- "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null \
+    | grep -q 'com.apple.security.cs.allow-jit'; then
+    fail "signed app is missing the macOS mod-loader entitlements"
+fi
+echo "  signature verified ($SIGNING_MODE)"
 
 # ── 5. Build a drag-and-drop DMG ──
 # Two paths, because the pretty one isn't safe everywhere:
@@ -460,6 +503,51 @@ fi
 
 rm -rf "$DMG_STAGE" "$DMG_BG_DIR"
 [[ -f "$DMG" ]] || fail "DMG was not created"
+
+if [[ "$SIGNING_MODE" == "developer-id" ]]; then
+    step "Signing DMG"
+    codesign \
+        --force \
+        --sign "$SIGNING_IDENTITY" \
+        "${CODESIGN_KEYCHAIN_ARGS[@]+"${CODESIGN_KEYCHAIN_ARGS[@]}"}" \
+        --timestamp \
+        "$DMG"
+    codesign --verify --verbose=2 "$DMG" \
+        || fail "codesign verify failed on $DMG"
+fi
+
+WANT_NOTARIZE=0
+if truthy "${SSB64_NOTARIZE:-}"; then
+    WANT_NOTARIZE=1
+elif [[ -n "${MACOS_NOTARY_APPLE_ID:-}${MACOS_NOTARY_TEAM_ID:-}${MACOS_NOTARY_PASSWORD:-}" ]]; then
+    WANT_NOTARIZE=1
+fi
+if [[ "$WANT_NOTARIZE" -eq 1 ]]; then
+    [[ "$SIGNING_MODE" == "developer-id" ]] \
+        || fail "notarization requires Developer ID signing"
+    missing=()
+    for name in MACOS_NOTARY_APPLE_ID MACOS_NOTARY_TEAM_ID MACOS_NOTARY_PASSWORD; do
+        if [[ -z "${!name:-}" ]]; then
+            missing+=("$name")
+        fi
+    done
+    if [[ "${#missing[@]}" -ne 0 ]]; then
+        fail "missing macOS notarization secret(s): ${missing[*]}"
+    fi
+
+    step "Notarizing DMG"
+    xcrun notarytool submit "$DMG" \
+        --apple-id "$MACOS_NOTARY_APPLE_ID" \
+        --team-id "$MACOS_NOTARY_TEAM_ID" \
+        --password "$MACOS_NOTARY_PASSWORD" \
+        --wait
+
+    step "Stapling notarization ticket"
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG" \
+        || fail "spctl assessment failed for notarized DMG"
+fi
 
 # ── 6. Report ──
 APP_KB=$(du -sk "$APP" | awk '{print $1}')

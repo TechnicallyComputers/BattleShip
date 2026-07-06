@@ -85,9 +85,78 @@ jobs:
         with:
           key: release-macos-${{ matrix.version }}
           max-size: 2G
+      - name: Import Developer ID certificate
+        # Developer ID certs must be imported into a writable keychain on
+        # ephemeral GitHub-hosted macOS runners before `codesign` can use
+        # them. The .p12 is stored base64-encoded in repo secrets; the
+        # matching notary credentials are passed only to package-macos.sh.
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64:   ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD:         ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY:         ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          missing=()
+          for name in \
+            MACOS_DEVELOPER_ID_P12_BASE64 \
+            MACOS_DEVELOPER_ID_P12_PASSWORD \
+            MACOS_KEYCHAIN_PASSWORD \
+            MACOS_CODESIGN_IDENTITY
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf '::error::Missing macOS signing secret(s): %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          CERT_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/battleship-signing.keychain-db"
+
+          python3 - <<'PY' > "$CERT_PATH"
+          import base64
+          import os
+          import sys
+
+          sys.stdout.buffer.write(base64.b64decode(os.environ["MACOS_DEVELOPER_ID_P12_BASE64"]))
+          PY
+
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_DEVELOPER_ID_P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$MACOS_KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F -- "$MACOS_CODESIGN_IDENTITY" >/dev/null; then
+            echo "::error::MACOS_CODESIGN_IDENTITY was not found in the imported keychain"
+            exit 1
+          fi
+
+          echo "MACOS_CODESIGN_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
       - name: Package macOS .app + .dmg
         env:
           SSB64_VERSION: ${{ matrix.version }}
+          SSB64_REQUIRE_MACOS_SIGNING: "1"
+          SSB64_NOTARIZE: "1"
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@v4
         # The .dmg is the standard drag-to-Applications installer macOS
