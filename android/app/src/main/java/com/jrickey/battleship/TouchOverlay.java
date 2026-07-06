@@ -126,13 +126,15 @@ public final class TouchOverlay {
         //     touches), or (b) the LUS menu is open (touches need to fall
         //     through to ImGui for menu navigation).
         //
-        //   * menuButton — just the hamburger. Stays visible even when a
-        //     physical gamepad is paired, because most pads don't have a
-        //     "open settings" button bound. Hidden only while the menu is
-        //     actually open (it has its own close-menu X then).
+        //   * menuButton — just the hamburger. Auto-hides on the same two
+        //     conditions as gameplayLayer: a physical gamepad is in control
+        //     (its Select button opens the LUS menu, so the touch shortcut
+        //     is redundant), or the menu is already open (taps need to fall
+        //     through to ImGui).
         //
-        // Splitting them avoids the previous bug where pairing a controller
-        // hid the menu hamburger too, locking the user out of settings.
+        // Both layers now share identical visibility rules — see
+        // refreshOverlayVisibility(). They're kept as separate views only
+        // because they group logically distinct controls (gameplay vs. menu).
         FrameLayout gameplayLayer = new FrameLayout(activity);
         FrameLayout menuLayer     = new FrameLayout(activity);
 
@@ -206,49 +208,51 @@ public final class TouchOverlay {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        installControllerWatcher(activity, gameplayLayer);
+        installControllerWatcher(activity, gameplayLayer, menuLayer);
         installMenuVisibilityPoller(activity, gameplayLayer, menuLayer);
     }
 
     /**
-     * Hide the gameplay overlay (stick + face buttons) whenever LUS's menu
-     * is visible — otherwise the stick area swallows taps on menu items
-     * before they reach ImGui. The hamburger button gets hidden too while
-     * the menu is open, since the menu has its own close-X.
+     * Single source of truth for overlay visibility. Both layers are hidden
+     * when either condition holds:
      *
-     * We poll because the menu can close from inside (X button, ESC),
-     * not just from our hamburger tap. 100ms is cheap and imperceptible.
+     *   - a physical gamepad is in control — its buttons replace the on-screen
+     *     stick/face cluster, and its Select button opens the LUS menu, so the
+     *     hamburger is redundant too; or
+     *   - the LUS menu is open — touches must fall through to ImGui, otherwise
+     *     the stick area swallows taps on menu items.
+     *
+     * Idempotent: {@link View#setVisibility} no-ops when the value is
+     * unchanged, so this is safe to call every poll tick and on every
+     * input-device change.
+     */
+    private static void refreshOverlayVisibility(View gameplayLayer, View menuLayer) {
+        boolean menuOpen;
+        try {
+            menuOpen = isMenuVisible();
+        } catch (UnsatisfiedLinkError e) {
+            // Native side not yet ready (pre-SDL_main) — treat menu as closed.
+            menuOpen = false;
+        }
+        int vis = (menuOpen || countGamepads() > 0) ? View.GONE : View.VISIBLE;
+        gameplayLayer.setVisibility(vis);
+        menuLayer.setVisibility(vis);
+    }
+
+    /**
+     * Poll overlay visibility on a 100ms cadence. We poll because the menu
+     * can close from inside (X button, ESC), not just from our hamburger tap,
+     * and neither event pushes a signal to Java. 100ms is cheap and
+     * imperceptible. The actual show/hide decision lives in
+     * {@link #refreshOverlayVisibility}.
      */
     private static void installMenuVisibilityPoller(Activity activity,
                                                     View gameplayLayer,
                                                     View menuLayer) {
         final Handler ui = new Handler(Looper.getMainLooper());
         Runnable poller = new Runnable() {
-            boolean lastVisible = false;
             @Override public void run() {
-                boolean nowVisible;
-                try {
-                    nowVisible = isMenuVisible();
-                } catch (UnsatisfiedLinkError e) {
-                    // Native side not yet ready (pre-SDL_main). Try again next tick.
-                    ui.postDelayed(this, 100);
-                    return;
-                }
-                if (nowVisible != lastVisible) {
-                    lastVisible = nowVisible;
-                    if (nowVisible) {
-                        // Menu open: hide everything so taps reach ImGui.
-                        gameplayLayer.setVisibility(View.GONE);
-                        menuLayer.setVisibility(View.GONE);
-                    } else {
-                        // Menu closed: hamburger always comes back, gameplay
-                        // only if no real gamepad is in control.
-                        menuLayer.setVisibility(View.VISIBLE);
-                        if (countGamepads() == 0) {
-                            gameplayLayer.setVisibility(View.VISIBLE);
-                        }
-                    }
-                }
+                refreshOverlayVisibility(gameplayLayer, menuLayer);
                 ui.postDelayed(this, 100);
             }
         };
@@ -258,15 +262,16 @@ public final class TouchOverlay {
     }
 
     /**
-     * Auto-hide the gameplay overlay (stick + face buttons) when a
-     * physical controller is paired. SDL2's SDLControllerManager reports
-     * paired controllers to the native side independently of our virtual
-     * joystick, so without this LUS sees two controllers (real + virtual)
-     * and the user gets duplicate input.
+     * Auto-hide the whole overlay (stick + face buttons AND the menu
+     * hamburger) when a physical controller is paired. SDL2's
+     * SDLControllerManager reports paired controllers to the native side
+     * independently of our virtual joystick, so without this LUS sees two
+     * controllers (real + virtual) and the user gets duplicate input.
      *
-     * Important: the menu hamburger lives in a separate sibling layer
-     * and is NOT toggled here — pads rarely have a "open settings"
-     * binding, so the touch shortcut needs to stay reachable.
+     * The menu hamburger hides along with the gameplay controls: a paired
+     * pad's Select button opens the LUS menu (matching libultraship's
+     * default), so the on-screen shortcut is redundant. Both layers share
+     * one visibility rule — see {@link #refreshOverlayVisibility}.
      *
      * Detection is via Android's InputManager — we count every device
      * whose source mask includes SOURCE_GAMEPAD or SOURCE_JOYSTICK and
@@ -275,7 +280,9 @@ public final class TouchOverlay {
      */
     private static final String TAG = "ssb64.touch";
 
-    private static void installControllerWatcher(Activity activity, View gameplayLayer) {
+    private static void installControllerWatcher(Activity activity,
+                                                 View gameplayLayer,
+                                                 View menuLayer) {
         Object svc = activity.getSystemService(Context.INPUT_SERVICE);
         if (!(svc instanceof InputManager)) {
             Log.w(TAG, "InputManager unavailable, overlay always visible");
@@ -286,9 +293,9 @@ public final class TouchOverlay {
 
         Runnable refresh = () -> {
             int count = countGamepads();
-            boolean hide = count > 0;
-            Log.i(TAG, "controller-watch: gamepads=" + count + " gameplay-layer=" + (hide ? "hidden" : "shown"));
-            gameplayLayer.setVisibility(hide ? View.GONE : View.VISIBLE);
+            Log.i(TAG, "controller-watch: gamepads=" + count
+                     + " overlay=" + (count > 0 ? "hidden" : "shown"));
+            refreshOverlayVisibility(gameplayLayer, menuLayer);
         };
 
         ui.post(refresh);
