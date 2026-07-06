@@ -5,9 +5,10 @@ name: Release
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
 # Platform jobs build the releasable artifacts, matrixed over ROM versions
-# where applicable. Windows additionally emits a standard package with
-# scripting disabled by default plus an opt-in US modding package with TCC.
-# Desktop jobs build through the corresponding scripts/package-*.sh|.ps1
+# where applicable. Windows emits exactly two packages: US and JP. The US
+# package includes scripting/modding support by default; JP keeps scripting
+# disabled until the TCC mod API is region-aware. Desktop jobs build through
+# the corresponding scripts/package-*.sh|.ps1
 # helper (SSB64_VERSION selects the region). A final `release` job stitches
 # the artifacts into a GitHub Release attached to the tag.
 #
@@ -374,20 +375,13 @@ jobs:
       matrix:
         include:
           - version: us
-            flavor: standard
-            enable_scripting: "0"
+            enable_scripting: "1"
             artifact_name: BattleShip-windows-us
             artifact_path: dist/BattleShip-windows.zip
           - version: jp
-            flavor: standard
             enable_scripting: "0"
             artifact_name: BattleShip-windows-jp
             artifact_path: dist/BattleShip-JP-windows.zip
-          - version: us
-            flavor: modding
-            enable_scripting: "1"
-            artifact_name: BattleShip-windows-us-modding
-            artifact_path: dist/BattleShip-windows-modding.zip
     steps:
       - uses: actions/checkout@v4
         with:
@@ -415,7 +409,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow
         shell: pwsh
-      - name: Package Windows zip (${{ matrix.flavor }})
+      - name: Package Windows zip (${{ matrix.version }})
         env:
           SSB64_VERSION: ${{ matrix.version }}
           SSB64_ENABLE_SCRIPTING: ${{ matrix.enable_scripting }}
@@ -469,7 +463,6 @@ jobs:
             artifacts/BattleShip-JP-x86_64.AppImage
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
-            artifacts/BattleShip-windows-modding.zip
             artifacts/BattleShip-android.apk
             artifacts/SHA256SUMS.txt
           generate_release_notes: true
