@@ -154,6 +154,9 @@ jobs:
           SSB64_VERSION: ${{ matrix.version }}
           SSB64_REQUIRE_MACOS_SIGNING: "1"
           SSB64_NOTARIZE: "1"
+          DMG_STYLED: "1"
+          DMG_REQUIRE_STYLED: "1"
+          DMG_TIMEOUT: "300"
           MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
