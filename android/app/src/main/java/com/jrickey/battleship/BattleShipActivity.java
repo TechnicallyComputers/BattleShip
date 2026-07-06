@@ -2,6 +2,9 @@ package com.jrickey.battleship;
 
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
+import android.util.Log;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 
 import org.libsdl.app.SDLActivity;
 
@@ -66,6 +69,53 @@ public class BattleShipActivity extends SDLActivity {
     @Override
     public void setRequestedOrientation(int requestedOrientation) {
         super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
+    /**
+     * Route the hardware buttons that should open/close the in-game (LUS)
+     * menu to {@link TouchOverlay#toggleMenu()}.
+     *
+     * With the on-screen hamburger auto-hidden whenever a physical controller
+     * is active (see TouchOverlay.refreshOverlayVisibility), a handheld like
+     * the Odin 2 otherwise has no way into the menu — this port binds no
+     * gamepad button to the menu by default. We wire two:
+     *
+     *   - Android Back button   (KEYCODE_BACK)
+     *   - Gamepad Select button (KEYCODE_BUTTON_SELECT)
+     *
+     * dispatchKeyEvent is the Activity's earliest key hook, so we see these
+     * before SDL/LUS. We toggle on the initial ACTION_DOWN (repeatCount 0)
+     * and swallow both DOWN and UP so the press isn't also delivered to the
+     * game. toggleMenu() handles open and close, so the same button dismisses
+     * the menu.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        final int keyCode = event.getKeyCode();
+        final boolean isMenuKey =
+               keyCode == KeyEvent.KEYCODE_BACK
+            || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT;
+
+        // Diagnostic: log gamepad button-downs so an unexpected Select
+        // mapping (pads vary) can be identified from `adb logcat -s ssb64.keys`.
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
+            && (isMenuKey
+                || (event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD)) {
+            Log.i("ssb64.keys", "keyDown code=" + keyCode
+                + " (" + KeyEvent.keyCodeToString(keyCode) + ") menuKey=" + isMenuKey);
+        }
+
+        if (isMenuKey) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                try {
+                    TouchOverlay.toggleMenu();
+                } catch (UnsatisfiedLinkError e) {
+                    // Native side not up yet (pre-SDL_main) — ignore this press.
+                }
+            }
+            return true; // consume DOWN and UP
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override
