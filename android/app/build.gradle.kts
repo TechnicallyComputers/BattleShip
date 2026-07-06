@@ -124,16 +124,28 @@ android {
 
     defaultConfig {
         applicationId = "com.jrickey.battleship"
-        minSdk = 26          // matches CMake -DANDROID_PLATFORM=android-26
+        // Production/default floor is Android 8.0 (API 26). The newest SDK
+        // manager-provided armeabi-v7a emulator image is API 25, so local
+        // emulator verification can temporarily lower this with
+        // -Pssb64.minSdk=25; AGP forwards that minSdk into the CMake Android
+        // platform for the native build.
+        val ssb64MinSdk = (project.findProperty("ssb64.minSdk") as String?)?.toInt() ?: 26
+        minSdk = ssb64MinSdk
         targetSdk = 34       // Play Store requires >= 34 (since Aug 2024)
         versionCode = 1
         versionName = "0.1.0-spike"
 
-        // Single ABI for now. arm64-v8a covers ~99% of in-use Android devices
-        // and runs natively on the M-series emulator. Add x86_64 if you need
-        // to test on Intel-host emulators.
+        // ABIs to build. Default arm64-v8a (covers ~99% of in-use devices and
+        // runs natively on the M-series emulator). Override at the command line
+        // with -Pssb64.abis=armeabi-v7a (or a comma-separated list, e.g.
+        // "arm64-v8a,armeabi-v7a") to build 32-bit ARM for older devices and
+        // cheap Android TV boxes. See docs/android_armeabi_v7a_2026-06-20.md.
+        // Add x86_64 if you need Intel-host emulators.
+        val ssb64Abis = (project.findProperty("ssb64.abis") as String?)
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?: listOf("arm64-v8a")
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += ssb64Abis
         }
 
         externalNativeBuild {

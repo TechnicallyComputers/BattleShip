@@ -18,6 +18,7 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(DISABLE_SCRIPTING ON CACHE BOOL "Disable the mod system (scripting + hooks)" FORCE)
 endif()
+
 if (DISABLE_SCRIPTING)
     # Define for every superproject target (ssb64_game + the exe + port glue)
     # so the #ifndef DISABLE_SCRIPTING guards in port/*.cpp engage. libultraship
@@ -787,13 +788,16 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # SDLActivity (Java) loads a shared library and calls SDL_main from it
     # via dlsym. Output name `main` matches SDL2's default `libmain.so`
-    # lookup. The aarch64 coroutine asm shim is pulled in here so the
-    # SHARED target builds with the .S preprocessed by clang.
+    # lookup. Both ARM coroutine asm shims are pulled in here so the SHARED
+    # target builds with the .S preprocessed by clang; each file's body is
+    # #if-guarded on the target arch (__aarch64__ / __arm__), so only the
+    # one matching ANDROID_ABI emits code.
     add_library(${PROJECT_NAME} SHARED
         ${SSB64_SRC_PORT}
         ${SSB64_DEBUG_TOOLS}
         $<TARGET_OBJECTS:ssb64_game>
         port/coroutine_aarch64.S
+        port/coroutine_armv7.S
     )
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "main")
 else()
@@ -1351,17 +1355,19 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(torch_runner PRIVATE torch)
     set_target_properties(torch_runner PROPERTIES OUTPUT_NAME "torch_runner")
 
-    # Standalone aarch64 coroutine test (off by default — opt in for asm
+    # Standalone ARM coroutine test (off by default — opt in for asm
     # regression validation, see docs/android_port_status_*.md). Pushes a
     # tiny binary to /data/local/tmp/ to verify the asm context-switch
-    # without needing the full game.
+    # without needing the full game. Both .S shims are arch-#if-guarded, so
+    # the same target builds for arm64-v8a and armeabi-v7a.
     option(SSB64_BUILD_COROUTINE_TEST
-        "Build the aarch64 coroutine standalone test binary (Android)" OFF)
+        "Build the ARM coroutine standalone test binary (Android)" OFF)
     if (SSB64_BUILD_COROUTINE_TEST)
         add_executable(coroutine_test
             port/coroutine_test.cpp
             port/coroutine_android.cpp
             port/coroutine_aarch64.S
+            port/coroutine_armv7.S
         )
         target_include_directories(coroutine_test PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/port

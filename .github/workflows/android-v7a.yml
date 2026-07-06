@@ -1,0 +1,79 @@
+# Builds the Android APK for armeabi-v7a (32-bit ARM) with the real NDK r29.
+#
+# This exists because the dev sandbox's network policy blocks dl.google.com,
+# so the NDK can't be fetched there — but GitHub's hosted runners can. This
+# job is the real-toolchain verification for the armeabi-v7a coroutine backend
+# and the per-ABI build of the whole dependency stack (libultraship, SDL2,
+# StormLib, ...). See docs/android_armeabi_v7a_2026-06-20.md.
+name: android-armeabi-v7a
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'port/**'
+      - 'CMakeLists.txt'
+      - 'decomp'
+      - 'libultraship'
+      - 'torch'
+      - '.github/workflows/android-v7a.yml'
+  push:
+    branches:
+      - main
+      - claude/32bit-x86-feasibility-n4utui
+    paths:
+      - 'android/**'
+      - 'port/**'
+      - 'CMakeLists.txt'
+      - 'decomp'
+      - 'libultraship'
+      - 'torch'
+      - '.github/workflows/android-v7a.yml'
+  workflow_dispatch:
+
+jobs:
+  build-android-v7a:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r (Fast3D shaders staged at repo root)
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Build armeabi-v7a APK (debug-signed)
+        # assembleDebug avoids the release keystore. The -Pssb64.abis property
+        # drives AGP's externalNativeBuild to configure + compile the full
+        # CMake graph for ANDROID_ABI=armeabi-v7a — which is exactly the
+        # real-NDK verification we want for the 32-bit ARM port.
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug -Pssb64.abis=armeabi-v7a
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          apk=(android/app/build/outputs/apk/debug/app-debug*.apk)
+          if (( ${#apk[@]} == 0 )); then
+            echo "::error::no armeabi-v7a APK produced"
+            ls -la android/app/build/outputs/apk/debug/ || true
+            exit 1
+          fi
+          cp "${apk[0]}" dist/BattleShip-android-armeabi-v7a.apk
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android-armeabi-v7a
+          path: dist/BattleShip-android-armeabi-v7a.apk
+          if-no-files-found: error
