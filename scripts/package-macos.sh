@@ -281,6 +281,44 @@ else
     dylibbundler "${DYLIBBUNDLER_ARGS[@]}"
 fi
 
+# Homebrew's current `sdl2` formula is an alias for `sdl2-compat`, an SDL2 ABI
+# wrapper that loads SDL3 with dlopen(). Because that SDL3 dependency is not a
+# Mach-O LC_LOAD_DYLIB entry, dylibbundler cannot discover it from `otool -L`.
+# Ship SDL3 next to SDL2 when the bundled SDL2 dylib is the compatibility layer.
+SDL2_BUNDLED="$APP/Contents/Frameworks/libSDL2-2.0.0.dylib"
+needs_sdl3=0
+if [[ -f "$SDL2_BUNDLED" ]] && grep -qiE 'sdl2-compat|SDL2COMPAT|Failed loading SDL3' < <(strings "$SDL2_BUNDLED"); then
+    needs_sdl3=1
+fi
+truthy "${SSB64_FORCE_BUNDLE_SDL3:-}" && needs_sdl3=1
+if [[ "$needs_sdl3" -eq 1 ]]; then
+    step "Bundling SDL3 for Homebrew sdl2-compat"
+    SDL3_PREFIX=""
+    if command -v brew >/dev/null 2>&1; then
+        SDL3_PREFIX="$(brew --prefix sdl3 2>/dev/null || true)"
+    fi
+    SDL3_DYLIB=""
+    for candidate in \
+        "${SDL3_PREFIX:+$SDL3_PREFIX/lib/libSDL3.dylib}" \
+        "${SDL3_PREFIX:+$SDL3_PREFIX/lib/libSDL3.0.dylib}" \
+        /opt/homebrew/opt/sdl3/lib/libSDL3.dylib \
+        /opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib \
+        /usr/local/opt/sdl3/lib/libSDL3.dylib \
+        /usr/local/opt/sdl3/lib/libSDL3.0.dylib
+    do
+        [[ -n "$candidate" && -f "$candidate" ]] || continue
+        SDL3_DYLIB="$candidate"
+        break
+    done
+    [[ -n "$SDL3_DYLIB" ]] || fail "bundled SDL2 needs SDL3, but libSDL3.dylib was not found"
+    SDL3_REAL="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SDL3_DYLIB")"
+    [[ -f "$SDL3_REAL" ]] || SDL3_REAL="$SDL3_DYLIB"
+    cp -f "$SDL3_REAL" "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    chmod +w "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    install_name_tool -id "@loader_path/libSDL3.0.dylib" "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    ln -snf libSDL3.0.dylib "$APP/Contents/Frameworks/libSDL3.dylib"
+fi
+
 # Sanity-check: no /opt/homebrew or /usr/local references should remain in
 # the binaries' load commands. Catches the case where dylibbundler missed a
 # transitive dep (rare, but worth failing loudly here rather than letting
@@ -393,15 +431,16 @@ echo "  signature verified ($SIGNING_MODE)"
 #
 #   • Plain (hdiutil) — a compressed image holding the .app plus an
 #     /Applications symlink, no background art, no Finder automation. Builds
-#     in seconds and cannot hang. This is what CI ships.
+#     in seconds and cannot hang. This is the CI-safe fallback.
 #
 # Path selection:
-#   DMG_PLAIN=1   force plain   (overrides everything)
-#   DMG_STYLED=1  force styled  (attempt it even under CI; still falls back)
-#   otherwise     plain when running under CI (GitHub Actions sets CI=true)
-#                 or when create-dmg is absent; styled on a dev machine.
+#   DMG_PLAIN=1           force plain   (overrides styled unless styled is required)
+#   DMG_STYLED=1          force styled  (attempt it even under CI; still falls back)
+#   DMG_REQUIRE_STYLED=1  fail if the styled path fails or is unavailable
+#   otherwise             plain when running under CI (GitHub Actions sets CI=true)
+#                         or when create-dmg is absent; styled on a dev machine.
 # The styled path falls back to plain on any failure or timeout, so this
-# script always emits a working DMG.
+# script always emits a working DMG unless DMG_REQUIRE_STYLED=1 is set.
 DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
@@ -479,6 +518,11 @@ mkdir -p "$DMG_STAGE" "$DMG_BG_DIR"
 cp -R "$APP" "$DMG_STAGE/"
 
 want_styled=1
+require_styled=0
+truthy "${DMG_REQUIRE_STYLED:-}" && require_styled=1
+if [[ -n "${DMG_PLAIN:-}" && "$require_styled" -eq 1 ]]; then
+    fail "DMG_PLAIN and DMG_REQUIRE_STYLED cannot both be set"
+fi
 if [[ -n "${DMG_PLAIN:-}" ]]; then
     want_styled=0
 elif [[ -n "${DMG_STYLED:-}" ]]; then
@@ -486,13 +530,17 @@ elif [[ -n "${DMG_STYLED:-}" ]]; then
 elif [[ -n "${CI:-}" ]]; then
     want_styled=0   # create-dmg's Finder/AppleScript step hangs on hosted CI
 fi
-command -v create-dmg >/dev/null || want_styled=0
+if ! command -v create-dmg >/dev/null; then
+    [[ "$require_styled" -eq 0 ]] || fail "DMG_REQUIRE_STYLED=1 but create-dmg is not in PATH"
+    want_styled=0
+fi
 
 if [[ "$want_styled" -eq 1 ]]; then
     step "Building styled DMG (create-dmg)"
     if build_styled_dmg && [[ -f "$DMG" ]]; then
         echo "  styled DMG built"
     else
+        [[ "$require_styled" -eq 0 ]] || fail "create-dmg failed or timed out and DMG_REQUIRE_STYLED=1"
         echo "  create-dmg failed or timed out — falling back to a plain hdiutil DMG" >&2
         detach_dmg_volume
         # create-dmg leaves a writable scratch image (rw.*.dmg) on failure.
