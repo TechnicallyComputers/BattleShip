@@ -271,12 +271,25 @@ jobs:
           if-no-files-found: error
 
   build-android:
+    name: build-android (${{ matrix.abi }})
     # US-only — the Android pipeline (Gradle asset staging, touch overlay,
     # ROM picker UI) has only ever been tested against the US decomp.
     # Pinning is also enforced in CMakeLists.txt; setting SSB64_VERSION=jp
-    # on Android would FATAL out at configure time.
+    # on Android would FATAL out at configure time. The ABI matrix produces
+    # separate sideload APKs so old 32-bit Android devices are covered without
+    # breaking the historical arm64 release filename.
     runs-on: ubuntu-22.04
-    timeout-minutes: 40
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            artifact_name: BattleShip-android
+            apk_name: BattleShip-android.apk
+          - abi: armeabi-v7a
+            artifact_name: BattleShip-android-armeabi-v7a
+            apk_name: BattleShip-android-armeabi-v7a.apk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -346,13 +359,16 @@ jobs:
         # is Play-Store-only (needs Google's bundletool to install on
         # a device), and this project isn't distributed through Play.
         # Skipping it also keeps the GitHub Release page uncluttered.
+        # The ssb64.abis Gradle property drives AGP's externalNativeBuild to
+        # configure and compile the full native dependency graph for the
+        # selected Android ABI.
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleRelease -Pssb64.abis=${{ matrix.abi }}
       - name: Stage release APK under a stable name
         # Gradle drops the file at app/build/outputs/apk/release/ with
         # a name like app-release.apk or app-release-unsigned.apk
-        # depending on signing config. Normalize to BattleShip-android.apk
-        # so the release job's files: list doesn't need a glob.
+        # depending on signing config. Normalize per ABI so the release
+        # job's files: list doesn't need a glob.
         run: |
           mkdir -p dist
           shopt -s nullglob
@@ -362,12 +378,12 @@ jobs:
             ls -la android/app/build/outputs/apk/release/ || true
             exit 1
           fi
-          cp "${apk[0]}" dist/BattleShip-android.apk
+          cp "${apk[0]}" "dist/${{ matrix.apk_name }}"
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: BattleShip-android
-          path: dist/BattleShip-android.apk
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.apk_name }}
           if-no-files-found: error
 
   build-windows:
@@ -458,8 +474,10 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          # Android: sideload APK only (no Play Store distribution, so
+          # Android: sideload APKs only (no Play Store distribution, so
           # the AAB is skipped). Android is US-only so there's no -JP.
+          # arm64-v8a keeps the historical filename; armeabi-v7a is separate
+          # for older 32-bit devices.
           files: |
             artifacts/BattleShip.dmg
             artifacts/BattleShip-JP.dmg
@@ -468,6 +486,7 @@ jobs:
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
             artifacts/BattleShip-android.apk
+            artifacts/BattleShip-android-armeabi-v7a.apk
             artifacts/SHA256SUMS.txt
           generate_release_notes: true
           draft: true   # land as a draft so a human can sanity-check
