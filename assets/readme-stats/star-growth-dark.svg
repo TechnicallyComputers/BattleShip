@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+<title id="title">GitHub star growth</title>
+<desc id="desc">JRickey/BattleShip has 337 stars in the current GitHub API data.</desc>
+<style>
+svg { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.surface { fill: #0d1117; stroke: #30363d; }
+.plot-bg { fill: #161b22; }
+.title { fill: #f0f6fc; font-size: 24px; font-weight: 700; }
+.subtitle { fill: #8b949e; font-size: 14px; }
+.axis { fill: #8b949e; font-size: 12px; }
+.grid { stroke: #30363d; stroke-width: 1; }
+.legend { fill: #f0f6fc; font-size: 13px; }
+.stat { fill: #f0f6fc; font-size: 22px; font-weight: 700; }
+.stat-label { fill: #8b949e; font-size: 12px; }
+</style>
+<rect class="surface" x="0.5" y="0.5" width="959" height="419" rx="10"/>
+<defs>
+<linearGradient id="starFill" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#9e6a03" stop-opacity="0.62"/>
+<stop offset="100%" stop-color="#161b22" stop-opacity="0.12"/>
+</linearGradient>
+</defs>
+<text class="title" x="36" y="40">GitHub star growth</text>
+<text class="subtitle" x="36" y="64">Since repository creation</text>
+<text class="stat" x="902" y="39" text-anchor="end">337</text>
+<text class="stat-label" x="902" y="61" text-anchor="end">stars</text>
+<rect class="plot-bg" x="72" y="100" width="840" height="250" rx="6"/>
+<line class="grid" x1="72" y1="350.00" x2="912" y2="350.00"/>
+<text class="axis" x="60" y="354.00" text-anchor="end">0</text>
+<line class="grid" x1="72" y1="287.50" x2="912" y2="287.50"/>
+<text class="axis" x="60" y="291.50" text-anchor="end">100</text>
+<line class="grid" x1="72" y1="225.00" x2="912" y2="225.00"/>
+<text class="axis" x="60" y="229.00" text-anchor="end">200</text>
+<line class="grid" x1="72" y1="162.50" x2="912" y2="162.50"/>
+<text class="axis" x="60" y="166.50" text-anchor="end">300</text>
+<line class="grid" x1="72" y1="100.00" x2="912" y2="100.00"/>
+<text class="axis" x="60" y="104.00" text-anchor="end">400</text>
+<text class="axis" x="72.00" y="384" text-anchor="middle">Apr 4, 2026</text>
+<text class="axis" x="352.00" y="384" text-anchor="middle">May 5, 2026</text>
+<text class="axis" x="632.00" y="384" text-anchor="middle">Jun 5, 2026</text>
+<text class="axis" x="912.00" y="384" text-anchor="middle">Jul 6, 2026</text>
+<path d="M 72.00 350.00 L 72.00 350.00 L 297.81 334.38 L 306.84 290.00 L 315.87 273.75 L 324.90 267.50 L 333.94 263.75 L 342.97 259.38 L 352.00 256.25 L 361.03 254.38 L 370.06 249.38 L 379.10 244.38 L 388.13 241.88 L 397.16 235.62 L 406.19 235.00 L 415.23 233.12 L 424.26 231.25 L 433.29 226.25 L 442.32 221.88 L 451.35 220.00 L 460.39 217.50 L 469.42 215.00 L 487.48 213.75 L 496.52 212.50 L 505.55 210.62 L 514.58 208.12 L 523.61 203.12 L 532.65 194.38 L 541.68 183.75 L 550.71 177.50 L 559.74 175.00 L 568.77 172.50 L 577.81 171.88 L 586.84 170.62 L 595.87 168.75 L 604.90 167.50 L 613.94 166.88 L 622.97 166.25 L 632.00 164.38 L 641.03 163.12 L 650.06 162.50 L 659.10 161.88 L 668.13 160.62 L 677.16 160.00 L 686.19 158.75 L 713.29 157.50 L 722.32 155.62 L 731.35 154.38 L 740.39 153.12 L 758.45 152.50 L 767.48 148.75 L 776.52 148.12 L 785.55 146.88 L 803.61 145.62 L 830.71 145.00 L 839.74 144.38 L 848.77 143.75 L 875.87 143.12 L 884.90 142.50 L 893.94 141.88 L 902.97 140.00 L 912.00 139.38 L 912.00 350.00 Z" fill="url(#starFill)"/>
+<path d="M 72.00 350.00 L 297.81 334.38 L 306.84 290.00 L 315.87 273.75 L 324.90 267.50 L 333.94 263.75 L 342.97 259.38 L 352.00 256.25 L 361.03 254.38 L 370.06 249.38 L 379.10 244.38 L 388.13 241.88 L 397.16 235.62 L 406.19 235.00 L 415.23 233.12 L 424.26 231.25 L 433.29 226.25 L 442.32 221.88 L 451.35 220.00 L 460.39 217.50 L 469.42 215.00 L 487.48 213.75 L 496.52 212.50 L 505.55 210.62 L 514.58 208.12 L 523.61 203.12 L 532.65 194.38 L 541.68 183.75 L 550.71 177.50 L 559.74 175.00 L 568.77 172.50 L 577.81 171.88 L 586.84 170.62 L 595.87 168.75 L 604.90 167.50 L 613.94 166.88 L 622.97 166.25 L 632.00 164.38 L 641.03 163.12 L 650.06 162.50 L 659.10 161.88 L 668.13 160.62 L 677.16 160.00 L 686.19 158.75 L 713.29 157.50 L 722.32 155.62 L 731.35 154.38 L 740.39 153.12 L 758.45 152.50 L 767.48 148.75 L 776.52 148.12 L 785.55 146.88 L 803.61 145.62 L 830.71 145.00 L 839.74 144.38 L 848.77 143.75 L 875.87 143.12 L 884.90 142.50 L 893.94 141.88 L 902.97 140.00 L 912.00 139.38" fill="none" stroke="#ffa657" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="912.00" cy="139.38" r="4.5" fill="#ffa657"/>
+</svg>
