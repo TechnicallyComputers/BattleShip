@@ -1117,6 +1117,13 @@ void PortMenu::AddMenuSettings() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip("Allows the player to pick a custom BGM track after the stage selection screen (music shuffling is ignored if this is turned on)."));
 
+    // --- Other ---
+    AddWidget(path, "Other", WIDGET_SEPARATOR_TEXT);
+        AddWidget(path, "Disable HUD", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::DisableHUDCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Disables the in-game HUD. Note that some icons will still be visible (e.g. CPU icons in 1P Mode on the top-left.)"));
+
     // --- Input customization ---
     path.sidebarName = "Input Mappings";
     path.column = SECTION_COLUMN_1;
