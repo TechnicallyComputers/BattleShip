@@ -3,6 +3,13 @@
 **Date:** 2026-07-03
 **Status:** Plan approved, implementation + testing handed off to Windows agent
 **Branch:** `claude/tinycc-antivirus-flagging-6hi2j3`
+**Windows test results:** [2026-07-06 results](tinycc_av_test_results_2026-07-06.md)
+
+**2026-07-06 packaging correction:** the release-facing US Windows artifact is
+the default `BattleShip-windows.zip` with scripting/modding support included.
+There is no split `-modding` artifact in the current release flow. Any older
+wording below that talks about a standard/modding package split is historical
+context from the initial plan.
 
 ---
 
