@@ -951,9 +951,9 @@ static int PortInitImpl(int argc, char* argv[]) {
 #ifndef DISABLE_SCRIPTING
 	// TCC mod scripting: configure the include paths + library paths under
 	// .tcc/ that the engine populates post-build (see CMakeLists.txt). On
-	// Windows we link mods against BattleShip.def (auto-generated from the
-	// EXE export table); on Unix mods resolve symbols dynamically via the
-	// host process's exported symbols.
+	// Windows BattleShip.def is an export-name list that ScriptLoader resolves
+	// against the running EXE before TCC relocates mods into memory; on Unix
+	// mods resolve symbols dynamically via the host process's exported symbols.
 	{
 		std::unordered_map<std::string, std::string> defines = {
 			{ "PORT", "1" },
@@ -977,9 +977,9 @@ static int PortInitImpl(int argc, char* argv[]) {
 			Ship::Context::GetPathRelativeToAppDirectory(".tcc/lib"),
 		};
 #ifdef _WIN32
-		std::vector<std::string> libraries = { "BattleShip.def" };
+		std::vector<std::string> libraries = { "BattleShip.def", "tcc1" };
 #else
-		std::vector<std::string> libraries = {};
+		std::vector<std::string> libraries = { "tcc1" };
 #endif
 		constexpr int kCodeVersion = 1;
 		/* -mms-bitfields makes TCC pack bitfields the way MSVC does
@@ -991,7 +991,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 		 * while MSVC splits them across multiple units, shifting every
 		 * field afterwards (e.g. `attr`, `joints`) and causing mod
 		 * reads to land on adjacent function-pointer fields. */
-		if (!sContext->InitScriptLoader(defines, kCodeVersion, "-g -mms-bitfields",
+		if (!sContext->InitScriptLoader(defines, kCodeVersion, "-mms-bitfields",
 		                                includePaths, libraryPaths, libraries)) {
 			port_log("SSB64: InitScriptLoader failed\n");
 			return 1;
@@ -1051,10 +1051,10 @@ static int PortInitImpl(int argc, char* argv[]) {
 
 	// TCC scripting: compile + load any .o2r / folder mod under mods/ that
 	// declares a `main` entry in its manifest.json. Each mod's source files
-	// are amalgamated by the ScriptLoader, compiled to a temp DLL via libtcc,
-	// and ModInit is called by name. The pre/post-init callbacks tag every
-	// HookManager::InstallHook call with the current mod name so hot-reload
-	// can selectively uninstall hooks per mod without touching others.
+	// are amalgamated by the ScriptLoader, compiled and relocated into memory
+	// via libtcc, and ModInit is called by name. The pre/post-init callbacks
+	// tag every HookManager::InstallHook call with the current mod name so
+	// hot-reload can selectively uninstall hooks per mod without touching others.
 	if (auto scripting = sContext->GetScriptLoader()) {
 		try {
 			scripting->CompileAll();

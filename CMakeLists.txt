@@ -940,9 +940,9 @@ endif()
 ################################################################################
 # TCC mod scripting: export the engine's full symbol table so libtcc-compiled
 # mods can resolve any engine function by name. On Windows this is what makes
-# `tcc.exe -impdef BattleShip.exe -o BattleShip.def` produce a useful import
-# library; on Unix the linker default-visibility + -Wl,-export-dynamic above
-# handles it.
+# `tcc.exe -impdef BattleShip.exe -o BattleShip.def` produce a useful export
+# list for ScriptLoader's memory-mode symbol registration; on Unix the linker
+# default-visibility + -Wl,-export-dynamic above handles it.
 ################################################################################
 if(NOT DISABLE_SCRIPTING)
     # ENABLE_EXPORTS makes the EXE produce an import library (.lib) and
@@ -1031,14 +1031,15 @@ endif()
 # self-contained; modders don't have to install TinyCC.
 #
 # On Windows we additionally run `tcc.exe -impdef BattleShip.exe -o
-# BattleShip.def` to generate the import library that libtcc links mod
-# objects against. WINDOWS_EXPORT_ALL_SYMBOLS (set above) makes the EXE's
-# export table contain every engine function so the .def covers them all.
+# BattleShip.def` to generate the export-name list that ScriptLoader resolves
+# against the running process before TCC relocates mod code. WINDOWS_EXPORT_ALL_SYMBOLS
+# (set above) makes the EXE's export table contain every engine function so
+# the .def covers them all.
 ################################################################################
 if(NOT DISABLE_SCRIPTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMENT "Copying libtcc headers, libs, and runtime DLL..."
+            COMMENT "Copying libtcc headers and runtime libraries..."
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/"
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/"
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
@@ -1049,34 +1050,18 @@ if(NOT DISABLE_SCRIPTING)
                 "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/include/"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
             # libtcc1.a built by MSVC is COFF format which TCC can't
-            # parse. Use tcc.exe itself to recompile the runtime sources
+            # parse. Use tcc.exe itself to recompile the runtime source
             # into a TCC-readable archive. -B points tcc at .tcc/ for
-            # tccdefs.h (auto-included via the command line). This
-            # produces libtcc1.o + dllcrt1.o + dllmain.o in TCC's native
-            # object format, then `tcc -ar rcs` bundles them.
+            # tccdefs.h (auto-included via the command line).
             COMMAND "$<TARGET_FILE:tcc>"
                 -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
                 -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/lib/libtcc1.c"
                 -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
-            COMMAND "$<TARGET_FILE:tcc>"
-                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
-                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllcrt1.c"
-                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
-            COMMAND "$<TARGET_FILE:tcc>"
-                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
-                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllmain.c"
-                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
             COMMAND "$<TARGET_FILE:tcc>" -ar rcs
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.a"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
-            # libtcc is built SHARED -> tcc.dll. The exe imports its symbols,
-            # so it must be loadable at process start. Without this the exe
-            # fails with 0xC0000135 (DLL not found) before main() runs.
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:libtcc>"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/$<TARGET_FILE_NAME:libtcc>"
+            COMMAND ${CMAKE_COMMAND} -E rm -f
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
             VERBATIM
         )
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
