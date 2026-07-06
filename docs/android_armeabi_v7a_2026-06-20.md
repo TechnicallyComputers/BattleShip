@@ -110,11 +110,12 @@ cmake --build build-android-v7a -j
 
 ### CI
 
-`.github/workflows/android-v7a.yml` builds the armeabi-v7a APK with the real
-NDK r29 on GitHub's runners (which can reach `dl.google.com`; the dev sandbox
-cannot, so the NDK can't be fetched there). It triggers on pull requests that
-touch Android/native/port inputs, pushes to `main`, pushes to the staging
-feature branch, and via `workflow_dispatch`. It is the authoritative
+The main release workflow builds Android as an ABI matrix with the real NDK r29
+on GitHub's runners (which can reach `dl.google.com`; the dev sandbox cannot,
+so the NDK can't be fetched there). `arm64-v8a` keeps the historical
+`BattleShip-android.apk` release filename, while `armeabi-v7a` uploads
+`BattleShip-android-armeabi-v7a.apk`. Both run `assembleRelease` with
+`-Pssb64.abis=<abi>`, so the release path itself is the authoritative
 real-toolchain check for the per-ABI dependency build.
 
 ### Emulator
