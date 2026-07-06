@@ -289,6 +289,8 @@ extern void syNetInputRollbackReconcilePublishedFromRemote(u32 from_tick, u32 to
 extern void syNetInputRollbackReconcilePublishedCommitWindow(u32 win_begin, u32 win_end); /* Stamp published before frame-commit digest. */
 extern void syNetInputRollbackReconcileAfterResimCompleted(u32 mismatch_tick, u32 target_tick,
                                                          s32 correction_player); /* Post-resim published tail reconcile. */
+extern void syNetInputRollbackResyncControllersAfterResim(u32 mismatch_tick,
+                                                        u32 target_tick); /* Reseed last_published + republish remote after resim exit. */
 extern sb32 syNetInputIsRemoteHumanSlot(s32 player); /* TRUE for opponent human sim slots (GGPO remote prediction/correction). */
 extern void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick,
                                                   s32 correction_player); /* GGPO unified resim inputs: remote=wire, local=transmitted/per-tick published. */

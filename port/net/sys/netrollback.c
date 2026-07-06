@@ -5670,14 +5670,23 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		syNetRbSnapshotReapplyJointAnimAtTick(tick);
 	}
 	syNetRbSnapshotFinalizeVerifyEffectState(tick);
-	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	/*
+	 * FinalizeVerifyEffectState re-runs link-bomb window / quake / shield effect reconcile after
+	 * PrepareLoadedSlotForVerify's item blob pass. Re-stamp slot item blobs immediately before the
+	 * item hash compare (same pattern as FinalizeEffectsForVerifyHash for eff-only drift).
+	 */
+	if (syNetRbSnapshotGetSlotItemCount(tick) > 0U)
 	{
-		syNetSyncLogActiveEffectsFoldDiag("verify", tick);
+		syNetRbSnapshotReconcileLoadedItemsForVerify(tick);
 	}
 #endif
 #if defined(SSB64_NETMENU)
 	syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
 	syNetplayCanonicalizeGMCameraSimState();
+	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	{
+		syNetRbSnapshotRepairItemThrowWindowForVerify();
+	}
 #endif
 	live_f = syNetSyncHashBattleFightersFull();
 	live_w = syNetSyncHashRollbackWorld();
@@ -5696,6 +5705,21 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 	live_r = syNetSyncHashRNGSeed();
 	live_c = syNetSyncHashGMCamera();
 	live_a = syNetSyncHashFighterAnimationStateForRollback();
+#if defined(SSB64_NETMENU)
+	/*
+	 * Item/camera canonicalize and the non-eff live hash passes can churn the effect link after the
+	 * first finalize (efDisplayEnsureParticleDrawInfrastructure recreates dl 10/15/18 hooks; slot
+	 * enforce ejects recycled-id=1011 landing VFX duplicates). soak2 @1869673246 tick 2789: eff_fold_diag
+	 * right after the first finalize matched the slot (0xE84E34D5) but live_ef after canonicalize +
+	 * fighter/item/map hashes did not (0xD669C0BF) -> false eff-only SYNCTEST_FAIL on both peers.
+	 * Re-stamp slot-authoritative effects immediately before the eff compare.
+	 */
+	if (syNetRbSnapRepairStageIsVerifyOnly() != FALSE)
+	{
+		syNetRbSnapshotFinalizeEffectsForVerifyHash(tick);
+		syNetSyncLogActiveEffectsFoldDiag("verify", tick);
+	}
+#endif
 	live_ef = syNetSyncHashActiveEffectsForRollback();
 	if (syNetRbSnapshotVerifyLiveFightersSanity(tick, "load_verify") == FALSE)
 	{
@@ -5755,6 +5779,7 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 			                             live_i,
 			                             "load_hash_drift_item");
 			syNetSyncLogItemFieldDiffDiag(tick, syNetRbSnapshotGetSlotHashItem(tick), live_i, "load_hash_drift_item");
+			syNetRbSnapshotLogItemBlobFieldDiffOnLoadDrift(tick);
 		}
 		else if (syNetRbSnapshotGetSlotItemCount(tick) > 0)
 		{
@@ -6607,6 +6632,7 @@ void syNetRollbackAfterBattleUpdate(void)
 	{
 		syNetplayCanonicalizeActiveFightersForNetplay();
 		syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
+		syNetRbSnapshotAfterSimLinkBombForwardRepair();
 	}
 #endif
 #endif
@@ -6647,84 +6673,40 @@ void syNetRollbackAfterBattleUpdate(void)
 		else
 		{
 			probe_tick = completed_tick - 1U;
-			if (syNetRbSnapshotSynctestProbeWeaponMismatch(probe_tick) != FALSE)
+			emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
+			verify_ok = FALSE;
+			if (emergency_ok != FALSE)
 			{
-				port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=weapon_probe_mismatch probe=%u\n",
-				         completed_tick,
-				         probe_tick);
-				sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
+				syNetRbSnapRepairStageSetVerifyOnly(TRUE);
 			}
-			else if (syNetRbSnapshotSynctestShouldSkipProbeTick(probe_tick, &skip_reason) != FALSE)
+			if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
 			{
-				port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=%s probe=%u\n",
-				         completed_tick,
-				         (skip_reason != NULL) ? skip_reason : "probe_skip",
-				         probe_tick);
+				syNetRbSnapshotPrepareLoadedSlotForVerify(probe_tick);
+				syNetRbSnapDiagLogGuardShieldJointPose("probe_loaded_pre_verify");
+				verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
+				syNetRbSnapDiagLogGuardShieldJointPose("probe_post_verify");
+			}
+			syNetRbSnapRepairStageSetVerifyOnly(FALSE);
+			if (emergency_ok != FALSE)
+			{
+				(void)syNetRbSnapshotRestoreLiveEmergency();
+				syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
+				syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
+				syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_recover");
 #if defined(SSB64_NETMENU)
-				syNetRbSnapTryEnsureLiveYoshiEggLayHatchAfterSynctestFragileSkip(skip_reason, completed_tick);
+				syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
+				syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_whispy_presentation");
 #endif
-				sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
+			}
+			if (verify_ok == FALSE)
+			{
+				port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
 			}
 			else
 			{
-#if defined(SSB64_NETMENU)
-				if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->gkind == nGRKindPupupu) &&
-				    (gGRCommonStruct.pupupu.whispy_status == (u8)nGRPupupuWhispyWindStatusBlow))
-				{
-					port_log("SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=pupupu_whispy_blow_live probe=%u\n",
-					         completed_tick,
-					         probe_tick);
-					sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
-				}
-				else if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->gkind == nGRKindPupupu) &&
-				         (syNetRbSnapPupupuWhispySlotIsBlow(probe_tick) != FALSE) &&
-				         (gGRCommonStruct.pupupu.whispy_status != (u8)nGRPupupuWhispyWindStatusBlow))
-				{
-					port_log(
-					    "SSB64 NetRollback: SYNCTEST_SKIP tick=%u reason=pupupu_whispy_blow_slot_stale probe=%u\n",
-					    completed_tick,
-					    probe_tick);
-					sSYNetRollbackSynctestNextProbeTick = completed_tick + 1U;
-				}
-				else
-#endif
-				{
-					emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
-					verify_ok = FALSE;
-					if (emergency_ok != FALSE)
-					{
-						syNetRbSnapRepairStageSetVerifyOnly(TRUE);
-					}
-					if ((emergency_ok != FALSE) && (syNetRbSnapshotLoad(probe_tick) != FALSE))
-					{
-						syNetRbSnapshotPrepareLoadedSlotForVerify(probe_tick);
-						syNetRbSnapDiagLogGuardShieldJointPose("probe_loaded_pre_verify");
-						verify_ok = syNetRollbackVerifyLoadedSlot(probe_tick);
-						syNetRbSnapDiagLogGuardShieldJointPose("probe_post_verify");
-					}
-					syNetRbSnapRepairStageSetVerifyOnly(FALSE);
-					if (emergency_ok != FALSE)
-					{
-						(void)syNetRbSnapshotRestoreLiveEmergency();
-						syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
-						syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
-						syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_recover");
-#if defined(SSB64_NETMENU)
-						syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
-						syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_whispy_presentation");
-#endif
-					}
-					if (verify_ok == FALSE)
-					{
-						port_log("SSB64 NetRollback: SYNCTEST_FAIL tick=%u\n", probe_tick);
-					}
-					else
-					{
-						port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
-					}
-					sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
-				}
+				port_log("SSB64 NetRollback: SYNCTEST_OK tick=%u\n", probe_tick);
 			}
+			sSYNetRollbackSynctestNextProbeTick = completed_tick + 120U;
 		}
 	}
 #if defined(SSB64_NETMENU)
@@ -7379,8 +7361,8 @@ static void syNetRollbackFinishForwardResim(void)
 			return;
 		}
 	}
-	if ((syNetRollbackEpisodeFsmEnabled() == FALSE) && (mismatch_tick != 0U) && (mismatch_tick != ~(u32)0U) &&
-	    (completed_target != 0U) && (completed_target != ~(u32)0U) && (completed_target > mismatch_tick))
+	if ((mismatch_tick != 0U) && (mismatch_tick != ~(u32)0U) && (completed_target != 0U) &&
+	    (completed_target != ~(u32)0U) && (completed_target > mismatch_tick))
 	{
 		syNetInputRollbackReconcileAfterResimCompleted(mismatch_tick, completed_target, correction_player);
 	}
@@ -7388,6 +7370,11 @@ static void syNetRollbackFinishForwardResim(void)
 	syNetRollbackEpisodeSetPhase(nSYNetRollbackEpisodePhaseLive);
 	syNetRollbackEpisodeReset();
 	sSYNetRollbackResimPending = FALSE;
+	if ((mismatch_tick != 0U) && (mismatch_tick != ~(u32)0U) && (completed_target != 0U) &&
+	    (completed_target != ~(u32)0U) && (completed_target > mismatch_tick))
+	{
+		syNetInputRollbackResyncControllersAfterResim(mismatch_tick, completed_target);
+	}
 #if defined(SSB64_NETMENU)
 	if (syNetplayRollbackLiveForwardSimEligible() != FALSE)
 	{
@@ -11426,6 +11413,7 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		{
 			syNetplayCanonicalizeActiveFightersForNetplay();
 			syNetRbSnapshotCanonicalizeActiveItemsForNetplay();
+			syNetRbSnapshotAfterSimLinkBombForwardRepair();
 		}
 		if (syNetRollbackResimSnapshotRefreshEnabled() != FALSE)
 		{

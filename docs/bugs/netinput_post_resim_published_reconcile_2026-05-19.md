@@ -12,7 +12,7 @@
 
 ## Fix
 
-1. **`syNetInputRollbackReconcileAfterResimCompleted`** — called from `syNetRollbackFinishForwardResim` before episode close; reconciles `[mismatch_tick, max(target_tick, sim_frontier+1))`.
+1. **`syNetInputRollbackReconcileAfterResimCompleted`** — called from `syNetRollbackFinishForwardResim` before episode close; reconciles `[mismatch_tick, max(target_tick, sim_frontier+1))`. **Episode FSM:** same call runs after `CommitPromoteSealed` (2026-07-04: guard that skipped episode-FSM resims removed).
 2. **`syNetInputRollbackReconcilePublishedCommitWindow`** — called from `syNetPeerFrameCommitAfterValidation` before `syNetFrameCommitBuildToken`; reconciles `[win_begin, validation_tick)` so commit digests see wire/transmitted truth.
 3. **`syNetInputRollbackReconcileResimSpan`** — when `correction_player` is a remote-human slot, only reconcile that remote slot (local slots still reconciled from transmitted).
 

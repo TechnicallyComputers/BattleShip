@@ -86,10 +86,21 @@ extern void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj);
 extern void syNetplayCanonicalizeActiveFightersForNetplay(void);
 
 /*
- * Before gcRunAll on pass-through platforms: re-anchor MPColl pos_prev to TopN for grounded
- * Squat/SquatWait/Pass/GuardPass so Pass-entry diff-branch translate matches cross-ISA.
+ * Before gcRunAll on pass-through platforms: re-anchor MPColl pos_prev to TopN for grounded fighters
+ * on MAP_VERTEX_COLL_PASS so pass-floor integration matches cross-ISA.
  */
 extern void syNetplayHardenPassPlatformCollBeforeSim(void);
+
+/*
+ * Before gcRunAll on airborne knockback: re-anchor MPColl pos_prev to TopN and zero pos_diff so
+ * cross-ISA integration matches the load-path re-anchor (soak2 @371591666 CopyLink hit FC @600).
+ */
+extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
+
+extern void syNetplayCanonicalizeWeaponSimState(GObj *weapon_gobj);
+extern void syNetplayCanonicalizeActiveWeaponsForNetplay(void);
+
+extern void syNetplayTraceKirbyCopyLinkBoomerangTick(u32 tick);
 
 /*
  * Shared-grid pass over a live item's folded sim state: ITPhysics (vel_ground/vel_air) and the root

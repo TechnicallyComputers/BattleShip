@@ -11,6 +11,7 @@
 
 struct GObj;
 struct EFStruct;
+struct ITStruct;
 
 #define SYNETRB_SNAPSHOT_RING_DEFAULT 64
 #define SYNETRB_SNAPSHOT_RING_MAX     128
@@ -99,6 +100,8 @@ extern void syNetRbSnapRepairPupupuWhispyPresentationAfterLoad(u32 tick, const c
 #if defined(SSB64_NETMENU)
 /* Ring slot ground blob: whispy_status == Blow (synctest stale-slot guard). */
 extern sb32 syNetRbSnapPupupuWhispySlotIsBlow(u32 tick);
+/* Read-only held-item hand pose for item hash fold (throw scope); does not mutate live sim. */
+extern sb32 syNetRbSnapGetItemTranslateForHashFold(struct GObj *gobj, const struct ITStruct *ip, Vec3f *out_pos);
 #endif
 /* Guard+shield load-hash drift bisect (fighter/anim mismatch while shield active). */
 extern void syNetRbSnapshotLogGuardShieldLoadDriftDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
@@ -213,6 +216,8 @@ extern void syNetRbSnapshotLogIntroAnchorSimTrail(const char *phase, u32 load_ti
 /* `SSB64_NETPLAY_SNAPSHOT_FIGHTER_FIELD_DIFF=1`: named field lines when load verify figh drifts. */
 extern void syNetRbSnapshotLogFighterFieldDiffOnLoadDrift(u32 tick);
 extern void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag);
+/* `SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1`: live vs slot blob scalars when load verify item drifts. */
+extern void syNetRbSnapshotLogItemBlobFieldDiffOnLoadDrift(u32 tick);
 #if defined(SSB64_NETMENU)
 /* TRUE when a Pikachu QA catch-up transition is pending in the ring slot at tick (fc_recovery clamp). */
 extern sb32 syNetRbSnapshotPikachuQuickAttackCatchUpPendingAtTick(u32 tick);
@@ -243,6 +248,14 @@ extern s32 syNetRbEnumerateActiveItemsSorted(struct GObj **out, s32 max, sb32 *t
 #if defined(SSB64_NETMENU)
 /* Cross-ISA: snap live item translate/vel to the shared F32 grid after each sim tick (forward path). */
 extern void syNetRbSnapshotCanonicalizeActiveItemsForNetplay(void);
+/* Pose-only held-bomb refresh before load-hash verify (throw scope). */
+extern void syNetRbSnapshotRepairItemThrowWindowForVerify(void);
+/* Forward sim: airborne Thrown/Fall MPColl repair + hold-state tracking (not load verify). */
+extern void syNetRbSnapshotAfterSimLinkBombForwardRepair(void);
+/* itMainSetFighterRelease: clear hold-phase floor coll before first thrown map proc. */
+extern void syNetRbSnapshotHardenLinkBombAtThrowRelease(struct GObj *item_gobj);
+/* Before gcRunAll: re-anchor airborne Thrown/Fall bomb MPColl (no floor probe). */
+extern void syNetRbSnapshotPreSimLinkBombAirborneMPCollHardening(void);
 #endif
 extern s32 syNetRbEnumerateActiveWeaponsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 

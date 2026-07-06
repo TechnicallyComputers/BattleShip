@@ -422,6 +422,46 @@ static u32 syNetSyncFoldFighterAnimRollback(const FTStruct *fp, GObj *fighter_go
 	return fold;
 }
 
+/*
+ * Attack-record victim pointers can dangle: the decomp only clears them on timer_rehit expiry
+ * while attack_state is active, so a stale record can outlive its victim GObj, whose memory is
+ * then recycled (rollback effect churn reuses GObj slots as id=1011 effects every verify).
+ * Reading victim_gobj->id raw folds a recycled/freed id into the slot hash at capture, while
+ * snapshot restore (syNetRbSnapResolveLiveGobj) maps the same record to NULL -> verify folds 0
+ * -> item LOAD_HASH_DRIFT (soak2 session 1854235190 ticks 869/989: live victim_id=0 vs blob
+ * 1011 on stale atk_state=0 records). Fold the id only when the pointer is a currently-linked
+ * fighter/item/weapon GObj — the exact criterion the restore path accepts — and never
+ * dereference an unlinked pointer.
+ */
+static u32 syNetSyncAttackRecordVictimIdForFold(GObj *victim_gobj)
+{
+	static const s32 victim_links[3] = {nGCCommonLinkIDFighter, nGCCommonLinkIDItem, nGCCommonLinkIDWeapon};
+	s32 li;
+
+	if (victim_gobj == NULL)
+	{
+		return 0U;
+	}
+	for (li = 0; li < 3; li++)
+	{
+		GObj *gobj;
+
+		for (gobj = gGCCommonLinks[victim_links[li]]; gobj != NULL; gobj = gobj->link_next)
+		{
+			if (gobj == victim_gobj)
+			{
+				if ((ftGetStruct(gobj) == NULL) && (itGetStruct(gobj) == NULL) &&
+				    (wpGetStruct(gobj) == NULL))
+				{
+					return 0U;
+				}
+				return (u32)gobj->id;
+			}
+		}
+	}
+	return 0U;
+}
+
 static u32 syNetSyncFoldAttackRecordSlots(const GMAttackRecord *records, s32 count, u32 fold)
 {
 	s32 i;
@@ -434,7 +474,7 @@ static u32 syNetSyncFoldAttackRecordSlots(const GMAttackRecord *records, s32 cou
 	{
 		const GMAttackRecord *rec = &records[i];
 
-		fold = syNetSyncFnvAccumulateU32(fold, (rec->victim_gobj != NULL) ? (u32)rec->victim_gobj->id : 0U);
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncAttackRecordVictimIdForFold(rec->victim_gobj));
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_hurt);
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_shield);
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)rec->victim_flags.is_interact_reflect);
@@ -2521,7 +2561,9 @@ static u32 syNetSyncFoldGBumperItemExtras(GObj *gobj, const ITStruct *ip, u32 fo
 }
 #endif
 
-static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
+static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj);
+
+u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
 {
 	DObj *dobj;
 	ITStruct *ip;
@@ -2552,8 +2594,14 @@ static u32 syNetSyncFoldActiveItemGobjForRollback(GObj *gobj)
 	dobj = DObjGetStruct(gobj);
 	if (dobj != NULL)
 	{
-		Vec3f pos = dobj->translate.vec.f;
+		Vec3f pos;
 
+#if defined(SSB64_NETMENU)
+		if (syNetRbSnapGetItemTranslateForHashFold(gobj, ip, &pos) == FALSE)
+#endif
+		{
+			pos = dobj->translate.vec.f;
+		}
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.x));
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.y));
 		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(pos.z));
@@ -2784,7 +2832,7 @@ void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_item, c
 	syNetSyncLogItemHashWalkBody(sim_tick, slot_item, live_item, reason);
 }
 
-static sb32 syNetSyncItemHashFieldDiffEnabled(void)
+sb32 syNetSyncItemHashFieldDiffEnabled(void)
 {
 	static int s_env_cache = -999;
 	const char *e;

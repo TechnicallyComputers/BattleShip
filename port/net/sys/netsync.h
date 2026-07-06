@@ -139,6 +139,7 @@ extern void syNetSyncReconcileBattleTimePassedFromSimTick(void);
 extern void syNetSyncLogItemHashWalkTrace(u32 sim_tick);
 /* Always-on ordered item walk when item hash drift is detected (load verify / frame commit). */
 extern void syNetSyncLogItemHashDriftDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);
+extern sb32 syNetSyncItemHashFieldDiffEnabled(void);
 #include <sys/netsync_rng_trace.h>
 /* Per-item pos/vel/status rows when item hash drifts (`SSB64_NETPLAY_ITEM_HASH_FIELD_DIFF=1`). */
 extern void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, const char *reason);

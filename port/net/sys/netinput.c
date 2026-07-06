@@ -35,6 +35,10 @@
 #include <sc/sctypes.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(SSB64_NETMENU)
+#include <ft/fighter.h>
+#include <sys/objman_gcport.h>
+#endif
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
 extern void port_log(const char *fmt, ...);
@@ -6204,6 +6208,89 @@ static sb32 syNetInputResimReconcileLogEnabled(void)
 static void syNetInputRollbackReconcileSpanTagged(u32 from_tick, u32 to_tick, s32 correction_player,
                                                   const char *log_tag);
 
+#if defined(SSB64_NETMENU)
+static u16 syNetInputExpandControllerButtonHold(u16 button_hold)
+{
+	if (button_hold & R_TRIG)
+	{
+		button_hold |= (A_BUTTON | Z_TRIG);
+	}
+	return button_hold;
+}
+
+static void syNetInputRollbackReconcileRemoteSlotFromSealed(s32 slot, u32 t)
+{
+	SYNetInputFrame row;
+
+	if (syNetRollbackEpisodeGetSealedFrame(slot, t, &row) != FALSE)
+	{
+		row.tick = t;
+		row.source = nSYNetInputSourceRemoteConfirmed;
+		row.is_predicted = FALSE;
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
+	}
+}
+
+/*
+ * Post-resim: gSYControllerDevices may be rewritten by publish helpers while fp->input.pl still
+ * reflects the resim replay path. Re-anchor pl latch from controllers + prior published stick so
+ * the first live ftMainProcessInput tick does not emit spurious button/stick edges (tick 523 squat fork).
+ */
+static void syNetInputRollbackResyncFighterPlLatchFromControllers(u32 sim_tick)
+{
+	GObj *fighter_gobj;
+	u32 prev_tick;
+
+	if (sim_tick == 0U)
+	{
+		prev_tick = 0U;
+	}
+	else
+	{
+		prev_tick = sim_tick - 1U;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		FTPlayerInput *pl;
+		SYController *controller;
+		SYNetInputFrame prev_frame;
+		s32 player;
+		u16 button_hold;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan) || (fp->is_control_disable != FALSE))
+		{
+			continue;
+		}
+		player = fp->player;
+		if ((player < 0) || (player >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		controller = &gSYControllerDevices[player];
+		pl = &fp->input.pl;
+		button_hold = syNetInputExpandControllerButtonHold(controller->button_hold);
+		if ((prev_tick < sim_tick) && (syNetInputGetHistoryFrame(player, prev_tick, &prev_frame) != FALSE))
+		{
+			pl->stick_prev.x = prev_frame.stick_x;
+			pl->stick_prev.y = prev_frame.stick_y;
+		}
+		else
+		{
+			pl->stick_prev.x = controller->stick_range.x;
+			pl->stick_prev.y = controller->stick_range.y;
+		}
+		pl->stick_range.x = controller->stick_range.x;
+		pl->stick_range.y = controller->stick_range.y;
+		pl->button_hold = button_hold;
+		pl->button_tap = 0;
+		pl->button_release = 0;
+	}
+}
+#endif
+
 void syNetInputRollbackReconcilePublishedCommitWindow(u32 win_begin, u32 win_end)
 {
 	u32 t;
@@ -6251,6 +6338,42 @@ void syNetInputRollbackReconcileAfterResimCompleted(u32 mismatch_tick, u32 targe
 		    mismatch_tick, target_tick, reconcile_end, (int)correction_player);
 	}
 	syNetInputRollbackReconcileSpanTagged(mismatch_tick, reconcile_end, correction_player, "resim_reconcile_span");
+}
+
+void syNetInputRollbackResyncControllersAfterResim(u32 mismatch_tick, u32 target_tick)
+{
+	u32 seed_tick;
+	s32 player;
+	SYNetInputFrame frame;
+
+	if ((mismatch_tick == 0U) || (mismatch_tick == ~(u32)0U) || (target_tick == 0U) || (target_tick == ~(u32)0U) ||
+	    (target_tick <= mismatch_tick))
+	{
+		return;
+	}
+	(void)mismatch_tick;
+	seed_tick = (target_tick > 0U) ? (target_tick - 1U) : 0U;
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (syNetInputGetHistoryFrame(player, seed_tick, &frame) != FALSE)
+		{
+			sSYNetInputSlots[player].last_published = frame;
+		}
+		else if (syNetInputGetHistoryFrame(player, target_tick, &frame) != FALSE)
+		{
+			sSYNetInputSlots[player].last_published = frame;
+		}
+		else
+		{
+			syNetInputClearFrame(&sSYNetInputSlots[player].last_published);
+		}
+		gSYControllerDevices[player].button_tap = 0;
+		gSYControllerDevices[player].button_release = 0;
+	}
+#if defined(SSB64_NETMENU)
+	syNetInputRollbackResyncFighterPlLatchFromControllers(target_tick);
+#endif
+	syNetInputPublishMainController();
 }
 
 void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick, s32 correction_player)
@@ -6301,6 +6424,12 @@ static void syNetInputRollbackReconcileSpanTagged(u32 from_tick, u32 to_tick, s3
 			if (syNetRollbackEpisodeSealRowsExchangeEnabled() != FALSE &&
 			    syNetRollbackEpisodeSlotRequiresPeerSealRows(slot) != FALSE)
 			{
+#if defined(SSB64_NETMENU)
+				if (syNetRollbackEpisodeInputsSealed() != FALSE)
+				{
+					syNetInputRollbackReconcileRemoteSlotFromSealed(slot, t);
+				}
+#endif
 				continue;
 			}
 			syNetInputRollbackReconcileRemoteSlotFromWire(slot, t);

@@ -18,9 +18,11 @@
 
 #include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftchar/ftkirby/ftkirby.h>
+#include <ft/ftchar/ftlink/ftlink.h>
 #include <ft/ftchar/ftness/ftness.h>
 #include <ft/ftchar/ftyoshi/ftyoshi.h>
 #include <ft/ftdef.h>
+#include <ft/ftstatusvars.h>
 #include <it/item.h>
 #include <wp/weapon.h>
 #include <wp/wpdef.h>
@@ -43,8 +45,8 @@
 
 #include <macros.h>
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -1026,21 +1028,165 @@ static sb32 syNetplayFighterInPassPlatformGroundCollScope(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	if (fp->ga != nMPKineticsGround)
+	return (fp->ga == nMPKineticsGround) ? TRUE : FALSE;
+}
+
+static sb32 syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindKirby))
 	{
 		return FALSE;
 	}
 	switch (fp->status_id)
 	{
-	case nFTCommonStatusSquat:
-	case nFTCommonStatusSquatWait:
-	case nFTCommonStatusPass:
-	case nFTCommonStatusGuardPass:
+	case nFTKirbyStatusCopyLinkSpecialN:
+	case nFTKirbyStatusCopyLinkSpecialNGet:
+	case nFTKirbyStatusCopyLinkSpecialNEmpty:
+	case nFTKirbyStatusCopyLinkSpecialAirN:
+	case nFTKirbyStatusCopyLinkSpecialAirNReturn:
+	case nFTKirbyStatusCopyLinkSpecialAirNEmpty:
 		return TRUE;
 	default:
 		return FALSE;
 	}
 }
+
+static sb32 syNetplayKirbyFighterInCopyLinkBoomerangScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindKirby))
+	{
+		return FALSE;
+	}
+	if (fp->passive_vars.kirby.copylink_boomerang_gobj != NULL)
+	{
+		return TRUE;
+	}
+	return syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(fp);
+}
+
+static sb32 syNetplayKirbyFighterInCopyLinkCombatScope(const FTStruct *fp)
+{
+	if (syNetplayKirbyFighterInCopyLinkBoomerangScope(fp) != FALSE)
+	{
+		return TRUE;
+	}
+	if ((fp == NULL) || (fp->fkind != nFTKindKirby))
+	{
+		return FALSE;
+	}
+	if ((fp->status_id >= nFTKirbyStatusJumpAerialF1) && (fp->status_id <= nFTKirbyStatusJumpAerialF5))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetplayFighterInLinkSpecialNAnimEndScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || ((fp->fkind != nFTKindLink) && (fp->fkind != nFTKindNLink)))
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTLinkStatusSpecialN:
+	case nFTLinkStatusSpecialNGet:
+	case nFTLinkStatusSpecialNEmpty:
+	case nFTLinkStatusSpecialAirN:
+	case nFTLinkStatusSpecialAirNReturn:
+	case nFTLinkStatusSpecialAirNEmpty:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static sb32 syNetplayFighterInAirborneDamageKnockbackScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->ga != nMPKineticsAir))
+	{
+		return FALSE;
+	}
+	if ((fp->status_id >= nFTCommonStatusDamageFlyHi) && (fp->status_id <= nFTCommonStatusDamageFlyRoll))
+	{
+		return TRUE;
+	}
+	return (fp->status_id == nFTCommonStatusDamageFall) ? TRUE : FALSE;
+}
+
+#if defined(SSB64_NETMENU)
+static u32 syNetplayKirbyCopyLinkFloatBits(f32 value)
+{
+	u32 bits;
+
+	memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
+
+static sb32 syNetplayKirbyCopyLinkTraceEnabled(void)
+{
+	static int sEnvCache = -999;
+	char *e;
+
+	if (sEnvCache == -999)
+	{
+		e = getenv("SSB64_NETPLAY_KIRBY_COPYLINK_TRACE");
+		sEnvCache = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	return (sEnvCache != 0) ? TRUE : FALSE;
+}
+
+void syNetplayTraceKirbyCopyLinkBoomerangTick(u32 tick)
+{
+	GObj *fighter_gobj;
+
+	if (syNetplayKirbyCopyLinkTraceEnabled() == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+		GObj *boomerang_gobj;
+		WPStruct *wp;
+		DObj *boomerang_dobj;
+		Vec3f *topn;
+
+		if (syNetplayKirbyFighterInCopyLinkCombatScope(fp) == FALSE)
+		{
+			continue;
+		}
+		boomerang_gobj = fp->passive_vars.kirby.copylink_boomerang_gobj;
+		wp = (boomerang_gobj != NULL) ? wpGetStruct(boomerang_gobj) : NULL;
+		boomerang_dobj = (boomerang_gobj != NULL) ? DObjGetStruct(boomerang_gobj) : NULL;
+		topn = (fp->joints[nFTPartsJointTopN] != NULL) ? &fp->joints[nFTPartsJointTopN]->translate.vec.f : NULL;
+		port_log(
+		    "SSB64 NetSync: kirby_copylink tick=%u player=%d status=%d motion=%d topn_x=0x%08X topn_y=0x%08X "
+		    "boomerang_id=%u boomerang_tx=0x%08X boomerang_ty=0x%08X vel_air_x=0x%08X vel_air_y=0x%08X\n",
+		    tick,
+		    (int)fp->player,
+		    (int)fp->status_id,
+		    (int)fp->motion_id,
+		    (topn != NULL) ? syNetplayKirbyCopyLinkFloatBits(topn->x) : 0U,
+		    (topn != NULL) ? syNetplayKirbyCopyLinkFloatBits(topn->y) : 0U,
+		    (boomerang_gobj != NULL) ? (unsigned int)boomerang_gobj->id : 0U,
+		    (boomerang_dobj != NULL) ? syNetplayKirbyCopyLinkFloatBits(boomerang_dobj->translate.vec.f.x) : 0U,
+		    (boomerang_dobj != NULL) ? syNetplayKirbyCopyLinkFloatBits(boomerang_dobj->translate.vec.f.y) : 0U,
+		    (wp != NULL) ? syNetplayKirbyCopyLinkFloatBits(wp->physics.vel_air.x) : 0U,
+		    (wp != NULL) ? syNetplayKirbyCopyLinkFloatBits(wp->physics.vel_air.y) : 0U);
+	}
+}
+#else
+void syNetplayTraceKirbyCopyLinkBoomerangTick(u32 tick)
+{
+	(void)tick;
+}
+#endif /* SSB64_NETMENU */
 
 static void syNetplayHardenPassPlatformCollForFighter(GObj *fighter_gobj)
 {
@@ -1073,6 +1219,89 @@ static void syNetplayHardenPassPlatformCollForFighter(GObj *fighter_gobj)
 	fp->coll_data.pos_diff.y = 0.0F;
 	fp->coll_data.pos_diff.z = 0.0F;
 }
+
+static void syNetplayHardenAirborneDamageKnockbackCollForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInAirborneDamageKnockbackScope(fp) == FALSE)
+	{
+		return;
+	}
+	if (fp->joints[nFTPartsJointTopN] == NULL)
+	{
+		return;
+	}
+	topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
+#if defined(SSB64_NETMENU)
+/*
+ * ftAnimEndSetWait / GuardOff release wait for anim_frame <= 0. Cross-ISA float can leave one peer
+ * above zero for extra ProcUpdate ticks despite syNetplayQuantizeAnimScalar (soak2 @950765188 GuardOff
+ * status_total_tics fork; @371591666 Link SpecialN charge end fork → CopyLink hit knockback FC @600).
+ * Snap near-zero frames to zero before ProcUpdate on known anim-end-wait statuses.
+ */
+static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
+{
+	DObj *root_dobj;
+	f32 q_anim;
+	const f32 release_grid = (1.0F / 65536.0F);
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	q_anim = syNetplayQuantizeAnimScalar(fighter_gobj->anim_frame);
+	if (q_anim <= release_grid)
+	{
+		fighter_gobj->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(fighter_gobj);
+		if (root_dobj != NULL)
+		{
+			root_dobj->anim_frame = 0.0F;
+		}
+	}
+}
+
+static void syNetplayCanonicalizeAnimEndWaitThreshold(GObj *fighter_gobj, FTStruct *fp)
+{
+	if ((fighter_gobj == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	if (fp->status_id == nFTCommonStatusGuardOn)
+	{
+		if (ftStatusVarsGuard(fp)->is_release != FALSE)
+		{
+			syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
+		}
+		return;
+	}
+	if ((syNetplayFighterInLinkSpecialNAnimEndScope(fp) != FALSE) ||
+	    (syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(fp) != FALSE))
+	{
+		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
+	}
+}
+#endif
 
 void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 {
@@ -1149,6 +1378,10 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	{
 		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
 	}
+	syNetplayHardenAirborneDamageKnockbackCollForFighter(fighter_gobj);
+#if defined(SSB64_NETMENU)
+	syNetplayCanonicalizeAnimEndWaitThreshold(fighter_gobj, fp);
+#endif
 }
 
 void syNetplayQuantizeGMCameraState(GMCamera *camera, f32 *pause_eye_x, f32 *pause_eye_y)
@@ -1268,6 +1501,59 @@ void syNetplayCanonicalizeActiveItemsForNetplay(void)
 	}
 }
 
+static void syNetplayQuantizeWeaponPhysics(WPStruct *wp)
+{
+	if (wp == NULL)
+	{
+		return;
+	}
+	wp->physics.vel_ground = syNetplayQuantizeF32(wp->physics.vel_ground);
+	syNetplayQuantizeVec3f(&wp->physics.vel_air);
+}
+
+void syNetplayCanonicalizeWeaponSimState(GObj *weapon_gobj)
+{
+	WPStruct *wp;
+	DObj *dobj;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if ((weapon_gobj == NULL) || (weapon_gobj->user_data.p == NULL))
+	{
+		return;
+	}
+	wp = wpGetStruct(weapon_gobj);
+	if (wp == NULL)
+	{
+		return;
+	}
+	syNetplayQuantizeWeaponPhysics(wp);
+	dobj = DObjGetStruct(weapon_gobj);
+	if (dobj != NULL)
+	{
+		syNetplayQuantizeDObjTranslate(dobj);
+		syNetplayQuantizeVec3f(&dobj->rotate.vec.f);
+		syNetplayQuantizeVec3f(&dobj->scale.vec.f);
+	}
+}
+
+void syNetplayCanonicalizeActiveWeaponsForNetplay(void)
+{
+	GObj *weapon_gobj;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	for (weapon_gobj = gGCCommonLinks[nGCCommonLinkIDWeapon]; weapon_gobj != NULL;
+	     weapon_gobj = weapon_gobj->link_next)
+	{
+		syNetplayCanonicalizeWeaponSimState(weapon_gobj);
+	}
+}
+
 void syNetplayHardenPassPlatformCollBeforeSim(void)
 {
 	GObj *fighter_gobj;
@@ -1285,6 +1571,23 @@ void syNetplayHardenPassPlatformCollBeforeSim(void)
 	}
 }
 
+void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void)
+{
+	GObj *fighter_gobj;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+#endif
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		syNetplayHardenAirborneDamageKnockbackCollForFighter(fighter_gobj);
+	}
+}
+
 void syNetplayCanonicalizeActiveFightersForNetplay(void)
 {
 	GObj *fighter_gobj;
@@ -1299,6 +1602,7 @@ void syNetplayCanonicalizeActiveFightersForNetplay(void)
 		syNetplayCanonicalizeFighterSimState(fighter_gobj);
 	}
 	syNetplayCanonicalizeActiveItemsForNetplay();
+	syNetplayCanonicalizeActiveWeaponsForNetplay();
 	syNetplayCanonicalizeGMCameraSimState();
 }
 

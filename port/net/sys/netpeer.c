@@ -24,6 +24,7 @@
 #include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_rebirth_gate.h>
 #include <sys/netplay_resim_replay_hang_diag.h>
+#include <sys/netplay_sim_quantize.h>
 #endif
 #include <sys/utils.h>
 #include <sys/taskman.h>
@@ -11654,6 +11655,7 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 	syNetSyncLogPKThunderHoldDiag(tick);
 #if defined(SSB64_NETMENU)
 	syNetplayFoxFirefoxStateForkTraceTick(tick, "post_sim");
+	syNetplayTraceKirbyCopyLinkBoomerangTick(tick);
 #endif
 
 	e = getenv("SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL");

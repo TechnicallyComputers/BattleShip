@@ -33,7 +33,7 @@ Suspect: stale `coll_data.pos_prev` vs TopN during Squat→Pass on `MAP_VERTEX_C
 
 **Fix:**
 
-- `syNetplayHardenPassPlatformCollBeforeSim()` — before `gcRunAll` (forward + resim), re-anchor `pos_prev=*TopN`, zero `pos_diff` for grounded Squat/SquatWait/Pass/GuardPass on pass floors; grid-quantize TopN when quantize active.
+- `syNetplayHardenPassPlatformCollBeforeSim()` — before `gcRunAll` (forward + resim), re-anchor `pos_prev=*TopN`, zero `pos_diff` for **any grounded fighter on `MAP_VERTEX_COLL_PASS`** (initially Squat/Pass only; broadened after soak `908190465`); grid-quantize TopN when quantize active.
 - Same re-anchor at post-tick canonicalize (`syNetplayCanonicalizeFighterSimState`).
 - Snapshot load: `syNetRbSnapRefreshPassPlatformGroundCollAfterLoad` (stale-integration gate, no floor probe).
 - Capture mirror: extend knockback/down-tech `pos_prev` re-anchor in `syNetRbSnapCaptureFighter` to pass-platform grounded scope.

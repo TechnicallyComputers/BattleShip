@@ -1,6 +1,6 @@
 # Netplay Kirby JumpAerial synctest probe — 2026-06-09
 
-**Status:** FIX SHIPPED (soak pending)
+**Status:** UN-SKIPPED (2026-07-04). Verify presentation repair shipped; soak pending.
 
 ## Symptom
 
@@ -14,13 +14,13 @@ Same probe-boundary class as `fox_firefox_probe`: live state had left the fragil
 
 ## Fix
 
-`syNetRbSnapshotSynctestShouldSkipProbeTick()` — `reason=kirby_jump_aerial_probe` when any slot fighter blob is Kirby/NKirby in `nFTKirbyStatusJumpAerialF1` … `nFTKirbyStatusJumpAerialF5`.
+`syNetRbSnapRefreshKirbyJumpAerialPresentationFromSlot()` re-pins joint figatree from the slot blob during verify prepare/resim (same family as Yoshi egg-lay). The `kirby_jump_aerial_probe` synctest skip was removed 2026-07-04 — see `netplay_link_guard_release_fc_drift_2026-07-04.md`.
 
-Implementation: `syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope()` in `port/net/sys/netrollbacksnapshot.c`.
+Previously: `syNetRbSnapshotSynctestShouldSkipProbeTick()` — `reason=kirby_jump_aerial_probe` when any slot fighter blob is Kirby/NKirby in `nFTKirbyStatusJumpAerialF1` … `nFTKirbyStatusJumpAerialF5` (`syNetRbSnapBlobInKirbyJumpAerialSynctestFragileScope()`).
 
 ## Soak pass criteria
 
-Pikachu/Kirby match with synctest enabled; trim ticks around triple-jump aerial + Up+B (~3547–3565):
+Pikachu/Kirby or Link/Kirby match with synctest enabled; trim ticks around triple-jump aerial (~749–759):
 
-- `SYNCTEST_SKIP reason=kirby_jump_aerial_probe` instead of `SYNCTEST_FAIL` on JumpAerial slot ticks.
+- `SYNCTEST_OK` on JumpAerial slot ticks (no `kirby_jump_aerial_probe` skip).
 - No `LOAD_HASH_DRIFT` + `fighter_mismatch` soft-continue block on those probe ticks.
