@@ -60,6 +60,10 @@ truthy() {
         *) return 1 ;;
     esac
 }
+json_get() {
+    local field="$1"
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], "") or "")' "$field"
+}
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "package-macos.sh runs on macOS only"
 
@@ -536,11 +540,82 @@ if [[ "$WANT_NOTARIZE" -eq 1 ]]; then
     fi
 
     step "Notarizing DMG"
-    xcrun notarytool submit "$DMG" \
-        --apple-id "$MACOS_NOTARY_APPLE_ID" \
-        --team-id "$MACOS_NOTARY_TEAM_ID" \
-        --password "$MACOS_NOTARY_PASSWORD" \
-        --wait
+    NOTARY_AUTH_ARGS=(
+        --apple-id "$MACOS_NOTARY_APPLE_ID"
+        --team-id "$MACOS_NOTARY_TEAM_ID"
+        --password "$MACOS_NOTARY_PASSWORD"
+    )
+    NOTARY_WAIT_TIMEOUT="${MACOS_NOTARY_WAIT_TIMEOUT:-10m}"
+    NOTARY_WAIT_ATTEMPTS="${MACOS_NOTARY_WAIT_ATTEMPTS:-3}"
+    NOTARY_WAIT_RETRY_DELAY="${MACOS_NOTARY_WAIT_RETRY_DELAY:-30}"
+
+    NOTARY_SUBMIT_JSON="$(xcrun notarytool submit "$DMG" \
+        "${NOTARY_AUTH_ARGS[@]}" \
+        --output-format json \
+        --no-progress)"
+    printf '%s\n' "$NOTARY_SUBMIT_JSON"
+    NOTARY_SUBMISSION_ID="$(printf '%s' "$NOTARY_SUBMIT_JSON" | json_get id)"
+    [[ -n "$NOTARY_SUBMISSION_ID" ]] \
+        || fail "notarytool submit did not return a submission id"
+
+    NOTARY_ACCEPTED=0
+    attempt=1
+    while [[ "$attempt" -le "$NOTARY_WAIT_ATTEMPTS" ]]; do
+        printf '  waiting for notarization submission %s (attempt %d/%d, timeout %s)\n' \
+            "$NOTARY_SUBMISSION_ID" "$attempt" "$NOTARY_WAIT_ATTEMPTS" "$NOTARY_WAIT_TIMEOUT"
+        set +e
+        NOTARY_WAIT_JSON="$(xcrun notarytool wait "$NOTARY_SUBMISSION_ID" \
+            "${NOTARY_AUTH_ARGS[@]}" \
+            --timeout "$NOTARY_WAIT_TIMEOUT" \
+            --output-format json \
+            --no-progress 2>&1)"
+        wait_rc=$?
+        set -e
+        printf '%s\n' "$NOTARY_WAIT_JSON"
+
+        if [[ "$wait_rc" -eq 0 ]]; then
+            NOTARY_STATUS="$(printf '%s' "$NOTARY_WAIT_JSON" | json_get status)"
+            if [[ "$NOTARY_STATUS" == "Accepted" ]]; then
+                NOTARY_ACCEPTED=1
+                break
+            fi
+            if [[ "$NOTARY_STATUS" == "Invalid" || "$NOTARY_STATUS" == "Rejected" ]]; then
+                xcrun notarytool log "$NOTARY_SUBMISSION_ID" "${NOTARY_AUTH_ARGS[@]}" || true
+                fail "notarization failed with status: $NOTARY_STATUS"
+            fi
+        else
+            echo "  notarytool wait failed (exit $wait_rc); checking current submission status" >&2
+            set +e
+            NOTARY_INFO_JSON="$(xcrun notarytool info "$NOTARY_SUBMISSION_ID" \
+                "${NOTARY_AUTH_ARGS[@]}" \
+                --output-format json 2>&1)"
+            info_rc=$?
+            set -e
+            printf '%s\n' "$NOTARY_INFO_JSON"
+            if [[ "$info_rc" -eq 0 ]]; then
+                NOTARY_STATUS="$(printf '%s' "$NOTARY_INFO_JSON" | json_get status)"
+                if [[ "$NOTARY_STATUS" == "Accepted" ]]; then
+                    NOTARY_ACCEPTED=1
+                    break
+                fi
+                if [[ "$NOTARY_STATUS" == "Invalid" || "$NOTARY_STATUS" == "Rejected" ]]; then
+                    xcrun notarytool log "$NOTARY_SUBMISSION_ID" "${NOTARY_AUTH_ARGS[@]}" || true
+                    fail "notarization failed with status: $NOTARY_STATUS"
+                fi
+            fi
+        fi
+
+        if [[ "$attempt" -eq "$NOTARY_WAIT_ATTEMPTS" ]]; then
+            break
+        fi
+        printf '  notarization is not complete yet; retrying status wait in %ss\n' \
+            "$NOTARY_WAIT_RETRY_DELAY"
+        sleep "$NOTARY_WAIT_RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+
+    [[ "$NOTARY_ACCEPTED" -eq 1 ]] \
+        || fail "notarization did not reach Accepted for submission $NOTARY_SUBMISSION_ID"
 
     step "Stapling notarization ticket"
     xcrun stapler staple "$DMG"
