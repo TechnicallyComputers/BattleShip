@@ -368,6 +368,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    name: build-windows (${{ matrix.version }})
     runs-on: windows-2022
     timeout-minutes: 30
     strategy:
