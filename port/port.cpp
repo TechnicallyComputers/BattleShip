@@ -48,6 +48,7 @@
 #include "renderdoc_trigger.h"
 #include "port_log.h"
 #include "fighter_registry.h"
+#include "focus.h"
 
 #ifndef DISABLE_SCRIPTING
 #include <ship/scripting/ScriptLoader.h>
@@ -980,6 +981,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 	// Must happen AFTER InitEventSystem (PortRegisterEvents calls
 	// EventSystemRegisterEvent, which dereferences Context::GetEventSystem()).
 	PortRegisterEvents();
+	ssb64::RegisterFocusListener();
 	port_log("SSB64: Engine events registered\n");
 
 #ifndef DISABLE_SCRIPTING

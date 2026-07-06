@@ -28,4 +28,6 @@ extern "C" void PortRegisterEvents(void) {
     REGISTER_EVENT(FighterHitboxSlotResetEvent);
     REGISTER_EVENT(FighterParentKindResolveEvent);
     REGISTER_EVENT(FighterRapidJabStatusQueryEvent);
+
+    REGISTER_EVENT(WindowFocusEvent);
 }

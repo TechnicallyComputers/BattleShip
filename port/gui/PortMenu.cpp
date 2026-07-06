@@ -1248,6 +1248,14 @@ void PortMenu::AddMenuSettings() {
         .Max(1.0f)
         .IsPercentage());
 
+    AddWidget(path, "Focus Behavior", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Mute on Focus Loss", WIDGET_CVAR_CHECKBOX)
+        .CVar("gSettings.FocusControl.MuteOnFocusLoss")
+        .RaceDisable(false)
+        .Options(CheckboxOptions()
+            .Tooltip("Silences game audio while the window is unfocused. Restores volume on refocus.")
+            .DefaultValue(false));
+
     // --- Cheats ---
     path.sidebarName = "Cheats";
     path.column = SECTION_COLUMN_1;
