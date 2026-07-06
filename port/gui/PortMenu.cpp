@@ -21,8 +21,9 @@
 #ifndef DISABLE_SCRIPTING
 #include <ship/scripting/ScriptLoader.h>
 #include "../mods/HookManager.h"
+#include "../mods/ModRegistry.h"
 
-namespace ssb64 { void MountModsDir(); }
+namespace ssb64 { void MountModsDir(); void UnmountMissingMods(); }
 #endif
 
 #include <imgui.h>
@@ -33,6 +34,7 @@ namespace ssb64 { void MountModsDir(); }
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 
@@ -1415,6 +1417,23 @@ void PortMenu::AddMenuAssets() {
 }
 
 #ifndef DISABLE_SCRIPTING
+// Cached, read-only mod list for the Mods panel. The set of installed mods
+// only changes on a reload or restart, so we snapshot on demand (first view,
+// Rescan, and after a Hot Reload) rather than re-scanning every frame.
+static std::vector<ssb64::mods::ModInfo> s_modList;
+static bool s_modListLoaded = false;
+
+static void RefreshModList() {
+    // Sync the mounted set to what's actually on disk so the list reflects mods
+    // added or deleted at runtime: drop archives whose folder is gone, pick up
+    // newly dropped ones. New mods appear as "not loaded" until a Hot Reload
+    // compiles them; this only refreshes the inventory, it does not recompile.
+    ssb64::UnmountMissingMods();
+    ssb64::MountModsDir();
+    s_modList = ssb64::mods::ModRegistry::Snapshot();
+    s_modListLoaded = true;
+}
+
 static void DoHotReload() {
     auto scripting = Ship::Context::GetInstance()->GetScriptLoader();
     if (!scripting) {
@@ -1432,9 +1451,12 @@ static void DoHotReload() {
             /*postExit=*/[](const std::string& mod) {
                 ssb64::mods::HookManager::UninstallHooksForOwner(mod.c_str());
             });
-        /* Pick up any new mod folders/archives that landed in mods/
-         * since the last load. Idempotent: already-mounted archives
-         * are skipped. */
+        /* Now that every script is unloaded, drop archives whose mod folder
+         * was deleted at runtime — otherwise it stays mounted and gets
+         * recompiled below as if it were still installed. Then pick up any
+         * new folders/archives that landed in mods/ since the last load
+         * (idempotent: already-mounted archives are skipped). */
+        ssb64::UnmountMissingMods();
         ssb64::MountModsDir();
         scripting->CompileAll();
         scripting->LoadAll(
@@ -1444,28 +1466,138 @@ static void DoHotReload() {
             /*postInit=*/[](const std::string&) {
                 ssb64::mods::HookManager::ClearCurrentOwner();
             });
+        RefreshModList();
     } catch (const std::exception& e) {
         SPDLOG_ERROR("Mod reload failed: {}", e.what());
     }
 }
 
 void PortMenu::AddMenuMods() {
-    AddMenuEntry("Mods", CVAR_SETTING("Menu.ModsSidebarSection"));
-
-    WidgetPath path = { "Mods", "Mods", SECTION_COLUMN_1 };
-    AddSidebarEntry("Mods", "Mods", 1);
+    WidgetPath path = { "Assets", "Script Mods", SECTION_COLUMN_1 };
+    AddSidebarEntry("Assets", "Script Mods", 1);
     AddWidget(path, "mods_panel", WIDGET_CUSTOM)
         .CustomFunction([](WidgetInfo&) {
+            // --- Action bar -------------------------------------------------
             if (ImGui::Button("Hot Reload")) {
-                DoHotReload();
+                DoHotReload(); // re-snapshots s_modList when it finishes
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Unload + recompile + re-init all TCC mods.\n"
                                   "Adding or removing mod folders still needs an engine restart.");
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Rescan")) {
+                RefreshModList();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Re-read the mods/ folder without reloading the mods.");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open Mods Folder")) {
+                std::string modsPath = Ship::Context::GetPathRelativeToAppDirectory("mods");
+                std::error_code ec;
+                fs::create_directories(modsPath, ec);
+                SDL_OpenURL(std::string("file:///" + fs::absolute(modsPath).string()).c_str());
+            }
+
+            // Build the list once on first view; thereafter only on demand.
+            if (!s_modListLoaded) {
+                RefreshModList();
+            }
+
+            // --- Filter -----------------------------------------------------
+            static char filter[64] = "";
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##modfilter", "Filter by name or author", filter,
+                                     sizeof(filter));
+
             ImGui::Separator();
-            ImGui::TextWrapped("Mods are loaded from the mods/ folder next to the executable. "
-                               "Drop a folder or .o2r in there, then Hot Reload (or restart) to pick it up.");
+
+            if (s_modList.empty()) {
+                ImGui::TextWrapped("No mods found. Drop a mod folder or .o2r into the mods/ "
+                                   "folder next to the executable, then press Rescan (or "
+                                   "restart).");
+                return;
+            }
+
+            auto toLower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(),
+                               [](unsigned char c) { return (char)std::tolower(c); });
+                return s;
+            };
+            const std::string needle = toLower(filter);
+            auto matches = [&](const ssb64::mods::ModInfo& mod) {
+                return needle.empty() ||
+                       toLower(mod.name).find(needle) != std::string::npos ||
+                       toLower(mod.author).find(needle) != std::string::npos;
+            };
+
+            // --- Mod cards --------------------------------------------------
+            int loadedCount = 0;
+            int issueCount = 0;
+            int shown = 0;
+            for (const auto& mod : s_modList) {
+                using ssb64::mods::ModState;
+                if (mod.state == ModState::Loaded) {
+                    loadedCount++;
+                }
+                if (mod.state == ModState::InvalidManifest) {
+                    issueCount++;
+                }
+                if (!matches(mod)) {
+                    continue;
+                }
+                shown++;
+
+                ImGui::PushID(mod.archivePath.c_str()); // unique id per card
+
+                switch (mod.state) {
+                    case ModState::Loaded:
+                        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.40f, 1.0f), "LOADED");
+                        break;
+                    case ModState::NotLoaded:
+                        ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "not loaded");
+                        break;
+                    case ModState::InvalidManifest:
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "manifest issue");
+                        break;
+                }
+
+                ImGui::SameLine();
+                if (!mod.version.empty()) {
+                    ImGui::Text("%s  v%s", mod.name.c_str(), mod.version.c_str());
+                } else {
+                    ImGui::TextUnformatted(mod.name.c_str());
+                }
+                if (ImGui::IsItemHovered() && !mod.archivePath.empty()) {
+                    ImGui::SetTooltip("%s", mod.archivePath.c_str());
+                }
+
+                if (!mod.author.empty()) {
+                    ImGui::TextDisabled("by %s", mod.author.c_str());
+                }
+                if (!mod.description.empty()) {
+                    ImGui::TextWrapped("%s", mod.description.c_str());
+                }
+                if (!mod.note.empty()) {
+                    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "%s", mod.note.c_str());
+                }
+
+                ImGui::PopID();
+                ImGui::Separator();
+            }
+
+            if (shown == 0) {
+                ImGui::TextDisabled("No mods match the filter.");
+            }
+
+            ImGui::Spacing();
+            std::string footer = std::to_string(static_cast<int>(s_modList.size())) +
+                                 " installed  |  " + std::to_string(loadedCount) + " loaded";
+            if (issueCount > 0) {
+                footer += "  |  " + std::to_string(issueCount) + " issue(s)";
+            }
+            ImGui::TextUnformatted(footer.c_str());
         });
 }
 #endif
