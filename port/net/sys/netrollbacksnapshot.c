@@ -1413,6 +1413,42 @@ static void syNetRbSnapEjectItemGObjForRollback(GObj *item_gobj)
 static void syNetRbSnapEjectKirbyInhaleWindEffectGObj(GObj *gobj, FTStruct *owner_fp);
 #endif
 
+static void syNetRbSnapEjectGObj(GObj *gobj);
+
+void syNetRbSnapSafeEjectOrphanEffectGObj(GObj *gobj)
+{
+	GObjProcess *gobjproc;
+	GObjProcess *next;
+	EFStruct *ep;
+
+	if (gobj == NULL)
+	{
+		return;
+	}
+	if (gobj->obj_kind == 0xFE)
+	{
+		syNetRbSnapUnlinkSentinelGObjFromLists(gobj);
+		return;
+	}
+	for (gobjproc = gobj->gobjproc_head; gobjproc != NULL; gobjproc = next)
+	{
+		next = gobjproc->link_next;
+		if (gobjproc->kind == nGCProcessKindFunc)
+		{
+			gcEndGObjProcess(gobjproc);
+		}
+	}
+	ep = efGetStruct(gobj);
+	if ((ep == NULL) || (gobj->obj == NULL))
+	{
+		gobj->user_data.p = NULL;
+		gobj->obj_kind = 0xFE;
+		syNetRbSnapUnlinkSentinelGObjFromLists(gobj);
+		return;
+	}
+	syNetRbSnapEjectGObj(gobj);
+}
+
 static void syNetRbSnapEjectGObj(GObj *gobj)
 {
 	EFStruct *ep;
@@ -1481,7 +1517,7 @@ static void syNetRbSnapEjectGObj(GObj *gobj)
 		gobj->user_data.p = NULL;
 		return;
 	}
-	gcEjectGObj(gobj);
+	syNetRbSnapSafeEjectOrphanEffectGObj(gobj);
 }
 
 static GObj *syNetRbSnapResolveGobj(u32 id)
@@ -2883,6 +2919,8 @@ static void syNetRbSnapLogFoxFirefoxAnimFramesProbe(const char *phase, const FTS
 static sb32 syNetRbSnapFighterInYoshiEggLayAttackScope(const FTStruct *fp);
 static sb32 syNetRbSnapshotSlotAnyFighterYoshiEggLayAttackScope(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapRefreshYoshiEggLayPresentationFromSlot(const SYNetRbSnapshotSlot *slot);
+static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj, FTStruct *fp,
+							      const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapBlobInResidualShieldPresentationScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapshotSlotAnyFighterResidualShieldPresentationScope(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapshotSlotAnyFighterKirbyJumpAerialPresentationScope(const SYNetRbSnapshotSlot *slot);
@@ -8798,6 +8836,17 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 		syNetRbSnapQuantizeFighterRebirthStatusVars(fp, &fp->status_vars);
 		syNetplayRepairRebirthApexIfInverted(fp);
 		syNetplayCanonicalizeRebirthFighterMapPose(fighter_gobj);
+	}
+#endif
+#if defined(SSB64_NETMENU)
+	/*
+	 * Egg-lay / CaptureYoshi: ApplyFighter canonicalize mutates TopN/MPColl fold fields before verify
+	 * (soak2 session 710030695 tick 509: topn_x C3BEFAA8→C3BE3CD8 during apply). Hard-pin sim fold
+	 * contributors from the slot blob immediately so load+prepare round-trips the saved ring state.
+	 */
+	if (syNetRbSnapBlobInYoshiEggLayPresentationScope(blob) != FALSE)
+	{
+		syNetRbSnapHardPinFighterFoldContributorsFromBlob(fighter_gobj, fp, blob);
 	}
 #endif
 	syNetRbSnapshotLogFighterBlobStatusTrail("apply_after", syNetInputGetTick(), fp->player, blob);
@@ -18230,10 +18279,10 @@ static void syNetRbSnapEjectHiddenCosmeticEffectShellForVerify(GObj *gobj, EFStr
 	 * Post-synctest-fail recovery can leave hidden cosmetic shells with obj=nil / ep=nil on the effect
 	 * link. gcEjectGObj on that shell SIGSEGVs (fault_addr=0x8). Unlink only.
 	 */
-	if ((ep == NULL) && ((gobj->obj == NULL) || (gobj->user_data.p == NULL)))
+	if (ep == NULL)
 	{
 		syNetRbSnapLogEffectEjectDiag("hidden_cosmetic_verify", syNetInputGetTick(), gobj, ep);
-		syNetRbSnapUnlinkSentinelGObjFromLists(gobj);
+		syNetRbSnapSafeEjectOrphanEffectGObj(gobj);
 		return;
 	}
 	syNetRbSnapLogEffectEjectDiag("hidden_cosmetic_verify", syNetInputGetTick(), gobj, ep);
@@ -18280,6 +18329,26 @@ static void syNetRbSnapEjectHiddenCosmeticEffectShellsForVerify(void)
 				continue;
 			}
 			syNetRbSnapEjectHiddenCosmeticEffectShellForVerify(gobj, ep);
+		}
+	}
+}
+
+void syNetRbSnapshotPurgeOrphanEffectShellsAfterSynctest(void)
+{
+	s32 pass;
+	GObj *gobj;
+	GObj *next;
+
+	for (pass = 0; pass < 2; pass++)
+	{
+		for (gobj = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		     gobj != NULL; gobj = next)
+		{
+			next = gobj->link_next;
+			if (efGetStruct(gobj) == NULL)
+			{
+				syNetRbSnapSafeEjectOrphanEffectGObj(gobj);
+			}
 		}
 	}
 }
@@ -34580,6 +34649,33 @@ static void syNetRbSnapBackfillGuardShieldEffectIdsFromEffects(const SYNetRbSnap
 }
 #endif
 
+static void syNetRbSnapRecaptureLiveFightersIntoSlot(SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index >= 0) && (slot_index < GMCOMMON_PLAYERS_MAX))
+		{
+			syNetRbSnapCaptureFighter(&slot->fighters[slot_index], fp, fighter_gobj);
+		}
+	}
+}
+
 static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed_sim_tick)
 {
 	GObj *fighter_gobj;
@@ -34721,6 +34817,23 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 	slot->hash_camera = syNetSyncHashGMCamera();
 	slot->hash_animation = syNetSyncHashFighterAnimationStateForRollback();
 #ifdef PORT
+#if defined(SSB64_NETMENU)
+	/*
+	 * Item/weapon/map tail passes can mutate live TopN/MPColl after the initial fighter capture.
+	 * Egg-lay presentation (victim status 177/178) needs a slot re-pin before the final blob pass.
+	 */
+	if (syNetRbSnapshotSlotAnyFighterYoshiEggLayPresentationScope(slot) != FALSE)
+	{
+		syNetRbSnapRefreshYoshiEggLayPresentationFromSlot(slot);
+	}
+#endif
+	syNetRbSnapRecaptureLiveFightersIntoSlot(slot);
+	/*
+	 * hash_fighter was first folded mid-fill before item/weapon/map tail passes. Re-fold at the same
+	 * instant as hash_animation so the ring aggregate matches the committed fighter blobs (soak2 session
+	 * 710030695: per-slot fhash OK but stale ring figh vs live after egg-lay load verify).
+	 */
+	slot->hash_fighter = syNetSyncHashBattleFightersFull();
 	slot->hash_effect = syNetRbSnapHashCanonicalSlotEffects(slot);
 	syNetRbSnapLogRingSaveDiag(slot, completed_sim_tick);
 #endif
@@ -38118,6 +38231,9 @@ void syNetRbSnapshotPrepareLoadedSlotForVerify(u32 completed_sim_tick)
 		syNetRbSnapRepairSlotWeaponsForVerify(slot);
 	}
 	syNetRbSnapshotLogFighterStatusTrail("prepare_verify", completed_sim_tick);
+#if defined(SSB64_NETMENU)
+	syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(completed_sim_tick);
+#endif
 }
 
 void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick)
@@ -40779,6 +40895,61 @@ u32 syNetRbSnapshotHashFightersLightFromLive(void)
 		merged = syNetRbSnapFnvAccumulateU32(merged ^ slot_hash[si], (u32)si);
 	}
 	return merged;
+}
+
+sb32 syNetRbSnapshotAllFighterSlotHashesMatchAtTick(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+	GObj *fighter_gobj;
+
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return FALSE;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		const SYNetRbSnapFighterBlob *blob;
+		s32 slot_index;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX) ||
+		    (slot->fighters[slot_index].is_valid == FALSE))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		if ((syNetSyncHashFighterStructLight(fp) != syNetRbSnapHashFighterBlobLight(blob)) ||
+		    (syNetSyncHashFighterSlotFull(fp) != syNetRbSnapHashFighterBlobFull(blob)) ||
+		    (syNetSyncHashFighterSlotAnim(fp, fighter_gobj) != syNetRbSnapHashFighterBlobAnim(blob)))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+void syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot == NULL) || (slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return;
+	}
+	if (syNetRbSnapshotAllFighterSlotHashesMatchAtTick(tick) == FALSE)
+	{
+		return;
+	}
+	slot->hash_fighter = syNetSyncHashBattleFightersFull();
 }
 #endif
 

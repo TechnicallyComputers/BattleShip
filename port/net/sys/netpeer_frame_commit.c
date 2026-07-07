@@ -189,6 +189,38 @@ sb32 syNetFrameCommitItemOnlyCosmeticDiverge(const SYNetFrameCommitToken *a, con
 	return TRUE;
 }
 
+/*
+ * Cross-peer frame commit: sim-critical partitions and per-slot blob light digests agree but
+ * aggregate fighter_digest differs (stale ring hash_fighter vs committed blobs — soak2 session
+ * 839144305 tick 600 egg-lay).
+ */
+sb32 syNetFrameCommitFighOnlyStaleRingDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b)
+{
+	s32 si;
+
+	if ((a == NULL) || (b == NULL))
+	{
+		return FALSE;
+	}
+	if (a->fighter_digest == b->fighter_digest)
+	{
+		return FALSE;
+	}
+	if ((a->world_digest != b->world_digest) || (a->item_digest != b->item_digest) ||
+	    (a->rng_digest != b->rng_digest) || (a->effect_digest != b->effect_digest))
+	{
+		return FALSE;
+	}
+	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+	{
+		if (a->fighter_slot_digest[si] != b->fighter_slot_digest[si])
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
 sb32 syNetFrameCommitLiveHashGuardTripped(const SYNetFrameCommitToken *local, const SYNetFrameCommitToken *peer,
 					  u32 validation_tick, u32 *out_diag_figh, u32 *out_diag_world)
 {

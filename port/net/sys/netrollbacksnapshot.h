@@ -92,6 +92,8 @@ extern void syNetRbSnapDiagLogGuardShieldJointPose(const char *tag);
 extern void syNetRbSnapRefreshGuardShieldYRotNDrawMatrix(struct GObj *fighter_gobj);
 /* Hidden hatch shell repair after synctest emergency restore (hash-excluded cosmetic). */
 extern void syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest(void);
+extern void syNetRbSnapshotPurgeOrphanEffectShellsAfterSynctest(void);
+extern void syNetRbSnapSafeEjectOrphanEffectGObj(struct GObj *gobj);
 /* Fragile synctest probe skip on escape boundary — replay hatch on live tail when shell missing. */
 extern void syNetRbSnapTryEnsureLiveYoshiEggLayHatchAfterSynctestFragileSkip(const char *skip_reason,
                                                                              u32 completed_sim_tick);
@@ -287,6 +289,9 @@ extern u32 syNetRbSnapshotGetSlotHashFighterLight(u32 tick);
 #if defined(SSB64_NETMENU)
 extern void syNetRbSnapshotCollectFighterSlotHashesAtTick(u32 tick, u32 *out_slot_hash);
 extern u32 syNetRbSnapshotHashFightersLightFromLive(void);
+/* TRUE when every live fighter matches its ring blob on light/full/anim slot-hash recipes. */
+extern sb32 syNetRbSnapshotAllFighterSlotHashesMatchAtTick(u32 tick);
+extern void syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(u32 tick);
 #endif
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashItem(u32 tick);

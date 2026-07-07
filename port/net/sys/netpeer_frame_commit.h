@@ -66,6 +66,11 @@ sb32 syNetFrameCommitStateDigestsDiverge(const SYNetFrameCommitToken *a, const S
  */
 sb32 syNetFrameCommitItemOnlyCosmeticDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b);
 /*
+ * TRUE when only fighter_digest differs while world/item/rng/effect and every fighter_slot_digest
+ * agree cross-peer (stale ring hash_fighter; per-slot blobs are authoritative).
+ */
+sb32 syNetFrameCommitFighOnlyStaleRingDiverge(const SYNetFrameCommitToken *a, const SYNetFrameCommitToken *b);
+/*
  * TRUE when frame-commit tokens agree on state digests but rollback snapshot at validation_tick-1 does not
  * match local token digests, or (fallback) live sim is more than one tick past validation and disagrees.
  */

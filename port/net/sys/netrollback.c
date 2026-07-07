@@ -1938,6 +1938,27 @@ static sb32 syNetRollbackFcRecoveryFighDriftOk(u32 tick, u32 live_f)
 }
 
 /*
+ * Load/synctest verify: aggregate ring figh can disagree with live while every per-player
+ * light/full/anim slot hash still matches (egg-lay apply canonicalize + stale mid-fill ring fold).
+ */
+static sb32 syNetRollbackLoadVerifyPerSlotFighDriftOk(u32 tick, u32 live_f, u32 live_w, u32 live_i, u32 live_wp,
+						      u32 live_m, u32 live_r, u32 live_a)
+{
+	if (live_f == syNetRbSnapshotGetSlotHashFighter(tick))
+	{
+		return FALSE;
+	}
+	if ((live_w != syNetRbSnapshotGetSlotHashWorld(tick)) || (live_i != syNetRbSnapshotGetSlotHashItem(tick)) ||
+	    (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) || (live_m != syNetRbSnapshotGetSlotHashMap(tick)) ||
+	    (live_r != syNetRbSnapshotGetSlotHashRng(tick)) ||
+	    (live_a != syNetRbSnapshotGetSlotHashAnimation(tick)))
+	{
+		return FALSE;
+	}
+	return syNetRbSnapshotAllFighterSlotHashesMatchAtTick(tick);
+}
+
+/*
  * FC recovery: ring may retain weapon blobs from a poisoned local forward-sim span while live load
  * correctly has none (peer-empty @480 soak3). Allow resim load when sim-critical partitions match.
  */
@@ -5853,6 +5874,17 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 			return TRUE;
 		}
 #if defined(SSB64_NETMENU)
+		if (syNetRollbackLoadVerifyPerSlotFighDriftOk(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
+		                                              live_a) != FALSE)
+		{
+			syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(tick);
+			port_log(
+			    "SSB64 NetRollback: LOAD_HASH_DRIFT per-slot-figh-ok — continuing verify tick=%u ring_figh=0x%08X live_figh=0x%08X\n",
+			    tick,
+			    syNetRbSnapshotGetSlotHashFighter(tick),
+			    live_f);
+			return TRUE;
+		}
 		if (syNetRollbackFcRecoveryWpnOnlyDriftOk(tick, live_f, live_w, live_i, live_wp, live_m, live_r) != FALSE)
 		{
 			return TRUE;
@@ -6692,6 +6724,7 @@ void syNetRollbackAfterBattleUpdate(void)
 				(void)syNetRbSnapshotRestoreLiveEmergency();
 				syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
 				syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
+				syNetRbSnapshotPurgeOrphanEffectShellsAfterSynctest();
 				syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_recover");
 #if defined(SSB64_NETMENU)
 				syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
@@ -9421,6 +9454,14 @@ static sb32 syNetRollbackTryDeeperLoadBeforeResim(u32 *io_load_tick, u32 *io_mis
 	{
 		return FALSE;
 	}
+#if defined(SSB64_NETMENU)
+	if (syNetRollbackLoadVerifyPerSlotFighDriftOk(load_tick, live.fighter, live.world, live.item, live.weapon,
+						      live.map, live.rng, live.animation) != FALSE)
+	{
+		syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(load_tick);
+		return FALSE;
+	}
+#endif
 	/* syNetRollbackLoadPostTick verify runs before coupling finalize; world/item may drift after eject. */
 	if ((live.fighter == slot_f) && (live.rng == slot_r))
 	{

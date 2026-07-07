@@ -9841,6 +9841,33 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 			syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
 			return;
 		}
+#if defined(SSB64_NETMENU)
+		if ((local->input_digest == peer->input_digest) &&
+		    (syNetFrameCommitFighOnlyStaleRingDiverge(local, peer) != FALSE))
+		{
+			u32 snap_tick;
+
+			snap_tick = (vtick > 0U) ? (vtick - 1U) : 0U;
+			syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(snap_tick);
+			if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+			{
+				sSYNetPeerFrameCommitMismatchLogCount++;
+				port_log(
+				    "SSB64 NetPeer: FRAME_COMMIT_FIGH_SLOT_OK validation=%u snap_tick=%u "
+				    "local figh=0x%08X peer figh=0x%08X slots agree world/item/rng/eff agree inp=0x%08X — continuing\n",
+				    vtick,
+				    snap_tick,
+				    local->fighter_digest,
+				    peer->fighter_digest,
+				    local->input_digest);
+			}
+			sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
+			sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
+			syNetRollbackNoteFrameCommitStateAgreed(vtick);
+			syNetPeerNotePostRecoveryConvergenceEpoch(TRUE, vtick);
+			return;
+		}
+#endif
 		sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
 		sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 		if (syNetPeerFrameCommitDiagLevel() >= 2)
