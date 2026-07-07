@@ -2633,6 +2633,9 @@ u32 syNetSyncHashActiveItemsForRollback(void)
 
 	truncated = FALSE;
 	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
+#if defined(SSB64_NETMENU)
+	syNetRbDedupeActiveItemsForRollbackHash(sorted, &count, SYNET_SYNC_ITEM_HASH_SORT_MAX);
+#endif
 #ifdef PORT
 	if ((truncated != FALSE) && (sSYNetSyncItemHashTruncationLogged == FALSE))
 	{
@@ -2734,6 +2737,9 @@ static void syNetSyncLogItemHashWalkBody(u32 sim_tick, u32 slot_item, u32 live_i
 
 	truncated = FALSE;
 	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
+#if defined(SSB64_NETMENU)
+	syNetRbDedupeActiveItemsForRollbackHash(sorted, &count, SYNET_SYNC_ITEM_HASH_SORT_MAX);
+#endif
 	hash = 2166136261U;
 	idx = 0U;
 	port_log(
@@ -2860,6 +2866,9 @@ void syNetSyncLogItemFieldDiffDiag(u32 sim_tick, u32 slot_item, u32 live_item, c
 	}
 	truncated = FALSE;
 	count = syNetRbEnumerateActiveItemsSorted(sorted, SYNET_SYNC_ITEM_HASH_SORT_MAX, &truncated);
+#if defined(SSB64_NETMENU)
+	syNetRbDedupeActiveItemsForRollbackHash(sorted, &count, SYNET_SYNC_ITEM_HASH_SORT_MAX);
+#endif
 	port_log(
 	    "SSB64 NetSync: item_field_diff begin sim_tick=%u live_sim=%u reason=%s slot_item=0x%08X live_item=0x%08X count=%d truncated=%d\n",
 	    sim_tick,

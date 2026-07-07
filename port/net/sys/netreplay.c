@@ -833,4 +833,26 @@ sb32 syNetReplayDeleteUserFile(const char *basename)
 	return TRUE;
 }
 
+sb32 syNetReplayDeleteAllUserFiles(void)
+{
+	char names[SYNETREPLAY_USER_MAX_FILES][SYNETREPLAY_USER_FILENAME_MAX];
+	s32 count;
+	s32 i;
+	sb32 any_failed;
+
+	if (syNetReplayEnumerateUserFiles(names, SYNETREPLAY_USER_MAX_FILES, &count) == FALSE)
+	{
+		return FALSE;
+	}
+	any_failed = FALSE;
+	for (i = 0; i < count; i++)
+	{
+		if (syNetReplayDeleteUserFile(names[i]) == FALSE)
+		{
+			any_failed = TRUE;
+		}
+	}
+	return (any_failed == FALSE) ? TRUE : FALSE;
+}
+
 #endif /* PORT && SSB64_NETMENU */

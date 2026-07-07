@@ -224,6 +224,8 @@ extern sb32 syNetRbSnapshotPikachuQuickAttackCatchUpPendingAtTick(u32 tick);
 /* Defer weapon eject until load-hash verify succeeds (fc_recovery abort path). */
 extern void syNetRbSnapshotCommitDeferredWeaponEject(u32 tick);
 extern void syNetRbSnapshotCancelDeferredWeaponEject(void);
+/* TRUE while snapshot load apply is deferring weapon orphan eject until verify hash. */
+extern sb32 syNetRbSnapDeferWeaponSimDuringLoadVerify(void);
 #endif
 #endif
 /*
@@ -246,8 +248,14 @@ extern sb32 syNetRbSnapshotLoadHashEffSoftContinueBlocked(u32 tick);
  */
 extern s32 syNetRbEnumerateActiveItemsSorted(struct GObj **out, s32 max, sb32 *truncated_out);
 #if defined(SSB64_NETMENU)
+/* SSB64_NETPLAY_ITEM_MPCOLL_VERBATIM=1 (legacy: LINK_BOMB_*): trust full item MPColl blob round-trip. */
+extern sb32 syNetRbSnapItemMPCollVerbatimActive(void);
+/* Deprecated alias — calls syNetRbSnapItemMPCollVerbatimActive(). */
+extern sb32 syNetRbSnapLinkBombMPCollVerbatimActive(void);
 /* Cross-ISA: snap live item translate/vel to the shared F32 grid after each sim tick (forward path). */
 extern void syNetRbSnapshotCanonicalizeActiveItemsForNetplay(void);
+/* Hash-only: collapse pickup ground-ghost + held Link bomb double-folds (capture/apply keep full list). */
+extern void syNetRbDedupeActiveItemsForRollbackHash(struct GObj **items, s32 *count_in_out, s32 max);
 /* Pose-only held-bomb refresh before load-hash verify (throw scope). */
 extern void syNetRbSnapshotRepairItemThrowWindowForVerify(void);
 /* Forward sim: airborne Thrown/Fall MPColl repair + hold-state tracking (not load verify). */

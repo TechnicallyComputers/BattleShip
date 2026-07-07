@@ -36,6 +36,7 @@ extern void syNetReplaySetUserPlaybackHalted(sb32 halted);
 extern sb32 syNetReplayIsUserPlaybackHalted(void);
 extern void syNetReplayAbortUserPlayback(void);
 extern sb32 syNetReplayDeleteUserFile(const char *basename);
+extern sb32 syNetReplayDeleteAllUserFiles(void);
 #endif
 
 #endif /* _SYNETREPLAY_H_ */
