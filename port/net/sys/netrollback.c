@@ -1037,6 +1037,9 @@ static sb32 syNetRollbackPeerBaselineGameplayDigestsMatch(const SYNetRollbackHas
 							    const SYNetRollbackHashSet *local);
 static sb32 syNetRollbackPeerBaselineDriftIsCameraOnlyCosmetic(const SYNetRollbackHashSet *peer,
 							       const SYNetRollbackHashSet *local);
+static sb32 syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(u32 load_tick, const SYNetRollbackHashSet *peer,
+								   const SYNetRollbackHashSet *local,
+								   const u32 *peer_fighter_slot);
 static sb32 syNetRollbackCollectBaselineCompareLocal(u32 load_tick, SYNetRollbackHashSet *out);
 static void syNetRollbackAlignArmedBaselineCameraFromPeerWire(u32 load_tick, u32 peer_camera);
 static sb32 syNetRollbackPeerBaselineWireDigestsMatchArmed(const SYNetRollbackHashSet *peer);
@@ -1794,6 +1797,24 @@ static sb32 syNetRollbackLoadHashSimCoreMatchesSlot(u32 tick, u32 live_f, u32 li
 	if ((live_f != syNetRbSnapshotGetSlotHashFighter(tick)) || (live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
 	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) ||
 	    (live_m != syNetRbSnapshotGetSlotHashMap(tick)) || (live_r != syNetRbSnapshotGetSlotHashRng(tick)))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static sb32 syNetRollbackVerifyLoadHashMatchesSlot(u32 tick, u32 live_f, u32 live_w, u32 live_i, u32 live_wp,
+						     u32 live_m, u32 live_r, u32 live_c, u32 live_a, u32 live_ef)
+{
+	if ((live_f != syNetRbSnapshotGetSlotHashFighter(tick)) || (live_w != syNetRbSnapshotGetSlotHashWorld(tick)) ||
+	    (live_i != syNetRbSnapshotGetSlotHashItem(tick)) || (live_wp != syNetRbSnapshotGetSlotHashWeapon(tick)) ||
+	    (live_m != syNetRbSnapshotGetSlotHashMap(tick)) || (live_r != syNetRbSnapshotGetSlotHashRng(tick)) ||
+	    (live_c != syNetRbSnapshotGetSlotHashCamera(tick)) || (live_a != syNetRbSnapshotGetSlotHashAnimation(tick)))
+	{
+		return FALSE;
+	}
+	if ((sSYNetRollbackVerifyEffectHash != FALSE) &&
+	    (live_ef != syNetRbSnapshotGetSlotHashEffect(tick)))
 	{
 		return FALSE;
 	}
@@ -5691,6 +5712,11 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		syNetRbSnapshotReapplyJointAnimAtTick(tick);
 	}
 	syNetRbSnapshotFinalizeVerifyEffectState(tick);
+#if defined(SSB64_NETMENU)
+	/* Verify-only egg-lay re-pin (PrepareYoshiEggLayForVerifyHash) runs inside the loaded-slot
+	 * prepare path — do not re-restore countdown fields here on the live synctest round-trip. */
+	syNetRbSnapshotPrepareYoshiEggLayForVerifyHash(tick);
+#endif
 	/*
 	 * FinalizeVerifyEffectState re-runs link-bomb window / quake / shield effect reconcile after
 	 * PrepareLoadedSlotForVerify's item blob pass. Re-stamp slot item blobs immediately before the
@@ -5830,6 +5856,12 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 			{
 				live_wp = syNetSyncHashActiveWeaponsForRollback();
 			}
+		}
+		if (syNetRollbackVerifyLoadHashMatchesSlot(tick, live_f, live_w, live_i, live_wp, live_m, live_r, live_c,
+		                                         live_a, live_ef) != FALSE)
+		{
+			port_log("SSB64 NetRollback: LOAD_HASH_DRIFT repair-ok — continuing verify tick=%u\n", tick);
+			return TRUE;
 		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
 		                                                 live_c, live_a, live_ef) != FALSE)
@@ -6447,6 +6479,18 @@ static sb32 syNetRollbackLoadPostTick(u32 tick)
 				live_wp = syNetSyncHashActiveWeaponsForRollback();
 			}
 		}
+		if (syNetRollbackVerifyLoadHashMatchesSlot(tick, live_f, live_w, live_i, live_wp, live_m, live_r, live_c,
+		                                         live_a, live_ef) != FALSE)
+		{
+			port_log("SSB64 NetRollback: LOAD_HASH_DRIFT repair-ok (post-verify) — continuing resim tick=%u\n",
+			         tick);
+			syNetRbSnapshotRebindAllFighters();
+#if defined(SSB64_NETMENU)
+			syNetRollbackWhispyPresentationAfterLoad(tick, "repair_ok");
+			syNetRollbackLoadPostTickCommitSideEffects(tick);
+#endif
+			return TRUE;
+		}
 		if (syNetRollbackLoadHashDriftIsPresentationalOnly(tick, live_f, live_w, live_i, live_wp, live_m, live_r,
 		                                                 live_c, live_a, live_ef) != FALSE)
 		{
@@ -6630,6 +6674,8 @@ void syNetRollbackAfterBattleUpdate(void)
 		}
 		syNetplayNessRunLiveJibakuCatchUpAll();
 		syNetplayRebirthCatchUpFightersTick();
+		syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects();
+		syNetRbSnapForwardPruneStaleFoxReflectors();
 		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
 		{
 			syNetRbSnapReconcileYoshiEggLayEffectsLive();
@@ -6705,6 +6751,9 @@ void syNetRollbackAfterBattleUpdate(void)
 		else
 		{
 			probe_tick = completed_tick - 1U;
+#if defined(SSB64_NETMENU)
+			syNetRbSnapStashYoshiEggLayWaitTimerBeforeSynctest(probe_tick);
+#endif
 			emergency_ok = syNetRbSnapshotCaptureLiveEmergency();
 			verify_ok = FALSE;
 			if (emergency_ok != FALSE)
@@ -6722,6 +6771,9 @@ void syNetRollbackAfterBattleUpdate(void)
 			if (emergency_ok != FALSE)
 			{
 				(void)syNetRbSnapshotRestoreLiveEmergency();
+#if defined(SSB64_NETMENU)
+				syNetRbSnapRestoreYoshiEggLayWaitTimerAfterSynctest(probe_tick, "synctest_restore");
+#endif
 				syNetRbSnapshotRecoverGuardShieldBubblesAfterSynctest();
 				syNetRbSnapshotRecoverYoshiEggLayHatchAfterSynctest();
 				syNetRbSnapshotPurgeOrphanEffectShellsAfterSynctest();
@@ -7686,6 +7738,19 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 				sSYNetRollbackBaselineItemOnlySelfDriftLoadTick = load_tick;
 			}
 		}
+#if defined(SSB64_NETMENU)
+		if (syNetRollbackLoadVerifyPerSlotFighDriftOk(load_tick, live.fighter, live.world, live.item, live.weapon,
+							      live.map, live.rng, live.animation) != FALSE)
+		{
+			syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(load_tick);
+			port_log(
+			    "SSB64 NetRollback: PEER_BASELINE_WIRE_LIVE_FIGH load_tick=%u ring_figh=0x%08X live_figh=0x%08X\n",
+			    load_tick,
+			    sSYNetRollbackPeerBaselineFigh,
+			    live.fighter);
+			sSYNetRollbackPeerBaselineFigh = live.fighter;
+		}
+#endif
 	}
 	syNetPeerTrySendRollbackBaselineDigest();
 	syNetPeerTrySendEpisodeSealRows();
@@ -9957,6 +10022,58 @@ static sb32 syNetRollbackPeerBaselineDriftIsCameraOnlyCosmetic(const SYNetRollba
 	return syNetRollbackPeerBaselineGameplayDigestsMatch(peer, local);
 }
 
+/*
+ * Egg-lay / CaptureYoshi resim: ring aggregate figh can lag post-apply canonicalize while every per-player
+ * slot hash still matches live (Linux follower soak2 @519). Baseline wire intentionally used ring aggregate,
+ * so one peer can send stale figh while slots and all other partitions agree — false PEER_SNAPSHOT_DIVERGE.
+ */
+static sb32 syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(u32 load_tick, const SYNetRollbackHashSet *peer,
+								   const SYNetRollbackHashSet *local,
+								   const u32 *peer_fighter_slot)
+{
+	SYNetRollbackHashSet live;
+	u32 live_slots[GMCOMMON_PLAYERS_MAX];
+
+#if defined(SSB64_NETMENU)
+	if ((peer == NULL) || (local == NULL))
+	{
+		return FALSE;
+	}
+	if (peer->fighter == local->fighter)
+	{
+		return FALSE;
+	}
+	if ((peer->world != local->world) || (peer->item != local->item) || (peer->rng != local->rng) ||
+	    (peer->animation != local->animation) || (peer->weapon != local->weapon) || (peer->map != local->map) ||
+	    (peer->camera != local->camera) ||
+	    ((sSYNetRollbackLastPeerOutcomeEffectValid != FALSE) && (peer->effect != local->effect)))
+	{
+		return FALSE;
+	}
+	live = syNetRollbackCollectHashes();
+	if ((syNetRollbackLoadVerifyPerSlotFighDriftOk(load_tick, live.fighter, live.world, live.item, live.weapon,
+						       live.map, live.rng, live.animation) != FALSE) &&
+	    (peer->fighter == live.fighter))
+	{
+		return TRUE;
+	}
+	syNetRollbackCollectFighterSlotHashes(live_slots);
+	if ((peer_fighter_slot != NULL) &&
+	    (syNetRollbackBaselineFighterSlotsMatch(peer_fighter_slot, live_slots) != FALSE) &&
+	    (syNetRbSnapshotAllFighterSlotHashesMatchAtTick(load_tick) != FALSE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+#else
+	(void)load_tick;
+	(void)peer;
+	(void)local;
+	(void)peer_fighter_slot;
+	return FALSE;
+#endif
+}
+
 static sb32 syNetRollbackCollectBaselineCompareLocal(u32 load_tick, SYNetRollbackHashSet *out)
 {
 	if (out == NULL)
@@ -9973,6 +10090,19 @@ static sb32 syNetRollbackCollectBaselineCompareLocal(u32 load_tick, SYNetRollbac
 	{
 		out->camera = sSYNetRollbackPeerBaselineSlotCamera;
 	}
+#if defined(SSB64_NETMENU)
+	{
+		SYNetRollbackHashSet live_compare;
+
+		live_compare = syNetRollbackCollectHashes();
+		if (syNetRollbackLoadVerifyPerSlotFighDriftOk(load_tick, live_compare.fighter, live_compare.world,
+							      live_compare.item, live_compare.weapon, live_compare.map,
+							      live_compare.rng, live_compare.animation) != FALSE)
+		{
+			out->fighter = live_compare.fighter;
+		}
+	}
+#endif
 	return TRUE;
 }
 
@@ -10372,6 +10502,26 @@ static void syNetRollbackComparePeerBaselineToLocal(u32 load_tick, const SYNetRo
 		}
 		return;
 	}
+	if (syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(load_tick, peer, &local, peer_fighter_slot) != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_BASELINE_FIGH_STALE_AGGREGATE_OK load_tick=%u peer figh=0x%08X local figh=0x%08X — continuing\n",
+		    load_tick,
+		    peer->fighter,
+		    local.fighter);
+		syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(load_tick);
+		if ((sSYNetRollbackResimPending != FALSE) && (sSYNetRollbackResimAwaitingPeerBaseline != FALSE) &&
+		    (load_tick == sSYNetRollbackResimLoadTick))
+		{
+			sSYNetRollbackResimBaselineDigestMatched = TRUE;
+			sSYNetRollbackResimBaselineWaitFrames = 0U;
+			sSYNetRollbackPeerBaselineSendPending = FALSE;
+			sSYNetRollbackBaselineTimeoutStreak = 0U;
+			sSYNetRollbackFcDeepenInFlight = FALSE;
+			syNetRollbackTryOpenResimReplayGate();
+		}
+		return;
+	}
 	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) && (syNetRollbackEpisodeInputsSealed() != FALSE) &&
 	    (syNetRollbackEpisodeAllPeerSealRowsComplete() != FALSE) && (peer->world == local.world) &&
 	    (peer->item == local.item) && (peer->rng == local.rng) && (peer->fighter != local.fighter))
@@ -10567,6 +10717,16 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 		    load_tick,
 		    peer->camera,
 		    local->camera);
+		return;
+	}
+	if ((peer != NULL) && (local != NULL) &&
+	    (syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(load_tick, peer, local, peer_fighter_slot) != FALSE))
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (figh stale aggregate) load_tick=%u peer figh=0x%08X local figh=0x%08X\n",
+		    load_tick,
+		    peer->fighter,
+		    local->fighter);
 		return;
 	}
 	port_log(

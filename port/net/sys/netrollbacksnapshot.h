@@ -113,6 +113,8 @@ extern void syNetRbSnapshotSanitizeLiveQuakeEffectsAfterEmergencyRestore(void);
 extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const struct EFStruct *ep);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
+extern void syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects(void);
+extern void syNetRbSnapForwardPruneStaleFoxReflectors(void);
 extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
 extern void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick);
@@ -292,6 +294,12 @@ extern u32 syNetRbSnapshotHashFightersLightFromLive(void);
 /* TRUE when every live fighter matches its ring blob on light/full/anim slot-hash recipes. */
 extern sb32 syNetRbSnapshotAllFighterSlotHashesMatchAtTick(u32 tick);
 extern void syNetRbSnapshotRefreshSlotHashFighterWhenPerSlotMatch(u32 tick);
+extern void syNetRbSnapshotPrepareYoshiEggLayForVerifyHash(u32 tick);
+extern void syNetRbSnapRestoreYoshiEggLaySimFieldsAtTick(u32 tick);
+extern void syNetRbSnapLogYoshiEggLayEscape(struct GObj *fighter_gobj, const char *reason);
+extern void syNetRbSnapLogYoshiEggLayTimerDiag(struct GObj *fighter_gobj, const char *reason);
+extern void syNetRbSnapStashYoshiEggLayWaitTimerBeforeSynctest(u32 probe_tick);
+extern void syNetRbSnapRestoreYoshiEggLayWaitTimerAfterSynctest(u32 probe_tick, const char *reason);
 #endif
 extern u32 syNetRbSnapshotGetSlotHashWorld(u32 tick);
 extern u32 syNetRbSnapshotGetSlotHashItem(u32 tick);
