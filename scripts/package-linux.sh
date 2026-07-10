@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 # Builds BattleShip as a Linux AppImage.
 #
-# Output: <repo-root>/dist/BattleShip-x86_64.AppImage
+# Usage:
+#   ./scripts/package-linux.sh
+#   ./scripts/package-linux.sh -DSSB64_NETMENU=ON    # netplay / net-menu build
+#   ./scripts/package-linux.sh -DSSB64_NETMENU=OFF   # explicit offline (default)
+#   ./scripts/package-linux.sh --netplay            # netplay output paths + NETMENU ON
+#
+# Additional CMake cache variables may be passed through (they are forwarded to
+# the configure step after NON_PORTABLE=ON and Release).
+#
+# Output:
+#   Default:     <repo-root>/dist/BattleShip-x86_64.AppImage
+#   Netmenu ON:  <repo-root>/dist/BattleShip-Netplay-x86_64.AppImage
+#   (--netplay or -DSSB64_NETMENU=ON selects the Netplay output; --netplay injects NETMENU if omitted.)
 #
 # AppDir layout produced (before appimagetool packs it):
 #   AppDir/
@@ -27,6 +39,9 @@
 #     actual library files into AppDir/usr/lib/ so the AppImage runs
 #     on distros that don't have the build host's exact .so versions.
 #     https://github.com/linuxdeploy/linuxdeploy/releases
+#   Netplay (--netplay / SSB64_NETMENU=ON): libcurl + OpenSSL at build time;
+#     packaging also ships a CA bundle under usr/share/BattleShip/ssl/ for HTTPS
+#     matchmaking (default https://netplay.technicallycomputers.ca/).
 #
 # If linuxdeploy isn't in PATH the script warns and skips library
 # bundling — the resulting AppImage will only run on systems whose
@@ -51,10 +66,134 @@ APPDIR="$DIST_DIR/$APP_NAME.AppDir"
 APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
+# Extra CMake configure arguments (forwarded to CMake). Use --netplay for the Netplay AppImage
+# with SSB64_NETMENU=ON (required so decomp/src/netplay/** + port/net/** link for netmenu).
+EXTRA_CMAKE_ARGS=()
+NETPLAY_PACKAGE=0
+for a in "$@"; do
+	if [[ "$a" == "--netplay" ]]; then
+		NETPLAY_PACKAGE=1
+		continue
+	fi
+	EXTRA_CMAKE_ARGS+=("$a")
+done
+
+has_netmenu_on=0
+has_netmenu_off=0
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
+	case "$a" in
+		-DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON|-DSSB64_NETMENU=1|-DSSB64_NETMENU:BOOL=1) has_netmenu_on=1 ;;
+		-DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF|-DSSB64_NETMENU=0|-DSSB64_NETMENU:BOOL=0) has_netmenu_off=1 ;;
+	esac
+done
+if [[ "$NETPLAY_PACKAGE" -eq 1 ]] && [[ "$has_netmenu_off" -eq 0 ]] && [[ "$has_netmenu_on" -eq 0 ]]; then
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=ON")
+	has_netmenu_on=1
+fi
+
+# Explicit -DSSB64_NETMENU=OFF wins over --netplay. Default is offline (IS_NETPLAY=0).
+IS_NETPLAY=0
+if [[ "$has_netmenu_off" -eq 1 ]]; then
+	IS_NETPLAY=0
+elif [[ "$has_netmenu_on" -eq 1 ]] || [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
+	IS_NETPLAY=1
+fi
+
+# Offline packaging must pass OFF so a reused build dir cannot keep a cached ON.
+if [[ "$IS_NETPLAY" -eq 0 ]] && [[ "$has_netmenu_off" -eq 0 ]]; then
+	EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=OFF")
+fi
+
+if [[ -n "${SSB64_EXTRA_CMAKE_ARGS:-}" ]]; then
+	read -r -a _ssb64_extra_cmake <<< "$SSB64_EXTRA_CMAKE_ARGS"
+	EXTRA_CMAKE_ARGS+=("${_ssb64_extra_cmake[@]}")
+fi
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	BUILD_DIR="$ROOT/build-bundle-linux-netplay-$VER"
+	APPDIR="$DIST_DIR/BattleShip-Netplay.AppDir"
+	if [[ "$VER" == "jp" ]]; then
+		APPIMAGE="$DIST_DIR/BattleShip-JP-Netplay-x86_64.AppImage"
+	else
+		APPIMAGE="$DIST_DIR/BattleShip-Netplay-x86_64.AppImage"
+	fi
+	DESKTOP_DISPLAY_NAME="BattleShip Netplay"
+else
+	BUILD_DIR="$ROOT/build-bundle-linux-$VER"
+	APPDIR="$DIST_DIR/$APP_NAME.AppDir"
+	APPIMAGE="$DIST_DIR/${APP_NAME}-x86_64.AppImage"
+	DESKTOP_DISPLAY_NAME="BattleShip"
+fi
+
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mWARN: %s\033[0m\n' "$1" >&2; }
+
+require_linux_netplay_deps() {
+	local pc="pkg-config"
+	command -v "$pc" >/dev/null 2>&1 || pc=""
+	if [[ -n "$pc" ]] && "$pc" --exists libcurl 2>/dev/null; then
+		return 0
+	fi
+	if ldconfig -p 2>/dev/null | grep -q 'libcurl\.so'; then
+		return 0
+	fi
+	if [[ -f /usr/lib/libcurl.so ]] || [[ -f /usr/lib/libcurl.so.4 ]]; then
+		return 0
+	fi
+	fail "SSB64_NETMENU requires libcurl (HTTPS matchmaking). Install: pacman -S curl  or  apt install libcurl4-openssl-dev"
+}
+
+bundle_linux_ca_certs() {
+	local dest="$1"
+	local candidate
+
+	mkdir -p "$dest"
+	for candidate in \
+		"$ROOT/port/net/cacert.pem" \
+		/etc/ssl/certs/ca-certificates.crt \
+		/etc/pki/tls/certs/ca-bundle.crt \
+		/etc/ssl/ca-bundle.pem \
+		/usr/share/curl/ca-bundle.crt \
+		/usr/lib/ssl/cert.pem; do
+		if [[ -f "$candidate" ]]; then
+			cp "$candidate" "$dest/cacert.pem"
+			printf '%s\n' "$dest/cacert.pem"
+			return 0
+		fi
+	done
+	fail "Could not find a system CA certificate bundle to ship for HTTPS matchmaking"
+}
+
+ensure_linuxdeploy_libs() {
+	local appdir="$1"
+	local binary="$2"
+	shift 2
+	local -a libs=("$@")
+	local lib base name
+
+	[[ -d "$appdir/usr/lib" ]] || mkdir -p "$appdir/usr/lib"
+	for lib in "${libs[@]}"; do
+		base="$(ldd "$binary" 2>/dev/null | awk -v pat="$lib" '$1 ~ pat { print $3; exit }')"
+		if [[ -z "$base" || ! -f "$base" ]]; then
+			base="$(ldconfig -p 2>/dev/null | awk -v pat="$lib" '$1 ~ pat && /x86-64/ && first == "" { first = $NF } END { if (first != "") print first }')"
+		fi
+		if [[ -z "$base" || ! -f "$base" ]]; then
+			warn "netplay packaging: could not locate $lib for bundling"
+			continue
+		fi
+		name="$(basename "$base")"
+		if [[ ! -f "$appdir/usr/lib/$name" ]]; then
+			cp -L "$base" "$appdir/usr/lib/$name"
+		fi
+	done
+}
 
 [[ "$(uname -s)" == "Linux" ]] || fail "package-linux.sh runs on Linux only"
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	require_linux_netplay_deps
+fi
 
 # ── 0. Run codegen scripts that don't need the ROM ──
 step "Encoding credits text"
@@ -69,7 +208,10 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
-# Use ccache as the compiler launcher when it's on PATH (CI installs it and
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=ON)"
+else
+	# Use ccache as the compiler launcher when it's on PATH (CI installs it and
 # warms a cross-run cache; harmless locally when it isn't present). Shrinks the
 # compile window so a slow / mid-compile-stalling hosted runner is likelier to
 # finish before the timeout.
@@ -77,11 +219,13 @@ CCACHE_ARGS=()
 if command -v ccache >/dev/null 2>&1; then
     CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
-step "Configuring release build with NON_PORTABLE=ON"
+step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
+fi
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
+    ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"} \
     "${CCACHE_ARGS[@]+"${CCACHE_ARGS[@]}"}" \
     >/dev/null
 
@@ -112,6 +256,14 @@ cp "$F3D_O2R"    "$APPDIR/usr/share/$APP_NAME/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APPDIR/usr/share/$APP_NAME/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APPDIR/usr/share/$APP_NAME/config.yml"
 cp "$ROOT/yamls/$VER/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/$VER/"
+
+# VS net-menu PNGs (mn_vs_submenu_png.c); must sit next to the binary like CMake
+# POST_BUILD ($<TARGET_FILE_DIR>/port/net/assets). RealAppBundlePath() is the
+# exe's parent (AppDir/usr/bin), not usr/share/ — so not under the data dir.
+if [[ "$IS_NETPLAY" -eq 1 ]] && [[ -d "$ROOT/port/net/assets" ]]; then
+	mkdir -p "$APPDIR/usr/bin/port/net/assets"
+	cp -a "$ROOT/port/net/assets/." "$APPDIR/usr/bin/port/net/assets/"
+fi
 
 # Bundle the ESC menu fonts. Menu.cpp::FindMenuAssetPath walks up from
 # RealAppBundlePath() (= /proc/self/exe parent = AppDir/usr/bin inside
@@ -171,7 +323,7 @@ EOF
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=$APP_NAME
+Name=$DESKTOP_DISPLAY_NAME
 Exec=$APP_NAME
 Icon=$APP_NAME
 Categories=Game;ArcadeGame;
@@ -265,6 +417,14 @@ else
     printf '   Install from https://github.com/linuxdeploy/linuxdeploy/releases\n'
 fi
 
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
+    ensure_linuxdeploy_libs "$APPDIR" "$APPDIR/usr/bin/$APP_NAME" \
+        libcurl libssl libcrypto libnghttp2 libidn2 libnghttp3 libngtcp2
+    NETPLAY_CA_BUNDLE="$(bundle_linux_ca_certs "$APPDIR/usr/share/$APP_NAME/ssl")"
+    printf '   CA bundle: %s\n' "$NETPLAY_CA_BUNDLE"
+fi
+
 # ── 7. AppRun ──
 # Linuxdeploy makes AppRun a *symlink* to usr/bin/BattleShip and
 # expects users to embed their AppRun-equivalent logic (env, cwd) in
@@ -275,6 +435,21 @@ fi
 # sets LD_LIBRARY_PATH for the bundled libs, cd's into the data dir,
 # then execs the binary.
 rm -f "$APPDIR/AppRun"
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+cat > "$APPDIR/AppRun" <<EOF
+#!/bin/sh
+HERE="\$(dirname "\$(readlink -f "\${0}")")"
+export PATH="\$HERE/usr/bin:\$PATH"
+export LD_LIBRARY_PATH="\$HERE/usr/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+CA_BUNDLE="\$HERE/usr/share/$APP_NAME/ssl/cacert.pem"
+if [ -f "\$CA_BUNDLE" ]; then
+	export CURL_CA_BUNDLE="\$CA_BUNDLE"
+	export SSL_CERT_FILE="\$CA_BUNDLE"
+fi
+cd "\$HERE/usr/share/$APP_NAME" || exit 1
+exec "\$HERE/usr/bin/$APP_NAME" "\$@"
+EOF
+else
 cat > "$APPDIR/AppRun" <<EOF
 #!/bin/sh
 HERE="\$(dirname "\$(readlink -f "\${0}")")"
@@ -283,6 +458,7 @@ export LD_LIBRARY_PATH="\$HERE/usr/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 cd "\$HERE/usr/share/$APP_NAME" || exit 1
 exec "\$HERE/usr/bin/$APP_NAME" "\$@"
 EOF
+fi
 chmod +x "$APPDIR/AppRun"
 
 # ── 8. Pack into AppImage if appimagetool is available ──

@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Builds BattleShip as a self-contained macOS .app bundle.
 #
-# Output: <repo-root>/dist/BattleShip.app
+# Usage:
+#   ./scripts/package-macos.sh
+#   ./scripts/package-macos.sh --netplay            # netmenu (decomp/src/netplay + port/net)
+#   ./scripts/package-macos.sh --netplay -DSSB64_NETPLAY_HARD_LAN_MODE=ON
+#
+# Output:
+#   Default:  <repo-root>/dist/BattleShip.app + BattleShip.dmg
+#   Netplay:   <repo-root>/dist/BattleShip-Netplay.app + BattleShip-Netplay.dmg
+#   (JP uses BattleShip-JP / BattleShip-JP-Netplay suffixes.)
 #
 # Layout produced:
 #   BattleShip.app/
@@ -23,6 +31,14 @@
 # Notes:
 # - The .app does NOT include BattleShip.o2r — that's ROM-derived and gets
 #   extracted on first launch via the ImGui wizard.
+# - Code signing / notarization is not handled here; expect Gatekeeper to
+#   warn on first launch. A future pass should sign with `codesign --deep`
+#   and notarize via `notarytool`.
+#
+# Netplay (--netplay / SSB64_NETMENU=ON): requires Homebrew curl at configure time;
+# dylibbundler ships libcurl (+ OpenSSL) in Contents/Frameworks/; CA bundle at
+# Contents/Resources/ssl/cacert.pem for HTTPS matchmaking.
+#
 # - Local builds ad-hoc sign the bundle with the mod-loader entitlements.
 #   CI sets MACOS_CODESIGN_IDENTITY + MACOS_NOTARY_* to Developer ID-sign
 #   the app, sign the DMG, submit it to Apple's notary service, and staple
@@ -40,20 +56,146 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # installs / the in-app updater / release links are unaffected.
 VER="${SSB64_VERSION:-us}"
 [[ "$VER" == "us" || "$VER" == "jp" ]] || { echo "SSB64_VERSION must be us|jp" >&2; exit 1; }
-BUILD_DIR="$ROOT/build-bundle-$VER"
 DIST_DIR="$ROOT/dist"
+
+EXTRA_CMAKE_ARGS=()
+NETPLAY_PACKAGE=0
+for a in "$@"; do
+    if [[ "$a" == "--netplay" ]]; then
+        NETPLAY_PACKAGE=1
+        continue
+    fi
+    EXTRA_CMAKE_ARGS+=("$a")
+done
+
+has_netmenu_on=0
+has_netmenu_off=0
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
+    case "$a" in
+        -DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON) has_netmenu_on=1 ;;
+        -DSSB64_NETMENU=OFF|-DSSB64_NETMENU:BOOL=OFF) has_netmenu_off=1 ;;
+    esac
+done
+if [[ "$NETPLAY_PACKAGE" -eq 1 ]] && [[ "$has_netmenu_off" -eq 0 ]] && [[ "$has_netmenu_on" -eq 0 ]]; then
+    EXTRA_CMAKE_ARGS+=("-DSSB64_NETMENU=ON")
+fi
+
+IS_NETPLAY=0
+if [[ "$NETPLAY_PACKAGE" -eq 1 ]]; then
+    IS_NETPLAY=1
+fi
+for a in ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}; do
+    case "$a" in
+        -DSSB64_NETMENU=ON|-DSSB64_NETMENU:BOOL=ON)
+            IS_NETPLAY=1
+            break
+            ;;
+    esac
+done
+
+if [[ -n "${SSB64_EXTRA_CMAKE_ARGS:-}" ]]; then
+    read -r -a _ssb64_extra_cmake <<< "$SSB64_EXTRA_CMAKE_ARGS"
+    EXTRA_CMAKE_ARGS+=("${_ssb64_extra_cmake[@]}")
+fi
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    BUILD_DIR="$ROOT/build-bundle-macos-netplay-$VER"
+else
+    BUILD_DIR="$ROOT/build-bundle-$VER"
+fi
+
 if [[ "$VER" == "jp" ]]; then
     APP_NAME="BattleShip-JP"
-    APP_BUNDLE_ID="com.ssb-decomp-re.battleship-jp"
+    if [[ "$IS_NETPLAY" -eq 1 ]]; then
+        APP_BUNDLE_BASENAME="BattleShip-JP-Netplay.app"
+        APP_BUNDLE_ID="com.ssb-decomp-re.battleship-jp-netplay"
+        APP_DISPLAY_NAME="BattleShip-JP Netplay"
+        DMG_BASENAME="BattleShip-JP-Netplay.dmg"
+    else
+        APP_BUNDLE_BASENAME="BattleShip-JP.app"
+        APP_BUNDLE_ID="com.ssb-decomp-re.battleship-jp"
+        APP_DISPLAY_NAME="BattleShip-JP"
+        DMG_BASENAME="BattleShip-JP.dmg"
+    fi
 else
     APP_NAME="BattleShip"
-    APP_BUNDLE_ID="com.ssb-decomp-re.battleship"
+    if [[ "$IS_NETPLAY" -eq 1 ]]; then
+        APP_BUNDLE_BASENAME="BattleShip-Netplay.app"
+        APP_BUNDLE_ID="com.ssb-decomp-re.battleship-netplay"
+        APP_DISPLAY_NAME="BattleShip Netplay"
+        DMG_BASENAME="BattleShip-Netplay.dmg"
+    else
+        APP_BUNDLE_BASENAME="BattleShip.app"
+        APP_BUNDLE_ID="com.ssb-decomp-re.battleship"
+        APP_DISPLAY_NAME="BattleShip"
+        DMG_BASENAME="BattleShip.dmg"
+    fi
 fi
-APP="$DIST_DIR/$APP_NAME.app"
+APP="$DIST_DIR/$APP_BUNDLE_BASENAME"
+DMG="$DIST_DIR/$DMG_BASENAME"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 fail() { printf '\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mWARN: %s\033[0m\n' "$1" >&2; }
+
+require_macos_netplay_deps() {
+    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libcurl 2>/dev/null; then
+        return 0
+    fi
+    if [[ -f /opt/homebrew/opt/curl/lib/libcurl.dylib ]] \
+        || [[ -f /usr/local/opt/curl/lib/libcurl.dylib ]]; then
+        return 0
+    fi
+    fail "SSB64_NETMENU requires libcurl (HTTPS matchmaking). Install: brew install curl"
+}
+
+bundle_macos_ca_certs() {
+    local dest="$1"
+    local candidate
+
+    mkdir -p "$dest"
+    for candidate in \
+        "$ROOT/port/net/cacert.pem" \
+        /opt/homebrew/etc/openssl@3/cert.pem \
+        /opt/homebrew/etc/ca-certificates/cert.pem \
+        /opt/homebrew/share/curl/curl-ca-bundle.crt \
+        /usr/local/etc/openssl@3/cert.pem \
+        /usr/local/etc/ca-certificates/cert.pem \
+        /usr/local/share/curl/curl-ca-bundle.crt \
+        /etc/ssl/cert.pem; do
+        if [[ -f "$candidate" ]]; then
+            cp "$candidate" "$dest/cacert.pem"
+            printf '%s\n' "$dest/cacert.pem"
+            return 0
+        fi
+    done
+    fail "Could not find a CA certificate bundle to ship for HTTPS matchmaking (brew install curl ca-certificates)"
+}
+
+verify_macos_https_bundle() {
+    local bin="$1"
+    local frameworks="$2"
+    local missing=0
+
+    if ! otool -L "$bin" | grep -Eiq 'curl'; then
+        warn "netplay binary does not link libcurl — automatch HTTPS will not work"
+        missing=1
+    fi
+    if ! compgen -G "${frameworks}/libcurl"*.dylib >/dev/null 2>&1 \
+        && otool -L "$bin" | grep -qE '(/opt/homebrew|/usr/local/opt).*curl'; then
+        warn "libcurl still references Homebrew after dylibbundler"
+        missing=1
+    fi
+    if [[ ! -f "$APP/Contents/Resources/ssl/cacert.pem" ]]; then
+        warn "missing Contents/Resources/ssl/cacert.pem"
+        missing=1
+    fi
+    if [[ "$missing" -ne 0 ]]; then
+        fail "Incomplete HTTPS matchmaking bundle — install brew curl and re-run with --netplay"
+    fi
+}
+
 truthy() {
     case "${1:-}" in
         1|true|TRUE|yes|YES|on|ON) return 0 ;;
@@ -66,6 +208,10 @@ json_get() {
 }
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "package-macos.sh runs on macOS only"
+
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    require_macos_netplay_deps
+fi
 
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in decomp/src/credits/),
@@ -93,11 +239,12 @@ CCACHE_ARGS=()
 if command -v ccache >/dev/null 2>&1; then
     CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
-step "Configuring release build with NON_PORTABLE=ON"
+step "Configuring release build with NON_PORTABLE=ON${IS_NETPLAY:+ (SSB64_NETMENU=ON)}"
 cmake -B "$BUILD_DIR" "$ROOT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \
+    ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"} \
     "${CCACHE_ARGS[@]+"${CCACHE_ARGS[@]}"}" \
     >/dev/null
 
@@ -155,6 +302,24 @@ cp "$ROOT/assets/custom/fonts/Montserrat-OFL.txt"      "$APP/Contents/Resources/
 cp "$ROOT/assets/custom/fonts/Inconsolata-Regular.ttf" "$APP/Contents/Resources/assets/custom/fonts/"
 cp "$ROOT/assets/custom/fonts/Inconsolata-OFL.txt"     "$APP/Contents/Resources/assets/custom/fonts/"
 
+# Netmenu VS submenu PNGs + HTTPS CA bundle (RealAppBundlePath = Contents/Resources on macOS).
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    net_assets=""
+    if [[ -d "$BUILD_DIR/port/net/assets" ]]; then
+        net_assets="$BUILD_DIR/port/net/assets"
+    elif [[ -d "$ROOT/port/net/assets" ]]; then
+        net_assets="$ROOT/port/net/assets"
+    fi
+    if [[ -n "$net_assets" ]]; then
+        mkdir -p "$APP/Contents/Resources/port/net/assets"
+        cp -a "$net_assets/." "$APP/Contents/Resources/port/net/assets/"
+    else
+        warn "netmenu build but port/net/assets not found — VS menu PNGs may be missing"
+    fi
+    NETPLAY_CA_BUNDLE="$(bundle_macos_ca_certs "$APP/Contents/Resources/ssl")"
+    printf '   CA bundle: %s\n' "$NETPLAY_CA_BUNDLE"
+fi
+
 # Project LICENSE + verbatim upstream LICENSE files for the submodules
 # whose compiled code is in this .app. MIT requires the upstream
 # copyright + permission notice to ride along with redistributed copies.
@@ -201,7 +366,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>                <string>$APP_NAME</string>
-    <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>         <string>$APP_DISPLAY_NAME</string>
     <key>CFBundleIdentifier</key>          <string>$APP_BUNDLE_ID</string>
     <key>CFBundleVersion</key>             <string>1.0</string>
     <key>CFBundleShortVersionString</key>  <string>1.0</string>
@@ -331,6 +496,11 @@ for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
     fi
 done
 
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    step "Verifying HTTPS matchmaking bundle (libcurl + CA certs)"
+    verify_macos_https_bundle "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Frameworks"
+fi
+
 # ── 4a. De-duplicate LC_RPATH ──
 # dyld aborts the process at load with "duplicate LC_RPATH '<path>'" if a
 # Mach-O carries the same rpath twice. The libultraship/CMake macOS link
@@ -444,7 +614,6 @@ echo "  signature verified ($SIGNING_MODE)"
 DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
-DMG="$DIST_DIR/$APP_NAME.dmg"
 DMG_STAGE="$DIST_DIR/dmg-stage"
 DMG_BG_DIR="$DIST_DIR/dmg-bg"
 
@@ -681,3 +850,6 @@ printf '   To run from the bundle:        open "%s"\n' "$APP"
 printf '   To install from the DMG:       open "%s"  (then drag to Applications)\n' "$DMG"
 printf '   App-data: ~/Library/Application Support/%s/\n' "$APP_NAME"
 printf '   First launch will prompt for your ROM via the ImGui wizard.\n'
+if [[ "$IS_NETPLAY" -eq 1 ]]; then
+    printf '   Netplay: automatch uses HTTPS matchmaking (bundled libcurl + CA certs).\n'
+fi

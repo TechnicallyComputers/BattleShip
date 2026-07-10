@@ -1,6 +1,8 @@
 #include "port_save.h"
 #include "port_log.h"
 
+#include <ssb64_paths_capi.h>
+
 #include <libultraship/libultraship.h>
 #include <SDL2/SDL.h>
 
@@ -39,6 +41,15 @@ void resolveSavePath()
         gSavePath = override;
         return;
     }
+#if defined(__ANDROID__)
+    {
+        char base[512];
+        if ((ssb64_UserDataDirUtf8(base, sizeof(base)) != 0) && (base[0] != '\0')) {
+            gSavePath = std::string(base) + "ssb64_save.bin";
+            return;
+        }
+    }
+#endif
     try {
         // Mirrors how BattleShip.o2r / BattleShip.cfg.json / logs/*.log
         // are located. Honors SHIP_HOME and the NON_PORTABLE build flag.

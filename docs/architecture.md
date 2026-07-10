@@ -66,7 +66,12 @@ CMakeLists.txt
 - Reference ports: HarbourMasters/Starship (Star Fox 64), HarbourMasters/SpaghettiKart (Mario Kart 64)
 
 ## Related Architecture Notes
+- `docs/linux_menu_rendering_fixes_2026-05-22.md` — Linux/OpenGL menu rendering
+  bug family (CSS, pause, HUD sprites): scene heap recycle, port reloc/sprite
+  fixups, forked libultraship Fast3D deltas vs upstream
+- `docs/build_and_tooling.md` — CMake targets, offline vs `SSB64_NETMENU`, native macOS/Linux/MSVC vs Linux→MinGW cross
 - `docs/netplay_architecture.md` — netplay input staging, prediction, saved input history, and the rollback input boundary
+- `docs/net_input_pipeline_audit.md` — SDL vs Raphnet convergence, scene FuncRead matrix, delay bootstrap, `SSB64_NETPLAY_LOCAL_HARDWARE`, hardening checklist
 
 ## What NOT to Include in Port
 - `decomp/src/ovl8/`, `decomp/src/db/` — Debug overlay/menu (kept on the

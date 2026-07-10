@@ -1,0 +1,68 @@
+name: Windows Netplay
+
+# PR smoke: netplay Windows zip (SSB64_NETMENU=ON). Catches MSVC-only issues in
+# port/net/matchmaking (mm_turn.c timeval vs _timeb, etc.). Full release matrix
+# remains in release.yml on tags.
+
+on:
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/Ssb64Netmenu*.cmake'
+      - 'cmake/Ssb64Libjuice.cmake'
+      - 'cmake/curl/**'
+      - 'third_party/libjuice/**'
+      - 'decomp'
+      - 'decomp/src/netplay/**'
+      - 'decomp/src/sys/objanim.c'
+      - 'decomp/src/gm/**'
+      - 'decomp/src/gr/**'
+      - 'decomp/src/ft/**'
+      - 'decomp/src/ef/**'
+      - 'decomp/src/wp/**'
+      - 'decomp/src/it/**'
+      - 'decomp/src/mp/**'
+      - 'decomp/src/lb/**'
+      - 'libultraship'
+      - 'libultraship/cmake/dependencies/**'
+      - 'port/net/**'
+      - 'port/stubs/**'
+      - 'scripts/package-windows.ps1'
+      - '.github/workflows/windows-netplay.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-netplay:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build deps
+        # Pillow: tools/generate_arrow_svg.py + tools/png_to_c_array.py import PIL.
+        # The arrow rules in CMakeLists.txt are unconditional.
+        run: |
+          choco install ninja -y
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+        shell: pwsh
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+      - name: Build Windows netplay zip
+        env:
+          SSB64_VERSION: us
+        run: ./scripts/package-windows.ps1 -Netplay
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-windows-netplay-pr
+          path: dist/BattleShip-Netplay-windows.zip
+          if-no-files-found: error
+          retention-days: 7

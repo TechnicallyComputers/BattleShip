@@ -29,6 +29,11 @@
 #include <ship/resource/ResourceType.h>
 
 #include "app_paths.h"
+#if defined(__ANDROID__)
+#include "debug_env.h"
+#endif
+#include "debug_session.h"
+#include <ssb64_paths_capi.h>
 #include "bridge/audio_bridge.h"
 #include "bridge/framebuffer_capture.h"
 #include "enhancements/enhancements.h"
@@ -47,6 +52,11 @@
 #endif
 #include "renderdoc_trigger.h"
 #include "port_log.h"
+#include "android_network.h"
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define SSB64_ANDROID_LOG_TAG "ssb64"
+#endif
 #include "fighter_registry.h"
 #include "focus.h"
 
@@ -113,16 +123,24 @@ extern "C" void* sModBridgeAnchorDataFilesRef = (void*)&dFTManagerDataFiles_Ref;
 #include <filesystem>
 #include <system_error>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
+/* MinGW cross: dbghelp/psapi linked from CMakeLists.txt; MSVC uses #pragma comment below. */
 #include <windows.h>
 #include <dbghelp.h>
 #include <psapi.h>
-#include <crtdbg.h>
 #include <signal.h>
 #include <exception>
 #include <ctime>
+#ifdef _MSC_VER
+#include <crtdbg.h>
 #pragma comment(lib, "dbghelp.lib")
+#endif
 
+#ifdef _MSC_VER
 static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
                                     const wchar_t* file, unsigned line, uintptr_t)
 {
@@ -132,6 +150,7 @@ static void portCrtInvalidParameter(const wchar_t* expr, const wchar_t* func,
 	if (file) port_log("    file: %ls:%u\n", file, line);
 	port_log_close();
 }
+#endif
 
 static volatile LONG sMinidumpWritten = 0;
 static void portResolveSymbol(void* addr, char* out, size_t cap);
@@ -309,14 +328,16 @@ static void portLogMsvcCxxThrow(EXCEPTION_POINTERS* info)
 	// safe per CatchableType properties.
 	const char* what = nullptr;
 	if (thrownObj && (ct->properties & 0x4) == 0) {
-		// Try as std::exception. Catch any access violation just in case
-		// the layout differs — vectored handlers must not throw.
+		// Try as std::exception. MSVC SEH guards against bad layout; MinGW
+		// has no __try/__except — log type name only to avoid AV in-handler.
+#if defined(_MSC_VER)
 		__try {
 			const std::exception* ex = (const std::exception*)thrownObj;
 			what = ex->what();
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			what = nullptr;
 		}
+#endif
 	}
 	port_log("    C++ throw: type=\"%s\" thrown=%p%s%s\n",
 	         tname, thrownObj,
@@ -423,6 +444,23 @@ static LONG WINAPI portWindowsCrashFilter(EXCEPTION_POINTERS* info)
 #endif
 
 static std::shared_ptr<Ship::Context> sContext;
+
+/* After PortShutdown(), returning from main still runs libc++ static
+ * destructors (__cxa_finalize). Teardown order between spdlog, BS::thread_pool,
+ * Ship::IResource holders, and other TU globals can call std::terminate() on
+ * macOS (SIGABRT with exit/cxa_finalize in the crash log) even though the game
+ * already shut down cleanly — e.g. Port menu Quit after ESC. Skip that phase on
+ * POSIX/Android the same way lbreloc_bridge uses _exit for stale-o2r (see
+ * docs/bugs/macos_shutdown_sigabrt_2026-05-24.md). Debug relaunch on Android is
+ * manual launcher restart only (docs/bugs/android_debug_restart_port_menu_segv_2026-05-25.md).
+ */
+static void port_exit_process(int code) {
+#if defined(__unix__) || defined(__APPLE__)
+	_exit(code);
+#else
+	std::exit(code);
+#endif
+}
 
 #ifndef DISABLE_SCRIPTING
 namespace ssb64 {
@@ -582,6 +620,11 @@ static std::string PortLocateFile(const std::string& basename) {
 
 	return "./" + basename;
 }
+
+#if defined(__ANDROID__)
+static void portAndroidJniWarmupLate(void);
+static void portAndroidFinishPortMenuInit(void);
+#endif
 
 extern "C" {
 
@@ -848,32 +891,52 @@ static int PortInitImpl(int argc, char* argv[]) {
 		port_log("SSB64: bootstrap ResourceManager OK\n");
 	}
 
-	// See controlDeck note above re: scoping.
-	{
-		port_log("SSB64: constructing Fast3dWindow ...\n");
-		auto window = std::make_shared<Fast::Fast3dWindow>();
-		port_log("SSB64: calling InitWindow ...\n");
-		if (!sContext->InitWindow(window)) { port_log("SSB64: InitWindow failed\n"); return 1; }
-		port_log("SSB64: Window OK\n");
-
-		// Esc Menu screen, Toggle with Esc.
-		if (auto gui = window->GetGui()) {
-			port_log("SSB64: attaching Port menu ...\n");
-			gui->SetMenu(std::make_shared<ssb64::PortMenu>());
-			port_log("SSB64: Port menu attached\n");
-		}
+	port_log("SSB64: constructing Fast3dWindow ...\n");
+	auto fast3dWindow = std::make_shared<Fast::Fast3dWindow>();
+	port_log("SSB64: Fast3dWindow constructed, calling InitWindow ...\n");
+	if (!sContext->InitWindow(fast3dWindow)) {
+		port_log("SSB64: InitWindow failed\n");
+		return 1;
+	}
+	port_log("SSB64: Window OK\n");
 
 #if !defined(__ANDROID__)
-		// Linux: WMs only show the app icon if SDL_SetWindowIcon is called
-		// on the live window. .ico/.icns paths are baked into the .exe /
-		// .app on Windows / macOS so this is a no-op there. Android pulls
-		// its launcher icon from the APK resources at install time, so
-		// the runtime SDL_SetWindowIcon path is skipped entirely there
-		// (and port_window_icon.cpp isn't compiled into libmain.so).
-		ssb64::SetWindowIcon();
+	port_android_network_install(nullptr);
 #endif
+
+#if defined(__ANDROID__)
+	portAndroidJniWarmupLate();
+#endif
+
+	// Esc Menu screen, Toggle with Esc.
+	if (auto window = sContext->GetWindow()) {
+		if (auto gui = window->GetGui()) {
+			port_log("SSB64: attaching Port menu ...\n");
+#if defined(__ANDROID__)
+			/* Build widget tree after PortInit + JNI warm-up (see
+			 * portAndroidFinishPortMenuInit in main). Avoids SIGSEGV during
+			 * debug-session cold restart when ImGui font merge or SDL caches
+			 * are not ready inside InitWindow's tail. */
+			gui->SetMenu(std::make_shared<ssb64::PortMenu>(), false);
+			port_log("SSB64: Port menu object attached (init deferred)\n");
+#else
+			gui->SetMenu(std::make_shared<ssb64::PortMenu>());
+			port_log("SSB64: Port menu attached\n");
+#endif
+		}
 	}
 
+#if !defined(__ANDROID__)
+	// Linux: WMs only show the app icon if SDL_SetWindowIcon is called
+	// on the live window. .ico/.icns paths are baked into the .exe /
+	// .app on Windows / macOS so this is a no-op there. Android pulls
+	// its launcher icon from the APK resources at install time, so
+	// the runtime SDL_SetWindowIcon path is skipped entirely there
+	// (and port_window_icon.cpp isn't compiled into libmain.so).
+	ssb64::SetWindowIcon();
+#endif
+
+	port_log("SSB64: setting force-render-to-fb ...\n");
 	// Pin LUS to off-screen rendering so mGameFb is populated during
 	// gameplay and the GPU readback at scene transitions captures the
 	// prior frame rather than the post-Present swap-chain back buffer
@@ -882,6 +945,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 	// match -> results-screen photo wipe (issue #81). Cost is one extra
 	// full-screen blit per frame (sub-millisecond on any modern GPU).
 	port_capture_set_force_render_to_fb(1);
+	port_log("SSB64: force-render-to-fb OK\n");
 
 	// FileDropMgr must come up before the first-run wizard so SDL_DROPFILE
 	// events landing on the window during the wizard frame loop can be
@@ -889,24 +953,35 @@ static int PortInitImpl(int argc, char* argv[]) {
 	if (!sContext->InitFileDropMgr()) { port_log("SSB64: InitFileDropMgr failed\n"); return 1; }
 	port_log("SSB64: FileDropMgr OK\n");
 
-	/* First-run flow:
-	 *   1. Silent extraction: if a ROM sits at app-data / bundle / cwd we
-	 *      just extract without bothering the user.
-	 *   2. If still missing, drive an ImGui wizard modal in a pre-gameloop
-	 *      render loop until the user provides a ROM and extraction
-	 *      succeeds — or quits the window. */
+	/* First-run flow (desktop): silent Torch extract, then ImGui wizard.
+	 * Android: BootActivity + libtorch_runner.so already produced
+	 * BattleShip.o2r before BattleShipActivity starts. The desktop wizard
+	 * exits immediately when the SDL window isn't "running" yet, which
+	 * looked like an instant close after ROM extract on device. */
 	{
 		const std::string targetO2r =
 			Ship::Context::GetPathRelativeToAppDirectory(SSB64_O2R_NAME);
+		std::error_code ec;
+		const bool haveO2r =
+		    std::filesystem::exists(targetO2r, ec) ||
+		    std::filesystem::exists(PortLocateFile(SSB64_O2R_NAME), ec);
+
+#if defined(__ANDROID__)
+		port_log("SSB64: Android first-run check -> %s (found=%d)\n",
+		         targetO2r.c_str(), haveO2r ? 1 : 0);
+		if (!haveO2r) {
+			port_log("SSB64: %s missing — use the launcher to pick your ROM "
+			         "(BootActivity / libtorch_runner), then try again\n",
+			         SSB64_O2R_NAME);
+			PortShutdown();
+			return 1;
+		}
+#else
 		// silent=true: any failure during this auto-attempt should land in
 		// the wizard's status text, not a native popup that races the
 		// ImGui modal.
 		ssb64::ExtractAssetsIfNeeded(targetO2r, /*silent=*/true);
-		std::error_code ec;
-		// noexcept exists / PortLocateFile rather than the throwing LUS
-		// form — issue #58.
-		if (!std::filesystem::exists(targetO2r, ec) &&
-		    !std::filesystem::exists(PortLocateFile(SSB64_O2R_NAME), ec)) {
+		if (!haveO2r) {
 			if (!ssb64::RunFirstRunWizard(targetO2r)) {
 				port_log("SSB64: first-run wizard cancelled — exiting\n");
 				// PortShutdown drops audio bridge refs + resets sContext
@@ -919,6 +994,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 				return 1;
 			}
 		}
+#endif
 	}
 
 	{
@@ -1176,7 +1252,116 @@ int PortIsRunning(void) {
 
 } // extern "C"
 
+#if defined(__ANDROID__)
+/* Hint/env cache only — safe before SDL_INIT_VIDEO (InitWindow). */
+static void portAndroidJniWarmupEarly(void)
+{
+	/*
+	 * Lock to landscape. SDL overrides the manifest's screenOrientation at window
+	 * creation: with no orientation hint and a resizable SDL window (LUS creates one),
+	 * SDLActivity.setOrientationBis() picks SCREEN_ORIENTATION_FULL_USER, so the app
+	 * follows the OS auto-rotate lock and sits in the device's natural (portrait)
+	 * orientation. Supplying both landscape tokens routes to SENSOR_LANDSCAPE — the
+	 * game rotates only between the two landscape orientations, never portrait, which
+	 * also avoids the portrait<->landscape surface resize that aborted the BLAST present
+	 * transaction (docs/bugs/android_surface_resize_blast_abort_2026-06-26.md).
+	 * Must be set before LUS creates the window (PortInit, below).
+	 */
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+	SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080");
+	(void)SDL_getenv("__ssb64_jni_warmup__");
+}
+
+/* HID + audio driver hints after the GL window exists (InitWindow). */
+static void portAndroidJniWarmupLate(void)
+{
+	SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
+	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
+	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+		port_log("SSB64: SDL_INIT_GAMECONTROLLER warm-up failed: %s\n", SDL_GetError());
+	}
+	/* Load gamecontrollerdb.txt on SDLThread before the controller coroutine
+	 * runs osContInit — SDL Android file/env helpers require a valid JNI frame. */
+	if (sContext != nullptr) {
+		try {
+			const std::string controllerDb =
+			    Ship::Context::LocateFileAcrossAppDirs("gamecontrollerdb.txt");
+			const int mappingsAdded =
+			    SDL_GameControllerAddMappingsFromFile(controllerDb.c_str());
+			if (mappingsAdded >= 0) {
+				port_log("SSB64: Android gamecontrollerdb loaded from %s (%d mappings)\n",
+				         controllerDb.c_str(), mappingsAdded);
+			} else {
+				port_log("SSB64: Android gamecontrollerdb skip %s (%s)\n",
+				         controllerDb.c_str(), SDL_GetError());
+			}
+		} catch (const std::exception& e) {
+			port_log("SSB64: Android gamecontrollerdb skip (%s)\n", e.what());
+		} catch (...) {
+			port_log("SSB64: Android gamecontrollerdb skip (unknown error)\n");
+		}
+	}
+	SDL_SetHint(SDL_HINT_AUDIODRIVER, "aaudio");
+}
+
+static void portAndroidFinishPortMenuInit(void)
+{
+	if (sContext == nullptr) {
+		return;
+	}
+	auto window = sContext->GetWindow();
+	if (window == nullptr) {
+		return;
+	}
+	auto gui = window->GetGui();
+	if (gui == nullptr) {
+		return;
+	}
+	auto menu = gui->GetMenu();
+	if (menu == nullptr || menu->IsInitialized()) {
+		return;
+	}
+	port_log("SSB64: initializing Port menu (deferred) ...\n");
+	menu->Init();
+	port_log("SSB64: Port menu initialized\n");
+}
+#endif
+
+static void portLogDebugSessionBanner(ssb64_debug_session_kind kind, const char *userDir, const char *logPath)
+{
+	const char *kindStr;
+
+	if (!port_log_debug_active()) {
+		return;
+	}
+	kindStr = (kind == SSB64_DEBUG_SESSION_ENV) ? "env" : "log_only";
+	port_log("SSB64: debug session start mode=%s\n", kindStr);
+#if defined(SSB64_NETMENU)
+	port_log("SSB64: build SSB64_NETMENU=1");
+#if defined(SSB64_NETPLAY_ICE)
+	port_log(" SSB64_NETPLAY_ICE=1\n");
+#else
+	port_log(" SSB64_NETPLAY_ICE=0\n");
+#endif
+#else
+	port_log("SSB64: build SSB64_NETMENU=0\n");
+#endif
+	if (userDir != NULL && userDir[0] != '\0') {
+		port_log("SSB64: userDataDir=%s\n", userDir);
+	}
+	if (logPath != NULL && logPath[0] != '\0') {
+		port_log("SSB64: debug log=%s\n", logPath);
+	}
+}
+
 int main(int argc, char* argv[]) {
+	ssb64_debug_session_kind debug_session = SSB64_DEBUG_SESSION_NONE;
+	std::string logPath;
+#if defined(__ANDROID__)
+	char userDir[512] = {};
+	__android_log_print(ANDROID_LOG_INFO, SSB64_ANDROID_LOG_TAG, "SSB64: main() entered (android)");
+#endif
+
 	/* Use an absolute path for ssb64.log so it lands in a predictable
 	 * place regardless of how the binary was launched (Finder / open /
 	 * shell from any cwd). SDL_GetPrefPath returns the OS app-data dir
@@ -1184,15 +1369,49 @@ int main(int argc, char* argv[]) {
 	 * $XDG_DATA_HOME/BattleShip/) and creates it on demand — same dir
 	 * Ship::Context will later use for the user's saves and o2r. */
 	{
-		std::string logPath;
+#if defined(__ANDROID__)
+		if ((ssb64_UserDataDirUtf8(userDir, sizeof(userDir)) != 0) && (userDir[0] != '\0')) {
+			debug_session = ssb64_consume_debug_session(userDir);
+			if (debug_session != SSB64_DEBUG_SESSION_NONE) {
+				std::string regularPath = std::string(userDir) + "ssb64.log";
+				logPath = std::string(userDir) + "ssb64-debug.log";
+				port_log_init_debug(logPath.c_str());
+				if (port_log_debug_active()) {
+					port_log_init_regular_append(regularPath.c_str());
+					port_log_set_active(PORT_LOG_SINK_DEBUG);
+				} else {
+					logPath = regularPath;
+					port_log_init_regular(regularPath.c_str());
+					port_log_set_active(PORT_LOG_SINK_REGULAR);
+				}
+			} else {
+				logPath = std::string(userDir) + "ssb64.log";
+				port_log_init_regular(logPath.c_str());
+			}
+		} else
+#endif
 		if (char* p = SDL_GetPrefPath(NULL, "BattleShip")) {
 			logPath = std::string(p) + "ssb64.log";
 			SDL_free(p);
 		} else {
 			logPath = "ssb64.log";  // last-resort cwd fallback
 		}
-		port_log_init(logPath.c_str());
+#if !defined(__ANDROID__)
+		port_log_init_regular(logPath.c_str());
+#elif defined(__ANDROID__)
+		if (debug_session == SSB64_DEBUG_SESSION_NONE && !logPath.empty()) {
+			port_log_init_regular(logPath.c_str());
+		}
+#endif
 	}
+	if (port_log_debug_active()) {
+#if defined(__ANDROID__)
+		portLogDebugSessionBanner(debug_session, userDir, logPath.c_str());
+#else
+		portLogDebugSessionBanner(debug_session, NULL, logPath.c_str());
+#endif
+	}
+	port_log_report_sinks();
 
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(portWindowsCrashFilter);
@@ -1201,6 +1420,7 @@ int main(int argc, char* argv[]) {
 		port_log("\n*** atexit reached — process is shutting down voluntarily ***\n");
 		port_log_close();
 	});
+#ifdef _MSC_VER
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 	_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
 	_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
@@ -1209,6 +1429,7 @@ int main(int argc, char* argv[]) {
 	_CrtSetReportMode(_CRT_WARN,   _CRTDBG_MODE_FILE);
 	_CrtSetReportFile(_CRT_WARN,   _CRTDBG_FILE_STDERR);
 	_set_invalid_parameter_handler(portCrtInvalidParameter);
+#endif
 	std::set_terminate(portTerminateHandler);
 	signal(SIGABRT, portSignalHandler);
 	signal(SIGFPE,  portSignalHandler);
@@ -1221,30 +1442,27 @@ int main(int argc, char* argv[]) {
 	// can hook D3D11 before LUS creates the device.
 	portRenderDocInit();
 
+#if defined(__ANDROID__)
+	portAndroidJniWarmupEarly();
+#endif
+
 	if (PortInit(argc, argv) != 0) {
-		return 1;
+		PortShutdown();
+		port_exit_process(1);
 	}
 
+	/* After PortInit: Ship::Context exists (NON_PORTABLE GetAppDirectoryPath needs it). */
 #if defined(__ANDROID__)
-	// === Android JNI cache warm-up ===
-	//
-	// Our cooperative scheduler runs as port_coroutines (aarch64 fibers)
-	// stack-switched on the SDL_main thread. ART tracks JNI transition
-	// frames per OS thread via a ManagedStack list whose head lives on
-	// the native stack — when port_coroutine_swap moves SP to a different
-	// fiber, the head pointer dangles and any JNI call from the fiber
-	// aborts with "invalid JNI transition frame reference".
-	//
-	// SDL2's Android backend lazy-initializes a few caches via JNI on
-	// first use; if the first use happens from a coroutine, we crash.
-	// Force-warm them here on the real thread so subsequent reads from
-	// inside coroutines hit the in-process cache without re-entering JNI.
+	if (debug_session == SSB64_DEBUG_SESSION_ENV) {
+		ssb64_load_debug_env_file();
+	}
+#endif
 
-	// 1. SDL_INIT_GAMECONTROLLER → HIDDeviceManager.initialize.
-	SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
-	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
-		port_log("SSB64: pre-init SDL_INIT_GAMECONTROLLER failed: %s\n",
-		         SDL_GetError());
+#if defined(__ANDROID__)
+	portAndroidFinishPortMenuInit();
+	if (port_log_debug_active()) {
+		port_log_set_android_logcat_mirror(1);
+		port_log("SSB64: debug session ready\n");
 	}
 
 	// Prefer AAudio (Android 8.0+ low-latency audio API) over the default
@@ -1340,19 +1558,22 @@ int main(int argc, char* argv[]) {
 	PortGameShutdown();
 	port_log("SSB64: PortGameShutdown returned\n");
 
+	port_log("SSB64: clean shutdown — skipping static C++ destructors\n");
 	PortShutdown();
 	portRenderDocShutdown();
-	return 0;
+	port_exit_process(0);
 
 	} catch (const std::exception& e) {
 		port_log("\n*** main: unhandled C++ exception ***\n"
 		         "    type: %s\n    what: %s\n",
 		         typeid(e).name(), e.what());
-		port_log_close();
-		return 1;
+		PortGameShutdown();
+		PortShutdown();
+		port_exit_process(1);
 	} catch (...) {
 		port_log("\n*** main: unhandled non-std exception ***\n");
-		port_log_close();
-		return 1;
+		PortGameShutdown();
+		PortShutdown();
+		port_exit_process(1);
 	}
 }

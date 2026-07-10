@@ -22,7 +22,13 @@
 /*
  * IDO's __sinf and __cosf are single-precision math built-ins.
  * Declared in include/common.h as: f32 __sinf(f32); f32 __cosf(f32);
+ *
+ * Offline (SSB64_NETMENU=OFF): thin wrappers to system libm (JRickey release parity).
+ * Netmenu: decomp N64 polynomial in decomp/src/libultra/gu/sinf.c + cosf.c defines
+ * __sinf/__cosf; wrappers omitted to avoid duplicate symbols. See
+ * docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
  */
+#if !defined(SSB64_NETMENU)
 
 f32 __cosf(f32 angle)
 {
@@ -33,6 +39,13 @@ f32 __sinf(f32 angle)
 {
 	return sinf(angle);
 }
+
+#endif /* !SSB64_NETMENU */
+
+#if defined(SSB64_NETMENU)
+/* PR/guint.h extern; MIPS libm_vals.s not compiled in the port build. */
+float __libm_qnan_f = (float)NAN;
+#endif
 
 /* ========================================================================= */
 /*  BSD libc                                                                 */

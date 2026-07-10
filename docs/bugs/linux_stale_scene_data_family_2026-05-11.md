@@ -112,6 +112,7 @@ when leaf-by-leaf fixes have diminishing returns.
 
 - [`dl_link_stale_pointer_guard_2026-05-09`](dl_link_stale_pointer_guard_2026-05-09.md) — the
   family doc with the platform-difference explanation
-- [`linux_intro_skip_crash_handoff_2026-05-09`](../linux_intro_skip_crash_handoff_2026-05-09.md)
-  — sibling handoff in the top-level `docs/` tree
+- [`linux_menu_rendering_fixes_2026-05-22`](../linux_menu_rendering_fixes_2026-05-22.md)
+  — umbrella index for Linux menu/scene rendering fixes (replaces missing
+  `linux_intro_skip_crash_handoff_2026-05-09*.md` bisect notes)
 - libultraship `190a1f9c` (per-frame SP segment clear) — the precedent for variant 4

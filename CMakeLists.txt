@@ -90,6 +90,25 @@ option(NON_MATCHING "Build without matching decomp constraints" ON)
 option(NON_EQUIVALENT "Build without equivalent decomp constraints" ON)
 option(USE_AUTO_VCPKG "Use automated vcpkg for dependency management" ON)
 option(SSB64_STAGE_CYCLE_DEMO "Boot directly into attract-demo stage cycle for rendering regression testing" OFF)
+option(SSB64_NETMENU "VS Mode custom menu UX (stripped VS START-only screen; extend for net lobby)" OFF)
+option(SSB64_NETPLAY_ICE "Use libjuice ICE for automatch NAT traversal (requires SSB64_NETMENU)" ON)
+option(SSB64_NETPLAY_HARD_LAN_MODE "Force LAN-only deterministic netplay bootstrap for debugging" OFF)
+set(SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT "" CACHE STRING
+    "When non-empty, bake automatch host stage GRKind (0-8, e.g. 6=Dream Land). Runtime env overrides.")
+
+# Automatch HTTP (mm_matchmaking) uses libcurl on Linux, Android, and MinGW Windows netmenu builds.
+# Offline builds (SSB64_NETMENU=OFF) do not link curl. MinGW: install mingw-w64-curl and pass
+# CMAKE_FIND_ROOT_PATH when cross-compiling (see scripts/package-mingw-windows.sh).
+# MSVC: libultraship bootstraps vcpkg in add_subdirectory(); curl is installed there
+# via LUS_VCPKG_EXTRA_PACKAGES when SSB64_NETMENU=ON.
+# Android curl is provisioned after libultraship (see below) so FetchContent does not
+# force BUILD_SHARED_LIBS=OFF before SDL2 is configured — netplay APK needs libSDL2.so.
+if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        find_package(CURL REQUIRED)
+        find_package(Threads REQUIRED)
+    endif()
+endif()
 
 # ROM version to build. The decomp game code is region-conditionally
 # compiled (#if REGION_US / REGION_JP), so US and JP are separate builds —
@@ -128,6 +147,9 @@ set(GBI_UCODE "F3DEX_GBI_2" CACHE STRING "" FORCE)
 # GLESv3 branch and the ENABLE_OPENGL/USE_OPENGLES compile defs are set.
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(USE_OPENGLES ON CACHE BOOL "" FORCE)
+    # Raphnet/hidapi: libultraship uses a no-op hidapi stub (no NDK libusb). SDL handles pads.
+    set(HIDAPI_WITH_LIBUSB OFF CACHE BOOL "" FORCE)
+    set(HIDAPI_WITH_HIDRAW OFF CACHE BOOL "" FORCE)
 endif()
 
 # Build Torch as the original standalone sidecar executable on desktop.
@@ -149,12 +171,147 @@ set(BUILD_MARIO_ARTIST OFF CACHE BOOL "" FORCE)
 set(BUILD_NAUDIO ON CACHE BOOL "" FORCE)
 set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 
+# MSVC netmenu: libcurl via the same vcpkg triplet as libultraship (see windows-vcpkg.cmake).
+# FORCE so a stale empty cache entry cannot drop curl/pthreads from the install list.
+if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND USE_AUTO_VCPKG)
+    set(LUS_VCPKG_EXTRA_PACKAGES curl pthreads CACHE INTERNAL
+        "Extra vcpkg packages for SSB64_NETMENU (installed by libultraship)" FORCE)
+    message(STATUS "SSB64_NETMENU: requesting vcpkg extras: ${LUS_VCPKG_EXTRA_PACKAGES}")
+endif()
+
 ################################################################################
 # Subdirectories: libultraship
 ################################################################################
 
 add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Belt-and-suspenders: GLES backend + skip desktop-only GL enums in gfx_opengl.cpp.
+    target_compile_definitions(libultraship PRIVATE USE_OPENGLES)
+endif()
+
+# Android netmenu: static curl+mbedTLS (after libultraship / SDL2 configure).
+if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Android")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64CurlAndroid.cmake")
+    ssb64_android_provide_curl()
+    find_package(Threads REQUIRED)
+endif()
+
+# Windows netmenu: MSVC uses libultraship vcpkg (curl + pthreads4w CONFIG packages).
+# MinGW cross uses mingw-w64-curl from CMAKE_FIND_ROOT_PATH (FindCURL module / pkg-config).
+if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(MINGW OR NOT USE_AUTO_VCPKG)
+        find_package(CURL REQUIRED)
+        find_package(Threads REQUIRED)
+    else()
+        # Prefer the vcpkg tree LUS actually bootstrapped. GHA windows-2022 often sets
+        # VCPKG_ROOT to the VS Enterprise copy under Program Files; packages may land
+        # there even when CMAKE_BINARY_DIR/libultraship/vcpkg also exists. Search both.
+        set(_SSB64_VCPKG_ROOTS "")
+        if(DEFINED VCPKG_ROOT AND VCPKG_ROOT)
+            list(APPEND _SSB64_VCPKG_ROOTS "${VCPKG_ROOT}")
+        endif()
+        if(DEFINED ENV{VCPKG_ROOT} AND NOT "$ENV{VCPKG_ROOT}" STREQUAL "")
+            list(APPEND _SSB64_VCPKG_ROOTS "$ENV{VCPKG_ROOT}")
+        endif()
+        list(APPEND _SSB64_VCPKG_ROOTS "${CMAKE_BINARY_DIR}/libultraship/vcpkg")
+        list(REMOVE_DUPLICATES _SSB64_VCPKG_ROOTS)
+
+        set(_SSB64_VCPKG_INSTALLED "")
+        set(_SSB64_VCPKG_ROOT_USED "")
+        foreach(_SSB64_VCPKG_ROOT IN LISTS _SSB64_VCPKG_ROOTS)
+            foreach(_SSB64_VCPKG_TRIPLET IN ITEMS
+                "${VCPKG_TARGET_TRIPLET}"
+                "${VCPKG_TRIPLET}"
+                x64-windows-static
+                x64-windows
+            )
+                if(NOT _SSB64_VCPKG_TRIPLET)
+                    continue()
+                endif()
+                set(_SSB64_VCPKG_CANDIDATE "${_SSB64_VCPKG_ROOT}/installed/${_SSB64_VCPKG_TRIPLET}")
+                if(EXISTS "${_SSB64_VCPKG_CANDIDATE}/share/curl/CURLConfig.cmake")
+                    set(_SSB64_VCPKG_INSTALLED "${_SSB64_VCPKG_CANDIDATE}")
+                    set(_SSB64_VCPKG_ROOT_USED "${_SSB64_VCPKG_ROOT}")
+                    break()
+                endif()
+            endforeach()
+            if(_SSB64_VCPKG_INSTALLED)
+                break()
+            endif()
+        endforeach()
+        if(_SSB64_VCPKG_INSTALLED)
+            set(SSB64_VCPKG_CURL_PREFIX "${_SSB64_VCPKG_INSTALLED}" CACHE INTERNAL
+                "vcpkg installed prefix for curl (headers under include/curl/)")
+            list(APPEND CMAKE_PREFIX_PATH "${_SSB64_VCPKG_INSTALLED}")
+            message(STATUS "SSB64 vcpkg prefix for CURL: ${_SSB64_VCPKG_INSTALLED} (root ${_SSB64_VCPKG_ROOT_USED})")
+        else()
+            message(STATUS "vcpkg roots searched: ${_SSB64_VCPKG_ROOTS}")
+            foreach(_SSB64_VCPKG_ROOT IN LISTS _SSB64_VCPKG_ROOTS)
+                if(EXISTS "${_SSB64_VCPKG_ROOT}/installed")
+                    file(GLOB _SSB64_VCPKG_TRIPLETS LIST_DIRECTORIES true "${_SSB64_VCPKG_ROOT}/installed/*")
+                    message(STATUS "vcpkg installed under ${_SSB64_VCPKG_ROOT}: ${_SSB64_VCPKG_TRIPLETS}")
+                endif()
+            endforeach()
+            message(FATAL_ERROR "vcpkg curl package missing under searched roots; see libultraship vcpkg install output above (need LUS_VCPKG_EXTRA_PACKAGES=curl pthreads)")
+        endif()
+        find_package(CURL REQUIRED CONFIG)
+        find_package(pthreads CONFIG REQUIRED)
+        find_package(Threads REQUIRED)
+    endif()
+endif()
+
+# ExternalProject does not inherit the parent CMAKE_BUILD_TYPE; match BattleShip.exe
+# (Release packaging must not pick up a Debug torch.exe — MSVCP140D / ucrtbased).
+if(CMAKE_BUILD_TYPE)
+    set(_SSB64_TORCH_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+else()
+    set(_SSB64_TORCH_BUILD_TYPE "Release")
+endif()
+
+# ExternalProject does not inherit the parent toolchain; forward MinGW cross args
+# so torch.exe matches BattleShip.exe when cross-compiling on Linux.
+set(_SSB64_TORCH_EP_CMAKE_ARGS
+    -DCMAKE_BUILD_TYPE=${_SSB64_TORCH_BUILD_TYPE}
+    -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
+    -DUSE_STANDALONE=ON
+    -DBUILD_STORMLIB=OFF
+    -DBUILD_SM64=OFF
+    -DBUILD_MK64=OFF
+    -DBUILD_SF64=OFF
+    -DBUILD_PM64=OFF
+    -DBUILD_FZERO=OFF
+    -DBUILD_MARIO_ARTIST=OFF
+    -DBUILD_NAUDIO=ON
+    -DBUILD_SSB64=ON
+)
+# Parent CMAKE_FIND_ROOT_PATH (MinGW sysroot) is not inherited by ExternalProject; forward it
+# so torch.exe is built with the same cross toolchain as BattleShip.exe.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(CMAKE_C_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+    endif()
+    if(CMAKE_CXX_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
+    endif()
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND (MINGW OR CMAKE_CROSSCOMPILING))
+    list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS
+        -DCMAKE_SYSTEM_NAME=Windows
+        -DCMAKE_CROSSCOMPILING=TRUE
+    )
+    if(CMAKE_RC_COMPILER)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS -DCMAKE_RC_COMPILER=${CMAKE_RC_COMPILER})
+    endif()
+    if(CMAKE_FIND_ROOT_PATH)
+        list(APPEND _SSB64_TORCH_EP_CMAKE_ARGS
+            -DCMAKE_FIND_ROOT_PATH=${CMAKE_FIND_ROOT_PATH}
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+        )
+    endif()
+endif()
 ################################################################################
 # funchook - cross-platform runtime function-detouring lib used by the mod
 # loader. Replaces MinHook (which is x86/x64-Windows-only) so the hook system
@@ -225,18 +382,10 @@ else()
     ExternalProject_Add(TorchExternal
         PREFIX TorchExternal
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/torch
-        CMAKE_ARGS
-            -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/torch-install
-            -DUSE_STANDALONE=ON
-            -DBUILD_STORMLIB=OFF
-            -DBUILD_SM64=OFF
-            -DBUILD_MK64=OFF
-            -DBUILD_SF64=OFF
-            -DBUILD_PM64=OFF
-            -DBUILD_FZERO=OFF
-            -DBUILD_MARIO_ARTIST=OFF
-            -DBUILD_NAUDIO=ON
-            -DBUILD_SSB64=ON
+        CMAKE_ARGS ${_SSB64_TORCH_EP_CMAKE_ARGS}
+        CMAKE_CACHE_ARGS
+            -DCMAKE_BUILD_TYPE:STRING=${_SSB64_TORCH_BUILD_TYPE}
+        BUILD_ALWAYS TRUE
     )
 
     ExternalProject_Get_Property(TorchExternal install_dir)
@@ -452,6 +601,10 @@ file(GLOB_RECURSE SSB64_SRC_WP      "decomp/src/wp/*.c"      "decomp/src/wp/*.h"
 # Port layer (C++ glue) — excludes port/stubs/ which is compiled as part of ssb64_game
 file(GLOB_RECURSE SSB64_SRC_PORT "port/*.cpp" "port/*.c" "port/*.h")
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/stubs/")
+# intro_room_draw_diag.c uses decomp types/GObj BSS — compiled in ssb64_game, not ssb64.
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/intro_room_draw_diag\\.c$")
+# port/net/*.c belongs in ssb64_game (needs port/net on the include path); see cmake/Ssb64NetmenuSources.cmake
+list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/net/")
 # RelocFileTable.{us,jp}.cpp both define gRelocFileTable — compile only the
 # selected version's table (the rest are siblings for the other version).
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/resource/RelocFileTable\\.(us|jp)\\.cpp$")
@@ -495,11 +648,18 @@ list(APPEND SSB64_SRC_PORT
     ${SSB64_CSS_ARROW_LEFT_H}
 )
 
-# Debug tools (GBI trace + Acmd trace systems)
-file(GLOB SSB64_DEBUG_TOOLS
-    "debug_tools/gbi_trace/*.c" "debug_tools/gbi_trace/*.h"
-    "debug_tools/acmd_trace/*.c" "debug_tools/acmd_trace/*.h"
-)
+# Debug tools — GBI trace in all PORT builds (SSB64_GBI_TRACE env); Acmd trace netmenu only.
+file(GLOB SSB64_GBI_TRACE_SOURCES
+    "debug_tools/gbi_trace/*.c" "debug_tools/gbi_trace/*.h")
+file(GLOB SSB64_ACMD_TRACE_SOURCES
+    "debug_tools/acmd_trace/*.c" "debug_tools/acmd_trace/*.h")
+set(SSB64_ACMD_TRACE_STUB
+    "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/acmd_trace_stubs.c")
+if(SSB64_NETMENU)
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_GBI_TRACE_SOURCES} ${SSB64_ACMD_TRACE_SOURCES})
+else()
+    set(SSB64_EXE_TRACE_SOURCES ${SSB64_GBI_TRACE_SOURCES} ${SSB64_ACMD_TRACE_STUB})
+endif()
 
 set(SSB64_DECOMP_SOURCES
     ${SSB64_SRC_CREDITS}
@@ -526,6 +686,11 @@ list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX "\\.inc\\.c$")
 if(SSB64_VERSION STREQUAL "jp")
     list(FILTER SSB64_DECOMP_SOURCES EXCLUDE REGEX
         "decomp/src/mn/mncommon/(mncongra|mnstartup)\\.c$")
+endif()
+
+if(SSB64_NETMENU)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuSources.cmake")
 endif()
 
 ################################################################################
@@ -622,6 +787,45 @@ if(SSB64_STAGE_CYCLE_DEMO)
     list(APPEND SSB64_COMPILE_DEFS PORT_STAGE_CYCLE_DEMO=1)
 endif()
 
+if(SSB64_NETMENU)
+    list(APPEND SSB64_COMPILE_DEFS SSB64_NETMENU=1)
+endif()
+
+# Upstream JRickey decomp still ships netreplay/netpeer/netsync under src/sys; the fork
+# removed them to port/net. When those stock TUs are present, omit overlapping offline stubs.
+if(NOT SSB64_NETMENU AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/netreplay.c")
+    list(APPEND SSB64_COMPILE_DEFS SSB64_UPSTREAM_DECOMP_NET_SYS=1)
+endif()
+
+if(SSB64_NETMENU AND SSB64_NETPLAY_ICE)
+    list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_ICE=1)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64Libjuice.cmake")
+endif()
+
+if(SSB64_NETPLAY_HARD_LAN_MODE)
+    list(APPEND SSB64_COMPILE_DEFS SSB64_NETPLAY_HARD_LAN_MODE=1)
+endif()
+
+if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT STREQUAL "")
+    if(NOT SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT MATCHES "^[0-9]+$")
+        message(FATAL_ERROR
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be numeric (got '${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}')")
+    endif()
+    math(EXPR _SSB64_AUTOMATCH_STAGE_DEFAULT "${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
+    if(_SSB64_AUTOMATCH_STAGE_DEFAULT LESS 0 OR _SSB64_AUTOMATCH_STAGE_DEFAULT GREATER 8)
+        message(FATAL_ERROR
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT must be 0..8 (got ${_SSB64_AUTOMATCH_STAGE_DEFAULT})")
+    endif()
+    if(SSB64_NETMENU)
+        list(APPEND SSB64_COMPILE_DEFS
+             SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT})
+        message(STATUS "SSB64 automatch stage default (compile): GRKind ${SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT}")
+    else()
+        message(WARNING
+            "SSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT ignored (requires SSB64_NETMENU=ON)")
+    endif()
+endif()
+
 # Hi-res texture pack support is US-only (desktop AND Android). On Android
 # it compiles but defaults to OFF and runs with a smaller decoded-RGBA8 LRU
 # budget (see port/hires/HiResPack.h: kHiResEnabledDefault / kDefaultLruBudgetMB)
@@ -646,9 +850,63 @@ endif()
 
 add_library(ssb64_game OBJECT ${SSB64_DECOMP_SOURCES})
 
+if(SSB64_NETMENU)
+    target_sources(ssb64_game PRIVATE ${SSB64_PORT_NETMENU_SOURCES})
+    # BEFORE: netplay shims + shadows, then port/net (matchmaking, rollback transport).
+    target_include_directories(ssb64_game BEFORE PRIVATE
+        ${SSB64_NETPLAY_INCLUDE_BEFORE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net/matchmaking"
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+    target_include_directories(ssb64_game PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
+    ssb64_netmenu_attach_curl(ssb64_game)
+    if(SSB64_NETPLAY_ICE)
+        ssb64_target_link_libjuice(ssb64_game)
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT MINGW)
+        target_link_libraries(ssb64_game PRIVATE PThreads4W::PThreads4W)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
+        target_link_libraries(ssb64_game PRIVATE Threads::Threads)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+        target_link_libraries(ssb64_game PRIVATE Threads::Threads)
+    endif()
+else()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetplayIncludes.cmake")
+    # Offline build (SSB64_NETMENU=OFF): decomp net rollback blocks are stripped at compile time
+    # (#if defined(PORT) && defined(SSB64_NETMENU)). No port/net rollback TUs linked.
+    # net_port_glue_offline.c + netsync_hash_stubs.c satisfy remaining port shell symbols.
+    set(_SSB64_PORT_NET_SYS_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/port/net")
+    set(_SSB64_DECOMP_NETINCLUDE_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sc/scmanager.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/sys/objman.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/ft/ftmain.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/if/ifcommon.c")
+    set(_SSB64_OFFLINE_NET_INCLUDE_DIRS
+        "${SSB64_NETPLAY_INCLUDE_SHIMS}"
+        "${SSB64_NETPLAY_DIR}"
+        "${_SSB64_PORT_NET_SYS_PARENT}")
+    set_source_files_properties(
+        ${_SSB64_DECOMP_NETINCLUDE_SOURCES}
+        PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
+endif()
+
 # Port stub definitions (C code that satisfies N64 linker symbols)
 file(GLOB SSB64_STUBS "port/stubs/*.c")
+list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/acmd_trace_stubs\\.c$")
+if(SSB64_NETMENU)
+    # Extended netpeer / rollback live in port/net when netmenu is on; omit offline-only glue (would duplicate symbols).
+    list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/net_port_glue_offline\\.c$")
+    list(FILTER SSB64_STUBS EXCLUDE REGEX ".*/netsync_hash_stubs\\.c$")
+endif()
 target_sources(ssb64_game PRIVATE ${SSB64_STUBS})
+target_sources(ssb64_game PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/port/intro_room_draw_diag.c)
+if(NOT SSB64_NETMENU)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/port/stubs/netsync_hash_stubs.c"
+        PROPERTIES INCLUDE_DIRECTORIES "${_SSB64_OFFLINE_NET_INCLUDE_DIRS}")
+endif()
 
 # Selectively include decomp libultra files that provide needed functionality.
 # These are pure C implementations that work on any platform.
@@ -660,6 +918,13 @@ set(SSB64_LIBULTRA_PORT
     # NOTE: sprite.c is NOT included — drawbitmap is assembly-only (MIPS).
     # Sprite functions are stubbed in port/stubs/n64_stubs.c instead.
 )
+if (SSB64_NETMENU)
+    # Deterministic cross-ISA __sinf/__cosf (N64 Cody-Waite polynomial); offline uses libc_compat wrappers.
+    list(APPEND SSB64_LIBULTRA_PORT
+        decomp/src/libultra/gu/sinf.c
+        decomp/src/libultra/gu/cosf.c
+    )
+endif()
 target_sources(ssb64_game PRIVATE ${SSB64_LIBULTRA_PORT})
 
 # N64 audio library — synthesis driver, sequence player, voice management.
@@ -744,6 +1009,85 @@ if (NOT MSVC)
     endif()
 endif()
 
+# Cross-ISA / cross-OS netplay: disable FMA contraction on sim-critical decomp/net TUs.
+if (SSB64_NETMENU)
+    if (MSVC)
+        # /fp:precise: no FMA contraction (VS2022+ default); pragma in netplay_fp_contract.h for older MSVC.
+        set(_ssb64_fp_contract_off "/fp:precise")
+    else()
+        set(_ssb64_fp_contract_off "-ffp-contract=off")
+    endif()
+    # Every decomp TU whose float output feeds a rollback/frame-commit sync hash must be
+    # contraction-free, or clang fuses a*b+c differently per ISA (aarch64 vs x86_64) and the
+    # quantize grid can no longer absorb the per-frame ULP divergence (eff/item/wpn hashes split
+    # first because effects/weapons/items run heavy Vec3f + transcendental math). Same-ISA peers
+    # stay bit-identical regardless, which is why Linux<->Linux was stable before quantization.
+    # Sim-critical hash producers: ft (figh), ef (eff), wp (wpn), it (item), mp (map/collision),
+    # lb (shared vector math used everywhere), gm (cam + collision/world-pose matrix math),
+    # sys/objanim (anim). Netmenu also keeps shared matrix/libultra gu helpers contraction-free so
+    # future relocated consumers cannot reintroduce cross-ISA fused-vs-unfused matrix drift.
+    #
+    # NOTE: stock decomp TUs (taskman, scvsbattle, lbcommon, scmanager, mnvsmode, mnvsresults) are
+    # unified under decomp/src/ with compile gates. Net-only sources remain under decomp/src/netplay/.
+    # lbcommon is the shared 2D/3D magnitude/normalize math (lbCommonMag2D/NormDist2D = sqrtf(x*x + y*y))
+    # on the item/fighter physics hot path. The "/decomp/src/lb/" pattern does NOT match
+    # "/decomp/src/netplay/lb/", so without the explicit netplay match below that relocated TU
+    # so without the explicit netplay match below that relocated TU compiled WITH contraction:
+    # aarch64 fused x*x + y*y into one FMA while baseline x86_64 used two rounded ops, diverging
+    # the bomb terminal-velocity clamp cross-ISA (Link bomb spam desync, 2026-05-29). Match the
+    # whole netplay tree so any relocated sim TU stays contraction-free.
+    #
+    # Same gap re-bit gm/: the matcher used to key on "/decomp/src/gm/gmcamera.c$" only, leaving
+    # gmcollision.c compiled WITH contraction. gmCollisionGetWorldPosition / TransformMatrixAll /
+    # the 4x4 matrix multiply are dense (mtx[0][0]*x + mtx[1][0]*y + mtx[2][0]*z) + mtx[3][0]
+    # dot-products that fuse to a single fmadd on aarch64. That 1-ULP world-position drift is
+    # cosmetic for fighters (their synced pose is the quantized physics root), but itMainSetFighterRelease
+    # seeds a THROWN item's *persistent synced position* directly from a fighter joint world
+    # position (gmCollisionGetFighterPartsWorldPosition), so the unfused/fused split leaks into the
+    # item hash and forks it at the next synctest — and the 1/65536 quantize grid is finer than the
+    # f32 ULP at stage-scale |x|>256 coords, so it cannot merge the two adjacent floats (Link bomb
+    # spam desync on Sector Z, 2026-05-30). Match the whole /decomp/src/gm/ tree (all five TUs are
+    # gameplay sim) so the collision/matrix surface stays contraction-free, not just gmcamera.c.
+    #
+    # Class A (cross-libm trig): __sinf/__cosf must use in-tree N64 polynomial (gu/sinf.c + cosf.c),
+    # not system libm — -ffp-contract=off cannot fix precompiled libm. See
+    # docs/netplay_cross_isa_float_determinism.md and docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
+    #
+    # Class B gaps (2026-06-04): gr/ (Sector Arwing orientation), sys/utils.c (syUtilsArcTan /
+    # jibaku angle), sys/vector.c (syVectorAngleDiff3D); libultra/gu/sinf.c + cosf.c (double
+    # polynomial FMA). Defensive netmenu coverage: sys/matrix.c and all libultra/gu helpers
+    # (matrix normalize / transform helpers) are compiled contraction-free too; current known
+    # sys/matrix consumers are render/camera, but this prevents future hash writeback gaps.
+    #
+    # Class B gap (2026-06-04, Sector Z Arwing deck map-hash split): sys/interp.c. The Arwing flight
+    # path drives map_dobjs[0]->translate through syInterpQuad/syInterpCubic, whose spline evaluators
+    # (syInterpCatromCubicSpline, syInterp*Bezier*, syInterpGetCubicIntegralApprox) are dense
+    # ctrl[i]*w[i] multiply-add polynomials. With contraction on, clang fuses them to fmadd on aarch64
+    # (Android host) but two rounded ops on x86_64 (Linux guest); the ~1-ULP split straddles the
+    # 1/65536 grid midpoint so the already-present grSectorArwingCanonicalizeSimState quantize snaps
+    # the two peers to different cells -> map-hash-only desync (mph differs cross-peer while figh/world/
+    # rng/anim all match) and a sector_arwing_deck LOAD_HASH map_mismatch hard abort once the gate
+    # disengages. objanim.c (AObjEvent16 joint anim) was already matched; the spline TU was the gap.
+    # See docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
+    foreach(_src IN LISTS SSB64_DECOMP_SOURCES)
+        if (_src MATCHES "/decomp/src/ft/" OR _src MATCHES "/decomp/src/ef/" OR
+            _src MATCHES "/decomp/src/wp/" OR _src MATCHES "/decomp/src/it/" OR
+            _src MATCHES "/decomp/src/mp/" OR _src MATCHES "/decomp/src/lb/" OR
+            _src MATCHES "/decomp/src/gm/" OR _src MATCHES "/decomp/src/gr/" OR
+            _src MATCHES "/decomp/src/netplay/" OR _src MATCHES "/decomp/src/sys/objanim\\.c$" OR
+            _src MATCHES "/decomp/src/sys/utils\\.c$" OR _src MATCHES "/decomp/src/sys/vector\\.c$" OR
+            _src MATCHES "/decomp/src/sys/interp\\.c$" OR _src MATCHES "/decomp/src/sys/matrix\\.c$")
+            set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+        endif()
+    endforeach()
+    foreach(_src IN LISTS SSB64_LIBULTRA_PORT)
+        set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+    endforeach()
+    foreach(_src IN LISTS SSB64_PORT_NETMENU_SOURCES)
+        set_source_files_properties(${_src} PROPERTIES COMPILE_OPTIONS "${_ssb64_fp_contract_off}")
+    endforeach()
+endif()
+
 ################################################################################
 # Fetch Discord RPC (desktop only — Android drops Discord Rich Presence
 # along with the rest of the network-dependent features).
@@ -764,7 +1108,13 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
         discord_rpc
         GIT_REPOSITORY https://github.com/discordapp/discord-rpc.git
         GIT_TAG        v3.4.0
-        PATCH_COMMAND  ${CMAKE_COMMAND} -E rm -f .clang-format
+        # discord-rpc's configure-time file(DOWNLOAD) for rapidjson is flaky on
+        # Windows CI (leaves RAPIDJSON-NOTFOUND). Pre-populate thirdparty here.
+        PATCH_COMMAND
+            ${CMAKE_COMMAND} -E rm -f .clang-format
+        COMMAND
+            ${CMAKE_COMMAND} -DRJ_ROOT:PATH=<SOURCE_DIR>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PopulateDiscordRpcRapidjson.cmake
     )
     FetchContent_MakeAvailable(discord_rpc)
     # Belt and suspenders: enforce the runtime-library property on the
@@ -794,14 +1144,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # one matching ANDROID_ABI emits code.
     add_library(${PROJECT_NAME} SHARED
         ${SSB64_SRC_PORT}
-        ${SSB64_DEBUG_TOOLS}
+        ${SSB64_EXE_TRACE_SOURCES}
         $<TARGET_OBJECTS:ssb64_game>
         port/coroutine_aarch64.S
         port/coroutine_armv7.S
     )
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "main")
 else()
-    add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_DEBUG_TOOLS} $<TARGET_OBJECTS:ssb64_game>)
+    add_executable(${PROJECT_NAME} ${SSB64_SRC_PORT} ${SSB64_EXE_TRACE_SOURCES} $<TARGET_OBJECTS:ssb64_game>)
 
     # User-facing binary name. The CMake target keeps the historical
     # `ssb64` identifier (matches the repo, build dirs, internal symbols),
@@ -809,6 +1159,10 @@ else()
     # (US) or `BattleShip-JP` (JP), so the two are distinct applications.
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${SSB64_APP_NAME}")
 endif()
+
+# OBJECT library via $<TARGET_OBJECTS:ssb64_game> does not always serialize the
+# final link against every .o under parallel make — wait for ssb64_game first.
+add_dependencies(${PROJECT_NAME} ssb64_game)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set_target_properties(ssb64_game PROPERTIES
@@ -833,6 +1187,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     # NOTE: Do NOT add decomp/include here. The C decomp shim headers (stdlib.h,
     # stddef.h, ...) shadow the C++ standard library when picked up by port/*.cpp,
     # producing libc++ <cstdlib> errors. Only ssb64_game (C decomp) consumes them.
+    ${CMAKE_CURRENT_SOURCE_DIR}/include       # ssb64_paths_capi.h, generated reloc headers consumed selectively
     ${CMAKE_CURRENT_SOURCE_DIR}/decomp/src       # Decomp game module headers (sys/, ft/, sc/, ...)
     ${CMAKE_CURRENT_SOURCE_DIR}/port
     ${CMAKE_CURRENT_SOURCE_DIR}/debug_tools
@@ -858,11 +1213,39 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     add_dependencies(${PROJECT_NAME} libultraship)
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+    # libultraship is STATIC; propagate SDL2 as a separate .so for SDLActivity.loadLibrary("SDL2").
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2)
+    elseif(TARGET SDL2::SDL2-static)
+        message(FATAL_ERROR
+            "Android requires shared libSDL2.so (SDLActivity loads it before libmain.so). "
+            "SDL2 was configured static — check SDL_SHARED and that netmenu curl runs after libultraship.")
+    endif()
 else()
     add_dependencies(${PROJECT_NAME} libultraship TorchExternal discord-rpc)
     target_link_libraries(${PROJECT_NAME} PRIVATE libultraship discord-rpc)
 endif()
 add_dependencies(ssb64_game GenerateCreditsAssets)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+	# Port TUs (lbreloc_byteswap.cpp, lbreloc_bridge.cpp) index gRelocFileTable;
+	# ensure RelocFileTable.<ver>.{h,cpp} exist before ssb64 links.
+	add_dependencies(${PROJECT_NAME} PrepareBuildInputs)
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+if(SSB64_NETMENU)
+    # ssb64_game: curl include paths in cmake/Ssb64NetmenuDeps.cmake (OBJECT compile needs -I).
+    target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl Threads::Threads)
+    if(SSB64_NETPLAY_ICE)
+        # mm_ice.c lives in ssb64_game OBJECTs; juice-static must be on the final link (macOS CI).
+        ssb64_target_link_libjuice(${PROJECT_NAME})
+    endif()
+    # mm_lan_detect.c (GetAdaptersAddresses) on Windows automatch LAN endpoint discovery.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT MINGW)
+        target_link_libraries(${PROJECT_NAME} PRIVATE PThreads4W::PThreads4W iphlpapi)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND MINGW)
+        target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi)
+    endif()
+endif()
 if (NOT DISABLE_SCRIPTING)
     # funchook hook backend (libultraship is already linked above).
     target_link_libraries(${PROJECT_NAME} PRIVATE funchook-static)
@@ -909,11 +1292,23 @@ endif()
 ################################################################################
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_options(${PROJECT_NAME} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
     target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    if(MINGW)
+        # MinGW has no #pragma comment(lib); port.cpp + libultraship CrashHandler need dbghelp.
+        target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp psapi)
+        if(SSB64_NETMENU)
+            # netpeer / STUN / LAN detect (Winsock + GetAdaptersAddresses).
+            target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        endif()
+    endif()
     # DMA functions (osEPiStartDma, osPiStartDma) are provided by LUS.
     # Game DMA code is no-opped via #ifdef PORT in dma.c, so no /FORCE needed.
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    elseif(MINGW)
+        # /utf-8 is MSVC-only; MinGW GCC treats it as a bogus input file path.
+        target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
+    endif()
     # Embed the application icon (Explorer / taskbar / window). The .rc
     # is generated per-region from port/ssb64.rc.in: US embeds
     # assets/icon.ico, JP embeds assets/icon-jp.ico. The icon also
@@ -1020,6 +1415,24 @@ else()
         COMMENT "Packaging Fast3D shaders into f3d.o2r (Android)"
     )
     add_dependencies(${PROJECT_NAME} GenerateF3DO2R)
+endif()
+
+if(SSB64_NETMENU AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Entire tree so custom menu PNGs (any filename under port/net/assets/) ship next to the binary;
+    # mn_vs_submenu_png.c loads RealAppBundlePath()/port/net/assets/<filename>.
+    # Android stages ssl/ + port/net/assets/ via Gradle/APK assets (see android/app/build.gradle.kts).
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/port/net/assets
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/port/net/assets
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/ssl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/port/net/cacert.pem
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/ssl/cacert.pem
+    )
 endif()
 
 ################################################################################

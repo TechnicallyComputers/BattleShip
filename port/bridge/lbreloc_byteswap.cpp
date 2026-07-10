@@ -38,6 +38,9 @@ extern "C" int  portRelocFindContainingFile(const void *ptr, uintptr_t *out_base
 extern "C" int  portRelocFindFileIdAndBase(const void *ptr, uintptr_t *out_base);
 extern "C" bool portRelocDescribePointer(const void *ptr, uintptr_t *out_base, size_t *out_size,
                                           unsigned int *out_file_id, const char **out_path);
+/* RelocFileTable.us.h declares this; repeat at file scope (not inside a function —
+ * MSVC mangled a block-local extern to a different symbol than the .cpp definition). */
+extern "C" const char *const gRelocFileTable[];
 
 // ============================================================
 //  Stage audit (SSB64_STAGE_AUDIT=1)

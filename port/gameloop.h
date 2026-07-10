@@ -39,6 +39,28 @@ void PortGameShutdown(void);
  */
 void port_resume_service_threads(void);
 
+/** Frame index for net barrier / logging (PC port). */
+int port_get_push_frame_count(void);
+void port_reset_push_frame_count_for_net_barrier(void);
+/** Reset VS decouple sim-step deadline phase when battle barrier first releases (pairs with taskman resync). */
+void port_reset_vs_decouple_pacing_for_net_barrier(void);
+/** Add nanoseconds bias applied once when decouple pacing first latches sVsNextSimStepDeadline after a barrier. */
+void port_add_vs_decouple_barrier_latch_bias_ns(long long delta_ns);
+/**
+ * Arm decouple sim-step grid to BATTLE_EXEC_SYNC monotonic origin (barrier=0 automatch).
+ * Next decouple init aligns sVsNextSimStepDeadline to the next contract-VI tick from anchor_mono_ms.
+ */
+void port_set_vs_decouple_exec_sync_monotonic_anchor(unsigned long long anchor_monotonic_ms);
+
+/**
+ * Counters for PortPushFrame cadence vs VS decoupled sim stepping (`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM`).
+ * wall_calls increments once per PortPushFrame; sim_advances when a game sim step runs; sim_skips when VS decouple
+ * holds a host refresh frame without advancing the negotiated VI sim step. With the default
+ * Decoupled VS defaults to contract VI Hz wall cap on all platforms; `SSB64_NETPLAY_VS_PUSH_FRAME_HZ` overrides.
+ */
+void port_get_netplay_push_frame_diag(unsigned long long *out_wall_calls, unsigned long long *out_sim_advances,
+                                      unsigned long long *out_sim_skips);
+
 #ifdef __cplusplus
 }
 #endif

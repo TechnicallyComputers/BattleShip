@@ -26,6 +26,9 @@
 
     <!-- Vibration for damage / smash hits. SDL_HapticRumble routes here. -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Automatch HTTPS + UDP netplay (netplay APK; harmless when offline). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:label="@string/app_name"

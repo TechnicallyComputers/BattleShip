@@ -46,6 +46,13 @@ val haveReleaseKeystore: Boolean =
 // Resolve relative to projectDir so it works from any worktree.
 val repoRoot = rootProject.projectDir.resolve("..").canonicalFile
 
+// Netplay APK: pass -Pssb64Netmenu=true (CI build-android-netplay job). Offline is default.
+val ssb64Netmenu: Boolean =
+    project.findProperty("ssb64Netmenu")?.toString()?.equals("true", ignoreCase = true) == true
+// Alpha / soak: -Pssb64AutomatchStageKindDefault=6 bakes Dream Land automatch host stage.
+val ssb64AutomatchStageKindDefault: String? =
+    project.findProperty("ssb64AutomatchStageKindDefault")?.toString()?.takeIf { it.isNotEmpty() }
+
 /** Resolve a generated asset by checking the desktop build dir first
  *  (where new-worktree.sh symlinks main-tree outputs into build/), then
  *  the repo root, then fail with a clear message. */
@@ -82,6 +89,20 @@ val stageGameAssets = tasks.register<Copy>("stageGameAssets") {
     from(repoRoot.resolve("config.yml"))
     from(repoRoot.resolve("yamls")) {
         into("yamls")
+    }
+
+    // HTTPS automatch CA bundle + VS netmenu PNGs (harmless in offline APK; required for netplay).
+    val cacert = repoRoot.resolve("port/net/cacert.pem")
+    if (cacert.isFile) {
+        from(cacert) {
+            into("ssl")
+        }
+    }
+    val netAssets = repoRoot.resolve("port/net/assets")
+    if (netAssets.isDirectory) {
+        from(netAssets) {
+            into("port/net/assets")
+        }
     }
 
     doFirst {
@@ -152,18 +173,25 @@ android {
             cmake {
                 // Forwarded to CMake configure. -DUSE_AUTO_VCPKG=OFF stops
                 // libultraship from trying to bootstrap vcpkg on Android.
-                arguments += listOf(
-                    "-DUSE_AUTO_VCPKG=OFF",
-                    "-DANDROID_STL=c++_shared",
-                )
+                arguments += buildList {
+                    add("-DUSE_AUTO_VCPKG=OFF")
+                    add("-DANDROID_STL=c++_shared")
+                    if (ssb64Netmenu) {
+                        add("-DSSB64_NETMENU=ON")
+                        ssb64AutomatchStageKindDefault?.let { stageDefault ->
+                            add("-DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=$stageDefault")
+                        }
+                    }
+                }
                 // Targets we explicitly want AGP to drive a build for.
                 //   ssb64         — libmain.so (the Activity loads this)
                 //   torch_runner  — libtorch_runner.so (first-run ROM
                 //                   extractor, loaded standalone by Java
                 //                   before SDLActivity is up)
-                // Transitive deps (libultraship.a, libSDL2.so, libtinyxml2,
-                // libtorch.a, etc.) get pulled in automatically — and only
-                // SHARED libs end up in the APK.
+                // Transitive SHARED libs linked from ssb64/torch_runner are
+                // packaged under lib/arm64-v8a/ (required at runtime):
+                //   libSDL2.so, libc++_shared.so (ANDROID_STL=c++_shared),
+                //   libmain.so, libtorch_runner.so
                 targets += listOf("ssb64", "torch_runner")
             }
         }
@@ -186,12 +214,15 @@ android {
             // Pure-native crashes need the unstripped .so to symbolicate;
             // packagingOptions below keeps debug symbols around in debug APKs.
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            applicationIdSuffix = if (ssb64Netmenu) ".netplay.debug" else ".debug"
+            versionNameSuffix = if (ssb64Netmenu) "-netplay-debug" else "-debug"
         }
         getByName("release") {
             isMinifyEnabled = false   // No Java code worth shrinking yet
             isShrinkResources = false
+            if (ssb64Netmenu) {
+                applicationIdSuffix = ".netplay"
+            }
             // Use the configured release keystore if present; otherwise the
             // debug key. The latter still produces a runnable APK for local
             // smoke-testing — it's just NOT distributable (Play Store

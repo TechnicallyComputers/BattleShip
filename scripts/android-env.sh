@@ -10,6 +10,10 @@
 # Installed via:
 #   brew install --cask android-ndk android-commandlinetools
 #   brew install openjdk@17
+#
+# Build APKs (from repo root):
+#   ./scripts/package-android.sh              # offline
+#   ./scripts/package-android.sh --netplay  # SSB64_NETMENU=ON
 
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export ANDROID_NDK_HOME=/opt/homebrew/share/android-ndk

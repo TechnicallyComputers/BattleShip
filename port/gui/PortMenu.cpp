@@ -30,6 +30,10 @@ namespace ssb64 { void MountModsDir(); void UnmountMissingMods(); }
 
 #include <SDL2/SDL.h>
 #include <spdlog/fmt/fmt.h>
+
+#if defined(__ANDROID__)
+#include "../android_debug_session.h"
+#endif
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -1308,6 +1312,34 @@ void PortMenu::AddMenuSettings() {
         .WindowName("GfxDebuggerWindow")
         .HideInSearch(true)
         .Options(WindowButtonOptions().Tooltip("Toggles the graphics debugger window."));
+
+#if defined(__ANDROID__)
+    AddWidget(path, "Debug Functions", WIDGET_SEPARATOR_TEXT);
+
+    AddWidget(path, "Restart in Debug Mode", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_restart_in_debug_mode(); })
+        .Options(ButtonOptions().Tooltip(
+            "Arms debug logging for the next launch: close the app, then open it again from the launcher. "
+            "Writes port_log to ssb64-debug.log (logcat tag ssb64). Enables matchmaking HTTPS, "
+            "automatch FSM/ICE milestones, and turn-credential errors without debug.env."));
+
+    AddWidget(path, "Restart with debug.env", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_restart_with_debug_env(); })
+        .Options(ButtonOptions().Tooltip(
+            "Pick any text file (name does not matter). Its contents are saved as debug.env and a debug "
+            "session is armed; close the app and open it again from the launcher. Use KEY=value lines "
+            "with SSB64_* names (see docs/netplay_environment_variables.md). Skipped lines are listed "
+            "in ssb64-debug.log."));
+
+    AddWidget(path, "Export ssb64-debug.log", WIDGET_BUTTON)
+        .RaceDisable(false)
+        .Callback([](WidgetInfo&) { ssb64_android_export_debug_log(); })
+        .Options(ButtonOptions().Tooltip(
+            "Save ssb64-debug.log to a location you choose. Use after arming Debug Mode (or debug.env) "
+            "and completing one launcher relaunch."));
+#endif
 }
 
 void PortMenu::AddMenuAssets() {

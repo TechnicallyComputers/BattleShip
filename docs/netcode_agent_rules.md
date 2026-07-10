@@ -34,6 +34,10 @@ Build rollback netcode in phases:
 - `src/sc/sc1pmode/sc1pgame.c`, `src/sc/sc1pmode/sc1ptrainingmode.c`, and `src/sc/sc1pmode/sc1pbonusstage.c` remain on `syControllerFuncRead`.
 - `docs/netplay_architecture.md` documents the current input architecture.
 
+## Environment variable reference
+
+- [`docs/netplay_environment_variables.md`](netplay_environment_variables.md) lists `SSB64_*` environment variables used by netplay / netmenu (input, netpeer, rollback, matchmaking, diagnostics). Use it when debugging, scripting launches, or porting this stack.
+
 ## Architecture Rules
 
 - Keep `src/sys/controller.c` focused on local hardware input and N64-style controller behavior.
@@ -82,6 +86,7 @@ Build rollback netcode in phases:
 - Narrow gameplay/state hashes exist (`src/sys/netsync.c`), but snapshot/rollback coverage is intentionally shallow until input parity is nailed down.
 - No rollback snapshot/restore API exists yet.
 - No STUN/TURN, NAT traversal, relay fallback, matchmaking, or final session owner model exists yet.
+- **FTStatusVars union stomps** — blind snapshot `memcpy` of `status_vars` restores stale overlay bytes. Do not paper over with new out-of-union mirrors; follow CLAUDE.md directive #6 (accessors → witness → parallel storage). See `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md`.
 
 ## Desync triage playbook
 

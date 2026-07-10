@@ -36,6 +36,9 @@ unsigned char port_diag_get_scene_curr(void);
 unsigned char port_diag_get_scene_prev(void);
 const char *port_diag_get_scene_name(unsigned char id);
 int port_log_get_fd(void);
+#if defined(SSB64_NETMENU)
+void syNetplayResimReplayHangDiagLogHangSnapshot(void);
+#endif
 }
 
 /* GFX stale-DL diag dump (libultraship public API — fast/interpreter.h).
@@ -50,6 +53,7 @@ std::atomic<uint64_t> sFrameCount{0};
 std::atomic<int>      sResumeActiveThreadId{-1};
 std::atomic<uint64_t> sResumeStartMs{0};
 std::atomic<bool>     sShutdown{false};
+std::atomic<int>      sConnectPhasePause{0};
 std::atomic<bool>     sStarted{false};
 std::thread           sWatchdogThread;
 
@@ -348,15 +352,21 @@ void CrashSignalHandler(int sig, siginfo_t *info, void *ucontext) {
 
     DumpBacktraceFromContext(ucontext);
 
+#if !defined(__ANDROID__)
     /* Dump the GFX stale-DL diag ring buffer (recent DL pushes + segment
      * writes, all classified by source memory range via the registered
      * Fast::AddressClassifier — see port_dl_ranges.cpp). This identifies
      * the upstream holder behind variant-5-style "walker ran past
      * registered DL range" crashes in gfx_step. NOT async-signal-safe
      * (uses spdlog) — accepts the deadlock risk because we're already
-     * crashing and the diag is more valuable than perfect signal safety. */
+     * crashing and the diag is more valuable than perfect signal safety.
+     *
+     * Skipped on Android: spdlog + allocator re-entry from a SIGSEGV handler
+     * produced follow-on faults (pc≈lr, empty FP backtrace) and masked the
+     * original crash site in exported ssb64-debug.log. */
     Fast::DumpDLDiag(info ? info->si_addr : nullptr,
                      "port_watchdog::CrashSignalHandler");
+#endif
 
     /* Restore default handler and re-raise so the OS still produces the
      * normal termination behavior (core file, exit status). */
@@ -371,6 +381,11 @@ void CrashSignalHandler(int sig, siginfo_t *info, void *ucontext) {
 
 constexpr uint64_t kHangThresholdMs = 3000;
 constexpr uint64_t kRepeatLogMs     = 2000;
+
+extern "C" void port_watchdog_set_connect_phase_pause(int paused)
+{
+    sConnectPhasePause.store(paused != 0 ? 1 : 0, std::memory_order_release);
+}
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -412,6 +427,11 @@ void WatchdogLoop() {
         /* Grace period — don't fire alarms during early boot before the
          * first frame has been pumped. */
         if (fc == 0) continue;
+
+        if (sConnectPhasePause.load(std::memory_order_acquire) != 0)
+        {
+            continue;
+        }
 
         uint64_t since_yield_ms = now - last_yield_change_ms;
         uint64_t since_frame_ms = now - last_frame_change_ms;
@@ -457,6 +477,10 @@ void WatchdogLoop() {
                          (unsigned long long)fc,
                          (unsigned long long)yc);
             std::fflush(stderr);
+
+#if defined(SSB64_NETMENU)
+            syNetplayResimReplayHangDiagLogHangSnapshot();
+#endif
 
 #if !defined(_WIN32)
             /* Ask the main thread to dump its own backtrace via SIGUSR1. One

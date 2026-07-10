@@ -3,15 +3,68 @@
 ## Build System
 - CMake is the build system
 - libultraship and Torch are git submodules
-- MSVC on Windows, Apple Clang on macOS, GCC/Clang on Linux
+- **Native hosts:** MSVC on Windows, Apple Clang on macOS, GCC/Clang on Linux
+- **Linux → Windows:** optional MinGW-w64 cross-compile (see [MinGW cross-compile](#mingw-cross-compile-linux--windows) below); does not change the macOS or offline-native workflows
 - The decomp's original MIPS toolchain (IDO 7.1) is NOT used for the port
-  - **Windows**: `& 'C:\Program Files\CMake\bin\cmake' -S . -B "build/x64" -A x64` (CMake auto-picks the newest installed Visual Studio + default toolset)
-  - **macOS / Linux**: `cmake -S . -B build-cmake -GNinja`
+  - **Windows (MSVC):** `& 'C:\Program Files\CMake\bin\cmake' -S . -B "build/x64" -A x64` (CMake auto-picks the newest installed Visual Studio + default toolset)
+  - **macOS / Linux:** `cmake -S . -B build-cmake -GNinja`
 - Build with:
   - `& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64`
 - Regenerate generated build inputs with:
   - `& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target ExtractAssetHeaders`
-- The executable target is `ssb64`, but the produced binary is `BattleShip`.
+- The CMake target is `ssb64`, but the produced binary is `BattleShip`.
+
+Full step-by-step instructions: [`BUILDING.md`](../BUILDING.md).
+
+## Build variants: offline vs netmenu
+
+| CMake option | Default | Offline build | Netmenu / netplay build |
+|--------------|---------|---------------|-------------------------|
+| `SSB64_NETMENU` | **OFF** | Stock VS menus; `port/stubs/net_port_glue_offline.c` | Full `port/net/**` sources; extended netpeer / rollback |
+| libcurl | — | Not required | **Required** on macOS, Linux, and Windows (MSVC or MinGW) |
+| `decomp/src/netplay/taskman.c` | — | Decomp `decomp/src/sys/taskman.c` (offline) + `-I port/net` on selected TUs | Netmenu uses netplay taskman; transport stays in `port/net/sys/` |
+
+**Offline** is what most contributors use day-to-day (`cmake -B build` with no extra flags, `scripts/package-macos.sh`). **Netmenu** adds `-DSSB64_NETMENU=ON` (or `scripts/package-linux.sh --netplay`, `scripts/package-mingw-windows.sh --netplay`).
+
+`port/gameloop.cpp` always references `syNetPeerPumpIngressTransport` under `#ifdef PORT`; offline builds must link the no-op in `net_port_glue_offline.c` (included automatically when `SSB64_NETMENU` is OFF).
+
+## Platform matrix (what CMake changes apply)
+
+| Host configure | `CMAKE_SYSTEM_NAME` | BattleShip CMake notes |
+|----------------|---------------------|-------------------------|
+| macOS native | `Darwin` | `libultraship` uses `cmake/dependencies/mac.cmake` — **not** `windows.cmake`. No MinGW-only flags. |
+| Linux native | `Linux` | `-Wl,-export-dynamic` on the main target. |
+| Windows MSVC | `Windows`, `MSVC` | `/SUBSYSTEM:WINDOWS`, `SDL2main`, `port/ssb64.rc`, vcpkg when `USE_AUTO_VCPKG=ON`. |
+| Linux → MinGW cross | `Windows`, `MINGW` | UTF-8 via `-finput-charset` / `-fexec-charset`; console subsystem; `dbghelp` + `psapi`; Torch `ExternalProject` gets forwarded cross toolchain; libultraship sets `SDL2_NO_MWINDOWS` and links `SDL2::SDL2` without `SDL2main`. |
+
+**macOS developers:** MinGW cross-compile and `windows.cmake` MinGW branches never run on a normal Darwin configure. Bumping the `libultraship` submodule for MinGW (lowercase Win32 system includes, `SDL2_NO_MWINDOWS`) does not alter the macOS dependency path.
+
+## MinGW cross-compile (Linux → Windows)
+
+Portable Windows zips are built on Linux with `x86_64-w64-mingw32-gcc` and system/AUR `mingw-w64-*` packages — see `scripts/bootstrap-mingw-w64-toolchain.sh`, `scripts/mingw-w64-build-one.sh`, and `scripts/package-mingw-windows.sh`.
+
+Configure (offline example):
+
+```bash
+cmake -S . -B build-mingw-windows -G Ninja \
+  -DCMAKE_SYSTEM_NAME=Windows \
+  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+  -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+  -DUSE_AUTO_VCPKG=OFF \
+  -DCMAKE_FIND_ROOT_PATH=/usr/x86_64-w64-mingw32 \
+  -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
+  -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+  -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+
+cmake --build build-mingw-windows -j 4
+```
+
+Netmenu: add `-DSSB64_NETMENU=ON` and install `mingw-w64-curl` (listed in the bootstrap script).
+
+**libultraship / Win32 headers:** the MinGW sysroot on Linux exposes only lowercase system headers (`windows.h`, `wtypesbase.h`, `dbghelp.h`). Cross builds must use those spellings in `#ifdef _WIN32` blocks; native Windows MSVC remains case-insensitive. This is a cross-toolchain constraint, not a macOS change.
+
+**Torch sidecar:** `ExternalProject_Add(TorchExternal)` does not inherit the parent toolchain. When `CMAKE_SYSTEM_NAME` is `Windows` and `MINGW` or `CMAKE_CROSSCOMPILING` is set, the root `CMakeLists.txt` forwards compilers and `CMAKE_FIND_ROOT_PATH` so `torch.exe` matches `BattleShip.exe`. POST_BUILD copies `torch` via `cmake/CopyIfExists.cmake` so a missing sidecar during incremental builds does not fail the main target.
 
 ### ROM version (US / JP)
 

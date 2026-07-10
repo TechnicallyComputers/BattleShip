@@ -1,6 +1,17 @@
 # Builds BattleShip as a self-contained Windows release zip.
 #
-# Output: <repo-root>\dist\BattleShip-windows.zip
+# Usage:
+#   pwsh scripts/package-windows.ps1              # offline (SSB64_NETMENU=OFF, no curl)
+#   pwsh scripts/package-windows.ps1 -Netplay     # netplay (SSB64_NETMENU=ON, vcpkg curl)
+#
+# Offline and netplay use separate build dirs (build-bundle-win-* vs build-bundle-win-netplay-*).
+# Do not pass -DSSB64_NETMENU=* on the command line; this script sets OFF|ON explicitly.
+#
+# Output:
+#   Default:  dist\BattleShip-windows.zip
+#   Netplay:  dist\BattleShip-Netplay-windows.zip  (JP: BattleShip-JP-Netplay-windows.zip)
+#         <repo-root>\dist\BattleShip-windows-modding.zip when
+#         SSB64_ENABLE_SCRIPTING=1
 #
 # Layout produced (extracted):
 #   BattleShip\
@@ -10,8 +21,9 @@
 #     config.yml                 — Torch extraction config
 #     yamls\us\*.yml             — Torch extraction recipes
 #     gamecontrollerdb.txt       — SDL controller mappings
-#     SDL2.dll                   — runtime dependency (vcpkg-bundled)
-#     <other vcpkg DLLs>         — picked up by Get-ChildItem from build dir
+#     SDL2.dll                   — runtime dependency (vcpkg / dumpbin walk)
+#     libcurl*.dll, libssl*.dll, libcrypto*.dll, zlib1.dll  — netplay HTTPS (when dynamic)
+#     <other transitive DLLs>    — recursive dumpbin walk from BattleShip.exe + torch.exe
 #
 # The default US Windows package includes TCC scripting support. It statically
 # links libtcc into BattleShip.exe and stages only TinyCC headers plus libtcc1.a
@@ -35,6 +47,10 @@
 # (LUS Context::GetAppBundlePath, _WIN32 branch) and saves via the same
 # mechanism, so the only paths the binary ever touches are exe-relative.
 
+param(
+    [switch]$Netplay
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -57,10 +73,16 @@ if ($EnableScripting -and $Ver -eq "jp") {
 }
 $DisableScripting = if ($EnableScripting) { "OFF" } else { "ON" }
 $PackageFlavor = if ($EnableScripting) { "scripting" } else { "standard" }
-$ZipSuffix = "-windows"
-$BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
-$DistDir = Join-Path $Root "dist"
 $AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
+$DistDir = Join-Path $Root "dist"
+# Offline and netplay must not share a CMake build tree (NETMENU ON/OFF + vcpkg curl).
+if ($Netplay) {
+    $ZipSuffix = "-Netplay-windows"
+    $BuildDir = Join-Path $Root "build-bundle-win-netplay-$Ver-$PackageFlavor"
+} else {
+    $ZipSuffix = "-windows"
+    $BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
+}
 $StageName = $AppName
 $StageDir = Join-Path $DistDir $StageName
 $ZipPath = Join-Path $DistDir "$AppName$ZipSuffix.zip"
@@ -68,6 +90,400 @@ $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else {
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
+
+function Reset-StaleCmakeCache {
+    param([string]$Dir, [bool]$WantNetmenu)
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) { return }
+    $raw = Get-Content -LiteralPath $cache -Raw
+    $hasNetmenu = $raw -match 'SSB64_NETMENU:BOOL=ON'
+    if ($WantNetmenu -and -not $hasNetmenu) {
+        Write-Host "   Clearing CMake cache (reconfigure with SSB64_NETMENU=ON)"
+        Remove-Item -LiteralPath $cache -Force
+        Remove-Item -LiteralPath (Join-Path $Dir "CMakeFiles") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $WantNetmenu -and $hasNetmenu) {
+        Write-Host "   Clearing CMake cache (offline build had SSB64_NETMENU=ON)"
+        Remove-Item -LiteralPath $cache -Force
+        Remove-Item -LiteralPath (Join-Path $Dir "CMakeFiles") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-OfflineWindowsConfigured {
+    param([string]$Dir)
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) { return }
+    $raw = Get-Content -LiteralPath $cache -Raw
+    if ($raw -match 'SSB64_NETMENU:BOOL=ON') {
+        Fail "Offline Windows build has SSB64_NETMENU=ON in CMakeCache — should be OFF (no curl/mm_matchmaking)"
+    }
+    $ninja = Join-Path $Dir "build.ninja"
+    if (Test-Path -LiteralPath $ninja) {
+        if (Select-String -LiteralPath $ninja -Pattern 'mm_matchmaking\.c' -Quiet) {
+            Fail "Offline build compiles mm_matchmaking.c — SSB64_NETMENU must be OFF"
+        }
+    }
+    Write-Host "   Offline: SSB64_NETMENU=OFF (no matchmaking/curl)"
+}
+
+function Test-NetplayCurlConfigured {
+    param([string]$Dir)
+    $curlHeader = Get-ChildItem -Path (Join-Path $Dir "libultraship\vcpkg\installed") -Recurse -Filter "curl.h" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\include\\curl\\curl\.h$' } |
+        Select-Object -First 1
+    if (-not $curlHeader) {
+        Fail "vcpkg curl not installed (no include/curl/curl.h under $Dir\libultraship\vcpkg\installed). Check LUS_VCPKG_EXTRA_PACKAGES and vcpkg install log."
+    }
+    Write-Host "   vcpkg curl.h: $($curlHeader.FullName)"
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (Test-Path -LiteralPath $cache) {
+        if ((Get-Content -LiteralPath $cache -Raw) -notmatch 'SSB64_NETMENU:BOOL=ON') {
+            Fail "CMakeCache has SSB64_NETMENU=OFF; expected ON for netplay package"
+        }
+        if ((Get-Content -LiteralPath $cache -Raw) -notmatch 'SSB64_VCPKG_CURL_PREFIX') {
+            Fail "CMakeCache missing SSB64_VCPKG_CURL_PREFIX — push latest CMakeLists.txt / cmake/Ssb64NetmenuDeps.cmake"
+        }
+    }
+}
+
+function Import-VcVars64IfNeeded {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) { return }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        Fail "MSVC not found (vswhere missing). Run from a Developer Command Prompt or install VS Build Tools."
+    }
+    $vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsPath) {
+        Fail "Visual Studio C++ tools not installed."
+    }
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (-not (Test-Path -LiteralPath $vcvars)) {
+        Fail "vcvars64.bat not found under $vsPath"
+    }
+    Write-Host "   Importing MSVC environment from vcvars64.bat"
+    cmd.exe /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+        if ($_ -match '^(?<key>[^=]+)=(?<val>.*)$') {
+            Set-Item -Path "Env:$($Matches.key)" -Value $Matches.val
+        }
+    }
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        Fail "vcvars64 did not expose cl.exe on PATH"
+    }
+}
+
+# automate-vcpkg.cmake runs git pull when ${BuildDir}/libultraship/vcpkg exists.
+# A partial/failed prior configure leaves a non-git directory and configure dies with
+# "fatal: not a git repository" before README.md exists.
+function Remove-InvalidVcpkgTree([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir)) { return }
+    $gitDir = Join-Path $Dir ".git"
+    $readme = Join-Path $Dir "README.md"
+    if ((-not (Test-Path -LiteralPath $gitDir)) -or (-not (Test-Path -LiteralPath $readme))) {
+        Write-Host "   Removing invalid vcpkg cache: $Dir"
+        Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Copy-CaBundle($DestDir) {
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    $CommittedCa = Join-Path $Root "port\net\cacert.pem"
+    if (Test-Path -LiteralPath $CommittedCa) {
+        Copy-Item -LiteralPath $CommittedCa (Join-Path $DestDir "cacert.pem")
+        Write-Host "   CA bundle: $CommittedCa (committed)"
+        return
+    }
+    $Candidates = @(
+        (Join-Path $BuildDir "vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows\share\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\tools\curl\curl-ca-bundle.crt"),
+        (Join-Path $BuildDir "libultraship\vcpkg\installed\x64-windows-static\tools\curl\cacert.pem")
+    )
+    foreach ($c in $Candidates) {
+        if (Test-Path -LiteralPath $c) {
+            Copy-Item -LiteralPath $c (Join-Path $DestDir "cacert.pem")
+            Write-Host "   CA bundle: $c"
+            return
+        }
+    }
+    foreach ($root in @(
+        (Join-Path $BuildDir "libultraship\vcpkg\installed"),
+        (Join-Path $BuildDir "libultraship\vcpkg_installed"),
+        (Join-Path $BuildDir "vcpkg_installed")
+    )) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $found = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @('curl-ca-bundle.crt', 'cacert.pem', 'ca-bundle.crt') } |
+            Select-Object -First 1
+        if ($found) {
+            Copy-Item -LiteralPath $found.FullName (Join-Path $DestDir "cacert.pem")
+            Write-Host "   CA bundle: $($found.FullName)"
+            return
+        }
+    }
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        $MozillaCaUrl = "https://curl.se/ca/cacert.pem"
+        try {
+            Invoke-WebRequest -Uri $MozillaCaUrl -OutFile (Join-Path $DestDir "cacert.pem") -ErrorAction Stop
+            Write-Host "   CA bundle: downloaded from $MozillaCaUrl (no committed/vcpkg bundle)"
+            return
+        } catch {
+            Fail "Could not find CA certificate bundle and download failed: $_"
+        }
+    }
+    Fail "Could not find a CA certificate bundle for HTTPS matchmaking (see port/net/cacert.pem)"
+}
+
+# Windows system DLLs — do not bundle (ship with Windows / UCRT).
+function Test-SystemDll {
+    param([string]$Name)
+    if (-not $Name) { return $false }
+    $n = $Name.ToLowerInvariant()
+    $system = @(
+        'kernel32.dll', 'user32.dll', 'gdi32.dll', 'shell32.dll', 'ole32.dll', 'oleaut32.dll',
+        'opengl32.dll', 'ws2_32.dll', 'advapi32.dll', 'comdlg32.dll', 'winmm.dll',
+        'd3dcompiler_47.dll', 'dbghelp.dll', 'hid.dll', 'dwmapi.dll', 'setupapi.dll',
+        'version.dll', 'imm32.dll', 'bcrypt.dll', 'psapi.dll', 'ntdll.dll',
+        'ucrtbase.dll', 'msvcrt.dll', 'shlwapi.dll', 'rpcrt4.dll', 'sechost.dll',
+        'combase.dll', 'gdiplus.dll', 'uxtheme.dll', 'dinput8.dll', 'xinput1_4.dll',
+        # Ship with Windows — link-time imports, not redistributed in the portable zip.
+        'iphlpapi.dll', 'crypt32.dll', 'secur32.dll', 'normaliz.dll', 'wldap32.dll',
+        'userenv.dll', 'dnsapi.dll', 'nsapi.dll', 'msasn1.dll', 'wintrust.dll'
+    )
+    foreach ($entry in $system) {
+        if ($n -ceq $entry) { return $true }
+    }
+    if ($n -like 'api-ms-win-*' -or $n -like 'ext-ms-win-*') { return $true }
+    if ($env:SystemRoot) {
+        $sys32 = Join-Path $env:SystemRoot 'System32'
+        if (Test-Path -LiteralPath (Join-Path $sys32 $Name)) { return $true }
+        if (Test-Path -LiteralPath (Join-Path $sys32 $n)) { return $true }
+    }
+    return $false
+}
+
+function Test-MsvcDebugCrtDll {
+    param([string]$Name)
+    $n = $Name.ToLowerInvariant()
+    return ($n -match '140d\.dll$' -or $n -eq 'ucrtbased.dll')
+}
+
+# True when the PE import must be present in the portable zip (not OS-provided / not Debug CRT).
+function Test-PortableBundledDll {
+    param([string]$Name)
+    if (Test-SystemDll $Name) { return $false }
+    if (Test-MsvcDebugCrtDll $Name) { return $false }
+    return $true
+}
+
+function Test-TorchReleaseBinary {
+    param([string]$Path)
+    $deps = @(Get-PeDependencies $Path)
+    if ($deps.Count -eq 0) {
+        Write-Host "   WARN: dumpbin returned no dependents for $Path"
+        return $false
+    }
+    foreach ($dll in $deps) {
+        if (Test-MsvcDebugCrtDll $dll) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Get-PeDependencies {
+    param([string]$Binary)
+    if (-not (Test-Path -LiteralPath $Binary)) { return @() }
+    if (-not (Get-Command dumpbin -ErrorAction SilentlyContinue)) {
+        Fail "dumpbin not found — run from a Developer Command Prompt or after vcvars64 / ilammy/msvc-dev-cmd"
+    }
+    $deps = @()
+    $inBlock = $false
+    foreach ($line in (& dumpbin /nologo /dependents $Binary 2>$null)) {
+        if ($line -match '^\s*Image has the following dependencies:\s*$') {
+            $inBlock = $true
+            continue
+        }
+        if ($inBlock -and $line -match '^\s*Summary\s*$') { break }
+        if ($inBlock -and $line -match '^\s+(\S+\.dll)\s*$') {
+            $deps += $Matches[1]
+        }
+    }
+    return $deps
+}
+
+function Get-VcpkgBinSearchPaths {
+    param([string]$Dir)
+    $paths = @()
+    foreach ($root in @(
+        (Join-Path $Dir "libultraship\vcpkg\installed"),
+        (Join-Path $Dir "libultraship\vcpkg_installed"),
+        (Join-Path $Dir "vcpkg_installed")
+    )) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $bin = Join-Path $_.FullName "bin"
+            if (Test-Path -LiteralPath $bin) { $paths += $bin }
+        }
+    }
+    return $paths | Select-Object -Unique
+}
+
+function Get-MsvcRedistSearchPaths {
+    $paths = @()
+    foreach ($hint in @($env:VCToolsRedistDir, $env:VCToolsInstallDir, $env:VCINSTALLDIR)) {
+        if (-not $hint) { continue }
+        foreach ($glob in @(
+            (Join-Path $hint "x64\Microsoft.VC*.CRT"),
+            (Join-Path $hint "Redist\MSVC\*\x64\Microsoft.VC*.CRT"),
+            (Join-Path (Split-Path $hint -Parent) "Redist\MSVC\*\x64\Microsoft.VC*.CRT")
+        )) {
+            $crt = Get-Item -Path $glob -ErrorAction SilentlyContinue |
+                Sort-Object { $_.Name } -Descending |
+                Select-Object -First 1
+            if ($crt) { $paths += $crt.FullName }
+        }
+    }
+    return $paths | Select-Object -Unique
+}
+
+function Find-RuntimeDll {
+    param(
+        [string]$Name,
+        [string[]]$SearchPaths
+    )
+    foreach ($dir in $SearchPaths) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $exact = Join-Path $dir $Name
+        if (Test-Path -LiteralPath $exact) { return $exact }
+        $ci = Get-ChildItem -LiteralPath $dir -Filter $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ci) { return $ci.FullName }
+    }
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Name).ToLowerInvariant()
+    $glob = switch -Regex ($leaf) {
+        '^libssl'     { 'libssl*.dll' }
+        '^libcrypto'  { 'libcrypto*.dll' }
+        '^libcurl'    { 'libcurl*.dll' }
+        '^zlib1$'     { 'zlib1.dll' }
+        '^zlib'       { 'zlib*.dll' }
+        '^libz'       { 'libz*.dll' }
+        default       { $Name }
+    }
+    if ($glob -ne $Name) {
+        foreach ($dir in $SearchPaths) {
+            if (-not (Test-Path -LiteralPath $dir)) { continue }
+            $hit = Get-ChildItem -LiteralPath $dir -Filter $glob -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        }
+    }
+    return $null
+}
+
+function Copy-EnsureDllGlob {
+    param(
+        [string]$Dest,
+        [string]$Pattern,
+        [string[]]$SearchPaths
+    )
+    if (Get-ChildItem -LiteralPath $Dest -Filter $Pattern -ErrorAction SilentlyContinue) {
+        return $true
+    }
+    foreach ($dir in $SearchPaths) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $hit = Get-ChildItem -LiteralPath $dir -Filter $Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) {
+            Copy-Item -LiteralPath $hit.FullName -Destination $Dest -Force
+            Write-Host "   ensured $($hit.Name)"
+            return $true
+        }
+    }
+    return $false
+}
+
+function Bundle-WindowsDlls {
+    param(
+        [string]$Binary,
+        [string]$Dest,
+        [string[]]$SearchPaths,
+        [hashtable]$SeenGlobal
+    )
+    if (-not (Test-Path -LiteralPath $Binary)) {
+        Fail "Bundle-WindowsDlls: not a file: $Binary"
+    }
+    $queue = [System.Collections.Queue]::new()
+    $queue.Enqueue($Binary)
+    $localCount = 0
+
+    while ($queue.Count -gt 0) {
+        $current = [string]$queue.Dequeue()
+        foreach ($dll in (Get-PeDependencies $current)) {
+            $key = $dll.ToLowerInvariant()
+            if (-not (Test-PortableBundledDll $dll)) { continue }
+            if ($SeenGlobal.ContainsKey($key)) { continue }
+
+            $src = Find-RuntimeDll $dll $SearchPaths
+            if (-not $src) {
+                Write-Host "WARN: $dll required by $(Split-Path $current -Leaf) but not found under search paths" -ForegroundColor Yellow
+                continue
+            }
+
+            $SeenGlobal[$key] = $true
+            $localCount++
+            Copy-Item -LiteralPath $src -Destination $Dest -Force
+            $queue.Enqueue($src)
+        }
+    }
+    Write-Host "   bundled $localCount DLL(s) from $(Split-Path $Binary -Leaf)"
+}
+
+function Test-StagedPeDependencies {
+    param(
+        [string]$Binary,
+        [string]$StageDir
+    )
+    $missing = @()
+    foreach ($dll in (Get-PeDependencies $Binary)) {
+        if (-not (Test-PortableBundledDll $dll)) { continue }
+        $staged = Join-Path $StageDir $dll
+        if (-not (Test-Path -LiteralPath $staged)) {
+            $globHit = Get-ChildItem -LiteralPath $StageDir -Filter ($dll -replace '\.dll$', '*.dll') -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $globHit) {
+                $missing += $dll
+            }
+        }
+    }
+    if ($missing.Count -gt 0) {
+        Fail "Staged $(Split-Path $Binary -Leaf) still missing DLL(s): $($missing -join ', ')"
+    }
+}
+
+function Test-WindowsNetplayHttpsBundle {
+    param(
+        [string]$StageDir,
+        [string]$GameExePath
+    )
+    if (-not (Test-Path (Join-Path $StageDir "ssl\cacert.pem"))) {
+        Fail "Netplay package missing ssl\cacert.pem"
+    }
+    $hasCurl = @(Get-ChildItem -LiteralPath $StageDir -Filter 'libcurl*.dll' -ErrorAction SilentlyContinue).Count -gt 0
+    if (-not $hasCurl) {
+        foreach ($dll in (Get-PeDependencies $GameExePath)) {
+            if ($dll -like 'libcurl*') { $hasCurl = $true; break }
+        }
+    }
+    if ($hasCurl) {
+        foreach ($pat in @('libssl*.dll', 'libcrypto*.dll')) {
+            if (-not (Get-ChildItem -LiteralPath $StageDir -Filter $pat -ErrorAction SilentlyContinue)) {
+                Fail "Netplay package links libcurl dynamically but missing $pat (OpenSSL runtime)"
+            }
+        }
+    }
+    Write-Host "   netplay HTTPS bundle OK (cacert.pem$(if ($hasCurl) { ' + dynamic curl/OpenSSL DLLs' } else { '; curl/OpenSSL statically linked' }))"
+}
 
 # ── 0. Run codegen scripts that don't need the ROM ──
 # Encoded credit files are gitignored (input text is in decomp/src/credits/),
@@ -87,7 +503,6 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-Write-Step "Configuring release build (portable, scripting=$EnableScripting)"
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
@@ -100,19 +515,64 @@ Write-Step "Configuring release build (portable, scripting=$EnableScripting)"
 # Windows Store stub); without a hint, CMake's find_package(Python3) can
 # resolve to a different interpreter than the one pip targeted, and the
 # CSS-arrow asset rules then fail with "Pillow is required" mid-build.
+Import-VcVars64IfNeeded
 $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
-cmake -B $BuildDir $Root `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DDISABLE_SCRIPTING=$DisableScripting" `
-    "-DSSB64_VERSION=$Ver" `
-    "-DPython3_EXECUTABLE=$PythonExe" `
-    | Out-Null
+
+# GHA windows-2022 (and VS Enterprise images) export VCPKG_ROOT to
+# "C:\Program Files\Microsoft Visual Studio\...\vcpkg". automate-vcpkg then
+# installs packages there, while BattleShip historically looked only under
+# ${BuildDir}/libultraship/vcpkg — so curl never appeared for SSB64_NETMENU.
+# Pin VCPKG_ROOT to the per-build local tree before configure.
+$LocalVcpkgRoot = Join-Path $BuildDir "libultraship\vcpkg"
+Remove-InvalidVcpkgTree $LocalVcpkgRoot
+$env:VCPKG_ROOT = $LocalVcpkgRoot
+Write-Host "VCPKG_ROOT=$env:VCPKG_ROOT (local; ignores VS Program Files vcpkg)"
+
+$CmakeArgs = @(
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DDISABLE_SCRIPTING=$DisableScripting",
+    "-DSSB64_VERSION=$Ver",
+    "-DPython3_EXECUTABLE=$PythonExe"
+)
+if ($Netplay) {
+    $CmakeArgs += "-DSSB64_NETMENU=ON"
+} else {
+    $CmakeArgs += "-DSSB64_NETMENU=OFF"
+}
+# Beta/alpha CI passes -DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=6 here.
+if ($env:SSB64_EXTRA_CMAKE_ARGS) {
+    $CmakeArgs += ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+' | Where-Object { $_ })
+}
+
+Write-Step "Configuring release build (portable, scripting=$EnableScripting$(if ($Netplay) { ', SSB64_NETMENU=ON' } else { ', SSB64_NETMENU=OFF' }))"
+Reset-StaleCmakeCache -Dir $BuildDir -WantNetmenu:$Netplay.IsPresent
+if ($Netplay) {
+    & cmake -B $BuildDir $Root @CmakeArgs
+} else {
+    & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
+
+if ($Netplay) {
+    Test-NetplayCurlConfigured $BuildDir
+} else {
+    Test-OfflineWindowsConfigured $BuildDir
+}
 
 Write-Step "Building BattleShip + torch"
 cmake --build $BuildDir --config Release -j $Jobs
 if ($LASTEXITCODE -ne 0) { Fail "build failed" }
+
+$TorchProbe = Join-Path $BuildDir "TorchExternal\src\TorchExternal-build\torch.exe"
+if ((Test-Path -LiteralPath $TorchProbe) -and -not (Test-TorchReleaseBinary $TorchProbe)) {
+    Write-Host "   torch.exe is Debug — clean-rebuilding TorchExternal (Release)"
+    cmake --build $BuildDir --target TorchExternal --clean-first -j $Jobs
+    if ($LASTEXITCODE -ne 0) { Fail "TorchExternal clean rebuild failed" }
+    if (-not (Test-TorchReleaseBinary $TorchProbe)) {
+        Fail "torch.exe still links MSVC Debug CRT after TorchExternal rebuild (check CMAKE_BUILD_TYPE on ExternalProject)"
+    }
+}
 
 # ── 2. Build f3d.o2r (zip of LUS shaders, ROM-independent) ──
 Write-Step "Packaging Fast3D shader archive"
@@ -135,14 +595,26 @@ if (-not (Test-Path $GameExe)) {
 $TorchExe = $null
 foreach ($cand in @(
     "TorchExternal\src\TorchExternal-build\Release\torch.exe",
-    "TorchExternal\src\TorchExternal-build\torch.exe",
-    "torch-install\bin\torch.exe"
+    "torch-install\bin\torch.exe",
+    "TorchExternal\src\TorchExternal-build\torch.exe"
 )) {
     $p = Join-Path $BuildDir $cand
-    if (Test-Path $p) { $TorchExe = $p; break }
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    if (Test-TorchReleaseBinary $p) {
+        $TorchExe = $p
+        Write-Host "   torch.exe: $p"
+        break
+    }
+    Write-Host "   skip non-Release torch: $p"
 }
 if (-not (Test-Path $GameExe))   { Fail "$AppName.exe not found at $GameExe" }
-if (-not $TorchExe)              { Fail "torch.exe not found in $BuildDir" }
+if (-not $TorchExe) {
+    Fail @"
+torch.exe not found as a Release binary under $BuildDir.
+Expected TorchExternal\src\TorchExternal-build\Release\torch.exe or a Release Ninja build.
+If only Debug torch exists, wipe the build dir and ensure TorchExternal gets -DCMAKE_BUILD_TYPE=Release.
+"@
+}
 
 # ── 4. Stage the release tree ──
 Write-Step "Staging $StageDir"
@@ -182,6 +654,24 @@ Copy-Item (Join-Path $Root "assets\custom\fonts\Montserrat-OFL.txt")      $Fonts
 Copy-Item (Join-Path $Root "assets\custom\fonts\Inconsolata-Regular.ttf") $FontsDir
 Copy-Item (Join-Path $Root "assets\custom\fonts\Inconsolata-OFL.txt")     $FontsDir
 
+if ($Netplay) {
+    $NetAssets = $null
+    foreach ($cand in @(
+        (Join-Path $BuildDir "port\net\assets"),
+        (Join-Path $Root "port\net\assets")
+    )) {
+        if (Test-Path $cand) { $NetAssets = $cand; break }
+    }
+    if ($NetAssets) {
+        $NetDest = Join-Path $StageDir "port\net\assets"
+        New-Item -ItemType Directory -Path $NetDest -Force | Out-Null
+        Copy-Item -Path (Join-Path $NetAssets "*") -Destination $NetDest -Recurse -Force
+    } else {
+        Write-Host "WARN: netmenu build but port\net\assets not found — VS menu PNGs may be missing" -ForegroundColor Yellow
+    }
+    Copy-CaBundle (Join-Path $StageDir "ssl")
+}
+
 # Project LICENSE + verbatim upstream LICENSE files for the submodules
 # whose compiled code is in this distribution. MIT requires the upstream
 # copyright + permission notice to ride along with redistributed copies.
@@ -214,11 +704,41 @@ BSD, BSD-3-Clause, MIT). Refer to those upstream packages for full
 license texts.
 '@ | Set-Content -Path (Join-Path $LicensesDir "README.txt") -Encoding UTF8
 
-# Bundle DLLs that landed next to BattleShip.exe (vcpkg drops SDL2.dll, etc.).
+# Recursive dumpbin walk: BattleShip.exe + torch.exe + vcpkg bin + MSVC redist.
+Write-Step "Bundling runtime DLLs"
 $ExeBuildDir = Split-Path $GameExe -Parent
-Get-ChildItem -Path $ExeBuildDir -Filter "*.dll" | ForEach-Object {
-    Copy-Item $_.FullName $StageDir
+$TorchBuildDir = Split-Path $TorchExe -Parent
+$DllSearchPaths = @(
+    $ExeBuildDir,
+    $TorchBuildDir
+) + (Get-VcpkgBinSearchPaths $BuildDir) + (Get-MsvcRedistSearchPaths)
+$DllSearchPaths = $DllSearchPaths | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+$BundledDlls = @{}
+Bundle-WindowsDlls -Binary $GameExe -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+$StagedTorch = Join-Path $StageDir "torch.exe"
+Bundle-WindowsDlls -Binary $StagedTorch -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+
+if ($Netplay) {
+    Write-Step "Bundling HTTPS matchmaking dependencies (curl + OpenSSL + CA certs)"
+    foreach ($pat in @('libcurl*.dll', 'libssl*.dll', 'libcrypto*.dll', 'zlib1.dll', 'zlib*.dll')) {
+        if (-not (Copy-EnsureDllGlob -Dest $StageDir -Pattern $pat -SearchPaths $DllSearchPaths)) {
+            if ($pat -match '^(libcurl|libssl|libcrypto)') {
+                Write-Host "   note: no $pat in search paths (may be statically linked via vcpkg x64-windows-static)"
+            }
+        }
+    }
+    foreach ($curlDll in (Get-ChildItem -LiteralPath $StageDir -Filter 'libcurl*.dll' -ErrorAction SilentlyContinue)) {
+        Bundle-WindowsDlls -Binary $curlDll.FullName -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+    }
+    foreach ($sslDll in (Get-ChildItem -LiteralPath $StageDir -Filter 'libssl*.dll' -ErrorAction SilentlyContinue)) {
+        Bundle-WindowsDlls -Binary $sslDll.FullName -Dest $StageDir -SearchPaths $DllSearchPaths -SeenGlobal $BundledDlls
+    }
+    Test-WindowsNetplayHttpsBundle -StageDir $StageDir -GameExePath (Join-Path $StageDir "$AppName.exe")
 }
+
+Test-StagedPeDependencies -Binary (Join-Path $StageDir "$AppName.exe") -StageDir $StageDir
+Test-StagedPeDependencies -Binary $StagedTorch -StageDir $StageDir
 
 if ($EnableScripting) {
     Write-Step "Staging TCC scripting runtime"
@@ -241,6 +761,7 @@ if (-not (Test-Path $ZipPath)) { Fail "zip was not created" }
 
 $ZipKB = [int]((Get-Item $ZipPath).Length / 1024)
 Write-Host "`n✓ Release zip ready: $ZipPath ($ZipKB KB)" -ForegroundColor Green
+Write-Host "   Variant: $(if ($Netplay) { 'netmenu/netplay' } else { 'offline' })"
 Write-Host "   Portable: extract anywhere; save data lives next to BattleShip.exe."
 if ($EnableScripting) {
     Write-Host "   Includes TCC scripting support for C mods."
@@ -248,3 +769,6 @@ if ($EnableScripting) {
     Write-Host "   TCC scripting disabled for this local/package variant."
 }
 Write-Host "   First launch will prompt for your ROM via the ImGui wizard."
+if ($Netplay) {
+    Write-Host "   Netplay: automatch uses HTTPS matchmaking (vcpkg curl + ssl\cacert.pem)."
+}

@@ -43,6 +43,84 @@ extern "C" {
 void port_aobj_event32_unhalfswap_stream(void *head);
 
 /**
+ * Same as port_aobj_event32_unhalfswap_stream but walks even when @p head is
+ * outside registered halfswapped ranges.  Walker validation still applies.
+ * Used for intro Appear hidden-part EVENT32 streams that live in figatree heap
+ * dependency slices not covered by per-file registration.
+ */
+void port_aobj_event32_unhalfswap_stream_force(void *head);
+
+/**
+ * Same as port_aobj_event32_unhalfswap_stream_force but reports whether the
+ * walker actually re-applied an in-place un-halfswap to @p head: returns 1 when
+ * the outcome was "applied" (bytes mutated), 0 for every other outcome
+ * (out_of_range / already_unswapped / phase2_native / rejected / invalid).
+ *
+ * Detector hook only: pairing this with port_aobj_event32_head_is_unswapped()
+ * before forgetting @p head identifies a double-swap — a head believed native
+ * (no intervening heap reload/eviction) that the heuristic nonetheless re-swaps,
+ * corrupting the stream. No behavior change vs the void variant.
+ */
+int port_aobj_event32_unhalfswap_stream_force_applied(void *head);
+
+/**
+ * Returns 1 if @p head is currently recorded as un-halfswapped (native) in the
+ * walker's memo, 0 otherwise. A head still in the memo means no heap reload
+ * evicted it, so its bytes are native; a force-swap that then applies is a
+ * double-swap. Detector use only.
+ */
+int port_aobj_event32_head_is_unswapped(const void *head);
+
+/**
+ * Snapshot, into a side set, every head currently recorded as un-halfswapped
+ * (native) whose address lies in [@p base, @p base + @p size).  Call this
+ * immediately before port_aobj_event32_unhalfswap_evict_range wipes the live
+ * memo so the double-swap detector can still tell a head was native after the
+ * eviction.  Each call replaces the previous snapshot.
+ */
+void port_aobj_event32_capture_native_in_range(void *base, unsigned long size);
+
+/**
+ * Returns 1 if @p head was captured as native by the most recent
+ * port_aobj_event32_capture_native_in_range call, 0 otherwise.  Detector use
+ * only — survives a subsequent evict_range/forget that clears the live memo.
+ */
+int port_aobj_event32_head_was_native_preevict(const void *head);
+
+/**
+ * Record @p head in the walker memo as already-un-halfswapped (native), so the
+ * next port_aobj_event32_unhalfswap_stream call on it short-circuits without
+ * re-running the ambiguous halfswap heuristic.  Drops any stale "rejected"
+ * verdict for the same address.
+ *
+ * Rollback-restore use: the figatree reload in syNetRbSnapshotSyncFighterPresentation
+ * calls port_aobj_register_halfswapped_range, which evicts the whole heap's memo —
+ * but a rollback re-BIND does not re-copy halfswapped bytes, so a mid-stream EVENT32
+ * cursor restored from a snapshot blob still points at native data.  Without re-marking,
+ * gcParseDObjAnimJoint's lazy walk re-classifies that mid-stream cursor, misclassifies a
+ * native mid-stream event as halfswapped, double-swaps it, and the joint's anim collapses
+ * to AOBJ_ANIM_NULL on the first resim tick (frozen/spinning leg).  Only call with a head
+ * known to point at native bytes (a cursor restored from a snapshot blob).
+ */
+void port_aobj_event32_head_mark_unswapped(void *head);
+
+/**
+ * Drop cached walker verdicts for @p head so the next
+ * port_aobj_event32_unhalfswap_stream call re-walks the stream.  Used when
+ * figatree heap bytes at a stable pointer were overwritten without going
+ * through port_aobj_register_halfswapped_range (modelpart swap, snapshot
+ * blob re-pin, etc.).
+ */
+void port_aobj_event32_unhalfswap_forget(void *head);
+
+/**
+ * Evict every walker / one-shot-fixup cache entry keyed on an address inside
+ * [@p base, @p base + @p size).  Same eviction as
+ * port_aobj_register_halfswapped_range without registering a new range.
+ */
+void port_aobj_event32_unhalfswap_evict_range(void *base, unsigned long size);
+
+/**
  * Register a memory region (from a fighter-figatree reloc file) that was
  * u16-halfswapped at load time.  The walker refuses to touch pointers
  * outside any registered region — protects against accidentally
@@ -52,6 +130,12 @@ void port_aobj_event32_unhalfswap_stream(void *head);
  * after portRelocFixupFighterFigatree.
  */
 void port_aobj_register_halfswapped_range(void *base, unsigned long size);
+
+/**
+ * Register an entire per-fighter figatree heap as halfswapped-eligible.
+ * Extends any existing registration for the same base via max(end).
+ */
+void port_aobj_register_figatree_heap_span(void *heap, unsigned long heap_size);
 
 /**
  * Clear the visited set and registered ranges.  Called on scene reset

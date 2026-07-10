@@ -35,6 +35,7 @@ CONTROLS.md
 torch.hash.yml
 tex_dump/
 ssb64_save.bin
+ssb64_netplaysave.bin
 
 # yamls/us/reloc_*.yml are now COMMITTED. They're regenerated from
 # tools/reloc_data_symbols.us.txt + ROM by tools/generate_yamls.py;
@@ -114,3 +115,28 @@ debug_traces/
 # Local extraction / scratch directories used during debugging
 extract/
 test.zip
+.cursor/debug-3b7f79.log
+/.cursor
+*.log
+.cursor/debug-3b7f79.log
+/.cursor
+.cursor/debug-3b7f79.log
+*.env
+*.env
+debug-resimtest.env
+debug-rollback.env
+debug-resimtest.env
+debug-rollback.env
+.cursor/debug-3b7f79.log
+/.cursor
+*.log
+.cursor/debug-3b7f79.log
+debug-resimtest.env
+debug-rollback.env
+*.env
+debug-rollback.env
+debug-resimtest.env
+.cursor/debug-3b7f79.log
+
+# Accidental media sidecars — never commit
+*.torrent

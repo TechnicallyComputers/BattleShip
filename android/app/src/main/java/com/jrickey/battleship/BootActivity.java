@@ -61,6 +61,7 @@ public class BootActivity extends ComponentActivity {
     protected void onCreate(Bundle savedInstanceState) {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         super.onCreate(savedInstanceState);
+        UserStoragePaths.prepareUserDataDir(getApplicationContext());
         buildUi();
         startAssetExtraction();
     }

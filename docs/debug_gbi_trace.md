@@ -20,7 +20,7 @@ Captures every GBI command as Fast3D's interpreter executes it.
 - `gbi_decoder.h` / `gbi_decoder.c` — Shared F3DEX2/RDP command decoder (pure C)
 - `gbi_trace.h` / `gbi_trace.c` — Port-side trace lifecycle (frame begin/end, file I/O)
 
-**How to enable:**
+**How to enable:** (all PORT builds — offline and netmenu)
 ```bash
 # Set env var before launching the port
 SSB64_GBI_TRACE=1 ./build/Debug/ssb64.exe

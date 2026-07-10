@@ -31,6 +31,9 @@ void port_watchdog_note_resume_start(int thread_id);
 void port_watchdog_note_resume_end(int thread_id);
 void port_watchdog_note_frame_end(void);
 
+/* Suppress hang alarms while automatch ICE connect / P2P bootstrap runs (long HTTPS/ICE waits). */
+void port_watchdog_set_connect_phase_pause(int paused);
+
 /* Dump a main-thread backtrace to stderr + ssb64.log. Async-signal-safe. */
 void port_dump_backtrace(void);
 

@@ -1,0 +1,90 @@
+name: Android Netplay
+
+# PR smoke: netplay APK only (SSB64_NETMENU=ON). Offline Android is covered by
+# release.yml build-android on tags. One job, one APK — never combined with offline.
+# Cross-ISA soak (Linux x86_64 host vs arm64-v8a guest) is manual; see
+# docs/bugs/netplay_cross_isa_determinism_2026-05-27.md and scripts/netplay-cross-isa-soak.env.example.
+# Cross-OS pacing (e.g. Windows MinGW x64 vs Linux x64) is manual; see
+# docs/bugs/netplay_cross_os_pacing_symmetry_2026-05-27.md and scripts/netplay-cross-os-soak.env.example.
+
+on:
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/Ssb64Netmenu*.cmake'
+      - 'cmake/Ssb64Libjuice.cmake'
+      - 'cmake/Ssb64CurlAndroid.cmake'
+      - 'cmake/curl/**'
+      - 'third_party/libjuice/**'
+      - 'decomp'
+      - 'decomp/src/netplay/**'
+      - 'decomp/src/sys/objanim.c'
+      - 'decomp/src/gm/**'
+      - 'decomp/src/gr/**'
+      - 'decomp/src/ft/**'
+      - 'decomp/src/ef/**'
+      - 'decomp/src/wp/**'
+      - 'decomp/src/it/**'
+      - 'decomp/src/mp/**'
+      - 'decomp/src/lb/**'
+      - 'libultraship'
+      - 'libultraship/cmake/dependencies/**'
+      - 'port/net/**'
+      - 'port/stubs/**'
+      - 'android/**'
+      - 'port/app_paths.cpp'
+      - 'port/android*.cpp'
+      - 'port/port.cpp'
+      - 'port/debug_env.c'
+      - '.github/workflows/android-netplay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-netplay:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Pillow for CSS asset baking
+        # Gradle's externalNativeBuild invokes the same CMake rules as the
+        # desktop builds, so the arrow PNG generation (generate_arrow_svg.py
+        # + png_to_c_array.py) needs PIL here too.
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
+      - name: Install Android SDK + NDK r29
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;29.0.14206865'
+      - name: Generate f3d.o2r
+        working-directory: libultraship/src/fast
+        run: cmake -E tar cf "$GITHUB_WORKSPACE/f3d.o2r" --format=zip shaders
+      - name: Clear stale Android CMake/FetchContent cache
+        run: rm -rf android/app/.cxx
+      - name: Build netplay APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -Pssb64Netmenu=true
+      - name: Verify APK native libraries
+        run: |
+          apk="$(find android/app/build/outputs/apk/release -name 'app-release*.apk' | head -n 1)"
+          test -n "$apk" -a -f "$apk"
+          for lib in libSDL2.so libmain.so libtorch_runner.so libc++_shared.so; do
+            unzip -l "$apk" "lib/arm64-v8a/$lib" >/dev/null || {
+              echo "missing lib/arm64-v8a/$lib in $apk"
+              unzip -l "$apk" 'lib/*/*.so' || true
+              exit 1
+            }
+          done
+          echo "jniLibs OK: libSDL2.so libmain.so libtorch_runner.so libc++_shared.so"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BattleShip-android-netplay-pr
+          path: android/app/build/outputs/apk/release/app-release*.apk
+          if-no-files-found: error
+          retention-days: 7

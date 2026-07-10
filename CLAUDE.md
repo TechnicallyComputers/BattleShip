@@ -15,6 +15,12 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | GBI trace capture (port + M64P plugin) and `gbi_diff.py` usage | `docs/debug_gbi_trace.md` |
 | IDO BE bitfield layout audit (compile + rabbitizer disasm to verify port struct bit positions) | `docs/debug_ido_bitfield_layout.md` |
 | Resolved bugs (index + per-bug root cause / fix write-ups) | `docs/bugs/README.md` |
+| Linux menu rendering bug family (CSS/pause/HUD sprites, upstream delta) | `docs/linux_menu_rendering_fixes_2026-05-22.md` |
+| Netplay: sim tick authority vs `hr` / VI / admission bias | `docs/netplay_timebase_authority.md` |
+| Netplay rollback boundary + decomp gating pattern | `docs/netplay_rollback_refactor_contracts.md` |
+| FTStatusVars union overlays, witness, stomp diagnosis | `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` |
+| Android port status + offline/netplay APK CI | `docs/android_port_status_2026-05-01.md` |
+| Android orientation/landscape lock + surface geometry (SDL overrides manifest; BLAST resize abort) | `docs/android_orientation_landscape_lock.md` |
 
 Ongoing investigations and handoff notes are loose `.md` files at the top level of `docs/` — check there before starting work on rendering, collision, or animation issues so you don't duplicate prior effort.
 
@@ -111,14 +117,58 @@ Stale worktrees under `.claude/worktrees/` from past sessions are fine to remove
 
 5. **DECOMP PRESERVATION — preserve behavior, not byte-matching**: The decomp describes the *game*, not the build. Keep IDO idioms (goto, odd casts, temp variables) that encode original N64 semantics — those are load-bearing and must not be "modernized." But don't preserve **compiler compat shims** (warning suppressions, permissive flags, header shortcuts) that hurt port stability just to avoid touching decomp source. If a suppressed diagnostic is masking real bugs on modern LP64 toolchains (e.g., `-Wno-implicit-function-declaration` silently truncating 64-bit pointer returns to `int`), fix the root cause — add the missing include, wrap a port fix in `#ifdef PORT`, or adjust the decomp file itself — rather than keeping the suppression. **Accuracy to game behavior > accuracy to ROM bytes.** When choosing between stability and ROM-matching, choose stability and document the deviation in `docs/bugs/`.
 
+6. **FTSTATUSVARS / UNION STOMP — structural fix, not mirrors**: `FTStruct.status_vars` is a union of per-status overlays (`entry`, `catchwait`, `rebirth`, …) that all alias the same bytes. A **union stomp** is when code reads/writes one overlay while a different overlay is live for the current `status_id`, silently corrupting gameplay state. This class of bug is amplified in netplay because rollback snapshots `memcpy` the whole blob with no overlay tag.
+
+   **Do not add new out-of-union mirror fields** (e.g. caching a union value in a separate `FTStruct` field and preferring the mirror in getters) as the primary fix. Existing mirrors (`hit_lr`, `shuffle_tics`) are legacy band-aids — leave them alone unless removing them as part of the migration, but **never introduce new ones**. `dead_gate_wait` is netmenu-only (`PORT && SSB64_NETMENU`); offline uses JRickey union `dead.wait` only.
+
+   **The approved fix path (Approach C):**
+   1. **Accessors** — route all `status_vars.common.*` reads/writes through `decomp/src/ft/ftstatusvars.h` (`ftStatusVarsEntry()`, `ftStatusVarsCatchWait()`, …). Never add raw union access in new or touched code.
+   2. **Witness** — diagnose stomps with `SSB64_NETPLAY_STATUSVARS_WITNESS=1`. Compare `accessed` vs `expected` overlay from the ownership table; integrity checks flag union/mirror divergence. Extend `syNetplayStatusVarsWitnessFillRange` for false negatives before guessing.
+   3. **Parallel storage (C2)** — the end-state is per-overlay storage that eliminates aliasing so mirrors can be deleted. Snapshot serialization gets overlay tags in the same milestone.
+
+   When a gameplay or netplay bug smells like stale/wrong per-status state (premature throw, wrong facing on Appear, rebirth halo drift, etc.), read `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` first, migrate the call site to accessors, run the witness, then fix the stomping writer — not another mirror.
+
+7. **OFFLINE vs NETMENU — we do not patch the offline build**:
+
+   **Offline (`SSB64_NETMENU=OFF`)** = JRickey’s maintained PC port at the release decomp SHA. Trust official offline sim; do not add fork “fixes,” wrappers, mirrors, or debug tooling. **Netmenu** = all fork netplay/rollback work unless JRickey promotes a change upstream.
+
+   | Layer | Mechanism | Offline binary | Netmenu binary |
+   |-------|-----------|----------------|----------------|
+   | **Product** | CMake `SSB64_NETMENU` | JRickey release parity | JRickey + fork netplay |
+   | **Compile** | `#if defined(PORT) && defined(SSB64_NETMENU)` | Fork net blocks **preprocessed out** | Fork net code compiled |
+   | **Runtime** | `syNetplayRollbackSemanticsActive()` | N/A (code absent) | Active VS/resim only |
+
+   - **`#ifdef PORT` alone** — only for code **already in JRickey `port-patches`** at the release baseline (reloc/LUS paths JRickey ships). Any **fork-only** `#ifdef PORT` block is assumed netplay work → gate `PORT && SSB64_NETMENU` or revert until JRickey review.
+   - **`SSB64_NETMENU`** — netplay compiled and linked (`port/net/**`, `decomp/src/netplay/**`, libcurl, `debug_tools/`).
+   - **Promotion** — offline benefit from a netplay fix requires JRickey review; widen IFDEF or upstream merge, never self-ship in offline.
+
+   **Required decomp pattern** (fighters, stages, items):
+
+   ```c
+   #if defined(PORT) && defined(SSB64_NETMENU)
+   /* SSB64_NETMENU: stripped from offline builds. Runtime: active VS/resim only. */
+   /* Netplay rollback only: <one-line why>. See docs/bugs/<slug>.md. */
+   if (syNetplayRollbackSemanticsActive() != FALSE)
+   {
+       ... /* rollback policy */
+       return; /* Mario-style: netplay branch then vanilla below */
+   }
+   #endif
+   /* JRickey vanilla forward sim — offline binary AND offline modes in netmenu binary. */
+   ```
+
+   - **Snapshot apply** in `port/net/sys/*` runs only during rollback load — no forward-sim gate.
+   - Offline must **not** link `port/net/**`, rollback TUs, or `debug_tools/acmd_trace/`; use `port/stubs/net_port_glue_offline.c` + `netsync_hash_stubs.c` + `port/stubs/acmd_trace_stubs.c`. **`debug_tools/gbi_trace/`** links in all PORT builds (`SSB64_GBI_TRACE=1` at runtime).
+   - Tracked checklist: `docs/decomp_upstream_divergence_audit_2026-06-03.md`. Full contract: `docs/netplay_rollback_refactor_contracts.md`.
+
 ### Context Management
 
-6. **SUB-AGENT SWARMING**: For tasks touching >5 independent files, launch parallel sub-agents. Each agent gets its own context window.
+8. **SUB-AGENT SWARMING**: For tasks touching >5 independent files, launch parallel sub-agents. Each agent gets its own context window.
 
-7. **CONTEXT DECAY AWARENESS**: After 10+ messages, re-read any file before editing. Do not trust memory of file contents.
+9. **CONTEXT DECAY AWARENESS**: After 10+ messages, re-read any file before editing. Do not trust memory of file contents.
 
-8. **FILE READ BUDGET**: For files over 500 LOC, use offset and limit parameters to read in chunks.
+10. **FILE READ BUDGET**: For files over 500 LOC, use offset and limit parameters to read in chunks.
 
-9. **EDIT INTEGRITY**: Before every edit, re-read the file. After editing, verify the change applied correctly. Never batch >3 edits to the same file without a verification read.
+11. **EDIT INTEGRITY**: Before every edit, re-read the file. After editing, verify the change applied correctly. Never batch >3 edits to the same file without a verification read.
 
-10. **NO SEMANTIC SEARCH**: When renaming or changing any function/type/variable, search separately for: direct calls, type references, string literals, dynamic references, re-exports, and tests.
+12. **NO SEMANTIC SEARCH**: When renaming or changing any function/type/variable, search separately for: direct calls, type references, string literals, dynamic references, re-exports, and tests.

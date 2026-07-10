@@ -70,6 +70,20 @@ ImFont* AddMergedMenuFont(ImGuiIO& io, float size, const std::string& path = std
         ImFontConfig fontCfg;
         fontCfg.FontDataOwnedByAtlas = false;
         font = io.Fonts->AddFontFromFileTTF(path.c_str(), size, &fontCfg);
+        if (font == nullptr) {
+            /* Corrupt/missing TTF on disk (common on Android when a path probe
+             * finds a non-font file). ImGui's FA merge targets the last added
+             * font — merging into nullptr SIGSEGVs during PortMenu::Init(). */
+            ImFontConfig fallbackCfg;
+            fallbackCfg.OversampleH = fallbackCfg.OversampleV = 1;
+            fallbackCfg.PixelSnapH = true;
+            fallbackCfg.SizePixels = size;
+            font = io.Fonts->AddFontDefault(&fallbackCfg);
+        }
+    }
+
+    if (font == nullptr) {
+        return nullptr;
     }
 
     const float iconFontSize = size * 2.0f / 3.0f;
