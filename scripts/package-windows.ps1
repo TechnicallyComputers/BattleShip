@@ -73,10 +73,16 @@ if ($EnableScripting -and $Ver -eq "jp") {
 }
 $DisableScripting = if ($EnableScripting) { "OFF" } else { "ON" }
 $PackageFlavor = if ($EnableScripting) { "scripting" } else { "standard" }
-$ZipSuffix = "-windows"
-$BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
-$DistDir = Join-Path $Root "dist"
 $AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
+$DistDir = Join-Path $Root "dist"
+# Offline and netplay must not share a CMake build tree (NETMENU ON/OFF + vcpkg curl).
+if ($Netplay) {
+    $ZipSuffix = "-Netplay-windows"
+    $BuildDir = Join-Path $Root "build-bundle-win-netplay-$Ver-$PackageFlavor"
+} else {
+    $ZipSuffix = "-windows"
+    $BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
+}
 $StageName = $AppName
 $StageDir = Join-Path $DistDir $StageName
 $ZipPath = Join-Path $DistDir "$AppName$ZipSuffix.zip"
@@ -497,17 +503,11 @@ foreach ($f in @("info.credits.us.txt", "companies.credits.us.txt")) {
 Pop-Location
 
 # ── 1. Configure + build (Release, portable) ──
-Write-Step "Configuring release build (portable, scripting=$EnableScripting)"
 # No NON_PORTABLE, no CMAKE_INSTALL_PREFIX. LUS resolves the bundle path
 # via GetModuleFileNameW at runtime, and the port's port_save.cpp +
 # Ship::Context::GetAppDirectoryPath() route saves/config to the cwd
 # (= BattleShip.exe's directory when launched normally). See the file
 # header for the v0.7.2 crash this avoids.
-if ($Netplay) {
-    & cmake -B $BuildDir $Root @CmakeArgs
-} else {
-    & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
-}
 #
 # Pin Python3_EXECUTABLE to the same `python` the workflow's
 # `pip install Pillow` step ran under. On Windows GHA runners the image
@@ -515,14 +515,33 @@ if ($Netplay) {
 # Windows Store stub); without a hint, CMake's find_package(Python3) can
 # resolve to a different interpreter than the one pip targeted, and the
 # CSS-arrow asset rules then fail with "Pillow is required" mid-build.
+Import-VcVars64IfNeeded
 $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
-cmake -B $BuildDir $Root `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DDISABLE_SCRIPTING=$DisableScripting" `
-    "-DSSB64_VERSION=$Ver" `
-    "-DPython3_EXECUTABLE=$PythonExe" `
-    | Out-Null
+
+$CmakeArgs = @(
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DDISABLE_SCRIPTING=$DisableScripting",
+    "-DSSB64_VERSION=$Ver",
+    "-DPython3_EXECUTABLE=$PythonExe"
+)
+if ($Netplay) {
+    $CmakeArgs += "-DSSB64_NETMENU=ON"
+} else {
+    $CmakeArgs += "-DSSB64_NETMENU=OFF"
+}
+# Beta/alpha CI passes -DSSB64_NETPLAY_AUTOMATCH_STAGE_KIND_DEFAULT=6 here.
+if ($env:SSB64_EXTRA_CMAKE_ARGS) {
+    $CmakeArgs += ($env:SSB64_EXTRA_CMAKE_ARGS -split '\s+' | Where-Object { $_ })
+}
+
+Write-Step "Configuring release build (portable, scripting=$EnableScripting$(if ($Netplay) { ', SSB64_NETMENU=ON' } else { ', SSB64_NETMENU=OFF' }))"
+Reset-StaleCmakeCache -Dir $BuildDir -WantNetmenu:$Netplay.IsPresent
+if ($Netplay) {
+    & cmake -B $BuildDir $Root @CmakeArgs
+} else {
+    & cmake -B $BuildDir $Root @CmakeArgs | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed" }
 
 if ($Netplay) {
