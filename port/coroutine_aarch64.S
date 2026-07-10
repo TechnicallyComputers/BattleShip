@@ -27,6 +27,8 @@
 // The 8-byte pad at offset 104 keeps d8..d15 at 16-byte alignment, which
 // is required for stp/ldp pair access on aarch64.
 
+#if defined(__aarch64__)
+
     .text
     .balign 4
 
@@ -100,6 +102,8 @@ port_coroutine_trampoline_aarch64:
 #if defined(__ELF__)
     .size   port_coroutine_trampoline_aarch64, .-port_coroutine_trampoline_aarch64
 #endif
+
+#endif /* __aarch64__ */
 
 
 // GNU/Linux ELF non-executable stack note. Android's linker rejects shared

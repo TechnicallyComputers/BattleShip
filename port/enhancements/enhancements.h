@@ -105,6 +105,7 @@ const char* ClassicCoopCVarName();
 const char* ClassicCoopFriendlyFireCVarName();
 const char* ShuffleMusicCVarName();
 const char* MusicSelectionCVarName();
+const char* DisableHUDCVarName();
 
 // Discord Rich Presence
 void UpdateDiscordPresence(const char* gameState, const char* matchDetails);

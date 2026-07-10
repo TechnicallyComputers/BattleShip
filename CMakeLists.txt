@@ -18,6 +18,7 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(DISABLE_SCRIPTING ON CACHE BOOL "Disable the mod system (scripting + hooks)" FORCE)
 endif()
+
 if (DISABLE_SCRIPTING)
     # Define for every superproject target (ssb64_game + the exe + port glue)
     # so the #ifndef DISABLE_SCRIPTING guards in port/*.cpp engage. libultraship
@@ -1112,13 +1113,16 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # SDLActivity (Java) loads a shared library and calls SDL_main from it
     # via dlsym. Output name `main` matches SDL2's default `libmain.so`
-    # lookup. The aarch64 coroutine asm shim is pulled in here so the
-    # SHARED target builds with the .S preprocessed by clang.
+    # lookup. Both ARM coroutine asm shims are pulled in here so the SHARED
+    # target builds with the .S preprocessed by clang; each file's body is
+    # #if-guarded on the target arch (__aarch64__ / __arm__), so only the
+    # one matching ANDROID_ABI emits code.
     add_library(${PROJECT_NAME} SHARED
         ${SSB64_SRC_PORT}
         ${SSB64_EXE_TRACE_SOURCES}
         $<TARGET_OBJECTS:ssb64_game>
         port/coroutine_aarch64.S
+        port/coroutine_armv7.S
     )
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "main")
 else()
@@ -1306,9 +1310,9 @@ endif()
 ################################################################################
 # TCC mod scripting: export the engine's full symbol table so libtcc-compiled
 # mods can resolve any engine function by name. On Windows this is what makes
-# `tcc.exe -impdef BattleShip.exe -o BattleShip.def` produce a useful import
-# library; on Unix the linker default-visibility + -Wl,-export-dynamic above
-# handles it.
+# `tcc.exe -impdef BattleShip.exe -o BattleShip.def` produce a useful export
+# list for ScriptLoader's memory-mode symbol registration; on Unix the linker
+# default-visibility + -Wl,-export-dynamic above handles it.
 ################################################################################
 if(NOT DISABLE_SCRIPTING)
     # ENABLE_EXPORTS makes the EXE produce an import library (.lib) and
@@ -1415,14 +1419,15 @@ endif()
 # self-contained; modders don't have to install TinyCC.
 #
 # On Windows we additionally run `tcc.exe -impdef BattleShip.exe -o
-# BattleShip.def` to generate the import library that libtcc links mod
-# objects against. WINDOWS_EXPORT_ALL_SYMBOLS (set above) makes the EXE's
-# export table contain every engine function so the .def covers them all.
+# BattleShip.def` to generate the export-name list that ScriptLoader resolves
+# against the running process before TCC relocates mod code. WINDOWS_EXPORT_ALL_SYMBOLS
+# (set above) makes the EXE's export table contain every engine function so
+# the .def covers them all.
 ################################################################################
 if(NOT DISABLE_SCRIPTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMENT "Copying libtcc headers, libs, and runtime DLL..."
+            COMMENT "Copying libtcc headers and runtime libraries..."
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/"
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/"
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
@@ -1433,34 +1438,18 @@ if(NOT DISABLE_SCRIPTING)
                 "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/include/"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/include/"
             # libtcc1.a built by MSVC is COFF format which TCC can't
-            # parse. Use tcc.exe itself to recompile the runtime sources
+            # parse. Use tcc.exe itself to recompile the runtime source
             # into a TCC-readable archive. -B points tcc at .tcc/ for
-            # tccdefs.h (auto-included via the command line). This
-            # produces libtcc1.o + dllcrt1.o + dllmain.o in TCC's native
-            # object format, then `tcc -ar rcs` bundles them.
+            # tccdefs.h (auto-included via the command line).
             COMMAND "$<TARGET_FILE:tcc>"
                 -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
                 -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/lib/libtcc1.c"
                 -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
-            COMMAND "$<TARGET_FILE:tcc>"
-                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
-                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllcrt1.c"
-                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
-            COMMAND "$<TARGET_FILE:tcc>"
-                -B "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc"
-                -c "${CMAKE_BINARY_DIR}/_deps/tinycc-src/win32/lib/dllmain.c"
-                -o "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
             COMMAND "$<TARGET_FILE:tcc>" -ar rcs
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.a"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllcrt1.o"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/dllmain.o"
-            # libtcc is built SHARED -> tcc.dll. The exe imports its symbols,
-            # so it must be loadable at process start. Without this the exe
-            # fails with 0xC0000135 (DLL not found) before main() runs.
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:libtcc>"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/$<TARGET_FILE_NAME:libtcc>"
+            COMMAND ${CMAKE_COMMAND} -E rm -f
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/.tcc/lib/libtcc1.o"
             VERBATIM
         )
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -1739,17 +1728,19 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(torch_runner PRIVATE torch)
     set_target_properties(torch_runner PROPERTIES OUTPUT_NAME "torch_runner")
 
-    # Standalone aarch64 coroutine test (off by default — opt in for asm
+    # Standalone ARM coroutine test (off by default — opt in for asm
     # regression validation, see docs/android_port_status_*.md). Pushes a
     # tiny binary to /data/local/tmp/ to verify the asm context-switch
-    # without needing the full game.
+    # without needing the full game. Both .S shims are arch-#if-guarded, so
+    # the same target builds for arm64-v8a and armeabi-v7a.
     option(SSB64_BUILD_COROUTINE_TEST
-        "Build the aarch64 coroutine standalone test binary (Android)" OFF)
+        "Build the ARM coroutine standalone test binary (Android)" OFF)
     if (SSB64_BUILD_COROUTINE_TEST)
         add_executable(coroutine_test
             port/coroutine_test.cpp
             port/coroutine_android.cpp
             port/coroutine_aarch64.S
+            port/coroutine_armv7.S
         )
         target_include_directories(coroutine_test PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/port

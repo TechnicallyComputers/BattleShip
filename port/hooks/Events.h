@@ -12,3 +12,4 @@
 
 #include "list/EngineEvent.h"
 #include "list/FighterEvent.h"
+#include "ship/events/WindowEvents.h"

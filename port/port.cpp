@@ -58,6 +58,7 @@
 #define SSB64_ANDROID_LOG_TAG "ssb64"
 #endif
 #include "fighter_registry.h"
+#include "focus.h"
 
 #ifndef DISABLE_SCRIPTING
 #include <ship/scripting/ScriptLoader.h>
@@ -543,6 +544,40 @@ void MountModsDir() {
 	walk(modsDir);
 }
 
+/* Unmount mod archives whose on-disk source no longer exists. MountModsDir
+ * only ever ADDS archives, so a mod folder/.o2r deleted at runtime stays
+ * mounted in the ArchiveManager for the rest of the session — Hot Reload would
+ * recompile it from the still-mounted VFS and Rescan would still list it.
+ * Removing the stale archive here lets both reflect deletions. Only archives
+ * carrying a manifest.json are considered, so the base game + shader archives
+ * are never touched. Call with mod scripts already unloaded (the loaded image
+ * is independent of the archive, but unloading first keeps state consistent). */
+void UnmountMissingMods() {
+	namespace fs = std::filesystem;
+	auto rm = sContext ? sContext->GetResourceManager() : nullptr;
+	if (!rm) return;
+	auto am = rm->GetArchiveManager();
+	if (!am) return;
+	auto archives = am->GetArchives();
+	if (!archives) return;
+
+	/* Collect first, then remove — don't mutate the manager's list mid-walk. */
+	std::vector<std::string> stale;
+	for (const auto& a : *archives) {
+		if (!a) continue;
+		if (!a->HasFile("manifest.json")) continue; /* not a mod */
+		const std::string path = a->GetPath();
+		std::error_code ec;
+		if (!fs::exists(fs::path(path), ec)) {
+			stale.push_back(path);
+		}
+	}
+	for (const auto& path : stale) {
+		am->RemoveArchive(path);
+		port_log("SSB64: unmounted deleted mod archive -> %s\n", path.c_str());
+	}
+}
+
 } // namespace ssb64
 #endif
 
@@ -1022,14 +1057,15 @@ static int PortInitImpl(int argc, char* argv[]) {
 	// Must happen AFTER InitEventSystem (PortRegisterEvents calls
 	// EventSystemRegisterEvent, which dereferences Context::GetEventSystem()).
 	PortRegisterEvents();
+	ssb64::RegisterFocusListener();
 	port_log("SSB64: Engine events registered\n");
 
 #ifndef DISABLE_SCRIPTING
 	// TCC mod scripting: configure the include paths + library paths under
 	// .tcc/ that the engine populates post-build (see CMakeLists.txt). On
-	// Windows we link mods against BattleShip.def (auto-generated from the
-	// EXE export table); on Unix mods resolve symbols dynamically via the
-	// host process's exported symbols.
+	// Windows BattleShip.def is an export-name list that ScriptLoader resolves
+	// against the running EXE before TCC relocates mods into memory; on Unix
+	// mods resolve symbols dynamically via the host process's exported symbols.
 	{
 		std::unordered_map<std::string, std::string> defines = {
 			{ "PORT", "1" },
@@ -1053,9 +1089,9 @@ static int PortInitImpl(int argc, char* argv[]) {
 			Ship::Context::GetPathRelativeToAppDirectory(".tcc/lib"),
 		};
 #ifdef _WIN32
-		std::vector<std::string> libraries = { "BattleShip.def" };
+		std::vector<std::string> libraries = { "BattleShip.def", "tcc1" };
 #else
-		std::vector<std::string> libraries = {};
+		std::vector<std::string> libraries = { "tcc1" };
 #endif
 		constexpr int kCodeVersion = 1;
 		/* -mms-bitfields makes TCC pack bitfields the way MSVC does
@@ -1067,7 +1103,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 		 * while MSVC splits them across multiple units, shifting every
 		 * field afterwards (e.g. `attr`, `joints`) and causing mod
 		 * reads to land on adjacent function-pointer fields. */
-		if (!sContext->InitScriptLoader(defines, kCodeVersion, "-g -mms-bitfields",
+		if (!sContext->InitScriptLoader(defines, kCodeVersion, "-mms-bitfields",
 		                                includePaths, libraryPaths, libraries)) {
 			port_log("SSB64: InitScriptLoader failed\n");
 			return 1;
@@ -1127,10 +1163,10 @@ static int PortInitImpl(int argc, char* argv[]) {
 
 	// TCC scripting: compile + load any .o2r / folder mod under mods/ that
 	// declares a `main` entry in its manifest.json. Each mod's source files
-	// are amalgamated by the ScriptLoader, compiled to a temp DLL via libtcc,
-	// and ModInit is called by name. The pre/post-init callbacks tag every
-	// HookManager::InstallHook call with the current mod name so hot-reload
-	// can selectively uninstall hooks per mod without touching others.
+	// are amalgamated by the ScriptLoader, compiled and relocated into memory
+	// via libtcc, and ModInit is called by name. The pre/post-init callbacks
+	// tag every HookManager::InstallHook call with the current mod name so
+	// hot-reload can selectively uninstall hooks per mod without touching others.
 	if (auto scripting = sContext->GetScriptLoader()) {
 		try {
 			scripting->CompileAll();
@@ -1159,6 +1195,20 @@ void PortShutdown(void) {
 	// that's about to be torn down).
 	ssb64::mods::HookManager::Shutdown();
 	ssb64::mods::SymbolResolver::Shutdown();
+
+	// Unload mod scripts now, while the Context's EventSystem is still fully
+	// alive, so each mod's ModExit (which calls UNREGISTER_LISTENER) can reach
+	// it. Otherwise the only UnloadAll happens inside ~Context via the
+	// sContext.reset() below — by which point the EventSystem is being torn
+	// down, so EventSystemUnregisterListener -> Context::GetEventSystem
+	// dereferences a dead shared_ptr<EventSystem> and crashes on exit whenever
+	// a listener-registering mod (e.g. one that REGISTER_LISTENERs in ModInit)
+	// is loaded. The later ~Context UnloadAll then finds nothing loaded.
+	if (sContext) {
+		if (auto scripting = sContext->GetScriptLoader()) {
+			scripting->UnloadAll();
+		}
+	}
 #endif
 
 	// Drop audio bridge resource references before Ship::Context goes away.

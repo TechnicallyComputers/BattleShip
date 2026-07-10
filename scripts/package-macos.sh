@@ -38,6 +38,11 @@
 # Netplay (--netplay / SSB64_NETMENU=ON): requires Homebrew curl at configure time;
 # dylibbundler ships libcurl (+ OpenSSL) in Contents/Frameworks/; CA bundle at
 # Contents/Resources/ssl/cacert.pem for HTTPS matchmaking.
+#
+# - Local builds ad-hoc sign the bundle with the mod-loader entitlements.
+#   CI sets MACOS_CODESIGN_IDENTITY + MACOS_NOTARY_* to Developer ID-sign
+#   the app, sign the DMG, submit it to Apple's notary service, and staple
+#   the returned ticket before upload.
 
 set -euo pipefail
 
@@ -189,6 +194,17 @@ verify_macos_https_bundle() {
     if [[ "$missing" -ne 0 ]]; then
         fail "Incomplete HTTPS matchmaking bundle — install brew curl and re-run with --netplay"
     fi
+}
+
+truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+json_get() {
+    local field="$1"
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], "") or "")' "$field"
 }
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "package-macos.sh runs on macOS only"
@@ -430,6 +446,44 @@ else
     dylibbundler "${DYLIBBUNDLER_ARGS[@]}"
 fi
 
+# Homebrew's current `sdl2` formula is an alias for `sdl2-compat`, an SDL2 ABI
+# wrapper that loads SDL3 with dlopen(). Because that SDL3 dependency is not a
+# Mach-O LC_LOAD_DYLIB entry, dylibbundler cannot discover it from `otool -L`.
+# Ship SDL3 next to SDL2 when the bundled SDL2 dylib is the compatibility layer.
+SDL2_BUNDLED="$APP/Contents/Frameworks/libSDL2-2.0.0.dylib"
+needs_sdl3=0
+if [[ -f "$SDL2_BUNDLED" ]] && grep -qiE 'sdl2-compat|SDL2COMPAT|Failed loading SDL3' < <(strings "$SDL2_BUNDLED"); then
+    needs_sdl3=1
+fi
+truthy "${SSB64_FORCE_BUNDLE_SDL3:-}" && needs_sdl3=1
+if [[ "$needs_sdl3" -eq 1 ]]; then
+    step "Bundling SDL3 for Homebrew sdl2-compat"
+    SDL3_PREFIX=""
+    if command -v brew >/dev/null 2>&1; then
+        SDL3_PREFIX="$(brew --prefix sdl3 2>/dev/null || true)"
+    fi
+    SDL3_DYLIB=""
+    for candidate in \
+        "${SDL3_PREFIX:+$SDL3_PREFIX/lib/libSDL3.dylib}" \
+        "${SDL3_PREFIX:+$SDL3_PREFIX/lib/libSDL3.0.dylib}" \
+        /opt/homebrew/opt/sdl3/lib/libSDL3.dylib \
+        /opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib \
+        /usr/local/opt/sdl3/lib/libSDL3.dylib \
+        /usr/local/opt/sdl3/lib/libSDL3.0.dylib
+    do
+        [[ -n "$candidate" && -f "$candidate" ]] || continue
+        SDL3_DYLIB="$candidate"
+        break
+    done
+    [[ -n "$SDL3_DYLIB" ]] || fail "bundled SDL2 needs SDL3, but libSDL3.dylib was not found"
+    SDL3_REAL="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SDL3_DYLIB")"
+    [[ -f "$SDL3_REAL" ]] || SDL3_REAL="$SDL3_DYLIB"
+    cp -f "$SDL3_REAL" "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    chmod +w "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    install_name_tool -id "@loader_path/libSDL3.0.dylib" "$APP/Contents/Frameworks/libSDL3.0.dylib"
+    ln -snf libSDL3.0.dylib "$APP/Contents/Frameworks/libSDL3.dylib"
+fi
+
 # Sanity-check: no /opt/homebrew or /usr/local references should remain in
 # the binaries' load commands. Catches the case where dylibbundler missed a
 # transitive dep (rare, but worth failing loudly here rather than letting
@@ -474,28 +528,64 @@ for bin in "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/torch"; do
     done
 done
 
-# ── 4b. Adhoc-sign the bundle as a unit ──
-# Modern Gatekeeper (Sequoia / 15.x+) flags downloaded adhoc-signed
-# bundles as "damaged" if the signature isn't deep enough to cover
-# every Mach-O inside. cp preserved each binary's linker-signature
-# individually, but the bundle as a whole isn't sealed — so the .app
-# refuses to install / launch from a quarantined DMG.
-#
-# `codesign --deep --force --sign -` walks the bundle, adhoc-signs
-# every executable and dylib, and writes a bundle-level signature
-# referencing all of them. Doesn't need an Apple Developer cert; it's
-# enough to satisfy Gatekeeper's structural check on a quarantined
-# download. For full "no warnings, no right-click-Open" we'd need a
-# real Developer ID Apple Distribution cert + notarization, but that
-# costs $99/yr and isn't tractable for an unsigned community port.
-#
-# Users who still hit "damaged" can run:
-#   xattr -dr com.apple.quarantine /Applications/BattleShip.app
-step "Adhoc-signing bundle"
-codesign --deep --force --sign - "$APP"
-codesign --verify --deep --strict "$APP" \
-    && echo "  signature verified" \
+# ── 4b. Sign the bundle as a unit ──
+# Sign after dylibbundler and install_name_tool because both mutate Mach-O
+# load commands. Developer ID CI uses hardened runtime + secure timestamp
+# for notarization; local builds keep an ad-hoc fallback so packaging stays
+# usable without Apple credentials. The main app signature always carries
+# the JIT / unsigned-executable-memory entitlements required by the mod
+# hook backend on Apple Silicon.
+SIGNING_IDENTITY="${MACOS_CODESIGN_IDENTITY:-}"
+SIGNING_MODE="developer-id"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+    SIGNING_MODE="ad-hoc"
+fi
+if [[ "$SIGNING_MODE" == "ad-hoc" ]] && truthy "${SSB64_REQUIRE_MACOS_SIGNING:-}"; then
+    fail "SSB64_REQUIRE_MACOS_SIGNING=1 but MACOS_CODESIGN_IDENTITY is empty"
+fi
+
+CODESIGN_KEYCHAIN_ARGS=()
+if [[ -n "${MACOS_CODESIGN_KEYCHAIN:-}" ]]; then
+    CODESIGN_KEYCHAIN_ARGS=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
+fi
+CODESIGN_RUNTIME_ARGS=()
+CODESIGN_TIMESTAMP_ARGS=(--timestamp=none)
+if [[ "$SIGNING_MODE" == "developer-id" ]]; then
+    CODESIGN_RUNTIME_ARGS=(--options runtime)
+    CODESIGN_TIMESTAMP_ARGS=(--timestamp)
+fi
+CODESIGN_BASE_ARGS=(
+    --force
+    --sign "$SIGNING_IDENTITY"
+    "${CODESIGN_KEYCHAIN_ARGS[@]+"${CODESIGN_KEYCHAIN_ARGS[@]}"}"
+    "${CODESIGN_RUNTIME_ARGS[@]+"${CODESIGN_RUNTIME_ARGS[@]}"}"
+    "${CODESIGN_TIMESTAMP_ARGS[@]}"
+)
+
+is_macho_file() {
+    file "$1" | grep -q 'Mach-O'
+}
+
+step "$([[ "$SIGNING_MODE" == "developer-id" ]] && echo "Developer ID-signing bundle" || echo "Ad-hoc signing bundle")"
+while IFS= read -r -d '' path; do
+    [[ "$path" == "$APP/Contents/MacOS/$APP_NAME" ]] && continue
+    if is_macho_file "$path"; then
+        printf '  signing nested code: %s\n' "${path#$APP/}"
+        codesign "${CODESIGN_BASE_ARGS[@]}" "$path"
+    fi
+done < <(find "$APP" -type f -print0)
+
+codesign "${CODESIGN_BASE_ARGS[@]}" \
+    --entitlements "$ROOT/cmake/macos_entitlements.plist" \
+    "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP" \
     || fail "codesign verify failed on $APP"
+if ! codesign -d --entitlements :- "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null \
+    | grep -q 'com.apple.security.cs.allow-jit'; then
+    fail "signed app is missing the macOS mod-loader entitlements"
+fi
+echo "  signature verified ($SIGNING_MODE)"
 
 # ── 5. Build a drag-and-drop DMG ──
 # Two paths, because the pretty one isn't safe everywhere:
@@ -511,15 +601,16 @@ codesign --verify --deep --strict "$APP" \
 #
 #   • Plain (hdiutil) — a compressed image holding the .app plus an
 #     /Applications symlink, no background art, no Finder automation. Builds
-#     in seconds and cannot hang. This is what CI ships.
+#     in seconds and cannot hang. This is the CI-safe fallback.
 #
 # Path selection:
-#   DMG_PLAIN=1   force plain   (overrides everything)
-#   DMG_STYLED=1  force styled  (attempt it even under CI; still falls back)
-#   otherwise     plain when running under CI (GitHub Actions sets CI=true)
-#                 or when create-dmg is absent; styled on a dev machine.
+#   DMG_PLAIN=1           force plain   (overrides styled unless styled is required)
+#   DMG_STYLED=1          force styled  (attempt it even under CI; still falls back)
+#   DMG_REQUIRE_STYLED=1  fail if the styled path fails or is unavailable
+#   otherwise             plain when running under CI (GitHub Actions sets CI=true)
+#                         or when create-dmg is absent; styled on a dev machine.
 # The styled path falls back to plain on any failure or timeout, so this
-# script always emits a working DMG.
+# script always emits a working DMG unless DMG_REQUIRE_STYLED=1 is set.
 DMG_VOLNAME="$APP_NAME"
 DMG_BG_SRC="$ROOT/assets/macos_dmg_banner.png"
 DMG_BG_LONG=600
@@ -596,6 +687,11 @@ mkdir -p "$DMG_STAGE" "$DMG_BG_DIR"
 cp -R "$APP" "$DMG_STAGE/"
 
 want_styled=1
+require_styled=0
+truthy "${DMG_REQUIRE_STYLED:-}" && require_styled=1
+if [[ -n "${DMG_PLAIN:-}" && "$require_styled" -eq 1 ]]; then
+    fail "DMG_PLAIN and DMG_REQUIRE_STYLED cannot both be set"
+fi
 if [[ -n "${DMG_PLAIN:-}" ]]; then
     want_styled=0
 elif [[ -n "${DMG_STYLED:-}" ]]; then
@@ -603,13 +699,17 @@ elif [[ -n "${DMG_STYLED:-}" ]]; then
 elif [[ -n "${CI:-}" ]]; then
     want_styled=0   # create-dmg's Finder/AppleScript step hangs on hosted CI
 fi
-command -v create-dmg >/dev/null || want_styled=0
+if ! command -v create-dmg >/dev/null; then
+    [[ "$require_styled" -eq 0 ]] || fail "DMG_REQUIRE_STYLED=1 but create-dmg is not in PATH"
+    want_styled=0
+fi
 
 if [[ "$want_styled" -eq 1 ]]; then
     step "Building styled DMG (create-dmg)"
     if build_styled_dmg && [[ -f "$DMG" ]]; then
         echo "  styled DMG built"
     else
+        [[ "$require_styled" -eq 0 ]] || fail "create-dmg failed or timed out and DMG_REQUIRE_STYLED=1"
         echo "  create-dmg failed or timed out — falling back to a plain hdiutil DMG" >&2
         detach_dmg_volume
         # create-dmg leaves a writable scratch image (rw.*.dmg) on failure.
@@ -624,6 +724,122 @@ fi
 
 rm -rf "$DMG_STAGE" "$DMG_BG_DIR"
 [[ -f "$DMG" ]] || fail "DMG was not created"
+
+if [[ "$SIGNING_MODE" == "developer-id" ]]; then
+    step "Signing DMG"
+    codesign \
+        --force \
+        --sign "$SIGNING_IDENTITY" \
+        "${CODESIGN_KEYCHAIN_ARGS[@]+"${CODESIGN_KEYCHAIN_ARGS[@]}"}" \
+        --timestamp \
+        "$DMG"
+    codesign --verify --verbose=2 "$DMG" \
+        || fail "codesign verify failed on $DMG"
+fi
+
+WANT_NOTARIZE=0
+if truthy "${SSB64_NOTARIZE:-}"; then
+    WANT_NOTARIZE=1
+elif [[ -n "${MACOS_NOTARY_APPLE_ID:-}${MACOS_NOTARY_TEAM_ID:-}${MACOS_NOTARY_PASSWORD:-}" ]]; then
+    WANT_NOTARIZE=1
+fi
+if [[ "$WANT_NOTARIZE" -eq 1 ]]; then
+    [[ "$SIGNING_MODE" == "developer-id" ]] \
+        || fail "notarization requires Developer ID signing"
+    missing=()
+    for name in MACOS_NOTARY_APPLE_ID MACOS_NOTARY_TEAM_ID MACOS_NOTARY_PASSWORD; do
+        if [[ -z "${!name:-}" ]]; then
+            missing+=("$name")
+        fi
+    done
+    if [[ "${#missing[@]}" -ne 0 ]]; then
+        fail "missing macOS notarization secret(s): ${missing[*]}"
+    fi
+
+    step "Notarizing DMG"
+    NOTARY_AUTH_ARGS=(
+        --apple-id "$MACOS_NOTARY_APPLE_ID"
+        --team-id "$MACOS_NOTARY_TEAM_ID"
+        --password "$MACOS_NOTARY_PASSWORD"
+    )
+    NOTARY_WAIT_TIMEOUT="${MACOS_NOTARY_WAIT_TIMEOUT:-10m}"
+    NOTARY_WAIT_ATTEMPTS="${MACOS_NOTARY_WAIT_ATTEMPTS:-3}"
+    NOTARY_WAIT_RETRY_DELAY="${MACOS_NOTARY_WAIT_RETRY_DELAY:-30}"
+
+    NOTARY_SUBMIT_JSON="$(xcrun notarytool submit "$DMG" \
+        "${NOTARY_AUTH_ARGS[@]}" \
+        --output-format json \
+        --no-progress)"
+    printf '%s\n' "$NOTARY_SUBMIT_JSON"
+    NOTARY_SUBMISSION_ID="$(printf '%s' "$NOTARY_SUBMIT_JSON" | json_get id)"
+    [[ -n "$NOTARY_SUBMISSION_ID" ]] \
+        || fail "notarytool submit did not return a submission id"
+
+    NOTARY_ACCEPTED=0
+    attempt=1
+    while [[ "$attempt" -le "$NOTARY_WAIT_ATTEMPTS" ]]; do
+        printf '  waiting for notarization submission %s (attempt %d/%d, timeout %s)\n' \
+            "$NOTARY_SUBMISSION_ID" "$attempt" "$NOTARY_WAIT_ATTEMPTS" "$NOTARY_WAIT_TIMEOUT"
+        set +e
+        NOTARY_WAIT_JSON="$(xcrun notarytool wait "$NOTARY_SUBMISSION_ID" \
+            "${NOTARY_AUTH_ARGS[@]}" \
+            --timeout "$NOTARY_WAIT_TIMEOUT" \
+            --output-format json \
+            --no-progress 2>&1)"
+        wait_rc=$?
+        set -e
+        printf '%s\n' "$NOTARY_WAIT_JSON"
+
+        if [[ "$wait_rc" -eq 0 ]]; then
+            NOTARY_STATUS="$(printf '%s' "$NOTARY_WAIT_JSON" | json_get status)"
+            if [[ "$NOTARY_STATUS" == "Accepted" ]]; then
+                NOTARY_ACCEPTED=1
+                break
+            fi
+            if [[ "$NOTARY_STATUS" == "Invalid" || "$NOTARY_STATUS" == "Rejected" ]]; then
+                xcrun notarytool log "$NOTARY_SUBMISSION_ID" "${NOTARY_AUTH_ARGS[@]}" || true
+                fail "notarization failed with status: $NOTARY_STATUS"
+            fi
+        else
+            echo "  notarytool wait failed (exit $wait_rc); checking current submission status" >&2
+            set +e
+            NOTARY_INFO_JSON="$(xcrun notarytool info "$NOTARY_SUBMISSION_ID" \
+                "${NOTARY_AUTH_ARGS[@]}" \
+                --output-format json 2>&1)"
+            info_rc=$?
+            set -e
+            printf '%s\n' "$NOTARY_INFO_JSON"
+            if [[ "$info_rc" -eq 0 ]]; then
+                NOTARY_STATUS="$(printf '%s' "$NOTARY_INFO_JSON" | json_get status)"
+                if [[ "$NOTARY_STATUS" == "Accepted" ]]; then
+                    NOTARY_ACCEPTED=1
+                    break
+                fi
+                if [[ "$NOTARY_STATUS" == "Invalid" || "$NOTARY_STATUS" == "Rejected" ]]; then
+                    xcrun notarytool log "$NOTARY_SUBMISSION_ID" "${NOTARY_AUTH_ARGS[@]}" || true
+                    fail "notarization failed with status: $NOTARY_STATUS"
+                fi
+            fi
+        fi
+
+        if [[ "$attempt" -eq "$NOTARY_WAIT_ATTEMPTS" ]]; then
+            break
+        fi
+        printf '  notarization is not complete yet; retrying status wait in %ss\n' \
+            "$NOTARY_WAIT_RETRY_DELAY"
+        sleep "$NOTARY_WAIT_RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+
+    [[ "$NOTARY_ACCEPTED" -eq 1 ]] \
+        || fail "notarization did not reach Accepted for submission $NOTARY_SUBMISSION_ID"
+
+    step "Stapling notarization ticket"
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG" \
+        || fail "spctl assessment failed for notarized DMG"
+fi
 
 # ── 6. Report ──
 APP_KB=$(du -sk "$APP" | awk '{print $1}')

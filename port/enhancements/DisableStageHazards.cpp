@@ -131,13 +131,21 @@ struct SCCommonDataPrefix {
     uint8_t scene_prev;
 };
 
-static_assert(offsetof(GObj, link_next) == 0x08);
-static_assert(offsetof(GObj, gobjproc_head) == 0x28);
-static_assert(offsetof(GObj, user_data) == 0xE0);
-static_assert(offsetof(GObjProcess, priority) == 0x20);
-static_assert(offsetof(GObjProcess, is_paused) == 0x25);
-static_assert(offsetof(ITStructPrefix, kind) == 0x18);
-static_assert(offsetof(WPStructPrefix, kind) == 0x18);
+// These mirror structs use real pointer / function-pointer fields, so they
+// auto-size to match the game's actual GObj/GObjProcess/IT/WP layout on any
+// ABI — field access stays correct. The hardcoded offsets below are the
+// 8-byte-pointer values; on ILP32 (e.g. Android armeabi-v7a) the pointer fields
+// are 4 bytes and every offset shifts, so guard the pointer-affected asserts to
+// 8-byte-pointer builds.
+// The SCBattleStatePrefix asserts are pointer-free (ABI-identical) and stay
+// unconditional.
+static_assert(sizeof(void*) != 8 || offsetof(GObj, link_next) == 0x08);
+static_assert(sizeof(void*) != 8 || offsetof(GObj, gobjproc_head) == 0x28);
+static_assert(sizeof(void*) != 8 || offsetof(GObj, user_data) == 0xE0);
+static_assert(sizeof(void*) != 8 || offsetof(GObjProcess, priority) == 0x20);
+static_assert(sizeof(void*) != 8 || offsetof(GObjProcess, is_paused) == 0x25);
+static_assert(sizeof(void*) != 8 || offsetof(ITStructPrefix, kind) == 0x18);
+static_assert(sizeof(void*) != 8 || offsetof(WPStructPrefix, kind) == 0x18);
 static_assert(offsetof(SCBattleStatePrefix, gkind) == 0x01);
 static_assert(offsetof(SCBattleStatePrefix, time_passed) == 0x18);
 

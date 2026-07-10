@@ -25,9 +25,10 @@
 #     libcurl*.dll, libssl*.dll, libcrypto*.dll, zlib1.dll  — netplay HTTPS (when dynamic)
 #     <other transitive DLLs>    — recursive dumpbin walk from BattleShip.exe + torch.exe
 #
-# The default Windows package disables TCC scripting so ordinary players do not
-# receive tcc.dll, which trips Microsoft Defender false positives. Set
-# SSB64_ENABLE_SCRIPTING=1 to build the opt-in modding package with TCC support.
+# The default US Windows package includes TCC scripting support. It statically
+# links libtcc into BattleShip.exe and stages only TinyCC headers plus libtcc1.a
+# under .tcc, avoiding the tcc.dll false-positive signature while ScriptLoader
+# relocates mod code in memory.
 #
 # Portable: drop the extracted folder anywhere and run BattleShip.exe.
 # Save data and config (ssb64_save.bin, BattleShip.cfg.json, logs/) land
@@ -61,18 +62,22 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 # unaffected.
 $Ver = if ($env:SSB64_VERSION) { $env:SSB64_VERSION } else { "us" }
 if ($Ver -ne "us" -and $Ver -ne "jp") { Write-Error "SSB64_VERSION must be us|jp"; exit 1 }
-$EnableScripting = $env:SSB64_ENABLE_SCRIPTING -in @("1", "ON", "TRUE", "YES", "on", "true", "yes")
+if ($env:SSB64_ENABLE_SCRIPTING) {
+    $EnableScripting = $env:SSB64_ENABLE_SCRIPTING -in @("1", "ON", "TRUE", "YES", "on", "true", "yes")
+} else {
+    $EnableScripting = $Ver -eq "us"
+}
 if ($EnableScripting -and $Ver -eq "jp") {
     Write-Error "JP source modding is not release-supported yet; the TCC mod API still compiles mods with US region defines."
     exit 1
 }
 $DisableScripting = if ($EnableScripting) { "OFF" } else { "ON" }
-$PackageFlavor = if ($EnableScripting) { "modding" } else { "standard" }
-$ZipSuffix = if ($EnableScripting) { "-windows-modding" } else { "-windows" }
+$PackageFlavor = if ($EnableScripting) { "scripting" } else { "standard" }
+$ZipSuffix = "-windows"
 $BuildDir = Join-Path $Root "build-bundle-win-$Ver-$PackageFlavor"
 $DistDir = Join-Path $Root "dist"
 $AppName = if ($Ver -eq "jp") { "BattleShip-JP" } else { "BattleShip" }
-$StageName = if ($EnableScripting) { "$AppName-modding" } else { $AppName }
+$StageName = $AppName
 $StageDir = Join-Path $DistDir $StageName
 $ZipPath = Join-Path $DistDir "$AppName$ZipSuffix.zip"
 $Jobs = if ($env:NUMBER_OF_PROCESSORS) { [int]$env:NUMBER_OF_PROCESSORS } else { 4 }
@@ -711,6 +716,12 @@ if ($EnableScripting) {
     $TccDir = Join-Path $ExeBuildDir ".tcc"
     if (-not (Test-Path $TccDir)) { Fail ".tcc scripting runtime not found at $TccDir" }
     Copy-Item $TccDir (Join-Path $StageDir ".tcc") -Recurse -Force
+    $TccPeFiles = Get-ChildItem -Path (Join-Path $StageDir ".tcc") -Recurse -File |
+        Where-Object { $_.Extension -in @(".dll", ".exe") }
+    if ($TccPeFiles) {
+        $Names = ($TccPeFiles | ForEach-Object { $_.FullName }) -join "`n"
+        Fail ".tcc scripting runtime contains PE executables:`n$Names"
+    }
 }
 
 # ── 5. Zip ──
@@ -724,9 +735,9 @@ Write-Host "`n✓ Release zip ready: $ZipPath ($ZipKB KB)" -ForegroundColor Gree
 Write-Host "   Variant: $(if ($Netplay) { 'netmenu/netplay' } else { 'offline' })"
 Write-Host "   Portable: extract anywhere; save data lives next to BattleShip.exe."
 if ($EnableScripting) {
-    Write-Host "   Modding build: includes TCC scripting support for C mods."
+    Write-Host "   Includes TCC scripting support for C mods."
 } else {
-    Write-Host "   Standard build: TCC scripting disabled; use the -modding zip for C mods."
+    Write-Host "   TCC scripting disabled for this local/package variant."
 }
 Write-Host "   First launch will prompt for your ROM via the ImGui wizard."
 if ($Netplay) {

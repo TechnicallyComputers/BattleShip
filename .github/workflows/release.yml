@@ -5,9 +5,10 @@ name: Release
 #   - Manual dispatch from the GitHub UI for smoke-testing
 #
 # Platform jobs build the releasable artifacts, matrixed over ROM versions
-# where applicable. Windows additionally emits a standard package with
-# scripting disabled by default plus an opt-in US modding package with TCC.
-# Desktop jobs build through the corresponding scripts/package-*.sh|.ps1
+# where applicable. Windows emits exactly two packages: US and JP. The US
+# package includes scripting/modding support by default; JP keeps scripting
+# disabled until the TCC mod API is region-aware. Desktop jobs build through
+# the corresponding scripts/package-*.sh|.ps1
 # helper (SSB64_VERSION selects the region). A final `release` job stitches
 # the artifacts into a GitHub Release attached to the tag.
 #
@@ -86,9 +87,81 @@ jobs:
         with:
           key: release-macos-${{ matrix.version }}
           max-size: 2G
+      - name: Import Developer ID certificate
+        # Developer ID certs must be imported into a writable keychain on
+        # ephemeral GitHub-hosted macOS runners before `codesign` can use
+        # them. The .p12 is stored base64-encoded in repo secrets; the
+        # matching notary credentials are passed only to package-macos.sh.
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64:   ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD:         ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY:         ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          missing=()
+          for name in \
+            MACOS_DEVELOPER_ID_P12_BASE64 \
+            MACOS_DEVELOPER_ID_P12_PASSWORD \
+            MACOS_KEYCHAIN_PASSWORD \
+            MACOS_CODESIGN_IDENTITY
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf '::error::Missing macOS signing secret(s): %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          CERT_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/battleship-signing.keychain-db"
+
+          python3 - <<'PY' > "$CERT_PATH"
+          import base64
+          import os
+          import sys
+
+          sys.stdout.buffer.write(base64.b64decode(os.environ["MACOS_DEVELOPER_ID_P12_BASE64"]))
+          PY
+
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_DEVELOPER_ID_P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$MACOS_KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F -- "$MACOS_CODESIGN_IDENTITY" >/dev/null; then
+            echo "::error::MACOS_CODESIGN_IDENTITY was not found in the imported keychain"
+            exit 1
+          fi
+
+          echo "MACOS_CODESIGN_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
       - name: Package macOS .app + .dmg
         env:
           SSB64_VERSION: ${{ matrix.version }}
+          SSB64_REQUIRE_MACOS_SIGNING: "1"
+          SSB64_NOTARIZE: "1"
+          DMG_STYLED: "1"
+          DMG_REQUIRE_STYLED: "1"
+          DMG_TIMEOUT: "300"
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@v4
         # The .dmg is the standard drag-to-Applications installer macOS
@@ -275,12 +348,25 @@ jobs:
           if-no-files-found: error
 
   build-android:
+    name: build-android (${{ matrix.abi }})
     # US-only — the Android pipeline (Gradle asset staging, touch overlay,
     # ROM picker UI) has only ever been tested against the US decomp.
     # Pinning is also enforced in CMakeLists.txt; setting SSB64_VERSION=jp
-    # on Android would FATAL out at configure time.
+    # on Android would FATAL out at configure time. The ABI matrix produces
+    # separate sideload APKs so old 32-bit Android devices are covered without
+    # breaking the historical arm64 release filename.
     runs-on: ubuntu-22.04
-    timeout-minutes: 40
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            artifact_name: BattleShip-android
+            apk_name: BattleShip-android.apk
+          - abi: armeabi-v7a
+            artifact_name: BattleShip-android-armeabi-v7a
+            apk_name: BattleShip-android-armeabi-v7a.apk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -350,13 +436,16 @@ jobs:
         # is Play-Store-only (needs Google's bundletool to install on
         # a device), and this project isn't distributed through Play.
         # Skipping it also keeps the GitHub Release page uncluttered.
+        # The ssb64.abis Gradle property drives AGP's externalNativeBuild to
+        # configure and compile the full native dependency graph for the
+        # selected Android ABI.
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleRelease -Pssb64.abis=${{ matrix.abi }}
       - name: Stage release APK under a stable name
         # Gradle drops the file at app/build/outputs/apk/release/ with
         # a name like app-release.apk or app-release-unsigned.apk
-        # depending on signing config. Normalize to BattleShip-android.apk
-        # so the release job's files: list doesn't need a glob.
+        # depending on signing config. Normalize per ABI so the release
+        # job's files: list doesn't need a glob.
         run: |
           mkdir -p dist
           shopt -s nullglob
@@ -366,12 +455,12 @@ jobs:
             ls -la android/app/build/outputs/apk/release/ || true
             exit 1
           fi
-          cp "${apk[0]}" dist/BattleShip-android.apk
+          cp "${apk[0]}" "dist/${{ matrix.apk_name }}"
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: BattleShip-android
-          path: dist/BattleShip-android.apk
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.apk_name }}
           if-no-files-found: error
 
   build-android-netplay:
@@ -452,6 +541,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    name: build-windows (${{ matrix.version }})
     runs-on: windows-2022
     timeout-minutes: 30
     strategy:
@@ -459,20 +549,13 @@ jobs:
       matrix:
         include:
           - version: us
-            flavor: standard
-            enable_scripting: "0"
+            enable_scripting: "1"
             artifact_name: BattleShip-windows-us
             artifact_path: dist/BattleShip-windows.zip
           - version: jp
-            flavor: standard
             enable_scripting: "0"
             artifact_name: BattleShip-windows-jp
             artifact_path: dist/BattleShip-JP-windows.zip
-          - version: us
-            flavor: modding
-            enable_scripting: "1"
-            artifact_name: BattleShip-windows-us-modding
-            artifact_path: dist/BattleShip-windows-modding.zip
     steps:
       - uses: actions/checkout@v4
         with:
@@ -500,7 +583,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow
         shell: pwsh
-      - name: Package Windows zip (${{ matrix.flavor }})
+      - name: Package Windows zip (${{ matrix.version }})
         env:
           SSB64_VERSION: ${{ matrix.version }}
           SSB64_ENABLE_SCRIPTING: ${{ matrix.enable_scripting }}
@@ -590,8 +673,10 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          # Android: sideload APK only (no Play Store distribution, so
+          # Android: sideload APKs only (no Play Store distribution, so
           # the AAB is skipped). Android is US-only so there's no -JP.
+          # arm64-v8a keeps the historical filename; armeabi-v7a is separate
+          # for older 32-bit devices.
           files: |
             artifacts/BattleShip.dmg
             artifacts/BattleShip-JP.dmg
@@ -603,11 +688,11 @@ jobs:
             artifacts/BattleShip-JP-Netplay-x86_64.AppImage
             artifacts/BattleShip-windows.zip
             artifacts/BattleShip-JP-windows.zip
-            artifacts/BattleShip-windows-modding.zip
-            artifacts/BattleShip-Netplay-windows.zip
-            artifacts/BattleShip-JP-Netplay-windows.zip
-            artifacts/BattleShip-android.apk
-            artifacts/BattleShip-android-netplay.apk
+            BattleShip-windows.zip
+            BattleShip-windows-netplay.zip
+            BattleShip-android.apk
+            BattleShip-android-armeabi-v7a.apk
+            BattleShip-android-netplay.apk
             artifacts/SHA256SUMS.txt
           generate_release_notes: true
           draft:
