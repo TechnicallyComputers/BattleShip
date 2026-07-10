@@ -1,6 +1,6 @@
 # ShockSmall cosmetic RNG → FRAME_COMMIT rng diverge — 2026-07-08
 
-**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak pending)  
+**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak pending) — superseded for all VFX by file-scope `ForcedCosmetic` in `efmanager.c`/`lbparticle.c`; see `docs/bugs/netplay_effect_vfx_forced_cosmetic_rng_2026-07-09.md`.  
 **Scope:** `decomp/src/sys/utils.c`, `decomp/src/sys/utils.h`, `decomp/src/ef/efmanager.c`
 
 ## Symptom

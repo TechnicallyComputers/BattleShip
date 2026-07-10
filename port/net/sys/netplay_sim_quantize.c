@@ -16,6 +16,10 @@
 
 #include <lb/lbcommon.h>
 
+#include <ef/efmanager.h>
+#include <ef/efvars.h>
+
+#include <ft/ftchar/ftcaptain/ftcaptain.h>
 #include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftchar/ftkirby/ftkirby.h>
 #include <ft/ftchar/ftlink/ftlink.h>
@@ -631,10 +635,46 @@ void syNetplayQuantizeNessPKThunderHoldPassiveVars(FTStruct *fp, FTNessPassiveVa
 	}
 }
 
+void syNetplayNessHardenPKJibakuAirVelFromAngle(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	f32 angle;
+	f32 mag;
+	Vec3f *vel;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayFighterInNessPKJibakuSimScope(fp) == FALSE))
+	{
+		return;
+	}
+	if (fp->status_id != nFTNessStatusSpecialAirHiJibaku)
+	{
+		return;
+	}
+	angle = syNetplayQuantizeF32(fp->status_vars.ness.specialhi.pkjibaku_angle);
+	fp->status_vars.ness.specialhi.pkjibaku_angle = angle;
+	vel = &fp->physics.vel_air;
+	mag = lbCommonMag2D(vel);
+	mag = syNetplayQuantizeF32(mag);
+	vel->x = syNetplayQuantizeF32(__cosf(angle) * mag * fp->lr);
+	vel->y = syNetplayQuantizeF32(__sinf(angle) * mag);
+	vel->z = 0.0F;
+}
+
 void syNetplayCanonicalizeNessPKJibakuSimState(GObj *fighter_gobj)
 {
 	FTStruct *fp;
 	DObj *pitch_joint;
+	DObj *root_dobj;
+	s32 ji;
 
 	if (syNetplaySimQuantizeActive() == FALSE)
 	{
@@ -653,6 +693,20 @@ void syNetplayCanonicalizeNessPKJibakuSimState(GObj *fighter_gobj)
 	    syNetplayQuantizeF32(fp->status_vars.ness.specialhi.pkjibaku_angle);
 	syNetplayQuantizeNessPKThunderPos(&fp->status_vars.ness.specialhi.pkthunder_pos);
 	syNetplayQuantizeFighterPhysics(&fp->physics);
+	syNetplayQuantizeMPCollData(&fp->coll_data);
+	root_dobj = DObjGetStruct(fighter_gobj);
+	if (root_dobj != NULL)
+	{
+		syNetplayQuantizeDObjTranslate(root_dobj);
+	}
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+			syNetplayQuantizeDObjRotate(fp->joints[ji]);
+		}
+	}
 	pitch_joint = fp->joints[4];
 	if (pitch_joint != NULL)
 	{
@@ -769,8 +823,47 @@ void syNetplayCanonicalizeNessPKThunderHoldSimState(GObj *fighter_gobj)
 	}
 	syNetplayQuantizeNessPKThunderPos(&fp->status_vars.ness.specialhi.pkthunder_pos);
 	syNetplayQuantizeNessPKThunderHoldPassiveVars(fp, &fp->passive_vars.ness);
+	syNetplayQuantizeFighterPhysics(&fp->physics);
+	syNetplayQuantizeMPCollData(&fp->coll_data);
 	syNetplayCanonicalizeNessPKThunderHoldFighterPose(fighter_gobj);
 	syNetplayCanonicalizeNessPKThunderHoldWeaponsForFighter(fighter_gobj);
+}
+
+sb32 syNetplayFighterInNessPKWaveSimScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess)))
+	{
+		return FALSE;
+	}
+	if ((fp->status_id == nFTNessStatusSpecialHiStart) || (fp->status_id == nFTNessStatusSpecialHiHold) ||
+	    (fp->status_id == nFTNessStatusSpecialAirHiStart) || (fp->status_id == nFTNessStatusSpecialAirHiHold))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+sb32 syNetplayLiveEffectIsNessPKWave(const GObj *effect_gobj, const EFStruct *ep)
+{
+	FTStruct *fp;
+	DObj *dobj;
+
+	if ((effect_gobj == NULL) || (ep == NULL) || (ep->fighter_gobj == NULL) || (ep->proc_update != gcPlayAnimAll))
+	{
+		return FALSE;
+	}
+	fp = ftGetStruct(ep->fighter_gobj);
+	if ((fp == NULL) || (syNetplayFighterInNessPKWaveSimScope(fp) == FALSE))
+	{
+		return FALSE;
+	}
+	dobj = DObjGetStruct((GObj *)effect_gobj);
+	if ((dobj == NULL) || (fp->joints[5] == NULL))
+	{
+		return FALSE;
+	}
+	dobj->user_data.p = fp->joints[5];
+	return TRUE;
 }
 
 sb32 syNetplayFighterInNessSpecialLwSimScope(const FTStruct *fp)
@@ -786,6 +879,26 @@ sb32 syNetplayFighterInNessSpecialLwSimScope(const FTStruct *fp)
 	return FALSE;
 }
 
+static sb32 syNetplayFighterInNessPsychicMagnetSimScope(const FTStruct *fp)
+{
+	if (syNetplayFighterInNessSpecialLwSimScope(fp) == FALSE)
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTNessStatusSpecialLwHold:
+	case nFTNessStatusSpecialAirLwHold:
+	case nFTNessStatusSpecialLwHit:
+	case nFTNessStatusSpecialAirLwHit:
+		return TRUE;
+
+	default:
+		break;
+	}
+	return FALSE;
+}
+
 sb32 syNetplayLiveEffectIsNessPsychicMagnet(const GObj *effect_gobj, const EFStruct *ep)
 {
 	FTStruct *fp;
@@ -796,17 +909,85 @@ sb32 syNetplayLiveEffectIsNessPsychicMagnet(const GObj *effect_gobj, const EFStr
 		return FALSE;
 	}
 	fp = ftGetStruct(ep->fighter_gobj);
-	if ((fp == NULL) || (syNetplayFighterInNessSpecialLwSimScope(fp) == FALSE))
+	if ((fp == NULL) || (syNetplayFighterInNessPsychicMagnetSimScope(fp) == FALSE))
 	{
 		return FALSE;
 	}
 	dobj = DObjGetStruct((GObj *)effect_gobj);
-	if ((dobj == NULL) || (fp->joints[nFTPartsJointTopN] == NULL) ||
-	    (dobj->user_data.p != fp->joints[nFTPartsJointTopN]))
+	if ((dobj == NULL) || (fp->joints[nFTPartsJointTopN] == NULL))
 	{
 		return FALSE;
 	}
+	/* Repin TopN before identity check (PK wave repin path must not run on this shell). */
+	dobj->user_data.p = fp->joints[nFTPartsJointTopN];
 	return TRUE;
+}
+
+static sb32 syNetplayFighterHasLiveNessPsychicMagnet(GObj *fighter_gobj)
+{
+	s32 pass;
+
+	if (fighter_gobj == NULL)
+	{
+		return FALSE;
+	}
+	for (pass = 0; pass < 2; pass++)
+	{
+		GObj *gobj;
+
+		for (gobj = gGCCommonLinks[(pass == 0) ? nGCCommonLinkIDEffect : nGCCommonLinkIDSpecialEffect];
+		     gobj != NULL; gobj = gobj->link_next)
+		{
+			EFStruct *ep = efGetStruct(gobj);
+
+			if ((syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE) && (ep->fighter_gobj == fighter_gobj))
+			{
+				return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
+
+void syNetplayEnsureNessPsychicMagnetEffect(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayFighterInNessPsychicMagnetSimScope(fp) == FALSE))
+	{
+		return;
+	}
+	if (syNetplayFighterHasLiveNessPsychicMagnet(fighter_gobj) != FALSE)
+	{
+		return;
+	}
+	/*
+	 * Vanilla InitVars only mints the bubble when is_effect_attach is FALSE. Rebirth halo / PK wave /
+	 * snapshot restore can leave attach TRUE without a live magnet shell, so absorb gameplay runs
+	 * (glow + sfx) but the PsychicMagnet GObj never spawns.
+	 */
+	if (efManagerNessPsychicMagnetMakeEffect(fighter_gobj) != NULL)
+	{
+		fp->is_effect_attach = TRUE;
+	}
+}
+
+static DObj *syNetplayNessPsychicMagnetAnimDObj(DObj *root_dobj)
+{
+	if (root_dobj == NULL)
+	{
+		return NULL;
+	}
+	return (root_dobj->child != NULL) ? root_dobj->child : root_dobj;
 }
 
 static void syNetplayCanonicalizeNessPsychicMagnetEffectsForFighter(GObj *fighter_gobj)
@@ -830,21 +1011,28 @@ static void syNetplayCanonicalizeNessPsychicMagnetEffectsForFighter(GObj *fighte
 		     gobj = gobj->link_next)
 		{
 			EFStruct *ep;
-			DObj *dobj;
+			DObj *root_dobj;
+			DObj *anim_dobj;
 
 			ep = efGetStruct(gobj);
 			if ((syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) == FALSE) || (ep->fighter_gobj != fighter_gobj))
 			{
 				continue;
 			}
-			gobj->anim_frame = syNetplayQuantizeAnimScalar(gobj->anim_frame);
-			dobj = DObjGetStruct(gobj);
-			if (dobj != NULL)
+			root_dobj = DObjGetStruct(gobj);
+			anim_dobj = syNetplayNessPsychicMagnetAnimDObj(root_dobj);
+			if (anim_dobj == NULL)
 			{
-				dobj->anim_frame = gobj->anim_frame;
-				syNetplayQuantizeDObjAnimPose(dobj);
-				syNetplayQuantizeDObjAnimScalars(dobj);
+				continue;
 			}
+			/*
+			 * AnimJoint lives on the child DObj (tree shell under TopN coupling). Quantize only the
+			 * anim cursor/scalars on that node — not root translate/rotate: pose follows the fighter
+			 * joint and mid-tick pose pinning froze the bubble on one frame (soak2 @405+).
+			 */
+			anim_dobj->anim_frame = syNetplayQuantizeAnimScalar(anim_dobj->anim_frame);
+			gobj->anim_frame = anim_dobj->anim_frame;
+			syNetplayQuantizeDObjAnimScalars(anim_dobj);
 		}
 	}
 }
@@ -883,6 +1071,36 @@ static void syNetplayCanonicalizeNessSpecialLwFighterPose(GObj *fighter_gobj)
 	}
 }
 
+void syNetplayCanonicalizeNessSpecialLwProcUpdateState(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (syNetplayFighterInNessSpecialLwSimScope(fp) == FALSE))
+	{
+		return;
+	}
+	/*
+	 * Mid-tick (Hold/Hit ProcUpdate): fighter pose + camera only. Magnet effect anim runs via
+	 * gcPlayAnimAll on the effect link after fighters; pinning effect pose/anim here froze the
+	 * bubble loop. End-of-tick canonicalize applies magnet anim scalars once gcPlayAnimAll advances.
+	 */
+	syNetplayCanonicalizeNessSpecialLwFighterPose(fighter_gobj);
+	syNetplayEnsureNessPsychicMagnetEffect(fighter_gobj);
+	if (fp->is_absorb != FALSE)
+	{
+		syNetplayCanonicalizeGMCameraSimState();
+	}
+}
+
 void syNetplayCanonicalizeNessSpecialLwSimState(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -901,6 +1119,7 @@ void syNetplayCanonicalizeNessSpecialLwSimState(GObj *fighter_gobj)
 		return;
 	}
 	syNetplayCanonicalizeNessSpecialLwFighterPose(fighter_gobj);
+	syNetplayEnsureNessPsychicMagnetEffect(fighter_gobj);
 	syNetplayCanonicalizeNessPsychicMagnetEffectsForFighter(fighter_gobj);
 	if (fp->is_absorb != FALSE)
 	{
@@ -1188,6 +1407,96 @@ void syNetplayTraceKirbyCopyLinkBoomerangTick(u32 tick)
 }
 #endif /* SSB64_NETMENU */
 
+sb32 syNetplayFighterInCaptainGroundKickGroundCollScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	if ((fp->fkind != nFTKindCaptain) && (fp->fkind != nFTKindNCaptain))
+	{
+		return FALSE;
+	}
+	if (fp->ga != nMPKineticsGround)
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTCaptainStatusSpecialLw:
+	case nFTCaptainStatusSpecialLwLanding:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static void syNetplayHardenCaptainGroundKickCollForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInCaptainGroundKickGroundCollScope(fp) == FALSE)
+	{
+		return;
+	}
+	if (fp->joints[nFTPartsJointTopN] == NULL)
+	{
+		return;
+	}
+	topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
+void syNetplayCanonicalizeCaptainGroundKickSimState(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	DObj *topn_joint;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInCaptainGroundKickGroundCollScope(fp) == FALSE)
+	{
+		return;
+	}
+	fp->physics.vel_ground.x = syNetplayQuantizeF32(fp->physics.vel_ground.x);
+	fp->physics.vel_ground.y = syNetplayQuantizeF32(fp->physics.vel_ground.y);
+	fp->physics.vel_ground.z = syNetplayQuantizeF32(fp->physics.vel_ground.z);
+	fp->physics.vel_air.x = syNetplayQuantizeF32(fp->physics.vel_air.x);
+	fp->physics.vel_air.y = syNetplayQuantizeF32(fp->physics.vel_air.y);
+	fp->physics.vel_air.z = syNetplayQuantizeF32(fp->physics.vel_air.z);
+	fp->status_vars.captain.speciallw.vel_scale =
+	    syNetplayQuantizeF32(fp->status_vars.captain.speciallw.vel_scale);
+	topn_joint = fp->joints[nFTPartsJointTopN];
+	if (topn_joint != NULL)
+	{
+		topn_joint->rotate.vec.f.z = syNetplayQuantizeF32(topn_joint->rotate.vec.f.z);
+	}
+	syNetplayHardenCaptainGroundKickCollForFighter(fighter_gobj);
+}
+
 static void syNetplayHardenPassPlatformCollForFighter(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -1299,6 +1608,17 @@ static void syNetplayCanonicalizeAnimEndWaitThreshold(GObj *fighter_gobj, FTStru
 	    (syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(fp) != FALSE))
 	{
 		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
+		return;
+	}
+	/*
+	 * Cliff windup/climb statuses gate on fighter_gobj->anim_frame <= 0.0F (same class as GuardOff /
+	 * Link SpecialN charge end). Quantize grid can leave a tiny positive frame that never satisfies
+	 * the check after synctest emergency restore re-pins mid-windup anim (~frame 30).
+	 */
+	if ((fp->status_id >= nFTCommonStatusCliffCatch) &&
+	    (fp->status_id <= nFTCommonStatusCliffEscapeSlow2))
+	{
+		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
 	}
 }
 #endif
@@ -1374,6 +1694,7 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	syNetplayCanonicalizeNessSpecialLwSimState(fighter_gobj);
 	syNetplayCanonicalizePikachuQuickAttackSimState(fighter_gobj);
 	syNetplayCanonicalizeFoxFirefoxSimState(fighter_gobj);
+	syNetplayCanonicalizeCaptainGroundKickSimState(fighter_gobj);
 	if (syNetplayFighterInPassPlatformGroundCollScope(fp) != FALSE)
 	{
 		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
@@ -1585,6 +1906,23 @@ void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void)
 	     fighter_gobj = fighter_gobj->link_next)
 	{
 		syNetplayHardenAirborneDamageKnockbackCollForFighter(fighter_gobj);
+	}
+}
+
+void syNetplayHardenCaptainGroundKickCollBeforeSim(void)
+{
+	GObj *fighter_gobj;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+#endif
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		syNetplayHardenCaptainGroundKickCollForFighter(fighter_gobj);
 	}
 }
 

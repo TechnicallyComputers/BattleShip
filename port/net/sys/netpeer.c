@@ -2798,6 +2798,9 @@ static void syNetPeerCommitStagedBootstrapMetadataNow(sb32 ignore_barrier_guard)
 	}
 	syNetReplayApplyBattleMetadata(&sSYNetPeerBootstrapMetadata);
 	syUtilsSetRandomSeed(sSYNetPeerBootstrapMetadata.rng_seed);
+#if defined(SSB64_NETMENU)
+	syUtilsResetCosmeticRandomSeed(sSYNetPeerBootstrapMetadata.rng_seed);
+#endif
 	gSCManagerSceneData.scene_prev = nSCKindVSMode;
 #if defined(SSB64_NETMENU) && defined(PORT)
 	if (gSYNetPeerSuppressBootstrapSceneAdvance != FALSE)

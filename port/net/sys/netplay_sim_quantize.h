@@ -97,6 +97,14 @@ extern void syNetplayHardenPassPlatformCollBeforeSim(void);
  */
 extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
 
+/*
+ * Grounded Captain Falcon Kick / landing slide: re-anchor MPColl pos_prev to TopN before gcRunAll so
+ * flooredge diff-branch integration matches cross-ISA (soak2 session 458909621 FC @3120).
+ */
+extern sb32 syNetplayFighterInCaptainGroundKickGroundCollScope(const struct FTStruct *fp);
+extern void syNetplayCanonicalizeCaptainGroundKickSimState(struct GObj *fighter_gobj);
+extern void syNetplayHardenCaptainGroundKickCollBeforeSim(void);
+
 extern void syNetplayCanonicalizeWeaponSimState(GObj *weapon_gobj);
 extern void syNetplayCanonicalizeActiveWeaponsForNetplay(void);
 
@@ -144,6 +152,8 @@ extern void syNetplayCanonicalizePikachuQuickAttackSimState(struct GObj *fighter
 
 extern void syNetplayCanonicalizeNessPKJibakuSimState(struct GObj *fighter_gobj);
 
+extern void syNetplayNessHardenPKJibakuAirVelFromAngle(struct GObj *fighter_gobj);
+
 extern void syNetplayCanonicalizeNessPKJibakuLaunchState(struct GObj *fighter_gobj);
 
 extern void syNetplayCanonicalizeNessPKThunderWeaponSimState(struct GObj *weapon_gobj);
@@ -152,7 +162,15 @@ extern void syNetplayCanonicalizeNessPKThunderHoldSimState(struct GObj *fighter_
 
 extern sb32 syNetplayFighterInNessSpecialLwSimScope(const struct FTStruct *fp);
 
+extern sb32 syNetplayFighterInNessPKWaveSimScope(const struct FTStruct *fp);
+
+extern sb32 syNetplayLiveEffectIsNessPKWave(const struct GObj *effect_gobj, const struct EFStruct *ep);
+
 extern sb32 syNetplayLiveEffectIsNessPsychicMagnet(const struct GObj *effect_gobj, const struct EFStruct *ep);
+
+extern void syNetplayEnsureNessPsychicMagnetEffect(struct GObj *fighter_gobj);
+
+extern void syNetplayCanonicalizeNessSpecialLwProcUpdateState(struct GObj *fighter_gobj);
 
 extern void syNetplayCanonicalizeNessSpecialLwSimState(struct GObj *fighter_gobj);
 

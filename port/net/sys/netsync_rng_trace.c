@@ -154,6 +154,12 @@ static sb32 syNetSyncRngStepSiteEnabled(void)
 
 static sb32 syNetSyncRngTraceShouldRecord(u32 tick)
 {
+	/* Always ring-buffer gameplay LCG steps during an active netplay VS session so
+	 * FRAME_COMMIT rng diverge can dump the prior tick without env flags. */
+	if (syNetRollbackIsActive() != FALSE)
+	{
+		return TRUE;
+	}
 	if (syNetSyncRngTraceTickInWindow(tick) == FALSE)
 	{
 		return FALSE;
@@ -367,7 +373,8 @@ static void syNetSyncLogRngHashWalkBody(u32 sim_tick, u32 local_rng, u32 peer_rn
 	dump_count = sSYNetSyncRngTraceStepCount;
 	truncated = sSYNetSyncRngTraceRingTruncated;
 	archived_tick = sSYNetSyncRngTraceArchivedTick;
-	if ((archived_tick == sim_tick) && (sSYNetSyncRngTraceArchivedStepCount > 0U))
+	/* Frame-commit validation at T queries sim_tick=T-1; prefer the last archived tick <= sim_tick. */
+	if ((sSYNetSyncRngTraceArchivedStepCount > 0U) && (archived_tick <= sim_tick))
 	{
 		steps = sSYNetSyncRngTraceArchivedRing;
 		dump_count = sSYNetSyncRngTraceArchivedStepCount;

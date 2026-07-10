@@ -32,6 +32,7 @@ extern void syTaskmanSetIntervals(u16 update, u16 framedraw);
 #if defined(SSB64_NETMENU)
 #include <gr/grcommon/grpupupu.h>
 #include <gr/ground.h>
+#include <gm/gmcamera.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
 #include <sys/netplay_fox_firefox_gate.h>
@@ -6674,6 +6675,7 @@ void syNetRollbackAfterBattleUpdate(void)
 		}
 		syNetplayNessRunLiveJibakuCatchUpAll();
 		syNetplayRebirthCatchUpFightersTick();
+		syNetRbSnapCatchUpCaptainGroundKickForwardIfDue();
 		syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects();
 		syNetRbSnapForwardPruneStaleFoxReflectors();
 		if (syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg() != FALSE)
@@ -6779,6 +6781,18 @@ void syNetRollbackAfterBattleUpdate(void)
 				syNetRbSnapshotPurgeOrphanEffectShellsAfterSynctest();
 				syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_recover");
 #if defined(SSB64_NETMENU)
+				/*
+				 * Synctest load pins CObj with used_run=0 (load-hash fidelity). Emergency restore
+				 * puts live CObj back, but if forward sim left at/eye far from fighter interests
+				 * (quake vel_at yank), one integrate starts pan recovery immediately instead of
+				 * waiting for the next battle camera tick. See
+				 * docs/bugs/netplay_cliffwait_camera_cobj_yank_2026-07-10.md.
+				 */
+				if (gGMCameraGObj != NULL)
+				{
+					gmCameraRunFuncCamera(gGMCameraGObj);
+					syNetplayCanonicalizeGMCameraSimState();
+				}
 				syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
 				syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_whispy_presentation");
 #endif
@@ -11162,10 +11176,10 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 	sSYNetRollbackExecutingEpisode.load_tick = load_tick;
 	sSYNetRollbackExecutingEpisode.mismatch_tick = mismatch_tick;
 #if defined(SSB64_NETMENU)
-	if (sSYNetRollbackFcStateRecoveryActive != FALSE)
-	{
-		syNetplayNessResimReplayHardeningAfterLoadStep();
-	}
+	/* Ness PK Thunder hold/jibaku: rebuild ephemeral tracking + canonicalize after every
+	 * resim load (not only FC recovery). Force-rebuild ThrowEntryTick once here — not on
+	 * every replay tick — so Canonical fall vel keeps accelerating (vanilla air drift). */
+	syNetplayNessResimHardeningAfterSnapshotLoad();
 #endif
 #ifdef PORT
 	if (syNetRollbackTryDeeperLoadBeforeResim(&load_tick, &mismatch_tick) != FALSE)
@@ -11585,10 +11599,9 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 	while ((t < sSYNetRollbackResimTargetTick) && (ran < limit))
 	{
 #if defined(SSB64_NETMENU)
-		if (sSYNetRollbackFcStateRecoveryActive != FALSE)
-		{
-			syNetplayNessResimReplayHardeningAfterLoadStep();
-		}
+		/* Ness PK Thunder hold/jibaku: weapon rebind + hold canonicalize each replayed tick
+		 * (not only FC recovery) so cross-ISA gravity drift cannot fork jibaku launch pose. */
+		syNetplayNessResimReplayHardeningAfterLoadStep();
 		syNetplayResimReplayHangDiagNoteReplayTickBegin(t, ran, limit);
 #endif
 		syNetInputSetTick(t);

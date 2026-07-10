@@ -3652,7 +3652,6 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 	fold = syNetSyncFnvAccumulateU32(fold, (u32)syNetRbSnapEffectRespawnKindFromLive(gobj, ep));
 	fold = syNetSyncFnvAccumulateU32(fold, (ep->fighter_gobj != NULL) ? (u32)ep->fighter_gobj->id : 0U);
 	fold = syNetSyncFnvAccumulateU32(fold, (ep->is_pause_effect != FALSE) ? 1U : 0U);
-	fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
 	if (ep->proc_update == efManagerFoxReflectorProcUpdate)
 	{
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.reflector.index);
@@ -3684,29 +3683,11 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 				fold = syNetSyncFnvAccumulateU32(fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_despawn_wait);
 				fold = syNetSyncFnvAccumulateU32(fold, (u32)ftStatusVarsRebirth(fp_halo)->halo_lower_wait);
 			}
-			else if (((fp_halo->fkind == nFTKindNess) || (fp_halo->fkind == nFTKindNNess)) &&
-			         (DObjGetStruct(gobj) != NULL) &&
-			         (DObjGetStruct(gobj)->user_data.p == fp_halo->joints[5]))
+			else if (syNetplayLiveEffectIsNessPKWave(gobj, ep) != FALSE)
 			{
-				switch (fp_halo->status_id)
-				{
-				case nFTNessStatusSpecialHiStart:
-				case nFTNessStatusSpecialHiHold:
-				case nFTNessStatusSpecialHiEnd:
-				case nFTNessStatusSpecialHiJibaku:
-				case nFTNessStatusSpecialAirHiStart:
-				case nFTNessStatusSpecialAirHiHold:
-				case nFTNessStatusSpecialAirHiEnd:
-				case nFTNessStatusSpecialAirHiBound:
-				case nFTNessStatusSpecialAirHiJibaku:
-					ness_pkwave_effect = TRUE;
-					fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
-					fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
-					break;
-
-				default:
-					break;
-				}
+				ness_pkwave_effect = TRUE;
+				fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
+				fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
 			}
 			else if (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE)
 			{
@@ -3733,6 +3714,26 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 	if (syNetRbSnapshotLiveEffectIsQuake(gobj, ep) != FALSE)
 	{
 		fold = syNetSyncFnvAccumulateU32(fold, (u32)ep->effect_vars.quake.priority);
+	}
+	/*
+	 * PK Thunder wave VFX (gcPlayAnimAll on joint 5) is presentation-only during hold; gameplay
+	 * lives in weapon sim. anim_frame can advance 0/1/2 times per tick cross-ISA (soak2 session
+     * 38366538 tick 521+: Linux vs Android eff_fold_diag off by one frame; FRAME_COMMIT eff-only
+     * @525 with matching figh/wpn/rng). Fold status_total_tics instead of anim_frame for this shell.
+	 */
+	if (ness_pkwave_effect != FALSE)
+	{
+		FTStruct *fp_pkwave;
+
+		fp_pkwave = ftGetStruct(ep->fighter_gobj);
+		if (fp_pkwave != NULL)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_pkwave->status_total_tics);
+		}
+	}
+	else
+	{
+		fold = syNetSyncFnvAccumulateU32(fold, syNetSyncHashF32(gobj->anim_frame));
 	}
 	dobj = DObjGetStruct(gobj);
 	if ((dobj != NULL) && (rebirth_halo_effect == FALSE) && (ness_pkwave_effect == FALSE) &&

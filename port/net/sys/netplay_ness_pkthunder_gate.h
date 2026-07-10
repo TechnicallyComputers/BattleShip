@@ -26,11 +26,17 @@ extern sb32 syNetplayNessClampFcRecoveryLoadTick(u32 *io_load_tick, u32 *io_mism
 
 extern void syNetplayNessResimReplayHardeningAfterLoadStep(void);
 
+extern void syNetplayNessResimHardeningAfterSnapshotLoad(void);
+
 extern void syNetRbSnapRebindNessPKJibakuProcs(struct GObj *fighter_gobj, struct FTStruct *fp);
 
 extern void syNetplayNessSanitizePKJibakuStatusVars(struct FTStruct *fp);
 
 extern void syNetplayNessSanitizePKThunderThrowStatusVars(struct FTStruct *fp);
+
+extern f32 syNetplayNessCanonicalPKThunderHoldFallVelY(struct FTStruct *fp);
+
+extern void syNetplayNessHardenPKThunderHoldAirFallAfterTranslate(struct GObj *fighter_gobj);
 
 extern sb32 syNetplayNessHoldJibakuCollideBlocked(const struct FTStruct *fp);
 
@@ -104,9 +110,12 @@ extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStr
 #define syNetplayNessAnyLiveFighterInFcStateRecoveryDeferScope() (FALSE)
 #define syNetplayNessClampFcRecoveryLoadTick(io_load_tick, io_mismatch_tick) (FALSE)
 #define syNetplayNessResimReplayHardeningAfterLoadStep() ((void)0)
+#define syNetplayNessResimHardeningAfterSnapshotLoad() ((void)0)
 #define syNetRbSnapRebindNessPKJibakuProcs(fighter_gobj, fp) ((void)0)
 #define syNetplayNessSanitizePKJibakuStatusVars(fp) ((void)0)
 #define syNetplayNessSanitizePKThunderThrowStatusVars(fp) ((void)0)
+#define syNetplayNessCanonicalPKThunderHoldFallVelY(fp) (0.0F)
+#define syNetplayNessHardenPKThunderHoldAirFallAfterTranslate(fighter_gobj) ((void)0)
 #define syNetplayNessHoldJibakuCollideBlocked(fp) (FALSE)
 #define syNetplayNessSanitizeAllFightersAfterSlotApply() ((void)0)
 #define syNetplayNessSyncHoldEntryTrackingFromApply(fp) ((void)0)

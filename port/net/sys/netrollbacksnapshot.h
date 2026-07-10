@@ -264,6 +264,8 @@ extern void syNetRbDedupeActiveItemsForRollbackHash(struct GObj **items, s32 *co
 extern void syNetRbSnapshotRepairItemThrowWindowForVerify(void);
 /* Forward sim: airborne Thrown/Fall MPColl repair + hold-state tracking (not load verify). */
 extern void syNetRbSnapshotAfterSimLinkBombForwardRepair(void);
+/* Forward sim: late ground-kick anim-end catch-up + optional forward_late_kick trace. */
+extern void syNetRbSnapCatchUpCaptainGroundKickForwardIfDue(void);
 /* itMainSetFighterRelease: clear hold-phase floor coll before first thrown map proc. */
 extern void syNetRbSnapshotHardenLinkBombAtThrowRelease(struct GObj *item_gobj);
 /* Before gcRunAll: re-anchor airborne Thrown/Fall bomb MPColl (no floor probe). */

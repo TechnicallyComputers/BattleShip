@@ -219,6 +219,9 @@ void syNetReplayInitDebugEnv(void)
 		{
 			syNetReplayApplyBattleMetadata(&sSYNetReplayLoadedMetadata);
 			syUtilsSetRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#if defined(SSB64_NETMENU)
+			syUtilsResetCosmeticRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#endif
 			gSCManagerSceneData.scene_prev = nSCKindVSMode;
 			gSCManagerSceneData.scene_curr = nSCKindVSBattle;
 		}
@@ -237,6 +240,9 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 		syNetInputClearReplayFrames();
 		syNetInputSetReplayMetadata(&sSYNetReplayLoadedMetadata);
 		syUtilsSetRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#if defined(SSB64_NETMENU)
+		syUtilsResetCosmeticRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#endif
 
 		for (tick = 0; tick < sSYNetReplayLoadedFrameCount; tick++)
 		{
@@ -764,6 +770,9 @@ sb32 syNetReplayBeginUserPlayback(const char *path)
 	syNetReplayStrCopyN(sSYNetReplayUserPlaybackPath, sizeof(sSYNetReplayUserPlaybackPath), path);
 	syNetReplayApplyBattleMetadata(&sSYNetReplayLoadedMetadata);
 	syUtilsSetRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#if defined(SSB64_NETMENU)
+	syUtilsResetCosmeticRandomSeed(sSYNetReplayLoadedMetadata.rng_seed);
+#endif
 	sSYNetReplayPlayPath = sSYNetReplayUserPlaybackPath;
 	sSYNetReplayIsUserPlaybackPending = TRUE;
 	gSCManagerSceneData.is_vs_replay_playback = (ub8)TRUE;

@@ -5,7 +5,7 @@
 
 #ifdef PORT
 
-/* Game LCG hooks (syUtilsRandUShort path). Offline / netmenu-off: empty stubs in netsync_hash_stubs.c */
+/* Game LCG hooks (syUtilsRandUShort and syUtilsRandFloat paths). Offline / netmenu-off: empty stubs in netsync_hash_stubs.c */
 extern void syNetSyncRngTraceBeforeGameSeedStep(void);
 extern void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after);
 
