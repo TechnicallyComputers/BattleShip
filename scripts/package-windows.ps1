@@ -519,6 +519,16 @@ Import-VcVars64IfNeeded
 $PythonExe = (Get-Command python).Source
 Write-Host "Using Python: $PythonExe"
 
+# GHA windows-2022 (and VS Enterprise images) export VCPKG_ROOT to
+# "C:\Program Files\Microsoft Visual Studio\...\vcpkg". automate-vcpkg then
+# installs packages there, while BattleShip historically looked only under
+# ${BuildDir}/libultraship/vcpkg — so curl never appeared for SSB64_NETMENU.
+# Pin VCPKG_ROOT to the per-build local tree before configure.
+$LocalVcpkgRoot = Join-Path $BuildDir "libultraship\vcpkg"
+Remove-InvalidVcpkgTree $LocalVcpkgRoot
+$env:VCPKG_ROOT = $LocalVcpkgRoot
+Write-Host "VCPKG_ROOT=$env:VCPKG_ROOT (local; ignores VS Program Files vcpkg)"
+
 $CmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
     "-DDISABLE_SCRIPTING=$DisableScripting",

@@ -172,8 +172,11 @@ set(BUILD_NAUDIO ON CACHE BOOL "" FORCE)
 set(BUILD_SSB64 ON CACHE BOOL "" FORCE)
 
 # MSVC netmenu: libcurl via the same vcpkg triplet as libultraship (see windows-vcpkg.cmake).
+# FORCE so a stale empty cache entry cannot drop curl/pthreads from the install list.
 if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND USE_AUTO_VCPKG)
-    set(LUS_VCPKG_EXTRA_PACKAGES curl pthreads CACHE INTERNAL "")
+    set(LUS_VCPKG_EXTRA_PACKAGES curl pthreads CACHE INTERNAL
+        "Extra vcpkg packages for SSB64_NETMENU (installed by libultraship)" FORCE)
+    message(STATUS "SSB64_NETMENU: requesting vcpkg extras: ${LUS_VCPKG_EXTRA_PACKAGES}")
 endif()
 
 ################################################################################
@@ -201,19 +204,39 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
         find_package(CURL REQUIRED)
         find_package(Threads REQUIRED)
     else()
-        set(_SSB64_VCPKG_ROOT "${CMAKE_BINARY_DIR}/libultraship/vcpkg")
+        # Prefer the vcpkg tree LUS actually bootstrapped. GHA windows-2022 often sets
+        # VCPKG_ROOT to the VS Enterprise copy under Program Files; packages may land
+        # there even when CMAKE_BINARY_DIR/libultraship/vcpkg also exists. Search both.
+        set(_SSB64_VCPKG_ROOTS "")
+        if(DEFINED VCPKG_ROOT AND VCPKG_ROOT)
+            list(APPEND _SSB64_VCPKG_ROOTS "${VCPKG_ROOT}")
+        endif()
+        if(DEFINED ENV{VCPKG_ROOT} AND NOT "$ENV{VCPKG_ROOT}" STREQUAL "")
+            list(APPEND _SSB64_VCPKG_ROOTS "$ENV{VCPKG_ROOT}")
+        endif()
+        list(APPEND _SSB64_VCPKG_ROOTS "${CMAKE_BINARY_DIR}/libultraship/vcpkg")
+        list(REMOVE_DUPLICATES _SSB64_VCPKG_ROOTS)
+
         set(_SSB64_VCPKG_INSTALLED "")
-        foreach(_SSB64_VCPKG_TRIPLET IN ITEMS
-            "${VCPKG_TARGET_TRIPLET}"
-            x64-windows-static
-            x64-windows
-        )
-            if(NOT _SSB64_VCPKG_TRIPLET)
-                continue()
-            endif()
-            set(_SSB64_VCPKG_CANDIDATE "${_SSB64_VCPKG_ROOT}/installed/${_SSB64_VCPKG_TRIPLET}")
-            if(EXISTS "${_SSB64_VCPKG_CANDIDATE}/share/curl/CURLConfig.cmake")
-                set(_SSB64_VCPKG_INSTALLED "${_SSB64_VCPKG_CANDIDATE}")
+        set(_SSB64_VCPKG_ROOT_USED "")
+        foreach(_SSB64_VCPKG_ROOT IN LISTS _SSB64_VCPKG_ROOTS)
+            foreach(_SSB64_VCPKG_TRIPLET IN ITEMS
+                "${VCPKG_TARGET_TRIPLET}"
+                "${VCPKG_TRIPLET}"
+                x64-windows-static
+                x64-windows
+            )
+                if(NOT _SSB64_VCPKG_TRIPLET)
+                    continue()
+                endif()
+                set(_SSB64_VCPKG_CANDIDATE "${_SSB64_VCPKG_ROOT}/installed/${_SSB64_VCPKG_TRIPLET}")
+                if(EXISTS "${_SSB64_VCPKG_CANDIDATE}/share/curl/CURLConfig.cmake")
+                    set(_SSB64_VCPKG_INSTALLED "${_SSB64_VCPKG_CANDIDATE}")
+                    set(_SSB64_VCPKG_ROOT_USED "${_SSB64_VCPKG_ROOT}")
+                    break()
+                endif()
+            endforeach()
+            if(_SSB64_VCPKG_INSTALLED)
                 break()
             endif()
         endforeach()
@@ -221,14 +244,16 @@ if(SSB64_NETMENU AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
             set(SSB64_VCPKG_CURL_PREFIX "${_SSB64_VCPKG_INSTALLED}" CACHE INTERNAL
                 "vcpkg installed prefix for curl (headers under include/curl/)")
             list(APPEND CMAKE_PREFIX_PATH "${_SSB64_VCPKG_INSTALLED}")
-            message(STATUS "SSB64 vcpkg prefix for CURL: ${_SSB64_VCPKG_INSTALLED}")
+            message(STATUS "SSB64 vcpkg prefix for CURL: ${_SSB64_VCPKG_INSTALLED} (root ${_SSB64_VCPKG_ROOT_USED})")
         else()
-            message(STATUS "vcpkg root: ${_SSB64_VCPKG_ROOT}")
-            if(EXISTS "${_SSB64_VCPKG_ROOT}/installed")
-                file(GLOB _SSB64_VCPKG_TRIPLETS LIST_DIRECTORIES true "${_SSB64_VCPKG_ROOT}/installed/*")
-                message(STATUS "vcpkg installed triplets: ${_SSB64_VCPKG_TRIPLETS}")
-            endif()
-            message(FATAL_ERROR "vcpkg curl package missing under ${_SSB64_VCPKG_ROOT}/installed/*; see libultraship vcpkg install output above")
+            message(STATUS "vcpkg roots searched: ${_SSB64_VCPKG_ROOTS}")
+            foreach(_SSB64_VCPKG_ROOT IN LISTS _SSB64_VCPKG_ROOTS)
+                if(EXISTS "${_SSB64_VCPKG_ROOT}/installed")
+                    file(GLOB _SSB64_VCPKG_TRIPLETS LIST_DIRECTORIES true "${_SSB64_VCPKG_ROOT}/installed/*")
+                    message(STATUS "vcpkg installed under ${_SSB64_VCPKG_ROOT}: ${_SSB64_VCPKG_TRIPLETS}")
+                endif()
+            endforeach()
+            message(FATAL_ERROR "vcpkg curl package missing under searched roots; see libultraship vcpkg install output above (need LUS_VCPKG_EXTRA_PACKAGES=curl pthreads)")
         endif()
         find_package(CURL REQUIRED CONFIG)
         find_package(pthreads CONFIG REQUIRED)
