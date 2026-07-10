@@ -137,3 +137,6 @@ debug-rollback.env
 debug-rollback.env
 debug-resimtest.env
 .cursor/debug-3b7f79.log
+
+# Accidental media sidecars — never commit
+*.torrent
