@@ -205,11 +205,11 @@ The debug runner is controlled with environment variables:
 
 ```sh
 cd build
-SSB64_REPLAY_RECORD=/tmp/test.ssb64r SSB64_REPLAY_RECORD_FRAMES=1800 ./BattleShip
+SSB64_REPLAY_RECORD=/tmp/test.ssb64r SSB64_REPLAY_RECORD_FRAMES=43200 ./BattleShip
 SSB64_REPLAY_PLAY=/tmp/test.ssb64r ./BattleShip
 ```
 
-`SSB64_REPLAY_RECORD_FRAMES` is optional and defaults to 1800 frames. Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
+`SYNETINPUT_REPLAY_MAX_FRAMES` / default record ceiling is **43200** (~12 minutes @ 60 Hz). Automatch auto-save writes on **match end** (`syNetReplayFinishVSSession`); `SSB64_REPLAY_RECORD_FRAMES` is optional and only forces an early flush when set below the max (debug short captures). Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
 
 ## Debug P2P Netplay
 

@@ -325,7 +325,7 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 ## Replay ([`port/net/sys/netreplay.c`](port/net/sys/netreplay.c))
 
 - **`SSB64_REPLAY_RECORD`**, **`SSB64_REPLAY_PLAY`** — Paths for record / playback.
-- **`SSB64_REPLAY_RECORD_FRAMES`** — Cap recorded frames.
+- **`SSB64_REPLAY_RECORD_FRAMES`** — Optional early-flush cap (1…`SYNETINPUT_REPLAY_MAX_FRAMES`). Default ceiling is **43200** (~12 min @ 60 Hz). Automatch auto-save still finalizes on match end; setting this below max only truncates debug `SSB64_REPLAY_RECORD` captures early.
 
 ---
 

@@ -30,7 +30,9 @@ extern int atoi(const char *s);
 #endif
 #endif
 
-#define SYNETREPLAY_DEFAULT_RECORD_FRAMES 1800
+/* Default safety ceiling matches SYNETINPUT_REPLAY_MAX_FRAMES (~12 min @ 60 Hz).
+ * Automatch auto-save writes on match end (syNetReplayFinishVSSession), not mid-match. */
+#define SYNETREPLAY_DEFAULT_RECORD_FRAMES SYNETINPUT_REPLAY_MAX_FRAMES
 
 typedef struct SYNetReplayFileHeader
 {
@@ -208,9 +210,9 @@ void syNetReplayInitDebugEnv(void)
 	{
 		s32 frame_limit = atoi(frame_limit_env);
 
-		if ((frame_limit > 0) && (frame_limit < SYNETINPUT_REPLAY_MAX_FRAMES))
+		if ((frame_limit > 0) && (frame_limit <= (s32)SYNETINPUT_REPLAY_MAX_FRAMES))
 		{
-			sSYNetReplayRecordFrameLimit = frame_limit;
+			sSYNetReplayRecordFrameLimit = (u32)frame_limit;
 		}
 	}
 	if (sSYNetReplayPlayPath != NULL)
@@ -280,9 +282,16 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 
 void syNetReplayUpdate(void)
 {
+	/* Recording is finalized on match end via syNetReplayFinishVSSession()
+	 * (scVSBattleStartScene). Do not write mid-match when the safety ceiling
+	 * is hit — new frames simply stop accepting past MAX; the file is still
+	 * flushed when the battle ends. Optional SSB64_REPLAY_RECORD_FRAMES only
+	 * shrinks the in-memory ceiling for debug captures. */
 	if ((sSYNetReplayIsRecording != FALSE) && (sSYNetReplayIsRecordWritten == FALSE) &&
-		(syNetInputGetRecordedFrameCount() >= sSYNetReplayRecordFrameLimit))
+	    (syNetInputGetRecordedFrameCount() >= sSYNetReplayRecordFrameLimit) &&
+	    (sSYNetReplayRecordFrameLimit < SYNETINPUT_REPLAY_MAX_FRAMES))
 	{
+		/* Debug-only early stop when env requested a short capture. */
 		syNetReplayFinishVSSession();
 	}
 	if ((sSYNetReplayIsPlaybackActive != FALSE) && (sSYNetReplayIsPlaybackVerified == FALSE) &&

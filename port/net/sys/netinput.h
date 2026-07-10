@@ -38,7 +38,8 @@
 #include <sys/controller.h>
 
 #define SYNETINPUT_HISTORY_LENGTH 720
-#define SYNETINPUT_REPLAY_MAX_FRAMES 21600
+/* Full-match replay stream: 12 minutes @ 60 Hz (covers stock + sudden death). */
+#define SYNETINPUT_REPLAY_MAX_FRAMES 43200
 #define SYNETINPUT_REPLAY_MAGIC 0x53534E52 // SSNR
 #define SYNETINPUT_REPLAY_VERSION 2
 
