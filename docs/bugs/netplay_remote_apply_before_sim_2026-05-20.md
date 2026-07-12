@@ -24,7 +24,7 @@ On the host at tick 548, `sim_state_tick` logged Kirby `status=10` (hold-last st
 - `syNetInputPumpIngressAndPromoteRemoteThroughTick` — final ingress pump + promote wire rows for recent sim ticks before resolve/sim.
 - Called from `syNetInputFuncRead` immediately before `syNetInputSynchronizeInputsForTick`.
 - `syNetInputRepublishRemoteHumanControllersForTick` — same pump/promote, then re-resolve/re-publish remote slots into `gSYControllerDevices`; called from `scVSBattleFuncUpdate` immediately before `ifCommonBattleUpdateInterfaceAll`. Returns FALSE when wire is not ready (battle sim skipped, `syNetPeerUpdate` recv runs).
-- `syNetInputRemoteHumanWireReadyForSimTick` — under authoritative wire contract, every remote-human slot must have strict wire-confirmed remote history for sim tick `T` before publish/sim. Stalls as **R** in `syNetTickCommitEvaluate` when phase-lock prediction would otherwise advance but resolve would still use hold-last/neutral (symmetric host P1 + client P0 soak @421).
+- `syNetInputRemoteHumanWireReadyForSimTick` — confirmed-path readiness under the authoritative wire contract. Originally stalled as **R** whenever phase-lock prediction would advance without confirmed rows (Fox @421). That veto made prediction a no-op; superseded for rollback sessions by predict-approved FuncRead/Republish + hold-last tagged `RemotePredicted` (`docs/bugs/netplay_predict_gate_veto_lockstep_2026-07-11.md`). Prediction-recovery windows still require confirmed.
 
 ## Verification
 

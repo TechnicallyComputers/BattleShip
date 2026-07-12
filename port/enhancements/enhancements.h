@@ -9,6 +9,8 @@ extern "C" {
 
 #define PORT_ENHANCEMENT_MAX_PLAYERS 4
 
+#include "netplay_cvar_allowlist.h"
+
 int port_enhancement_tap_jump_disabled(int player_index);
 
 // Hitbox-view debug overlay. Returns the dbObjectDisplayMode the caller should

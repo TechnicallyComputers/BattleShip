@@ -62,6 +62,16 @@ static MmIceCandidateSlot sCandQ[MM_ICE_CANDIDATE_QUEUE];
 static u32 sCandHead;
 static u32 sCandTail;
 static u32 sCandCount;
+/*
+ * Drain scratch for mmIcePoll — NOT a stack local. Each slot is MM_ICE_CANDIDATE_MAX
+ * (280) bytes × 32 ≈ 9 KB. Poll runs from the VS GObj coroutine (PORT_STACK_GOBJ =
+ * 64 KB) after deep snapshot-apply frames; a 9 KB frame tips the stack into the
+ * PROT_NONE guard → SIGSEGV with garbage FP (= just-logged figh hash). Single-threaded
+ * game poll; reentrancy guarded in mmIcePoll. See
+ * docs/bugs/netplay_mmicepoll_cand_copy_stack_overflow_2026-07-12.md.
+ */
+static MmIceCandidateSlot sCandDrainCopy[MM_ICE_CANDIDATE_QUEUE];
+static sb32 sCandDrainActive;
 
 /* Last juice_send status for logging (not errno). */
 static int sIceLastSendJuiceErr;
@@ -1769,7 +1779,6 @@ MmIceState mmIcePoll(void)
 	MmIceState st;
 	u32 i;
 	u32 cand_count;
-	MmIceCandidateSlot cand_copy[MM_ICE_CANDIDATE_QUEUE];
 	sb32 gathering_done;
 	MmIceOnLocalCandidateFn on_candidate;
 	MmIceOnGatheringDoneFn on_gathering_done;
@@ -1785,19 +1794,35 @@ MmIceState mmIcePoll(void)
 	{
 		st = MM_ICE_STATE_IDLE;
 	}
+	/*
+	 * Nested poll (candidate callback → PeerUpdate → mmIcePoll): refresh juice
+	 * state only. Nested drain would clobber sCandDrainCopy mid-callback.
+	 */
+	if (sCandDrainActive != FALSE)
+	{
+		(void)pthread_mutex_lock(&sIceMutex);
+		sIceState = st;
+		(void)pthread_mutex_unlock(&sIceMutex);
+		return st;
+	}
 	cand_count = 0U;
 	gathering_done = FALSE;
 	on_candidate = NULL;
 	on_gathering_done = NULL;
 	callback_user = NULL;
+	sCandDrainActive = TRUE;
 	(void)pthread_mutex_lock(&sIceMutex);
 	sIceState = st;
 	cand_count = sCandCount;
+	if (cand_count > MM_ICE_CANDIDATE_QUEUE)
+	{
+		cand_count = MM_ICE_CANDIDATE_QUEUE;
+	}
 	for (i = 0U; i < cand_count; i++)
 	{
 		u32 idx = (sCandHead + i) % MM_ICE_CANDIDATE_QUEUE;
 
-		cand_copy[i] = sCandQ[idx];
+		sCandDrainCopy[i] = sCandQ[idx];
 	}
 	sCandHead = sCandTail;
 	sCandCount = 0U;
@@ -1814,15 +1839,42 @@ MmIceState mmIcePoll(void)
 	{
 		if (on_candidate != NULL)
 		{
-			on_candidate(cand_copy[i].sdp, callback_user);
+			on_candidate(sCandDrainCopy[i].sdp, callback_user);
 		}
 	}
 	if ((gathering_done != FALSE) && (on_gathering_done != NULL))
 	{
 		on_gathering_done(callback_user);
 	}
+	sCandDrainActive = FALSE;
 	mmIceFlushPendingStateLog();
 	return st;
+}
+
+MmIceState mmIceGetState(void)
+{
+	return sIceState;
+}
+
+const char *mmIceStateName(MmIceState st)
+{
+	switch (st)
+	{
+	case MM_ICE_STATE_IDLE:
+		return "idle";
+	case MM_ICE_STATE_GATHERING:
+		return "gathering";
+	case MM_ICE_STATE_CONNECTING:
+		return "connecting";
+	case MM_ICE_STATE_CONNECTED:
+		return "connected";
+	case MM_ICE_STATE_COMPLETED:
+		return "completed";
+	case MM_ICE_STATE_FAILED:
+		return "failed";
+	default:
+		return "unknown";
+	}
 }
 
 sb32 mmIceIsConnected(void)

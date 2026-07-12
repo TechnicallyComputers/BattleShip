@@ -509,6 +509,10 @@ static int sSYNetPeerBootstrapIngressSymEnv = -999;
 static sb32 sSYNetPeerBootstrapIngressWarmupOutboundSent;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedStart;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedDone;
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* First inbound remote INPUT (including wire tick 0) — hr alone cannot signal D=0 bootstrap. */
+static sb32 sSYNetPeerRemoteIngressSeen;
+#endif
 static u32 sSYNetPeerGlobalCommitGen;
 static int sSYNetPeerPhaseLockPredictionWindowEnv = -999;
 static int sSYNetPeerStrictRingFuzzTicksEnvCache = -999;
@@ -3443,6 +3447,20 @@ void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const 
 	sSYNetPeerAdaptiveDelayEnabled = syNetSessionParamsAdaptiveDelayEnvEnabled();
 }
 
+void syNetPeerCommitLabInputDelay(u32 delay, const char *tag)
+{
+	if (delay > 32U)
+	{
+		delay = 32U;
+	}
+	sSYNetPeerInputDelayFloor = 0U;
+	sSYNetPeerInputDelayCeil = 32U;
+	sSYNetPeerInputDelay = delay;
+	sSYNetPeerInputDelaySource = (tag != NULL) ? tag : "lab";
+	sSYNetPeerAdaptiveDelayEnabled = FALSE;
+	syNetPeerLogCommittedInputDelay((tag != NULL) ? tag : "lab", delay, delay);
+}
+
 void syNetPeerApplyAutoNegotiatedTransportParams(u32 phase_lock_ticks, u32 bundle_redundancy, u32 ingress_extra_pumps,
                                                u32 strict_ring_fuzz_ticks)
 {
@@ -4073,6 +4091,118 @@ static sb32 syNetPeerAutomatchTryForceStageKind(u32 *stage_kind_out)
 }
 #endif /* SSB64_NETMENU */
 
+/*
+ * Host MATCH_CONFIG only: lower sim slots keep (fkind, costume); higher slots that collide
+ * get a deterministic random free royal costume (mnPlayersVSGetFreeCostumeRoyal class).
+ * Uses Automix — never gameplay syUtilsRand — so client apply of MATCH_CONFIG stays identical.
+ */
+#define SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT 4
+
+static sb32 syNetPeerAutomatchCostumeUsedByLowerSlots(const SYNetInputReplayMetadata *m, s32 player, u8 fkind,
+                                                       u8 costume)
+{
+	s32 i;
+
+	if ((m == NULL) || (player <= 0))
+	{
+		return FALSE;
+	}
+	for (i = 0; i < player; i++)
+	{
+		if ((m->fighter_kinds[i] == nFTKindNull) || (m->player_kinds[i] == nFTPlayerKindNot))
+		{
+			continue;
+		}
+		if ((m->fighter_kinds[i] == fkind) && (m->costumes[i] == costume))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static void syNetPeerAutomatchResolveCostumeCollisions(SYNetInputReplayMetadata *m, u32 mix)
+{
+	s32 player;
+	s32 color;
+	s32 nfree;
+	s32 pick;
+	u8 free_costumes[SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT];
+	u8 fkind;
+	u8 costume;
+	u8 old_costume;
+
+	if ((m == NULL) || (m->player_count < 2U))
+	{
+		return;
+	}
+	for (player = 1; (player < (s32)m->player_count) && (player < MAXCONTROLLERS); player++)
+	{
+		fkind = m->fighter_kinds[player];
+		if ((fkind == nFTKindNull) || (m->player_kinds[player] == nFTPlayerKindNot))
+		{
+			continue;
+		}
+		costume = m->costumes[player];
+		if (syNetPeerAutomatchCostumeUsedByLowerSlots(m, player, fkind, costume) == FALSE)
+		{
+			continue;
+		}
+		nfree = 0;
+		for (color = 0; color < SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT; color++)
+		{
+			u8 candidate;
+
+			candidate = (u8)ftParamGetCostumeCommonID((s32)fkind, color);
+			if (syNetPeerAutomatchCostumeUsedByLowerSlots(m, player, fkind, candidate) == FALSE)
+			{
+				free_costumes[nfree++] = candidate;
+			}
+		}
+		old_costume = costume;
+		if (nfree > 0)
+		{
+			pick = (s32)(((mix ^ ((u32)player * 0x9E3779B9U) ^ (((u32)fkind) << 8) ^ (u32)old_costume) %
+			              (u32)nfree));
+			m->costumes[player] = free_costumes[pick];
+			port_log(
+			    "SSB64 NetPeer: automatch costume collision slot=%d fkind=%u old=%u -> new=%u (priority lower slots)\n",
+			    player, (unsigned int)fkind, (unsigned int)old_costume, (unsigned int)m->costumes[player]);
+		}
+		else
+		{
+			/* All royal colors taken by lower same-fkind slots — CSS shade fallback. */
+			sb32 shade_used[SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT];
+			s32 i;
+			s32 shade;
+
+			for (i = 0; i < SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT; i++)
+			{
+				shade_used[i] = FALSE;
+			}
+			for (i = 0; i < player; i++)
+			{
+				if ((m->fighter_kinds[i] == fkind) &&
+				    (m->shades[i] < (u8)SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT))
+				{
+					shade_used[m->shades[i]] = TRUE;
+				}
+			}
+			for (shade = 0; shade < SYNETPEER_AUTOMATCH_ROYAL_COLOR_COUNT; shade++)
+			{
+				if (shade_used[shade] == FALSE)
+				{
+					m->shades[player] = (u8)shade;
+					break;
+				}
+			}
+			port_log(
+			    "SSB64 NetPeer: automatch costume exhausted slot=%d fkind=%u costume=%u shade=%u\n", player,
+			    (unsigned int)fkind, (unsigned int)costume, (unsigned int)m->shades[player]);
+		}
+	}
+}
+
 static sb32 syNetPeerComposeAutomatchMatchMetadata(void)
 {
 	SYNetInputReplayMetadata *m = &sSYNetPeerBootstrapMetadata;
@@ -4185,10 +4315,15 @@ static sb32 syNetPeerComposeAutomatchMatchMetadata(void)
 		m->game_rules = SCBATTLE_GAMERULE_STOCK;
 		m->rng_seed = syNetPeerAutomix32(seed_pick, (((u32)hfk) << 24) ^ (((u32)gfk) << 16) ^ (((u32)combo)),
 		                                 m->stage_kind ^ match_mix);
+		/* Host→slot0 / guest→slot1 today; walk ascending so P1 keeps, P2+ reassigned on collision. */
+		syNetPeerAutomatchResolveCostumeCollisions(m, seed_pick ^ match_mix ^ m->rng_seed);
 		m->netplay_sim_slot_host_hw = 0U;
 		m->netplay_sim_slot_client_hw = 1U;
-		port_log("SSB64 NetPeer: automatch metadata composed stage=%u seed=%u pool=%u match_mix=0x%08X\n",
-		         m->stage_kind, m->rng_seed, npool, match_mix);
+		port_log("SSB64 NetPeer: automatch metadata composed stage=%u seed=%u pool=%u match_mix=0x%08X "
+		         "p0=%u/%u p1=%u/%u\n",
+		         m->stage_kind, m->rng_seed, npool, match_mix, (unsigned int)m->fighter_kinds[0],
+		         (unsigned int)m->costumes[0], (unsigned int)m->fighter_kinds[1],
+		         (unsigned int)m->costumes[1]);
 	}
 	return TRUE;
 }
@@ -5428,6 +5563,82 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	{
 		out->shared_confirmed_sim = shared_confirmed;
 	}
+	/*
+	 * Rollback + prediction: prefer predict+rollback over lockstep R-holds from runway deficit / skew.
+	 * The old order checked max_sim_deficit (default 2) and skew lead *before* the phase_lock prediction
+	 * window, which punched sampling holes even when prediction would accept the tick — killing dash
+	 * peaks. Epoch / hard frontier caps still bind; outside the window we R-stall as before.
+	 */
+	if (syNetSessionParamsRollbackEnabled() != FALSE)
+	{
+		u32 epoch_cap;
+		u32 cap_source;
+
+		if ((syNetRollbackIsResimulating() == FALSE) &&
+		    (syNetRollbackGetLiveSimCap(&epoch_cap, &cap_source) != FALSE) && (epoch_cap != ~(u32)0) &&
+		    (sim_tick > epoch_cap))
+		{
+			(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
+			syNetPeerPumpIngressTransport("rollback_epoch_hold");
+			out->advance = FALSE;
+			out->hold_reason = 'B';
+			return;
+		}
+		if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U) &&
+		    (sSYNetPeerHighestRemoteTick != 0U))
+		{
+			u32 remote_sim_frontier;
+			u32 effective_window;
+
+			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+			out->shared_confirmed_sim = remote_sim_frontier;
+			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
+			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)effective_window))
+			{
+				out->uses_prediction = TRUE;
+				return;
+			}
+		}
+		else if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U) &&
+		         (have_shared_frontier != FALSE) &&
+		         ((u64)sim_tick <= ((u64)shared_confirmed + (u64)prediction_window)))
+		{
+			out->uses_prediction = TRUE;
+			return;
+		}
+		if (sSYNetPeerHighestRemoteTick != 0U)
+		{
+			u32 remote_sim_frontier;
+			u32 rollback_sim_cap;
+			u32 effective_cap;
+
+			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+			rollback_sim_cap = remote_sim_frontier + syNetPeerGetCommittedInputDelay() + prediction_window;
+			effective_cap = rollback_sim_cap;
+			if ((syNetRollbackIsResimulating() == FALSE) &&
+			    (syNetRollbackGetLiveSimCap(&epoch_cap, NULL) != FALSE) && (epoch_cap != ~(u32)0) &&
+			    (epoch_cap < effective_cap))
+			{
+				effective_cap = epoch_cap;
+			}
+			if (sim_tick > effective_cap)
+			{
+				if (effective_cap == epoch_cap)
+				{
+					(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
+				}
+				syNetPeerPumpIngressTransport(
+				    (effective_cap == epoch_cap) ? "rollback_epoch_hold" : "rollback_frontier_cap");
+				out->advance = FALSE;
+				out->hold_reason = (effective_cap == epoch_cap) ? 'B' : 'R';
+				return;
+			}
+		}
+		out->advance = FALSE;
+		out->hold_reason = 'R';
+		return;
+	}
+	/* Non-rollback sessions: keep legacy runway / skew lockstep holds. */
 	if (sSYNetPeerHighestRemoteTick != 0U)
 	{
 		u32 hr;
@@ -5449,83 +5660,6 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			syNetPeerPumpIngressTransport("runway_hold");
 			out->advance = FALSE;
 			out->hold_reason = 'R';
-			return;
-		}
-	}
-	if (syNetSessionParamsRollbackEnabled() != FALSE)
-	{
-		u32 epoch_cap;
-		u32 cap_source;
-
-		if ((syNetRollbackIsResimulating() == FALSE) &&
-		    (syNetRollbackGetLiveSimCap(&epoch_cap, &cap_source) != FALSE) && (epoch_cap != ~(u32)0) &&
-		    (sim_tick > epoch_cap))
-		{
-			(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
-			syNetPeerPumpIngressTransport("rollback_epoch_hold");
-			out->advance = FALSE;
-			out->hold_reason = 'B';
-			return;
-		}
-	}
-	if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
-	{
-		u32 remote_sim_frontier;
-		u32 rollback_sim_cap;
-		u32 epoch_cap;
-		u32 effective_cap;
-
-		remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
-		rollback_sim_cap = remote_sim_frontier + syNetPeerGetCommittedInputDelay() + prediction_window;
-		effective_cap = rollback_sim_cap;
-		if ((syNetRollbackIsResimulating() == FALSE) &&
-		    (syNetRollbackGetLiveSimCap(&epoch_cap, NULL) != FALSE) && (epoch_cap != ~(u32)0) &&
-		    (epoch_cap < effective_cap))
-		{
-			effective_cap = epoch_cap;
-		}
-		if (sim_tick > effective_cap)
-		{
-			if (effective_cap == epoch_cap)
-			{
-				(void)syNetRollbackShouldBlockLiveBattleAdvance(sim_tick);
-			}
-			syNetPeerPumpIngressTransport(
-			    (effective_cap == epoch_cap) ? "rollback_epoch_hold" : "rollback_frontier_cap");
-			out->advance = FALSE;
-			out->hold_reason = (effective_cap == epoch_cap) ? 'B' : 'R';
-			return;
-		}
-	}
-	if ((syNetInputGetUseInputPrediction() != FALSE) && (prediction_window > 0U))
-	{
-		sb32 predict_ok = FALSE;
-
-		/*
-		 * Rollback sessions: gate prediction on observed remote wire frontier (hr), not the connect-ack
-		 * min() frontier — connect rows often lag hr by >phase_lock and forced STRICT stalls despite rollback.
-		 */
-		if ((syNetSessionParamsRollbackEnabled() != FALSE) && (sSYNetPeerHighestRemoteTick != 0U))
-		{
-			u32 remote_sim_frontier;
-			u32 effective_window;
-
-			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
-			out->shared_confirmed_sim = remote_sim_frontier;
-			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
-			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)effective_window))
-			{
-				predict_ok = TRUE;
-			}
-		}
-		else if ((have_shared_frontier != FALSE) &&
-		         ((u64)sim_tick <= ((u64)shared_confirmed + (u64)prediction_window)))
-		{
-			predict_ok = TRUE;
-		}
-		if (predict_ok != FALSE)
-		{
-			out->uses_prediction = TRUE;
 			return;
 		}
 	}
@@ -7587,8 +7721,8 @@ static sb32 syNetPeerBundleHasWireTick(SYNetPeerPacketFrame *frames, s32 frame_c
 	return FALSE;
 }
 
-static void syNetPeerAppendInputFrameToBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *frame_count,
-                                            SYNetInputFrame *input_frame)
+static void syNetPeerAppendInputFrameToBundleEx(s32 slot, SYNetPeerPacketFrame *frames, s32 *frame_count,
+                                              SYNetInputFrame *input_frame, sb32 note_transmitted)
 {
 	u32 wire_tick;
 
@@ -7606,10 +7740,25 @@ static void syNetPeerAppendInputFrameToBundle(s32 slot, SYNetPeerPacketFrame *fr
 	frames[*frame_count].stick_x = input_frame->stick_x;
 	frames[*frame_count].stick_y = input_frame->stick_y;
 	(*frame_count)++;
-	syNetInputNoteTransmittedSimFrame(slot, input_frame);
+	if (note_transmitted != FALSE)
+	{
+		syNetInputNoteTransmittedSimFrame(slot, input_frame);
+	}
+}
+
+static void syNetPeerAppendInputFrameToBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *frame_count,
+                                            SYNetInputFrame *input_frame)
+{
+	syNetPeerAppendInputFrameToBundleEx(slot, frames, frame_count, input_frame, TRUE);
 }
 
 #ifdef PORT
+/*
+ * Emit send-lead rows for [sim … sim+D]. NETMENU feel-0 stages authoritative HID at `sim` and
+ * provisional hold-last rows through `sim+D` so wire labels reach `sim+2D` (intro Wait needs
+ * DelaySim(hr) >= next_sim). Provisional ahead rows are wire-only — do not NoteTransmitted /
+ * Promote (that caused GGPO local-authority revision storms on stick onset).
+ */
 static void syNetPeerAppendDelayedLocalRowsToBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *frame_count)
 {
 	SYNetInputFrame delayed_frame;
@@ -7617,6 +7766,7 @@ static void syNetPeerAppendDelayedLocalRowsToBundle(s32 slot, SYNetPeerPacketFra
 	u32 delay;
 	u32 last_tick;
 	u32 t;
+	sb32 note_transmitted;
 
 	if (syNetInputAuthoritativeWireContractEnabled() == FALSE)
 	{
@@ -7634,7 +7784,13 @@ static void syNetPeerAppendDelayedLocalRowsToBundle(s32 slot, SYNetPeerPacketFra
 	{
 		if (syNetInputGetLocalDelayedFrame(slot, t, &delayed_frame) != FALSE)
 		{
-			syNetPeerAppendInputFrameToBundle(slot, frames, frame_count, &delayed_frame);
+#if defined(SSB64_NETMENU)
+			/* Only the current sample tick is local authority; t>sim is provisional runway. */
+			note_transmitted = (t == sim_tick) ? TRUE : FALSE;
+#else
+			note_transmitted = TRUE;
+#endif
+			syNetPeerAppendInputFrameToBundleEx(slot, frames, frame_count, &delayed_frame, note_transmitted);
 		}
 		if ((t == last_tick) || (*frame_count >= SYNETPEER_MAX_PACKET_FRAMES))
 		{
@@ -8074,6 +8230,9 @@ static void syNetPeerResetBootstrapIngressSymmetryState(void)
 	sSYNetPeerBootstrapIngressWarmupOutboundSent = FALSE;
 	sSYNetPeerBootstrapIngressWarmupLoggedStart = FALSE;
 	sSYNetPeerBootstrapIngressWarmupLoggedDone = FALSE;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetPeerRemoteIngressSeen = FALSE;
+#endif
 }
 
 sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
@@ -8094,17 +8253,38 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 	{
 		return TRUE;
 	}
-	if ((sSYNetPeerBootstrapIngressWarmupOutboundSent != FALSE) && (syNetPeerGetHighestRemoteTick() > 0U))
+	if (sSYNetPeerBootstrapIngressWarmupOutboundSent != FALSE)
 	{
-		if (sSYNetPeerBootstrapIngressWarmupLoggedDone == FALSE)
+		sb32 ingress_ok;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+		ingress_ok = ((sSYNetPeerRemoteIngressSeen != FALSE) || (syNetPeerGetHighestRemoteTick() > 0U) ||
+		              (sSYNetPeerFramesStaged > 0U))
+		                 ? TRUE
+		                 : FALSE;
+#else
+		ingress_ok = (syNetPeerGetHighestRemoteTick() > 0U) ? TRUE : FALSE;
+#endif
+		if (ingress_ok != FALSE)
 		{
-			sSYNetPeerBootstrapIngressWarmupLoggedDone = TRUE;
-			port_log(
-			    "SSB64 NetPeer: bootstrap_ingress_warmup complete role=%s outbound=1 hr=%u sim=%u\n",
-			    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
-			    (unsigned int)syNetPeerGetHighestRemoteTick(), (unsigned int)syNetInputGetTick());
+			if (sSYNetPeerBootstrapIngressWarmupLoggedDone == FALSE)
+			{
+				sSYNetPeerBootstrapIngressWarmupLoggedDone = TRUE;
+				port_log(
+				    "SSB64 NetPeer: bootstrap_ingress_warmup complete role=%s outbound=1 hr=%u staged=%u "
+				    "ingress_seen=%d sim=%u\n",
+				    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+				    (unsigned int)syNetPeerGetHighestRemoteTick(),
+				    (unsigned int)sSYNetPeerFramesStaged,
+#if defined(PORT) && defined(SSB64_NETMENU)
+				    (sSYNetPeerRemoteIngressSeen != FALSE) ? 1 : 0,
+#else
+				    0,
+#endif
+				    (unsigned int)syNetInputGetTick());
+			}
+			return TRUE;
 		}
-		return TRUE;
 	}
 	return FALSE;
 }
@@ -8391,7 +8571,25 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 		                                       (s8 *)&frames[i].stick_x, (s8 *)&frames[i].stick_y);
 #endif
 		{
-			sb32 is_new_remote_tick = (frames[i].tick > sSYNetPeerHighestRemoteTick) ? TRUE : FALSE;
+			sb32 is_new_remote_tick;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+			/*
+			 * Wire D=0 can deliver tick 0 first. Strict `>` never leaves hr==0 in that case;
+			 * treat the first inbound row as ingress-seen and accept `>=` only for that bootstrap.
+			 */
+			if (sSYNetPeerRemoteIngressSeen == FALSE)
+			{
+				sSYNetPeerRemoteIngressSeen = TRUE;
+				is_new_remote_tick = TRUE;
+			}
+			else
+			{
+				is_new_remote_tick = (frames[i].tick > sSYNetPeerHighestRemoteTick) ? TRUE : FALSE;
+			}
+#else
+			is_new_remote_tick = (frames[i].tick > sSYNetPeerHighestRemoteTick) ? TRUE : FALSE;
+#endif
 
 			if ((is_new_remote_tick != FALSE) && (frames[i].tick < current_tick))
 			{
@@ -8402,7 +8600,7 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 				u32 prev_hr = sSYNetPeerHighestRemoteTick;
 
 				sSYNetPeerHighestRemoteTick = frames[i].tick;
-				if ((prev_hr == 0U) && (frames[i].tick > 0U))
+				if (prev_hr == 0U)
 				{
 					port_log("SSB64 NetPeer: remote_frontier_init role=%s target_slot=%d first_hr=%u from_pkt_tick=%u local_sim=%u\n",
 					         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
@@ -11886,6 +12084,14 @@ void syNetPeerUpdate(void)
 		syNetRollbackUpdate();
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	if ((syNetReplayIsDiagnosticPlaybackActive() != FALSE) && (syNetRollbackIsResimulating() != FALSE))
+	{
+		syNetRollbackPumpResimBaselineIfAwaiting();
+		syNetRollbackUpdate();
+		return;
+	}
+#endif
 #endif
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
@@ -11893,6 +12099,12 @@ void syNetPeerUpdate(void)
 	}
 	if (sSYNetPeerIsActive == FALSE)
 	{
+#if defined(PORT) && defined(SSB64_NETMENU)
+		if (syNetReplayIsDiagnosticPlaybackActive() != FALSE)
+		{
+			syNetRollbackUpdate();
+		}
+#endif
 		return;
 	}
 	syNetPeerUpdateBattleGate();
@@ -11959,6 +12171,11 @@ void syNetPeerUpdate(void)
 void syNetPeerStopVSSession(void)
 {
 #ifdef PORT
+#if defined(SSB64_NETMENU)
+	/* Persist automatch/debug recording before tearing down peer/input state.
+	 * Idempotent with scVSBattleStartScene match-end Finish. */
+	syNetReplayFinishVSSession();
+#endif
 	syNetPhaseReset();
 	syNetRollbackStopVSSession();
 #endif

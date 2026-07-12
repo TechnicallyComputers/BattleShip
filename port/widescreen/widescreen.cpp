@@ -2,7 +2,6 @@
 
 #include "../enhancements/enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
 #include <libultraship/bridge/gfxbridge.h>
 
 namespace {
@@ -10,7 +9,7 @@ namespace {
 constexpr const char* kWidescreenCVar = "gEnhancements.Widescreen";
 
 bool widescreen_enabled() {
-    return CVarGetInteger(kWidescreenCVar, 1) != 0;
+    return port_enhancement_cvar_get_integer(kWidescreenCVar, 1) != 0;
 }
 
 } // namespace

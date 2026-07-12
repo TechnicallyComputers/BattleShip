@@ -1,5 +1,4 @@
 #include "enhancements.h"
-#include <libultraship/bridge/consolevariablebridge.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -65,8 +64,8 @@ extern "C" uint32_t port_enhancement_shuffle_music(uint32_t requested_bgm) {
         return chosen_track;
     }
 
-    // 2. middle priority: Shuffle Music
-    if (CVarGetInteger(kShuffleMusicCVar, 0) != 0 && IsStageBGM(requested_bgm)) {
+    // 2. middle priority: Shuffle Music (netplay allowlist denies → vanilla BGM)
+    if (port_enhancement_cvar_get_integer(kShuffleMusicCVar, 0) != 0 && IsStageBGM(requested_bgm)) {
         static bool sIsSeeded = false;
         if (!sIsSeeded) {
             // Seed the generator with the current time

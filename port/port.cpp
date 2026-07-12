@@ -39,6 +39,10 @@
 #include "enhancements/enhancements.h"
 #include "first_run.h"
 #include "gui/PortMenu.h"
+#if defined(SSB64_NETMENU)
+#include "gui/PortMenuNetplay.h"
+extern "C" void syNetReplayFinishVSSession(void);
+#endif
 #ifdef PORT_HIRES_ENABLED
 #include "hires/HiResHook.h"
 #include "hires/HiResPack.h"
@@ -726,7 +730,7 @@ static int PortInitImpl(int argc, char* argv[]) {
 	 * latched here); changing it mid-session triggers an mCurDimensions FB
 	 * resize that's racy and crashes. Document this on the menu tooltip. */
 	if (auto cv = sContext->GetConsoleVariables()) {
-		const bool widescreen_on = cv->GetInteger("gEnhancements.Widescreen", 1) != 0;
+		const bool widescreen_on = port_enhancement_cvar_get_integer("gEnhancements.Widescreen", 1) != 0;
 		cv->SetFloat("gAdvancedResolution.AspectRatioX", 4.0f);
 		cv->SetFloat("gAdvancedResolution.AspectRatioY", 3.0f);
 
@@ -917,11 +921,20 @@ static int PortInitImpl(int argc, char* argv[]) {
 			 * portAndroidFinishPortMenuInit in main). Avoids SIGSEGV during
 			 * debug-session cold restart when ImGui font merge or SDL caches
 			 * are not ready inside InitWindow's tail. */
+#if defined(SSB64_NETMENU)
+			gui->SetMenu(std::make_shared<ssb64::PortMenuNetplay>(), false);
+#else
 			gui->SetMenu(std::make_shared<ssb64::PortMenu>(), false);
+#endif
 			port_log("SSB64: Port menu object attached (init deferred)\n");
+#else
+#if defined(SSB64_NETMENU)
+			gui->SetMenu(std::make_shared<ssb64::PortMenuNetplay>());
+			port_log("SSB64: Port menu (netplay stripped) attached\n");
 #else
 			gui->SetMenu(std::make_shared<ssb64::PortMenu>());
 			port_log("SSB64: Port menu attached\n");
+#endif
 #endif
 		}
 	}
@@ -1189,6 +1202,10 @@ static int PortInitImpl(int argc, char* argv[]) {
 }
 
 void PortShutdown(void) {
+#if defined(SSB64_NETMENU)
+	/* Flush in-progress automatch/debug replay before tearing down Context/filesystem. */
+	syNetReplayFinishVSSession();
+#endif
 #ifndef DISABLE_SCRIPTING
 	// Tear down mod hooks first so no replacement function fires during
 	// engine shutdown (replacement code might call into ssb64_game state
@@ -1337,7 +1354,7 @@ static void portLogDebugSessionBanner(ssb64_debug_session_kind kind, const char 
 	kindStr = (kind == SSB64_DEBUG_SESSION_ENV) ? "env" : "log_only";
 	port_log("SSB64: debug session start mode=%s\n", kindStr);
 #if defined(SSB64_NETMENU)
-	port_log("SSB64: build SSB64_NETMENU=1");
+	port_log("SSB64: build SSB64_NETMENU=1 (PortMenuNetplay; casual sim CVars forced vanilla)");
 #if defined(SSB64_NETPLAY_ICE)
 	port_log(" SSB64_NETPLAY_ICE=1\n");
 #else

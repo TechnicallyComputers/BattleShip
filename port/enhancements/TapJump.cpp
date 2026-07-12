@@ -1,7 +1,5 @@
 #include "enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 // Forward declaration from port/net/sys/netpeer.h. Avoid pulling the netpeer
 // header (which transitively drags in PR/ultratypes + ssb_types) into a leaf
 // enhancement TU.
@@ -33,7 +31,7 @@ extern "C" int port_enhancement_tap_jump_disabled(int playerIndex) {
     if (syNetPeerIsVSSessionActive()) {
         return 0;
     }
-    return CVarGetInteger(kTapJumpCVars[playerIndex], 0) != 0;
+    return port_enhancement_cvar_get_integer(kTapJumpCVars[playerIndex], 0) != 0;
 }
 
 namespace ssb64 {

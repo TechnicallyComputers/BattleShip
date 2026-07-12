@@ -11,6 +11,9 @@
 #include <sc/scmanager.h>
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#if defined(PORT) && defined(SSB64_NETMENU)
+#include <sys/netrollback.h>
+#endif
 #include <sys/utils.h>
 
 #ifdef PORT
@@ -31,8 +34,11 @@ extern int atoi(const char *s);
 #endif
 
 /* Default safety ceiling matches SYNETINPUT_REPLAY_MAX_FRAMES (~12 min @ 60 Hz).
- * Automatch auto-save writes on match end (syNetReplayFinishVSSession), not mid-match. */
+ * Automatch auto-save finalizes on match end, VS session stop, or clean PortShutdown
+ * (syNetReplayFinishVSSession). Mid-match checkpoints rewrite the same path so a crash
+ * still leaves a playable partial file (default every ~5s; SSB64_REPLAY_CHECKPOINT_FRAMES). */
 #define SYNETREPLAY_DEFAULT_RECORD_FRAMES SYNETINPUT_REPLAY_MAX_FRAMES
+#define SYNETREPLAY_DEFAULT_CHECKPOINT_FRAMES 300U
 
 typedef struct SYNetReplayFileHeader
 {
@@ -53,8 +59,13 @@ static char sSYNetReplayUserRecordPath[SYNETREPLAY_USER_PATH_MAX];
 static char sSYNetReplayUserPlaybackPath[SYNETREPLAY_USER_PATH_MAX];
 static sb32 sSYNetReplayIsUserPlaybackPending;
 static sb32 sSYNetReplayIsUserPlaybackHalted;
+static sb32 sSYNetReplayDiagnosticEnvEnabled;
+static u32 sSYNetReplayDiagnosticResimTick;
+static sb32 sSYNetReplayDiagnosticRollbackSessionStarted;
 #endif
 u32 sSYNetReplayRecordFrameLimit = SYNETREPLAY_DEFAULT_RECORD_FRAMES;
+u32 sSYNetReplayCheckpointInterval = SYNETREPLAY_DEFAULT_CHECKPOINT_FRAMES;
+u32 sSYNetReplayLastCheckpointFrameCount;
 u32 sSYNetReplayLoadedFrameCount;
 u32 sSYNetReplayLoadedInputChecksum;
 sb32 sSYNetReplayIsRecording;
@@ -64,6 +75,60 @@ sb32 sSYNetReplayIsPlaybackActive;
 sb32 sSYNetReplayIsPlaybackVerified;
 SYNetInputReplayMetadata sSYNetReplayLoadedMetadata;
 SYNetInputFrame sSYNetReplayLoadedFrames[MAXCONTROLLERS][SYNETINPUT_REPLAY_MAX_FRAMES];
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+static void syNetReplayStopDiagnosticRollbackSession(void)
+{
+	if (sSYNetReplayDiagnosticRollbackSessionStarted == FALSE)
+	{
+		return;
+	}
+	syNetRollbackStopVSSession();
+	sSYNetReplayDiagnosticRollbackSessionStarted = FALSE;
+#ifdef PORT
+	port_log("SSB64 Replay: diagnostic rollback session stopped\n");
+#endif
+}
+
+static void syNetReplayStartDiagnosticRollbackSession(void)
+{
+	if (sSYNetReplayDiagnosticEnvEnabled == FALSE)
+	{
+		return;
+	}
+	if (sSYNetReplayDiagnosticRollbackSessionStarted != FALSE)
+	{
+		return;
+	}
+	syNetRollbackStartVSSession();
+	sSYNetReplayDiagnosticRollbackSessionStarted = TRUE;
+#ifdef PORT
+	port_log(
+	    "SSB64 Replay: diagnostic playback active (rollback synctest/quantize/hardening on; no UDP peer)%s\n",
+	    (sSYNetReplayDiagnosticResimTick != ~(u32)0)
+	        ? " — set SSB64_REPLAY_DIAGNOSTIC_RESIM_TICK for forced load→resim"
+	        : "");
+	if (sSYNetReplayDiagnosticResimTick != ~(u32)0)
+	{
+		port_log("SSB64 Replay: diagnostic forced resim at completed tick=%u\n",
+		         sSYNetReplayDiagnosticResimTick);
+	}
+#endif
+}
+
+sb32 syNetReplayIsDiagnosticPlaybackActive(void)
+{
+	return ((sSYNetReplayDiagnosticEnvEnabled != FALSE) && (sSYNetReplayIsPlaybackLoaded != FALSE) &&
+	        (sSYNetReplayDiagnosticRollbackSessionStarted != FALSE))
+	           ? TRUE
+	           : FALSE;
+}
+
+u32 syNetReplayGetDiagnosticResimTick(void)
+{
+	return sSYNetReplayDiagnosticResimTick;
+}
+#endif /* PORT && SSB64_NETMENU */
 
 void syNetReplayClearLoadedFrames(void)
 {
@@ -190,10 +255,12 @@ static void syNetReplayStartRecordingInternal(const char *path, const SYNetInput
 	sSYNetReplayRecordPath = path;
 	sSYNetReplayIsRecording = TRUE;
 	sSYNetReplayIsRecordWritten = FALSE;
+	sSYNetReplayLastCheckpointFrameCount = 0U;
 
 #ifdef PORT
-	port_log("SSB64 Replay: recording start path=%s limit=%u stage=%u seed=%u players=%u\n", path,
-	         sSYNetReplayRecordFrameLimit, metadata->stage_kind, metadata->rng_seed, metadata->player_count);
+	port_log("SSB64 Replay: recording start path=%s limit=%u checkpoint=%u stage=%u seed=%u players=%u\n", path,
+	         sSYNetReplayRecordFrameLimit, sSYNetReplayCheckpointInterval, metadata->stage_kind, metadata->rng_seed,
+	         metadata->player_count);
 #endif
 }
 
@@ -201,10 +268,43 @@ void syNetReplayInitDebugEnv(void)
 {
 #ifdef PORT
 	const char *frame_limit_env;
+	const char *checkpoint_env;
+#if defined(SSB64_NETMENU)
+	const char *diag_env;
+	const char *diag_resim_env;
+#endif
 
 	sSYNetReplayRecordPath = getenv("SSB64_REPLAY_RECORD");
 	sSYNetReplayPlayPath = getenv("SSB64_REPLAY_PLAY");
 	frame_limit_env = getenv("SSB64_REPLAY_RECORD_FRAMES");
+	checkpoint_env = getenv("SSB64_REPLAY_CHECKPOINT_FRAMES");
+#if defined(SSB64_NETMENU)
+	sSYNetReplayDiagnosticEnvEnabled = FALSE;
+	sSYNetReplayDiagnosticResimTick = ~(u32)0;
+	sSYNetReplayDiagnosticRollbackSessionStarted = FALSE;
+	diag_env = getenv("SSB64_REPLAY_DIAGNOSTIC");
+	if ((diag_env != NULL) && (diag_env[0] != '\0') && (atoi(diag_env) != 0))
+	{
+		sSYNetReplayDiagnosticEnvEnabled = TRUE;
+		port_log("SSB64 Replay: SSB64_REPLAY_DIAGNOSTIC=1 (rollback diagnostics on next playback)\n");
+	}
+	diag_resim_env = getenv("SSB64_REPLAY_DIAGNOSTIC_RESIM_TICK");
+	if ((diag_resim_env != NULL) && (diag_resim_env[0] != '\0'))
+	{
+		s32 v = atoi(diag_resim_env);
+
+		if (v > 0)
+		{
+			sSYNetReplayDiagnosticResimTick = (u32)v;
+			if (sSYNetReplayDiagnosticEnvEnabled == FALSE)
+			{
+				sSYNetReplayDiagnosticEnvEnabled = TRUE;
+				port_log(
+				    "SSB64 Replay: DIAGNOSTIC_RESIM_TICK implies SSB64_REPLAY_DIAGNOSTIC=1\n");
+			}
+		}
+	}
+#endif
 
 	if (frame_limit_env != NULL)
 	{
@@ -214,6 +314,21 @@ void syNetReplayInitDebugEnv(void)
 		{
 			sSYNetReplayRecordFrameLimit = (u32)frame_limit;
 		}
+	}
+	if (checkpoint_env != NULL)
+	{
+		s32 checkpoint_frames = atoi(checkpoint_env);
+
+		/* 0 disables mid-match checkpoints (finalize-only on end/stop/shutdown). */
+		if (checkpoint_frames < 0)
+		{
+			checkpoint_frames = 0;
+		}
+		if (checkpoint_frames > (s32)SYNETINPUT_REPLAY_MAX_FRAMES)
+		{
+			checkpoint_frames = (s32)SYNETINPUT_REPLAY_MAX_FRAMES;
+		}
+		sSYNetReplayCheckpointInterval = (u32)checkpoint_frames;
 	}
 	if (sSYNetReplayPlayPath != NULL)
 	{
@@ -261,6 +376,7 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 		sSYNetReplayIsPlaybackVerified = FALSE;
 #if defined(SSB64_NETMENU)
 		sSYNetReplayIsUserPlaybackPending = FALSE;
+		syNetReplayStartDiagnosticRollbackSession();
 #endif
 
 #ifdef PORT
@@ -280,19 +396,50 @@ void syNetReplayStartVSSession(SCBattleState *battle_state)
 	}
 }
 
+void syNetReplayFlushRecordingCheckpoint(void)
+{
+	u32 frame_count;
+
+	if ((sSYNetReplayIsRecording == FALSE) || (sSYNetReplayIsRecordWritten != FALSE) ||
+	    (sSYNetReplayRecordPath == NULL))
+	{
+		return;
+	}
+	frame_count = syNetInputGetRecordedFrameCount();
+	if (frame_count == 0U)
+	{
+		return;
+	}
+	if (syNetReplayWriteDebugFile(sSYNetReplayRecordPath) != FALSE)
+	{
+		sSYNetReplayLastCheckpointFrameCount = frame_count;
+	}
+}
+
 void syNetReplayUpdate(void)
 {
-	/* Recording is finalized on match end via syNetReplayFinishVSSession()
-	 * (scVSBattleStartScene). Do not write mid-match when the safety ceiling
-	 * is hit — new frames simply stop accepting past MAX; the file is still
-	 * flushed when the battle ends. Optional SSB64_REPLAY_RECORD_FRAMES only
-	 * shrinks the in-memory ceiling for debug captures. */
+	u32 frame_count;
+
+	/* Finalize: match end / session stop / PortShutdown call FinishVSSession.
+	 * Mid-match: periodic checkpoint rewrites the same path so abrupt process
+	 * death still leaves a partial playable file. Optional SSB64_REPLAY_RECORD_FRAMES
+	 * below MAX still forces an early finalize for short debug captures. */
 	if ((sSYNetReplayIsRecording != FALSE) && (sSYNetReplayIsRecordWritten == FALSE) &&
 	    (syNetInputGetRecordedFrameCount() >= sSYNetReplayRecordFrameLimit) &&
 	    (sSYNetReplayRecordFrameLimit < SYNETINPUT_REPLAY_MAX_FRAMES))
 	{
 		/* Debug-only early stop when env requested a short capture. */
 		syNetReplayFinishVSSession();
+	}
+	else if ((sSYNetReplayIsRecording != FALSE) && (sSYNetReplayIsRecordWritten == FALSE) &&
+	         (sSYNetReplayCheckpointInterval > 0U))
+	{
+		frame_count = syNetInputGetRecordedFrameCount();
+		if ((frame_count >= sSYNetReplayCheckpointInterval) &&
+		    ((frame_count - sSYNetReplayLastCheckpointFrameCount) >= sSYNetReplayCheckpointInterval))
+		{
+			syNetReplayFlushRecordingCheckpoint();
+		}
 	}
 	if ((sSYNetReplayIsPlaybackActive != FALSE) && (sSYNetReplayIsPlaybackVerified == FALSE) &&
 		(syNetInputGetTick() >= sSYNetReplayLoadedFrameCount))
@@ -311,6 +458,9 @@ void syNetReplayUpdate(void)
 
 void syNetReplayFinishVSSession(void)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	syNetReplayStopDiagnosticRollbackSession();
+#endif
 	if ((sSYNetReplayIsRecording != FALSE) && (sSYNetReplayIsRecordWritten == FALSE))
 	{
 		syNetReplayWriteDebugFile(sSYNetReplayRecordPath);
@@ -326,19 +476,32 @@ sb32 syNetReplayWriteDebugFile(const char *path)
 	SYNetInputReplayMetadata metadata;
 	SYNetInputFrame frame;
 	FILE *fp;
+	char tmp_path[SYNETREPLAY_USER_PATH_MAX + 8];
 	u32 tick;
 	s32 player;
+	size_t path_len;
 
 	if ((path == NULL) || (syNetInputGetReplayMetadata(&metadata) == FALSE))
 	{
 		return FALSE;
 	}
-	fp = fopen(path, "wb");
+	path_len = strlen(path);
+	if ((path_len == 0U) || (path_len + 6U >= sizeof(tmp_path)))
+	{
+#ifdef PORT
+		port_log("SSB64 Replay: record path too long path=%s\n", path);
+#endif
+		return FALSE;
+	}
+	memcpy(tmp_path, path, path_len);
+	memcpy(tmp_path + path_len, ".part", 6);
+
+	fp = fopen(tmp_path, "wb");
 
 	if (fp == NULL)
 	{
 #ifdef PORT
-		port_log("SSB64 Replay: failed to open record path=%s\n", path);
+		port_log("SSB64 Replay: failed to open record path=%s\n", tmp_path);
 #endif
 		return FALSE;
 	}
@@ -350,8 +513,15 @@ sb32 syNetReplayWriteDebugFile(const char *path)
 	header.player_count = MAXCONTROLLERS;
 	header.input_checksum = syNetInputGetReplayInputChecksum();
 
-	fwrite(&header, sizeof(header), 1, fp);
-	fwrite(&metadata, sizeof(metadata), 1, fp);
+	if ((fwrite(&header, sizeof(header), 1, fp) != 1) || (fwrite(&metadata, sizeof(metadata), 1, fp) != 1))
+	{
+		fclose(fp);
+		remove(tmp_path);
+#ifdef PORT
+		port_log("SSB64 Replay: failed to write header path=%s\n", tmp_path);
+#endif
+		return FALSE;
+	}
 
 	for (tick = 0; tick < header.frame_count; tick++)
 	{
@@ -362,10 +532,31 @@ sb32 syNetReplayWriteDebugFile(const char *path)
 				memset(&frame, 0, sizeof(frame));
 				frame.tick = tick;
 			}
-			fwrite(&frame, sizeof(frame), 1, fp);
+			if (fwrite(&frame, sizeof(frame), 1, fp) != 1)
+			{
+				fclose(fp);
+				remove(tmp_path);
+#ifdef PORT
+				port_log("SSB64 Replay: failed to write frames path=%s\n", tmp_path);
+#endif
+				return FALSE;
+			}
 		}
 	}
+	fflush(fp);
 	fclose(fp);
+
+#ifdef _WIN32
+	remove(path);
+#endif
+	if (rename(tmp_path, path) != 0)
+	{
+		remove(tmp_path);
+#ifdef PORT
+		port_log("SSB64 Replay: failed to promote record path=%s errno=%d\n", path, errno);
+#endif
+		return FALSE;
+	}
 
 #ifdef PORT
 	port_log("SSB64 Replay: wrote path=%s frames=%u checksum=0x%08X\n",

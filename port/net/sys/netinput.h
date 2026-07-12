@@ -4,18 +4,21 @@
 /*
  * NetInput — authoritative per-slot controller frames aligned to `sSYNetInputTick`.
  *
- * Pipeline (normal VS): scenes call `syNetInputFuncRead` once per sim step. On PORT it snapshots HID into an internal
- * latch (once per `sSYNetInputTick`; **before** stall-until-remote / skew pacing so the sample is keyed to the local sim
- * tick, not wall/network timing) and clears `gSYControllerDevices[]` before resolve. In phase-locked VS, local HID sampled
- * at sim `t` is staged as the owned local row for `t + D`; resolve consumes the staged row for the current sim tick
- * (neutral until the buffer is primed). Replay, remote-confirmed rings, and prediction fill the other sources, then publish
- * into `gSYControllerDevices[]`,
+ * Pipeline (normal VS): scenes call `syNetInputFuncRead` once per sim step. On PORT+NETMENU it consumes one sample from a
+ * wall-rate HID capture FIFO into an internal latch (once per `sSYNetInputTick`; **before** stall-until-remote so the sample
+ * is keyed to the local sim tick) and clears `gSYControllerDevices[]` before resolve. The FIFO is polled on every FuncRead
+ * while the same tick is held and on PortPushFrame sim-skips, preserving stick trajectory across rare R-holds (not peak-hold).
+ * In phase-locked VS (NETMENU), local HID sampled at sim `t` is staged into a gameplay ring at `t` (feel delay 0) and a
+ * send-lead ring at `t` plus provisional hold-last rows through `t+D` so wire `hr` can lead intro Wait; resolve consumes
+ * the gameplay row for the current sim tick. Committed `D` remains wire send lead only (`wire = sim + D`). Replay,
+ * remote-confirmed rings, and prediction fill the
+ * other sources, then publish into `gSYControllerDevices[]`,
  * snapshots `SYNETINPUT_HISTORY_LENGTH` rings. `sSYNetInputTick` advances only after a full `scVSBattleFuncUpdate`
  * (`syNetInputAdvanceAuthoritativeSimTick`). Active UDP VS (PORT): `syNetTickCommitEvaluate` unifies exec-ready
  * (`syNetPeerCheckBattleExecutionReady`) with wire/stall/skew admission so FuncRead and battle sim agree on tick commit.
  *
  * GGPO-shaped rule: rollback resim replays local slots from published history for that tick (not fresh HID); live VS still
- * samples hardware once per tick before resolve.
+ * samples hardware once per tick before resolve (from the capture FIFO when NETMENU).
  *
  * **GGPO battle frame** (`syNetGgpoBattleFrame*`): mirrors `syNetInputGetTick()` — set together in `syNetInputSetTick` and
  * advanced only in `syNetInputAdvanceAuthoritativeSimTick()` at the end of each completed `scVSBattleFuncUpdate`.
@@ -102,6 +105,36 @@ typedef struct SYNetInputReplayMetadata /* Header written alongside recorded fra
 extern void syNetInputReset(void);
 extern void syNetInputStartVSSession(void); /* Calls Reset and reads netplay env (e.g. predict-neutral). */
 #ifdef PORT
+#if defined(SSB64_NETMENU)
+/*
+ * Solo training lab: same latch → delay-ring → publish path as net VS, without UDP peer.
+ * `input_delay` is committed locally (use 0 to compare against online D>0). Ends with EndLocalLabSession.
+ */
+extern void syNetInputStartLocalLabSession(s32 local_player, u32 input_delay);
+extern void syNetInputEndLocalLabSession(void);
+extern sb32 syNetInputIsLocalLabActive(void);
+extern s32 syNetInputGetLocalLabPlayer(void);
+/*
+ * `SSB64_STICK_SAMPLE_LOG=1`: one line per human fighter after each completed sim tick (training lab or net VS).
+ * Logs sx/sy from published `gSYControllerDevices` plus `tap_stick_x` / `hold_stick_x` from FTStruct.
+ */
+extern void syNetInputMaybeLogStickSample(const char *mode);
+/*
+ * `SSB64_STICK_TAP_WITNESS=1`: after each completed sim tick, log anomalies linking published
+ * `gSYControllerDevices` sticks to `FTStruct` tap counters / `input.pl` latch:
+ * - `burned_dash` — `|sx_dev|>=56` and `tap_x>=3` (smash/dash window closed)
+ * - `tap_max_held` — `|sx_dev|>=20` and `tap_x>=250` (near `FTINPUT_STICKBUFFER_TICS_MAX`)
+ * - `device_pl_mismatch` — device stick != `fp->input.pl.stick_range` (device rewritten after ProcessInput)
+ * Grep `STICK_TAP_WITNESS`.
+ */
+extern void syNetInputMaybeLogStickTapWitness(const char *mode);
+/*
+ * Wall-rate HID capture into a small FIFO (NETMENU). Call from PortPushFrame sim-skips and from
+ * `syNetInputFuncRead` while the same sim tick is admission-held. Each accepted sim tick pops one
+ * sample into the hardware latch — preserves stick trajectory across rare R-holds (not peak-hold).
+ */
+extern void syNetInputPollHardwareCaptureFifo(void);
+#endif
 /* Resets getenv caches used by netinput helpers; paired with `syNetPeerRefreshCachedNetplayEnvForNewMatch`. */
 extern void syNetInputRefreshCachedNetplayEnvForNewMatch(void);
 extern void syNetInputSetSessionIngressExtraPumpsOverride(s32 pumps);
@@ -254,6 +287,11 @@ extern void syNetInputNoteSimTickPredictedRemoteUsage(u32 sim_tick, const SYNetI
 extern sb32 syNetInputSimTickUsedPredictedRemote(u32 sim_tick);
 /* Earliest sim tick in [from_tick, to_tick] where live sim consumed predicted remote input; ~(u32)0 if none. */
 extern u32 syNetInputFindEarliestPredictedRemoteUsageInSpan(u32 from_tick, u32 to_tick);
+/*
+ * Earliest sim tick in [from_tick, to_tick] where any published human slot has non-neutral stick/buttons.
+ * Symmetric when peers share input digests — prefer for FC input-agree reanchor over local predict flags.
+ */
+extern u32 syNetInputFindEarliestHumanNonNeutralInSpan(u32 from_tick, u32 to_tick);
 /* Per-tick published vs sim-effective vs remote-confirmed row when SSB64_NETPLAY_DIVERGENCE_INPUT_LOG=1. */
 extern void syNetInputMaybeLogDivergenceInputRow(u32 tick, const SYNetInputFrame *sim_consumed);
 /* Bracketed fork bisect: SSB64_NETPLAY_INPUT_FORK_DIAG=1 (+ MIN/MAX sim ticks, default 515–530). */

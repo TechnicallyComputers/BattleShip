@@ -27,9 +27,9 @@ Normal Android launches do **not** truncate `ssb64-debug.log`. Use **Export ssb6
 
 - Session banner (build flags, `userDataDir`, log path), **`PortInit complete`**, **`debug session ready`**
 - Matchmaking HTTPS request/response summaries (ensure player, queue, poll, heartbeat, turn-credentials failures)
-- Automatch FSM transitions (`SSB64 Automatch: state …`) and error reasons before returning to character select
-- ICE milestones (TURN credentials, `peer_ice_sdp` length/prefix, connection failed, bootstrap configure/run failures)
 - Throttled ICE trickle polls while in queue
+
+Automatch FSM transitions, abort reasons, and ICE connect-abort summaries (`connect_abort`, selected path typ/addr) always write to the regular **`ssb64.log`** (no Debug Mode required).
 
 The same lines are mirrored to **logcat** tag **`ssb64`** during the debug session (`adb logcat -s ssb64`). Normal launches do not mirror to logcat.
 
@@ -119,7 +119,7 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 
 ## Auto session negotiation ([`port/net/sys/netsession_params.c`](port/net/sys/netsession_params.c))
 
-- **`SSB64_NETPLAY_AUTO_SESSION_PARAMS`** — **`1`** or unset (default): host measures RTT (`TIME_PING` during VS sync, or barrier clock sync when enabled), computes and negotiates rollback-first **`D`** from a fixed RTT tier table (**2 / 3 / 5 / 7 / 9 / 10** frames for increasing RTT), **`PHASE_LOCK_PREDICTION_TICKS`** (prediction runway from one-way RTT + margin, capped), transport knobs, snapshot/resim budgets, and symmetric rollback enablement, then sends **`SESSION_PARAMS`** (wire type **22**), guest **`SESSION_PARAMS_ACK`** (type **23**). Both peers apply the same contract before battle execution unlocks. **`0`**: legacy manual env only. **`SSB64_NETPLAY_DELAY`** / **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** still override committed **`D`** when set. **`SSB64_NETPLAY_ROLLBACK=0`** still disables rollback locally even if the host proposal includes it. RTT→**`D`** tiers (ms): **&lt;60→2**, **60–99→3**, **100–149→5**, **150–199→7**, **200–279→9**, **≥280→10**.
+- **`SSB64_NETPLAY_AUTO_SESSION_PARAMS`** — **`1`** or unset (default): host measures RTT (`TIME_PING` during VS sync, or barrier clock sync when enabled), computes and negotiates rollback-first **`D`** from a fixed RTT tier table (**2 / 2 / 3 / 5 / 7 / 8** frames for increasing RTT), **`PHASE_LOCK_PREDICTION_TICKS`** (prediction runway from one-way RTT + margin, capped at `PREDICTION_MAX` — not clipped by `D+D/2`), transport knobs, snapshot/resim budgets, and symmetric rollback enablement, then sends **`SESSION_PARAMS`** (wire type **22**), guest **`SESSION_PARAMS_ACK`** (type **23**). Both peers apply the same contract before battle execution unlocks. **`0`**: legacy manual env only. **`SSB64_NETPLAY_DELAY`** / **`SSB64_NETPLAY_MATCH_INPUT_DELAY`** still override committed **`D`** when set. **`SSB64_NETPLAY_ROLLBACK=0`** still disables rollback locally even if the host proposal includes it. RTT→**`D`** tiers (ms): **&lt;60→2**, **60–99→2**, **100–149→3**, **150–199→5**, **200–279→7**, **≥280→8**.
 - Example / bisect: [`scripts/netplay-auto-session.env.example`](../scripts/netplay-auto-session.env.example).
 
 ---
@@ -140,6 +140,10 @@ Use this **preset** to validate wire delay semantics (`wire_tick = sim_tick + co
 - **`SSB64_NETPLAY_STRICT_REMOTE_LEAD_BUFFER_TICKS`** — Retired from the phase-locked commit predicate. `hr` no longer changes which wire row owns a sim tick.
 - **`SSB64_NETPLAY_PREDICT_NEUTRAL`** — VS session: neutral prediction policy when on.
 - **`SSB64_NETPLAY_LOG_LOCAL_INPUT`** — Android **guest** only (`local_sim != 0`): rate-limited (`tick % 128`) log from `syNetInputMakeLocalFrame` with path tag `delay_slot` (strict contract) or `hardware_latch`. Grep `NetInput (net guest)` in `ssb64-debug.log`.
+- **`SSB64_STICK_SAMPLE_LOG`** — **`1`**: after each completed sim tick (training lab or net VS), log `STICK_SAMPLE mode=training|netvs tick=… player=… sx=… sy=… tap_x=… hold_x=…` for human fighters. Use for dash-dance A/B: training lab is **`D=0`** on the same `syNetInputFuncRead` path; online uses negotiated/`MATCH_INPUT_DELAY` **`D`**. Grep `STICK_SAMPLE`. Offline (`SSB64_NETMENU=OFF`) unchanged.
+- **`SSB64_STICK_TAP_WITNESS`** — **`1`**: anomaly-only companion to stick samples. After each completed tick (local human only), logs `STICK_TAP_WITNESS` when: **`burned_dash`** (`|sx_dev|≥56` and `tap_x≥3`), **`tap_max_held`** (`|sx_dev|≥20` and `tap_x≥250`), or **`device_pl_mismatch`** (published `gSYControllerDevices` stick ≠ `fp->input.pl.stick_range` after `ftMainProcessInput`). Includes `prev=(sx,sy)`, `D`, and `lab=`. Grep `STICK_TAP_WITNESS` — use with or without `STICK_SAMPLE_LOG`.
+- **`SSB64_TURN_DASH_WITNESS`** — **`1`**: during `nFTCommonStatusTurn`, log `TURN_DASH_WITNESS` from ProcUpdate/ProcInterrupt (`flag1`, `allow`, `lr_dash`, `lr_turn`, `lr`, `sx`, `tap_x`, `anim_frame`, `did_dash`). Use for dash-dance A/B when stick burned rates look fine but `Turn→Dash` never fires. Grep `TURN_DASH_WITNESS`. Offline (`SSB64_NETMENU=OFF`) unchanged.
+- **Wall-rate HID capture FIFO** (NETMENU, always on): `syNetInputPollHardwareCaptureFifo` runs on FuncRead same-tick admission holds and PortPushFrame sim-skips; each accepted sim tick pops one sample into the hardware latch. Preserves vanilla stick trajectory across rare R-holds (drop-oldest at depth 8; not peak-hold). Rollback sessions prefer phase_lock prediction over runway-deficit/skew lockstep R-holds so sampling stays continuous.
 - **`SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH`** — Bitmask: bit 1 NetSync validation, bit 2 rollback pre-resim; logs mismatch (hard `abort` only if fatal env set).
 - **`SSB64_NETPLAY_ABORT_ON_INPUT_MISMATCH_FATAL`** — Non-zero: after logging mismatch, call `abort()` (for CI / bisect).
 - **`SSB64_NETPLAY_STALL_UNTIL_REMOTE`** — Stall-until-remote path; cached.
@@ -259,7 +263,7 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 - **`SSB64_NETPLAY_ROLLBACK_VERIFY_STRICT`**, **`SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY`**
 - **`SSB64_NETPLAY_ROLLBACK_MISMATCH_REMOTE_WITHOUT_PUBLISHED`**, **`SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH_PLAYER`**
 - **`SSB64_NETPLAY_ROLLBACK_SNAPSHOT_FRAMES`** — Rollback snapshot ring depth (default **32**, clamp **1–64**). Independent of input history length.
-- **`SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`** — After each save, load `tick-1` and verify subsystem hashes (no rebind); `SYNCTEST_OK` / `SYNCTEST_FAIL` every 120 ticks. Skips probes when `multi_item_probe`, `post_multi_item_probe`, `link_bomb_probe`, or effect-count mismatch.
+- **`SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`** — After each save, load `tick-1` and verify subsystem hashes (no rebind); `SYNCTEST_OK` / `SYNCTEST_FAIL`. Skips probes during intro `game_status==Wait` (`SYNCTEST_SKIP … intro_wait`). After Wait ends, runs a short **early post-Wait burst** (`SYNCTEST_EARLY_POST_WAIT`: two extra probes on consecutive ticks) so first Go / first-stick frames are covered, then resumes the normal **every 120 ticks** cadence.
 - **`SSB64_NETPLAY_ROLLBACK_LOAD_HASH_SOFT=0`** — Hard-abort on load verify failure (default strict). During **resim**, when world/item/wpn/map/rng match the slot but fighter/anim/effect finalize drift, logs **`LOAD_HASH_DRIFT resim-sim-core-ok`** and continues replay instead of stopping the session.
 - **`SSB64_NETPLAY_ROLLBACK_EPISODE_AUTHORITY=1`** (default on) — Symmetric follower executes initiator `ROLLBACK_SYNC` `(epoch, load, mismatch, target)` verbatim; `=0` restores legacy follower re-derivation (`follower_local_auth`, frontier clamp, `LOAD_TICK_ADJUST` mismatch shift).
 - **`SSB64_NETPLAY_ROLLBACK_CORRECTION_TUPLE_LOG=1`** — Log `CORRECTION_TUPLE` when input corrections are queued (`source=wire|timeline_player|timeline_global|scan`, plus `timeline_earliest` / `last_confirmed` for the slot).
@@ -325,7 +329,20 @@ The old host-led periodic **TIME_PING** / **TIME_PONG** path (high-bit seq, ~3s 
 ## Replay ([`port/net/sys/netreplay.c`](port/net/sys/netreplay.c))
 
 - **`SSB64_REPLAY_RECORD`**, **`SSB64_REPLAY_PLAY`** — Paths for record / playback.
-- **`SSB64_REPLAY_RECORD_FRAMES`** — Optional early-flush cap (1…`SYNETINPUT_REPLAY_MAX_FRAMES`). Default ceiling is **43200** (~12 min @ 60 Hz). Automatch auto-save still finalizes on match end; setting this below max only truncates debug `SSB64_REPLAY_RECORD` captures early.
+- **`SSB64_REPLAY_RECORD_FRAMES`** — Optional early-finalize cap (1…`SYNETINPUT_REPLAY_MAX_FRAMES`). Default ceiling is **43200** (~12 min @ 60 Hz). Automatch auto-save still finalizes on match end, VS session stop, or clean `PortShutdown`; setting this below max only truncates debug `SSB64_REPLAY_RECORD` captures early.
+- **`SSB64_REPLAY_CHECKPOINT_FRAMES`** — Mid-match rewrite interval while recording (default **300** ≈ 5 s @ 60 Hz). Rewrites the same `.ssb64r` without stopping recording so a crash/kill can leave a partial file. Set **`0`** to disable checkpoints (finalize-only).
+- **`SSB64_REPLAY_DIAGNOSTIC=1`** — Netmenu only. When playing a loaded `.ssb64r` (Replays menu or `SSB64_REPLAY_PLAY`), start a **local rollback session** without UDP: snapshot ring, `ROLLBACK_SYNCTEST`, quantize/hardening, and other `syNetplayRollbackSemanticsActive()` paths run against the saved authoritative input stream. Pair with existing diag envs (`SSB64_NETPLAY_ROLLBACK_SYNCTEST=1`, RNG/item traces, etc.).
+- **`SSB64_REPLAY_DIAGNOSTIC_RESIM_TICK=N`** — One-shot forced load→resim when completed sim tick reaches **N** (implies diagnostic on). Loads ~`N-4`…`N-1` and resims to `N+1` with a solo baseline gate (no peer). Logs `DIAGNOSTIC_FORCED_RESIM` / `DIAGNOSTIC_SOLO_GATE_*`.
+
+Example (shareable user replay + synctest + forced resim):
+
+```sh
+SSB64_REPLAY_PLAY=/path/to/match.ssb64r \
+SSB64_REPLAY_DIAGNOSTIC=1 \
+SSB64_REPLAY_DIAGNOSTIC_RESIM_TICK=520 \
+SSB64_NETPLAY_ROLLBACK_SYNCTEST=1 \
+./BattleShip
+```
 
 ---
 

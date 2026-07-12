@@ -71,10 +71,14 @@ into the offline binary. Re-gated all eight guards (the six damage-particle call
 `PORT && SSB64_NETMENU` so they compile only into the netmenu binary; the offline binary's `#else`
 branch is byte-for-byte the original decomp body.
 
-Did not touch the remaining, more specialized proc-update callbacks (`FoxReflector`,
+Did not initially touch the remaining, more specialized proc-update callbacks (`FoxReflector`,
 `PikachuThunderTrail`, `NessPKThunderTrail`/`NessPKReflectTrail`, `MBallThrown`, `YoshiEggLay`,
 `CaptureKirbyStar`, `LoseKirbyStar`, `CaptainEntryCar`, `FoxEntryArwing`) — lower frequency/more
 complex bodies, worth an individual audit pass rather than a blanket guard.
+
+**Follow-up 2026-07-11:** `CaptureKirbyStar` / `LoseKirbyStar` guarded — see
+[netplay_capture_kirby_star_efstruct_null_2026-07-11.md](netplay_capture_kirby_star_efstruct_null_2026-07-11.md)
+(soak2 `1063557657` ThrownCopyStar absorb crash).
 
 ## Verify
 

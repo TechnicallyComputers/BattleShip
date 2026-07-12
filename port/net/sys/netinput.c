@@ -3,13 +3,15 @@
 /*
  * NetInput implementation: ring buffers keyed by `tick % SYNETINPUT_HISTORY_LENGTH`.
  * `syNetInputResolveFrame` chooses source; `syNetInputPublishFrame` materializes edge-detected taps into `gSYControllerDevices`.
- * On PORT, `syNetInputFuncRead` snapshots hardware into `sSYNetInputHardwareLatch` and clears `gSYControllerDevices` before
- * resolve/publish so sim globals are never read for gameplay between raw HID and publish. At most one HID snapshot is taken per
- * `sSYNetInputTick` (taskman may call FuncRead several times while skew pacing holds sim without advancing the tick).
+ * On PORT, `syNetInputFuncRead` consumes one wall-rate HID sample from a capture FIFO into `sSYNetInputHardwareLatch`
+ * and clears `gSYControllerDevices` before resolve/publish so sim globals are never read for gameplay between raw HID
+ * and publish. The FIFO is polled on every FuncRead (including admission stalls for the same sim tick) and on PortPushFrame
+ * sim-skips, so stick trajectory during rare R-holds is preserved instead of dropped. Each accepted sim tick pops one
+ * FIFO sample (drop-oldest on overrun) — vanilla-shaped motion, not peak-hold.
  *
- * GGPO-shaped contract: live phase-locked VS samples raw HID at sim `t` into a local delay ring owned by `t + D`; battle
- * resolves local slots from that owned sim row, so committed `D` is felt locally and sent to the peer ahead of use. During
- * rollback resim, local HID is ignored; `syNetInputMakeLocalFrame` replays from published history for that tick.
+ * Phase-lock contract (NETMENU): live VS samples raw HID at sim `t` into gameplay + send-lead rings both keyed by `t`
+ * (zero local feel delay). Committed `D` is send/predict runway only: wire label remains `sim + D`. During rollback
+ * resim, local HID is ignored; `syNetInputMakeLocalFrame` replays from published history for that tick.
  */
 
 #include <sys/controller.h>
@@ -43,8 +45,23 @@ extern char *getenv(const char *name);
 extern int atoi(const char *s);
 extern void port_log(const char *fmt, ...);
 static sb32 sSYNetInputPredictNeutral;
+#if defined(SSB64_NETMENU)
+static sb32 sSYNetInputLocalLabActive;
+static s32 sSYNetInputLocalLabPlayer;
+#endif
 static SYController sSYNetInputHardwareLatch[MAXCONTROLLERS];
+/*
+ * Send-lead / egress ring. Under NETMENU feel-0:
+ * - authoritative HID for sim `t` is stored at tick `t` (same content as gameplay);
+ * - staging also hold-last-fills `(t+1)…(t+D)` so AppendDelayed can emit wire labels through
+ *   `sim+2D` and intro Wait's `DelaySim(hr)` frontier can advance (soak stuck-at-0 with D≥1).
+ * Legacy non-NETMENU still stages only at sample+D for closed-loop local delay.
+ */
 static SYNetInputFrame sSYNetInputLocalDelayHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+#if defined(SSB64_NETMENU)
+/* Gameplay ring: HID owned by sample tick (feel 0). MakeLocalFrame / local authority read this. */
+static SYNetInputFrame sSYNetInputLocalGameplayHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+#endif
 /* Last gameplay row enqueued for wire transmit per sim tick (peer-symmetric authority for local slot). */
 static SYNetInputFrame sSYNetInputTransmittedHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 static u32 sSYNetInputRemotePacketSeqHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
@@ -73,8 +90,24 @@ static s32 sSYNetInputAnalogOnsetLookback = -1;
 static s32 sSYNetInputAnalogOnsetFacingThresh = -1;
 static s32 sSYNetInputAnalogOnsetLargeDelta = -1;
 static u32 sSYNetInputAnalogOnsetLogBudget;
-/* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must sample HID. */
+/* Sim-tick the latch was last filled for; 0xFFFFFFFFU => next FuncRead must consume a FIFO sample. */
 static u32 sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
+#if defined(SSB64_NETMENU)
+/*
+ * Wall-rate HID capture FIFO: preserves vanilla stick trajectory across admission stalls /
+ * decouple sim-skips. Depth covers a short R-hold without inventing peaks.
+ */
+#define SYNETINPUT_HW_CAPTURE_FIFO_LEN 8U
+typedef struct SYNetInputHwCaptureSample
+{
+	u16 buttons;
+	s8 stick_x;
+	s8 stick_y;
+} SYNetInputHwCaptureSample;
+static SYNetInputHwCaptureSample sSYNetInputHwCaptureFifo[MAXCONTROLLERS][SYNETINPUT_HW_CAPTURE_FIFO_LEN];
+static u32 sSYNetInputHwCaptureFifoHead[MAXCONTROLLERS];
+static u32 sSYNetInputHwCaptureFifoCount[MAXCONTROLLERS];
+#endif
 static sb32 sSYNetInputLocalEncodingWasDigital[MAXCONTROLLERS];
 static u32 sSYNetInputMixedInputLogBudget;
 static sb32 sSYNetInputSuppressSceneUpdateAfterRead;
@@ -102,6 +135,129 @@ static void syNetInputNeutralizeAllControllerDevices(void)
 		gSYControllerDevices[i].stick_range.y = 0;
 	}
 }
+
+static void syNetInputStageLocalDelayFramesFromLatch(u32 sample_tick);
+
+#if defined(SSB64_NETMENU)
+static void syNetInputHwCaptureFifoReset(void)
+{
+	s32 player;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		sSYNetInputHwCaptureFifoHead[player] = 0U;
+		sSYNetInputHwCaptureFifoCount[player] = 0U;
+	}
+}
+
+static void syNetInputHwCaptureFifoPushFromDevices(void)
+{
+	s32 player;
+	u32 head;
+	u32 count;
+	SYNetInputHwCaptureSample *slot;
+	const SYController *controller;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		controller = &gSYControllerDevices[player];
+		count = sSYNetInputHwCaptureFifoCount[player];
+		head = sSYNetInputHwCaptureFifoHead[player];
+		if (count >= SYNETINPUT_HW_CAPTURE_FIFO_LEN)
+		{
+			/* Drop oldest — keep freshest wall-rate trajectory, never invent peaks. */
+			head = (head + 1U) % SYNETINPUT_HW_CAPTURE_FIFO_LEN;
+			sSYNetInputHwCaptureFifoHead[player] = head;
+			count = SYNETINPUT_HW_CAPTURE_FIFO_LEN - 1U;
+		}
+		slot = &sSYNetInputHwCaptureFifo[player][(head + count) % SYNETINPUT_HW_CAPTURE_FIFO_LEN];
+		slot->buttons = (u16)(controller->button_hold | controller->button_tap);
+		slot->stick_x = controller->stick_range.x;
+		slot->stick_y = controller->stick_range.y;
+		sSYNetInputHwCaptureFifoCount[player] = count + 1U;
+	}
+}
+
+static sb32 syNetInputHwCaptureFifoPopIntoLatch(void)
+{
+	s32 player;
+	u32 head;
+	u32 count;
+	const SYNetInputHwCaptureSample *sample;
+	SYController *latch;
+
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (sSYNetInputHwCaptureFifoCount[player] == 0U)
+		{
+			return FALSE;
+		}
+	}
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		head = sSYNetInputHwCaptureFifoHead[player];
+		count = sSYNetInputHwCaptureFifoCount[player];
+		sample = &sSYNetInputHwCaptureFifo[player][head];
+		latch = &sSYNetInputHardwareLatch[player];
+		memset(latch, 0, sizeof(*latch));
+		latch->button_hold = sample->buttons;
+		latch->stick_range.x = sample->stick_x;
+		latch->stick_range.y = sample->stick_y;
+		sSYNetInputHwCaptureFifoHead[player] = (head + 1U) % SYNETINPUT_HW_CAPTURE_FIFO_LEN;
+		sSYNetInputHwCaptureFifoCount[player] = count - 1U;
+	}
+	return TRUE;
+}
+
+static sb32 syNetInputHwCaptureActive(void)
+{
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		return TRUE;
+	}
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/*
+ * Wall-rate HID poll into the capture FIFO. Safe on admission stalls and PortPushFrame sim-skips.
+ * Neutralizes devices after capture so live HID cannot leak into sim globals.
+ */
+void syNetInputPollHardwareCaptureFifo(void)
+{
+	if (syNetInputHwCaptureActive() == FALSE)
+	{
+		return;
+	}
+	syControllerFuncRead();
+	syNetInputHwCaptureFifoPushFromDevices();
+	syNetInputNeutralizeAllControllerDevices();
+}
+
+static void syNetInputConsumeHardwareLatchForSimTick(u32 tick)
+{
+	if (syNetInputHwCaptureFifoPopIntoLatch() == FALSE)
+	{
+		syNetInputPollHardwareCaptureFifo();
+		if (syNetInputHwCaptureFifoPopIntoLatch() == FALSE)
+		{
+			/* Empty after poll: fall back to a direct latch (should be rare). */
+			syControllerFuncRead();
+			memcpy(sSYNetInputHardwareLatch, gSYControllerDevices, sizeof(SYController) * (size_t)MAXCONTROLLERS);
+			syNetInputNeutralizeAllControllerDevices();
+		}
+	}
+	syNetInputStageLocalDelayFramesFromLatch(tick);
+	sSYNetInputPortHwLatchTick = tick;
+}
+#endif
 #endif
 
 typedef struct SYNetInputSlot
@@ -146,6 +302,9 @@ void syNetInputSetTick(u32 tick)
 	sSYNetGgpoBattleFrame = tick;
 	/* Rollback resim and other explicit rewinds: do not treat the next FuncRead as a repeat of the prior sim tick. */
 	sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
+#if defined(SSB64_NETMENU)
+	syNetInputHwCaptureFifoReset();
+#endif
 #endif
 }
 
@@ -285,6 +444,14 @@ void syNetInputAdvanceAuthoritativeSimTick(void)
 		return;
 	}
 	completed_tick = sSYNetInputTick;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Stick sample uses the completed tick's published controllers + fighter tap counters (post-sim).
+	 * Must run before the counter advances so mode=training|netvs lines align with dash-window math.
+	 */
+	syNetInputMaybeLogStickSample(syNetInputIsLocalLabActive() != FALSE ? "training" : "netvs");
+	syNetInputMaybeLogStickTapWitness(syNetInputIsLocalLabActive() != FALSE ? "training" : "netvs");
+#endif
 	sSYNetInputTick++;
 #ifdef PORT
 	sSYNetGgpoBattleFrame++;
@@ -682,6 +849,12 @@ static sb32 syNetInputIsLocalDelaySlot(s32 player)
 	{
 		return FALSE;
 	}
+#if defined(SSB64_NETMENU)
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		return (player == sSYNetInputLocalLabPlayer) ? TRUE : FALSE;
+	}
+#endif
 	if (syNetPeerIsVSSessionActive() == FALSE)
 	{
 		return FALSE;
@@ -691,7 +864,27 @@ static sb32 syNetInputIsLocalDelaySlot(s32 player)
 	return ((player == local_slot) || (player == extra_slot)) ? TRUE : FALSE;
 }
 
-static u32 syNetInputLocalDelayOwnerTick(u32 sample_tick)
+/*
+ * NETMENU: gameplay owner is sample_tick (feel 0). Send-lead horizon is sample+D (provisional fill).
+ * Non-NETMENU keeps legacy sample+D ownership on the delay ring only.
+ */
+static u32 syNetInputLocalGameplayOwnerTick(u32 sample_tick)
+{
+#if defined(SSB64_NETMENU)
+	return sample_tick;
+#else
+	u32 d;
+
+	d = syNetPeerGetCommittedInputDelay();
+	if ((~(u32)0 - sample_tick) < d)
+	{
+		return ~(u32)0;
+	}
+	return sample_tick + d;
+#endif
+}
+
+static u32 syNetInputLocalSendLeadOwnerTick(u32 sample_tick)
 {
 	u32 d;
 
@@ -720,37 +913,127 @@ static void syNetInputMaybeLogForkDiagRemoteWire(s32 player, u32 wire_tick, u32 
                                                  const char *reason);
 #endif
 
-static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 owner_tick)
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Mash during Appear/countdown (game_status Wait) must not enter gameplay/send-lead rings or remote
+ * history. Feel-0 still stages provisional runway for intro hr, but rows stay neutral so the first
+ * post-Go stick onset is not a REPLACE/GGPO against intro HID (soak1 Turn@394 vs Wait).
+ * Synctest remains skipped for Wait — this is input policy, not intro hash fidelity.
+ */
+static sb32 syNetInputIntroWaitForceNeutralActive(void)
 {
-	SYNetInputFrame frame;
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return FALSE;
+	}
+	if ((gSCManagerBattleState == NULL) || (gSCManagerBattleState->game_status != nSCBattleGameStatusWait))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static void syNetInputForceFrameNeutralButtonsStick(SYNetInputFrame *frame)
+{
+	if (frame == NULL)
+	{
+		return;
+	}
+	frame->buttons = 0;
+	frame->stick_x = 0;
+	frame->stick_y = 0;
+}
+#endif
+
+static void syNetInputBuildLocalFrameFromLatch(s32 player, u32 owner_tick, SYNetInputFrame *out_frame)
+{
 	SYController *controller;
 	s32 hw_player;
+	s8 stick_x;
+	s8 stick_y;
+
+	hw_player = syNetPeerResolveLocalHardwareDevice(player);
+	if (syNetInputCheckPlayer(hw_player) == FALSE)
+	{
+		syNetInputMakeFrame(out_frame, owner_tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
+		return;
+	}
+	controller = &sSYNetInputHardwareLatch[hw_player];
+	stick_x = controller->stick_range.x;
+	stick_y = controller->stick_range.y;
+	syNetInputNoteLocalEncodingOnSample(player, stick_x, stick_y, owner_tick);
+	if (syNetInputMixedInputQuantizeEnabled() != FALSE)
+	{
+		syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
+	}
+	syNetInputMakeFrame(out_frame, owner_tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
+	                   nSYNetInputSourceLocal, FALSE);
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		syNetInputForceFrameNeutralButtonsStick(out_frame);
+		if (syNetInputCheckPlayer(player) != FALSE)
+		{
+			syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+		}
+	}
+#endif
+}
+
+static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 sample_tick)
+{
+	SYNetInputFrame frame;
+#if defined(SSB64_NETMENU)
+	u32 lead_tick;
+	u32 ahead_tick;
+#endif
 
 	if (syNetInputIsLocalDelaySlot(player) == FALSE)
 	{
 		return;
 	}
-	hw_player = syNetPeerResolveLocalHardwareDevice(player);
-	if (syNetInputCheckPlayer(hw_player) == FALSE)
-	{
-		return;
-	}
-	controller = &sSYNetInputHardwareLatch[hw_player];
-	{
-		s8 stick_x;
-		s8 stick_y;
-
-		stick_x = controller->stick_range.x;
-		stick_y = controller->stick_range.y;
-		syNetInputNoteLocalEncodingOnSample(player, stick_x, stick_y, owner_tick);
-		if (syNetInputMixedInputQuantizeEnabled() != FALSE)
-		{
-			syNetInputQuantizeStickToDigitalCardinals(&stick_x, &stick_y);
-		}
-		syNetInputMakeFrame(&frame, owner_tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
-		                   nSYNetInputSourceLocal, FALSE);
-	}
+#if defined(SSB64_NETMENU)
+	syNetInputBuildLocalFrameFromLatch(player, sample_tick, &frame);
+	syNetInputStoreFrame(sSYNetInputLocalGameplayHistory, player, &frame);
+	/*
+	 * Send-lead: authoritative row at sample_tick (wire = sample+D) plus hold-last provisional rows
+	 * through sample+D so AppendDelayed can raise hr past DelaySim frontier during intro Wait.
+	 * Real samples overwrite provisional ahead slots when those ticks arrive.
+	 * Peer egress must NoteTransmitted only for the current sample tick — provisional ahead is wire-only
+	 * (see syNetPeerAppendDelayedLocalRowsToBundle); otherwise stick onset revises transmitted authority
+	 * and GGPO-storms into rollback_epoch / load_fail_hold.
+	 */
 	syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
+	/*
+	 * If egress NoteTransmitted provisional delay[sim] before this sample, realign transmitted +
+	 * published to the feel-0 HID row now (NoteTransmitted refuses pre-sample locks).
+	 */
+	{
+		SYNetInputFrame prior_tx;
+
+		if ((syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, frame.tick, &prior_tx) != FALSE) &&
+		    (syNetInputFrameGameplayEquals(&prior_tx, &frame) == FALSE))
+		{
+			syNetInputNoteTransmittedSimFrame(player, &frame);
+		}
+	}
+	lead_tick = syNetInputLocalSendLeadOwnerTick(sample_tick);
+	if ((lead_tick != ~(u32)0) && (lead_tick > sample_tick))
+	{
+		for (ahead_tick = sample_tick + 1U; ahead_tick <= lead_tick; ahead_tick++)
+		{
+			frame.tick = ahead_tick;
+			syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
+			if (ahead_tick == lead_tick)
+			{
+				break;
+			}
+		}
+	}
+#else
+	syNetInputBuildLocalFrameFromLatch(player, sample_tick, &frame);
+	syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
+#endif
 }
 
 static void syNetInputStageLocalDelayFramesFromLatch(u32 sample_tick)
@@ -759,15 +1042,25 @@ static void syNetInputStageLocalDelayFramesFromLatch(u32 sample_tick)
 	s32 local_slot;
 	s32 extra_slot;
 
-	if (syNetPeerIsVSSessionActive() == FALSE)
-	{
-		return;
-	}
 	if (syNetInputAuthoritativeWireContractEnabled() == FALSE)
 	{
 		return;
 	}
-	owner_tick = syNetInputLocalDelayOwnerTick(sample_tick);
+	owner_tick = syNetInputLocalGameplayOwnerTick(sample_tick);
+#if defined(SSB64_NETMENU)
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		if ((sSYNetInputLocalLabPlayer >= 0) && (sSYNetInputLocalLabPlayer < MAXCONTROLLERS))
+		{
+			syNetInputStoreLocalDelayFrameFromLatch(sSYNetInputLocalLabPlayer, owner_tick);
+		}
+		return;
+	}
+#endif
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
 	local_slot = syNetPeerGetLocalSimSlot();
 	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
 	syNetInputStoreLocalDelayFrameFromLatch(local_slot, owner_tick);
@@ -786,10 +1079,24 @@ sb32 syNetInputGetLocalDelayedFrame(s32 player, u32 tick, SYNetInputFrame *out_f
 	return syNetInputGetStoredFrame(sSYNetInputLocalDelayHistory, player, tick, out_frame);
 }
 
+#if defined(SSB64_NETMENU)
+static sb32 syNetInputGetLocalGameplayFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	if (syNetInputIsLocalDelaySlot(player) == FALSE)
+	{
+		return FALSE;
+	}
+	return syNetInputGetStoredFrame(sSYNetInputLocalGameplayHistory, player, tick, out_frame);
+}
+#endif
+
 #define nSYNetLocalAuthoritySourceNone 0
 #define nSYNetLocalAuthoritySourceLatch 1
 #define nSYNetLocalAuthoritySourceDelay 2
 #define nSYNetLocalAuthoritySourceTransmitted 3
+#if defined(SSB64_NETMENU)
+#define nSYNetLocalAuthoritySourceGameplay 4
+#endif
 
 static sb32 syNetInputFrameStickGameplayNeutral(const SYNetInputFrame *frame)
 {
@@ -833,6 +1140,10 @@ static const char *syNetInputLocalAuthoritySourceTag(s32 source_rank)
 		return "transmitted";
 	case nSYNetLocalAuthoritySourceDelay:
 		return "delay";
+#if defined(SSB64_NETMENU)
+	case nSYNetLocalAuthoritySourceGameplay:
+		return "gameplay";
+#endif
 	case nSYNetLocalAuthoritySourceLatch:
 		return "latch";
 	default:
@@ -856,6 +1167,25 @@ static sb32 syNetInputResolveLocalAuthorityFrameEx(s32 player, u32 tick, SYNetIn
 	{
 		*out_source_rank = nSYNetLocalAuthoritySourceNone;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Feel-0: gameplay ring is sim + FC authority. Prefer it over Transmitted — egress can
+	 * NoteTransmit delay[sim] before FuncRead stages the real sample (provisional hold-last from
+	 * sample-1 still sits in send-lead), which left FC hist≠authority (soak 1989925098 @600).
+	 */
+	if (syNetInputGetLocalGameplayFrame(player, tick, out_frame) != FALSE)
+	{
+		out_frame->tick = tick;
+		out_frame->source = nSYNetInputSourceLocal;
+		out_frame->is_predicted = FALSE;
+		out_frame->is_valid = TRUE;
+		if (out_source_rank != NULL)
+		{
+			*out_source_rank = nSYNetLocalAuthoritySourceGameplay;
+		}
+		return TRUE;
+	}
+#endif
 	if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, tick, out_frame) != FALSE)
 	{
 		out_frame->tick = tick;
@@ -868,6 +1198,7 @@ static sb32 syNetInputResolveLocalAuthorityFrameEx(s32 player, u32 tick, SYNetIn
 		}
 		return TRUE;
 	}
+#if !defined(SSB64_NETMENU)
 	if (syNetInputGetLocalDelayedFrame(player, tick, out_frame) != FALSE)
 	{
 		out_frame->tick = tick;
@@ -879,6 +1210,12 @@ static sb32 syNetInputResolveLocalAuthorityFrameEx(s32 player, u32 tick, SYNetIn
 			*out_source_rank = nSYNetLocalAuthoritySourceDelay;
 		}
 		return TRUE;
+	}
+#endif
+	/* Resim must not invent authority from live HID. */
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return FALSE;
 	}
 	hw_player = syNetPeerResolveLocalHardwareDevice(player);
 	if (syNetInputCheckPlayer(hw_player) == FALSE)
@@ -914,7 +1251,12 @@ void syNetInputPromoteLocalAuthorityPublished(s32 player, u32 tick)
 	s32 source_rank;
 	sb32 had_published;
 
-	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) ||
+	    ((syNetPeerIsVSSessionActive() == FALSE)
+#if defined(SSB64_NETMENU)
+	     && (sSYNetInputLocalLabActive == FALSE)
+#endif
+	         ) ||
 	    (syNetRollbackIsResimulating() != FALSE) || (tick == 0U) ||
 	    (syNetInputResolveLocalAuthorityFrameEx(player, tick, &resolved, &source_rank) == FALSE))
 	{
@@ -952,8 +1294,22 @@ void syNetInputPromoteAllLocalAuthoritySlots(u32 tick)
 	s32 local_slot;
 	s32 extra_slot;
 
-	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE) ||
-	    (syNetRollbackIsResimulating() != FALSE) || (tick == 0U))
+	if ((syNetInputAuthoritativeWireContractEnabled() == FALSE) || (syNetRollbackIsResimulating() != FALSE) ||
+	    (tick == 0U))
+	{
+		return;
+	}
+#if defined(SSB64_NETMENU)
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		if ((sSYNetInputLocalLabPlayer >= 0) && (sSYNetInputLocalLabPlayer < MAXCONTROLLERS))
+		{
+			syNetInputPromoteLocalAuthorityPublished(sSYNetInputLocalLabPlayer, tick);
+		}
+		return;
+	}
+#endif
+	if (syNetPeerIsVSSessionActive() == FALSE)
 	{
 		return;
 	}
@@ -1025,7 +1381,12 @@ static sb32 syNetInputResolveRemoteHumanAuthorityFrameEx(s32 player, u32 tick, S
 		stick_x = last_confirmed->stick_x;
 		stick_y = last_confirmed->stick_y;
 	}
-	syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteConfirmed, FALSE);
+	/*
+	 * Speculative hold-last while wire for this sim tick is not confirmed yet. Must be tagged predicted so
+	 * rollback mismatch / NoteSimTickPredictedRemoteUsage can correct when the real row arrives — marking this
+	 * as RemoteConfirmed (legacy) made phase-lock prediction invisible to recovery.
+	 */
+	syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemotePredicted, TRUE);
 	if (out_source_rank != NULL)
 	{
 		*out_source_rank = nSYNetRemoteAuthoritySourceHoldLast;
@@ -1156,9 +1517,10 @@ static void syNetInputPumpIngressAndPromoteRemoteThroughTick(u32 tick)
 }
 
 /*
- * Authoritative wire contract: every remote-human slot must have a strict confirmed remote row for `sim_tick`
- * before battle may consume it. Phase-lock prediction may advance shared commit while resolve still falls back to
- * hold-last/neutral — that path desyncs (client Fox @421 soak).
+ * TRUE when every remote-human slot has a strict confirmed remote row for `sim_tick`.
+ * Used as the confirmed-path readiness check. On rollback sessions, phase-lock prediction may advance without
+ * this (see FuncRead wire admission + Republish) and consume hold-last tagged RemotePredicted until wire arrives.
+ * Prediction-recovery windows still require confirmed (`syNetRollbackPredictionRecoveryRequiresConfirmed`).
  */
 sb32 syNetInputRemoteHumanWireReadyForSimTick(u32 sim_tick)
 {
@@ -1186,6 +1548,30 @@ sb32 syNetInputRemoteHumanWireReadyForSimTick(u32 sim_tick)
 	return TRUE;
 }
 
+/*
+ * TRUE when shared commit admits this sim tick via the phase_lock prediction window (ring missing at wire_base)
+ * and prediction-recovery is not forcing confirmed-only stalls.
+ */
+static sb32 syNetInputPhaseLockPredictAdvanceAllowed(u32 sim_tick)
+{
+	SYNetPeerSharedCommitStep shared;
+
+	if ((syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackPredictionRecoveryRequiresConfirmed(sim_tick) != FALSE)
+	{
+		return FALSE;
+	}
+	syNetPeerEvaluateSharedCommitStep(sim_tick, &shared);
+	if ((shared.advance == FALSE) || (shared.uses_prediction == FALSE))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 sb32 syNetInputRepublishRemoteHumanControllersForTick(u32 tick)
 {
 	SYNetInputFrame frame;
@@ -1201,7 +1587,11 @@ sb32 syNetInputRepublishRemoteHumanControllersForTick(u32 tick)
 	syNetInputPumpIngressAndPromoteRemoteThroughTick(tick);
 	if (syNetInputRemoteHumanWireReadyForSimTick(tick) == FALSE)
 	{
-		return FALSE;
+		/* Predict-approved: publish speculative remote frames and allow battle sim; rollback corrects later. */
+		if (syNetInputPhaseLockPredictAdvanceAllowed(tick) == FALSE)
+		{
+			return FALSE;
+		}
 	}
 	n = syNetPeerGetRemoteHumanSlotCount();
 	for (i = 0; i < n; i++)
@@ -1260,6 +1650,9 @@ void syNetInputReset(void)
 	sSYNetInputIsReplayMetadataValid = FALSE;
 #ifdef PORT
 	sSYNetInputPortHwLatchTick = 0xFFFFFFFFU;
+#if defined(SSB64_NETMENU)
+	syNetInputHwCaptureFifoReset();
+#endif
 	memset(sSYNetInputLocalEncodingWasDigital, 0, sizeof(sSYNetInputLocalEncodingWasDigital));
 #endif
 #ifdef PORT
@@ -1334,6 +1727,9 @@ void syNetInputReset(void)
 			syNetInputClearFrame(&sSYNetInputSavedHistory[player][i]);
 #ifdef PORT
 			syNetInputClearFrame(&sSYNetInputLocalDelayHistory[player][i]);
+#if defined(SSB64_NETMENU)
+			syNetInputClearFrame(&sSYNetInputLocalGameplayHistory[player][i]);
+#endif
 			sSYNetInputRemotePacketSeqHistory[player][i] = 0U;
 			sSYNetInputRemotePacketSeqValid[player][i] = FALSE;
 #endif
@@ -1364,6 +1760,204 @@ void syNetInputStartVSSession(void)
 	syNetInputLoadExecutionDelayAndPredictionFromEnv();
 #endif
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+sb32 syNetInputIsLocalLabActive(void)
+{
+	return sSYNetInputLocalLabActive;
+}
+
+s32 syNetInputGetLocalLabPlayer(void)
+{
+	return sSYNetInputLocalLabPlayer;
+}
+
+void syNetInputEndLocalLabSession(void)
+{
+	if (sSYNetInputLocalLabActive == FALSE)
+	{
+		return;
+	}
+	sSYNetInputLocalLabActive = FALSE;
+	sSYNetInputLocalLabPlayer = 0;
+	port_log("SSB64 NetInput: local_lab end\n");
+}
+
+void syNetInputStartLocalLabSession(s32 local_player, u32 input_delay)
+{
+	s32 p;
+
+	if ((local_player < 0) || (local_player >= MAXCONTROLLERS))
+	{
+		local_player = 0;
+	}
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		syNetInputEndLocalLabSession();
+	}
+	syNetInputStartVSSession();
+	syNetPeerCommitLabInputDelay(input_delay, "training_lab");
+	sSYNetInputLocalLabPlayer = local_player;
+	sSYNetInputLocalLabActive = TRUE;
+	for (p = 0; p < MAXCONTROLLERS; p++)
+	{
+		syNetInputSetSlotSource(p, nSYNetInputSourceLocal);
+	}
+	port_log("SSB64 NetInput: local_lab start player=%d D=%u\n", (int)local_player, (unsigned int)input_delay);
+}
+
+void syNetInputMaybeLogStickSample(const char *mode)
+{
+	static sb32 sStickSampleCached = -999;
+	GObj *fighter_gobj;
+	const char *e;
+	u32 tick;
+
+	if (sStickSampleCached == -999)
+	{
+		e = getenv("SSB64_STICK_SAMPLE_LOG");
+		sStickSampleCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	if (sStickSampleCached == 0)
+	{
+		return;
+	}
+	tick = syNetInputGetTick();
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		SYController *controller;
+		s32 player;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan) || (fp->is_control_disable != FALSE))
+		{
+			continue;
+		}
+		player = fp->player;
+		if ((player < 0) || (player >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		controller = &gSYControllerDevices[player];
+		port_log("SSB64 STICK_SAMPLE mode=%s tick=%u player=%d sx=%d sy=%d tap_x=%d hold_x=%d btn=0x%04X\n",
+		         (mode != NULL) ? mode : "?", (unsigned int)tick, (int)player, (int)controller->stick_range.x,
+		         (int)controller->stick_range.y, (int)fp->tap_stick_x, (int)fp->hold_stick_x,
+		         (unsigned int)controller->button_hold);
+	}
+}
+
+void syNetInputMaybeLogStickTapWitness(const char *mode)
+{
+	static sb32 sTapWitnessCached = -999;
+	GObj *fighter_gobj;
+	const char *e;
+	u32 tick;
+	u32 d;
+	s32 local_only;
+
+	if (sTapWitnessCached == -999)
+	{
+		e = getenv("SSB64_STICK_TAP_WITNESS");
+		sTapWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	if (sTapWitnessCached == 0)
+	{
+		return;
+	}
+	tick = syNetInputGetTick();
+	d = syNetPeerGetCommittedInputDelay();
+	/*
+	 * Prefer the local human only (lab player, else peer local sim slot). Remote Man slots are
+	 * often neutral/predicted and drown the log.
+	 */
+	local_only = -1;
+	if (sSYNetInputLocalLabActive != FALSE)
+	{
+		local_only = sSYNetInputLocalLabPlayer;
+	}
+	else if (syNetPeerIsVSSessionActive() != FALSE)
+	{
+		local_only = syNetPeerGetLocalSimSlot();
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		FTPlayerInput *pl;
+		SYController *controller;
+		s32 player;
+		s32 sx_dev;
+		s32 sy_dev;
+		s32 sx_pl;
+		s32 sy_pl;
+		s32 prev_x;
+		s32 prev_y;
+		u32 tap;
+		u32 hold;
+		sb32 mismatch;
+		sb32 burned;
+		sb32 tap_max;
+		const char *reason;
+
+		fp = ftGetStruct(fighter_gobj);
+		if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan) || (fp->is_control_disable != FALSE))
+		{
+			continue;
+		}
+		player = fp->player;
+		if ((player < 0) || (player >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		if ((local_only >= 0) && (player != local_only))
+		{
+			continue;
+		}
+		controller = &gSYControllerDevices[player];
+		pl = &fp->input.pl;
+		sx_dev = (s32)controller->stick_range.x;
+		sy_dev = (s32)controller->stick_range.y;
+		sx_pl = (s32)pl->stick_range.x;
+		sy_pl = (s32)pl->stick_range.y;
+		prev_x = (s32)pl->stick_prev.x;
+		prev_y = (s32)pl->stick_prev.y;
+		tap = (u32)fp->tap_stick_x;
+		hold = (u32)fp->hold_stick_x;
+		mismatch = ((sx_dev != sx_pl) || (sy_dev != sy_pl)) ? TRUE : FALSE;
+		{
+			s32 abs_sx_dev;
+
+			abs_sx_dev = (sx_dev < 0) ? -sx_dev : sx_dev;
+			burned = ((abs_sx_dev >= 56) && (tap >= 3U)) ? TRUE : FALSE;
+			tap_max = ((abs_sx_dev >= 20) && (tap >= 250U)) ? TRUE : FALSE;
+		}
+		if ((mismatch == FALSE) && (burned == FALSE) && (tap_max == FALSE))
+		{
+			continue;
+		}
+		if (mismatch != FALSE)
+		{
+			reason = "device_pl_mismatch";
+		}
+		else if (tap_max != FALSE)
+		{
+			reason = "tap_max_held";
+		}
+		else
+		{
+			reason = "burned_dash";
+		}
+		port_log(
+		    "SSB64 STICK_TAP_WITNESS mode=%s reason=%s tick=%u player=%d D=%u lab=%d "
+		    "sx_dev=%d sy_dev=%d sx_pl=%d sy_pl=%d prev=(%d,%d) tap_x=%u hold_x=%u btn=0x%04X\n",
+		    (mode != NULL) ? mode : "?", reason, (unsigned int)tick, (int)player, (unsigned int)d,
+		    (sSYNetInputLocalLabActive != FALSE) ? 1 : 0, sx_dev, sy_dev, sx_pl, sy_pl, prev_x, prev_y,
+		    (unsigned int)tap, (unsigned int)hold, (unsigned int)controller->button_hold);
+	}
+}
+#endif
 
 void syNetInputSetSlotSource(s32 player, SYNetInputSource source)
 {
@@ -2474,34 +3068,56 @@ void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame)
 	SYNetInputFrame store;
 	SYNetInputFrame prior;
 	sb32 had_prior;
+#if defined(SSB64_NETMENU)
+	SYNetInputFrame gameplay;
+	const SYNetInputFrame *authority;
+#endif
 
 	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (frame->tick == 0U))
 	{
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	authority = frame;
+	if (syNetInputIsLocalDelaySlot(player) != FALSE)
+	{
+		if (syNetInputGetLocalGameplayFrame(player, frame->tick, &gameplay) == FALSE)
+		{
+			/* Send-before-sample: delay[sim] may still be hold-last provisional — do not lock. */
+			return;
+		}
+		if (syNetInputFrameGameplayEquals(&gameplay, frame) == FALSE)
+		{
+			authority = &gameplay;
+		}
+	}
+	had_prior = syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, authority->tick, &prior);
+	store = *authority;
+#else
 	had_prior = syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, frame->tick, &prior);
 	store = *frame;
+#endif
 	syNetInputStoreFrame(sSYNetInputTransmittedHistory, player, &store);
 	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (syNetInputIsLocalDelaySlot(player) != FALSE))
 	{
-		syNetInputPromoteLocalAuthorityPublished(player, frame->tick);
-		if ((had_prior != FALSE) && (syNetInputFrameGameplayEquals(&prior, frame) == FALSE))
+		syNetInputPromoteLocalAuthorityPublished(player, store.tick);
+		if ((had_prior != FALSE) && (syNetInputFrameGameplayEquals(&prior, &store) == FALSE))
 		{
-			syNetRollbackNotifyLocalAuthorityTransmitRevision(player, frame->tick);
+			syNetRollbackNotifyLocalAuthorityTransmitRevision(player, store.tick);
 		}
 		return;
 	}
-	if ((had_prior != FALSE) && (syNetInputFrameGameplayEquals(&prior, frame) == FALSE))
+	if ((had_prior != FALSE) && (syNetInputFrameGameplayEquals(&prior, &store) == FALSE))
 	{
 		SYNetInputFrame patch;
 
 		patch = store;
-		patch.tick = frame->tick;
+		patch.tick = store.tick;
 		patch.source = nSYNetInputSourceLocal;
 		patch.is_predicted = FALSE;
 		syNetInputStoreFrame(sSYNetInputHistory, player, &patch);
 		syNetInputStrictReadyCacheInvalidate();
-		syNetRollbackNotifyLocalAuthorityTransmitRevision(player, frame->tick);
+		syNetRollbackNotifyLocalAuthorityTransmitRevision(player, store.tick);
 	}
 }
 
@@ -2688,21 +3304,81 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 #ifdef PORT
 	syNetInputMaybeLogForkDiagRemoteWire(player, wire_tick, sim_tick, frame, "commit_remote_wire");
 #endif
-	if ((sim_tick != 0U) && (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
-	    (syNetInputAuthoritativeWireContractEnabled() != FALSE))
-	{
-		syNetInputPromoteRemoteHumanAuthorityPublished(player, sim_tick);
-	}
 	{
 		SYNetInputFrame published;
 		SYNetInputFrame wire_view;
 		sb32 had_published;
+		sb32 queued_predicted_correction;
 
-		had_published = syNetInputGetHistoryFrame(player, sim_tick, &published);
 		wire_view = *frame;
 		wire_view.tick = sim_tick;
+		had_published = (sim_tick != 0U) ? syNetInputGetHistoryFrame(player, sim_tick, &published) : FALSE;
+		queued_predicted_correction = FALSE;
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * Feel-0 send-lead: provisional ahead rows are still sent as RemoteConfirmed (no predicted bit on
+		 * INPUT packets). Peer may sim that hold-last as wire-ready, then REPLACE with the real sample.
+		 * PublishedSimUsedPrediction is false for those confirms, so RequestInputCorrection would no-op and
+		 * leave a permanent +1 status-phase lag (soak 1648332797 Android p0 behind Linux after every stick
+		 * onset; FC@600 inputs=DIFFER). Mark superseded publish as predicted so GGPO can rewind.
+		 */
+		if ((sim_tick != 0U) && (had_published != FALSE) && (had_prior_ring != FALSE) && (prior_ring != NULL) &&
+		    (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
+		    (syNetInputFrameIsRemoteStrictConfirmed(prior_ring) != FALSE) &&
+		    (syNetInputFrameGameplayEquals(prior_ring, frame) == FALSE) &&
+		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
+		    (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, &published, &wire_view) == FALSE) &&
+		    (syNetInputGameplayCorrectionIsSignificantEx(prior_ring, frame, TRUE) != FALSE))
+		{
+			published.is_predicted = TRUE;
+			if (published.source == nSYNetInputSourceRemoteConfirmed)
+			{
+				published.source = nSYNetInputSourceRemotePredicted;
+			}
+			syNetInputStoreFrame(sSYNetInputHistory, player, &published);
+			syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
+			                              "feel0_provisional_replace", &published, &wire_view);
+			syNetRollbackRequestInputCorrection(player, sim_tick);
+			queued_predicted_correction = TRUE;
+			had_published = TRUE;
+		}
+#endif
+		/*
+		 * Queue GGPO correction *before* Promote overwrites published history with confirmed wire.
+		 * Otherwise predicted hold-last (neutral) vs stick onset becomes published==wire and we return
+		 * without rollback — FC later reanchors from asymmetric local predicted-onset flags (Wait vs Dash).
+		 */
+		if ((sim_tick != 0U) && (had_published != FALSE) && (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
+		    ((published.is_predicted != FALSE) || (published.source == nSYNetInputSourceRemotePredicted)) &&
+		    (syNetInputFrameGameplayEquals(&published, &wire_view) == FALSE) &&
+		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
+		    (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, &published, &wire_view) == FALSE) &&
+		    (syNetInputGameplayCorrectionIsSignificantEx(&published, &wire_view, TRUE) != FALSE))
+		{
+			if (queued_predicted_correction == FALSE)
+			{
+				syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
+				                              "pre_promote_ggpo", &published, &wire_view);
+				syNetRollbackRequestInputCorrection(player, sim_tick);
+			}
+			queued_predicted_correction = TRUE;
+		}
+		if ((sim_tick != 0U) && (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
+		    (syNetInputAuthoritativeWireContractEnabled() != FALSE))
+		{
+			syNetInputPromoteRemoteHumanAuthorityPublished(player, sim_tick);
+		}
+		had_published = (sim_tick != 0U) ? syNetInputGetHistoryFrame(player, sim_tick, &published) : FALSE;
 		if ((had_published != FALSE) && (syNetInputFrameGameplayEquals(&published, &wire_view) != FALSE))
 		{
+			return;
+		}
+		if (queued_predicted_correction != FALSE)
+		{
+			if (syNetInputEpisodeSealedSpanBlocksPatch(sim_tick) == FALSE)
+			{
+				syNetInputPatchPublishedFromRemoteConfirmedReason(player, wire_tick, frame, "post_pre_promote");
+			}
 			return;
 		}
 		if ((had_prior_ring != FALSE) && (prior_ring != NULL) && (prior_ring->is_predicted != FALSE) &&
@@ -2814,6 +3490,12 @@ static void syNetInputFillRemoteConfirmedGap(s32 player, u32 tick)
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		syNetInputForceFrameNeutralButtonsStick(&seed);
+	}
+#endif
 	for (t = last + 1U; t < tick; t++)
 	{
 		if ((syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, t, &existing) != FALSE) &&
@@ -2851,6 +3533,15 @@ sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 st
 	{
 		return FALSE;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		buttons = 0;
+		stick_x = 0;
+		stick_y = 0;
+		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
+	}
+#endif
 	syNetInputMakeFrame(&frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteConfirmed, FALSE);
 	syNetInputFillRemoteConfirmedGap(player, tick);
 	if (syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, tick, &existing) != FALSE)
@@ -3038,6 +3729,15 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (syNetInputIsLocalDelaySlot(player) != FALSE))
 	{
 		hw_player = syNetPeerResolveLocalHardwareDevice(player);
+#if defined(SSB64_NETMENU)
+		if (syNetInputGetLocalGameplayFrame(player, tick, out_frame) != FALSE)
+		{
+			out_frame->source = nSYNetInputSourceLocal;
+			out_frame->is_predicted = FALSE;
+			syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "gameplay_slot");
+			return;
+		}
+#else
 		if (syNetInputGetLocalDelayedFrame(player, tick, out_frame) != FALSE)
 		{
 			out_frame->source = nSYNetInputSourceLocal;
@@ -3045,6 +3745,7 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 			syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "delay_slot");
 			return;
 		}
+#endif
 		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
 		syNetInputMaybeLogLocalInputFrame(player, hw_player, tick, out_frame, "delay_slot_empty");
 		return;
@@ -4822,6 +5523,38 @@ u32 syNetInputFindEarliestPredictedRemoteUsageInSpan(u32 from_tick, u32 to_tick)
 	return ~(u32)0;
 }
 
+/*
+ * Shared across peers when FC input digests match: earliest published human row in [from,to] with
+ * non-neutral sticks/buttons. Prefer this over local predicted-usage flags for FC reanchor so both
+ * peers pick the same mismatch tick on analog onset (see netplay_predict_fc_asymmetric_onset).
+ */
+u32 syNetInputFindEarliestHumanNonNeutralInSpan(u32 from_tick, u32 to_tick)
+{
+	u32 t;
+	s32 player;
+	SYNetInputFrame frame;
+
+	if (from_tick > to_tick)
+	{
+		return ~(u32)0;
+	}
+	for (t = from_tick; t <= to_tick; t++)
+	{
+		for (player = 0; player < MAXCONTROLLERS; player++)
+		{
+			if (syNetInputGetHistoryFrame(player, t, &frame) == FALSE)
+			{
+				continue;
+			}
+			if (syNetInputFrameStickGameplayNeutral(&frame) == FALSE)
+			{
+				return t;
+			}
+		}
+	}
+	return ~(u32)0;
+}
+
 static sb32 syNetInputDivergenceInputLogWindow(u32 tick, u32 *out_begin, u32 *out_end)
 {
 	const char *e;
@@ -5409,13 +6142,16 @@ static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
 
 /*
  * Strict wire admission (`nSYNetTickCommitPhase_FuncReadWireAdmission`): `syNetPeerEvaluateSharedCommitStep` first
- * requires **every remote human slot** to have a ring cell at **`wire_base = sim_tick + D`** (`syNetPeerRemoteInputsPresentForWireTick`).
+ * requires **every remote human slot** to have a ring cell at **`wire_base = sim_tick + D`** (`syNetPeerRemoteInputsPresentForWireTick`),
+ * or admits via the bounded phase_lock prediction window (`uses_prediction`).
  * `hr` from `syNetPeerGetHighestRemoteTick()` is the highest **wire index** seen in ingress (not sim tick).
  * **`wire_strict = wire_base + strict_slack`** (`SSB64_NETPLAY_STRICT_SLACK_FRAMES` et al., capped 0..4) caps how far
  * `syNetPeerEffectiveWireFrontierFromHr` may sit ahead when resolving frames elsewhere (`syNetPeerIsRemoteInputReadyForSimTickEx`);
  * the shared-commit gate itself keys off `wire_base` only.
- * When rollback has used predicted remote input and arms recovery, `syNetRollbackPredictionRecoveryRequiresConfirmed`
- * returns TRUE until `sim_tick` reaches `frontier + PHASE_LOCK_PREDICTION_TICKS` — then missing `wire_base` stalls as **R**
+ * On rollback sessions, after shared `advance`, FuncRead must **not** re-apply skew lockstep or require confirmed
+ * remote history when `uses_prediction` — resolve publishes hold-last tagged `RemotePredicted` and rollback corrects
+ * on mismatch. When rollback has used predicted remote input and arms recovery, `syNetRollbackPredictionRecoveryRequiresConfirmed`
+ * returns TRUE until `sim_tick` reaches `frontier + PHASE_LOCK_PREDICTION_TICKS` — then missing confirmed stalls as **R**
  * (no prediction escape) until inputs arrive or `SSB64_NETPLAY_STRICT_R_ABORT_FRAMES` tears down VS.
  * On abort: verdict stays blocked (`strict_remote_stall_abort`); FuncRead returns without publish (must not
  * `syNetTickCommitVerdictAllowAll` or the stall counter resets on the accidental publish path).
@@ -5779,6 +6515,57 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 			}
 			return;
 		}
+		/*
+		 * Rollback sessions: shared commit already decided advance (confirmed ring or phase_lock prediction).
+		 * Do not re-impose skew lockstep or confirmed-only wire after a predict-approved advance — that made
+		 * EvaluateSharedCommitStep prediction a no-op and forced delay-sized soft lockstep (D=1 soak).
+		 * Skew must not suppress battle updates on rollback (docs/netplay_phase_lock.md).
+		 * Prediction-recovery windows still require confirmed remote rows.
+		 */
+		if (syNetSessionParamsRollbackEnabled() != FALSE)
+		{
+			sb32 need_confirmed_wire;
+
+			/*
+			 * Confirmed ring path: still verify published remote history is present (belt-and-suspenders).
+			 * Predict path: allow speculative hold-last (tagged RemotePredicted) unless recovery demands confirmed.
+			 */
+			need_confirmed_wire = (shared.uses_prediction == FALSE) ? TRUE : FALSE;
+			if ((shared.uses_prediction != FALSE) &&
+			    (syNetRollbackPredictionRecoveryRequiresConfirmed(tick) != FALSE))
+			{
+				need_confirmed_wire = TRUE;
+			}
+			if ((need_confirmed_wire != FALSE) &&
+			    (syNetInputRemoteHumanWireReadyForSimTick(tick) == FALSE))
+			{
+				out->allow_full_input_publish = FALSE;
+				out->allow_battle_sim_step = FALSE;
+				out->suppress_scene_update = TRUE;
+				out->strict_partial_publish_local = TRUE;
+				out->admission_letter = 'R';
+				syNetInputMaybeIngressExtraPumpsOnStall();
+				if (syNetInputStrictRemoteMissAbortIfStuck(tick) != FALSE)
+				{
+					out->allow_full_input_publish = FALSE;
+					out->allow_battle_sim_step = FALSE;
+					out->suppress_scene_update = TRUE;
+					out->strict_partial_publish_local = FALSE;
+					out->strict_remote_stall_abort = TRUE;
+					out->admission_letter = 'A';
+					return;
+				}
+				syNetInputLogStrictDecision(tick, shared.required_wire, syNetPeerGetCommittedInputDelay(),
+				                            syNetPeerGetHighestRemoteTick(), TRUE);
+				return;
+			}
+			if (shared.uses_prediction != FALSE)
+			{
+				syNetInputStrictReadyCacheInvalidate();
+			}
+			return;
+		}
+		/* Non-rollback: keep legacy skew + confirmed-wire lockstep after shared advance. */
 		if (syNetPeerShouldHoldSimTickForSkewPacing(tick, NULL) != FALSE)
 		{
 			out->allow_full_input_publish = FALSE;
@@ -5907,15 +6694,29 @@ void syNetInputFuncRead(void)
 		 * Latch HID **before** VS admission that depends on remote ring / skew (network timing). Otherwise a stall or
 		 * skew hold defers the first `syControllerFuncRead` for this tick until later wall time, binding a different
 		 * physical sample to the same `tick` — local sim index must own local input capture, not ingress pacing.
+		 *
+		 * NETMENU: wall-rate FIFO — poll on every FuncRead (including same-tick stalls); each new sim tick pops one
+		 * sample so stick trajectory during rare R-holds is preserved (vanilla shape, not peak-hold).
 		 */
 		if (tick != sSYNetInputPortHwLatchTick)
 		{
+#if defined(SSB64_NETMENU)
+			syNetInputConsumeHardwareLatchForSimTick(tick);
+#else
 			syControllerFuncRead();
 			memcpy(sSYNetInputHardwareLatch, gSYControllerDevices, sizeof(SYController) * (size_t)MAXCONTROLLERS);
 			syNetInputStageLocalDelayFramesFromLatch(tick);
 			syNetInputNeutralizeAllControllerDevices();
 			sSYNetInputPortHwLatchTick = tick;
+#endif
 		}
+#if defined(SSB64_NETMENU)
+		else
+		{
+			/* Same sim tick held (admission R/V/…): keep capturing wall-rate HID into the FIFO. */
+			syNetInputPollHardwareCaptureFifo();
+		}
+#endif
 		syNetInputPromoteAllLocalAuthoritySlots(tick);
 		if (syNetPeerIsVSSessionActive() != FALSE)
 		{
@@ -6179,7 +6980,7 @@ static void syNetInputRollbackReconcileLocalSlotForResim(s32 slot, u32 t)
 {
 	SYNetInputFrame row;
 
-	/* GGPO local authority: transmitted → delay → latch; no stale neutral published fallback. */
+	/* GGPO local authority: transmitted → gameplay/delay ring; never live HID during resim. */
 	if (syNetInputResolveLocalAuthorityFrame(slot, t, &row) != FALSE)
 	{
 		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);

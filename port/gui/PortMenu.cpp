@@ -788,8 +788,7 @@ PortMenu::PortMenu()
     : Menu("gOpenPortMenu", "Port Menu", 0, UIWidgets::Colors::LightBlue) {
 }
 
-void PortMenu::AddMenuSettings() {
-    AddMenuEntry("Settings", CVAR_SETTING("Menu.SettingsSidebarSection"));
+void PortMenu::AddMenuSettingsGeneral() {
     AddSidebarEntry("Settings", "General", 2);
 
     WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
@@ -869,7 +868,11 @@ void PortMenu::AddMenuSettings() {
         })
         .Options(ButtonOptions().Tooltip("Opens the folder that contains the save, config, and asset files."));
 
-    path.sidebarName = "Graphics";
+    }
+
+void PortMenu::AddMenuSettingsGraphics() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Graphics";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Graphics", 2);
 
@@ -1029,7 +1032,11 @@ void PortMenu::AddMenuSettings() {
                      .Max(32.0f)
                      .DefaultValue(10.0f));
 
-    path.sidebarName = "Gameplay";
+    }
+
+void PortMenu::AddMenuSettingsGameplay() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Gameplay";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Gameplay", 1);
 
@@ -1129,7 +1136,35 @@ void PortMenu::AddMenuSettings() {
         .Options(CheckboxOptions().Tooltip("Disables the in-game HUD. Note that some icons will still be visible (e.g. CPU icons in 1P Mode on the top-left.)"));
 
     // --- Input customization ---
-    path.sidebarName = "Input Mappings";
+    }
+
+void PortMenu::AddMenuSettingsDisplay() {
+    WidgetPath path = { "Settings", "Display", SECTION_COLUMN_1 };
+    AddSidebarEntry("Settings", "Display", 1);
+
+    AddWidget(path, "Debug", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Hitbox View", WIDGET_CVAR_COMBOBOX)
+        .CVar(ssb64::enhancements::HitboxViewCVarName())
+        .RaceDisable(false)
+        .Options(ComboboxOptions()
+                     .Tooltip("Overrides fighter/item/weapon display with hitbox visualization. "
+                              "Filled mode draws red cubes for active hitboxes; Outline mode "
+                              "draws hitbox edges and shows hurtboxes as solid "
+                              "yellow/green/blue boxes (yellow=normal, green="
+                              "invincible, blue=intangible).")
+                     .ComboMap(kHitboxViewMap)
+                     .DefaultIndex(0));
+
+    AddWidget(path, "Other", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Disable HUD", WIDGET_CVAR_CHECKBOX)
+        .CVar(ssb64::enhancements::DisableHUDCVarName())
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Disables the in-game HUD. Note that some icons will still be visible (e.g. CPU icons in 1P Mode on the top-left.)"));
+}
+
+void PortMenu::AddMenuSettingsInputMappings() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Input Mappings";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Input Mappings", 1);
 
@@ -1142,7 +1177,11 @@ void PortMenu::AddMenuSettings() {
         .Options(WindowButtonOptions().Tooltip("Toggles the controller configuration window."));
 
     // --- Controls sidebar: per-player input remapping ---
-    path.sidebarName = "Control Enhancements";
+    }
+
+void PortMenu::AddMenuSettingsControlEnhancements(bool includeTapJump) {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Control Enhancements";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Control Enhancements", 1);
 
@@ -1150,10 +1189,12 @@ void PortMenu::AddMenuSettings() {
         const std::string playerLabel = fmt::format("Player {}", p + 1);
         AddWidget(path, playerLabel, WIDGET_SEPARATOR_TEXT);
 
-        AddWidget(path, fmt::format("Disable Tap Jump (P{})", p + 1), WIDGET_CVAR_CHECKBOX)
-            .CVar(enhancements::TapJumpCVarName(p))
-            .RaceDisable(false)
-            .Options(CheckboxOptions().Tooltip("Disables jumping by pushing up on the analog stick."));
+        if (includeTapJump) {
+            AddWidget(path, fmt::format("Disable Tap Jump (P{})", p + 1), WIDGET_CVAR_CHECKBOX)
+                .CVar(enhancements::TapJumpCVarName(p))
+                .RaceDisable(false)
+                .Options(CheckboxOptions().Tooltip("Disables jumping by pushing up on the analog stick."));
+        }
 
         AddWidget(path, fmt::format("C-Stick Smash (P{})", p + 1), WIDGET_CVAR_CHECKBOX)
             .CVar(enhancements::CStickSmashCVarName(p))
@@ -1208,7 +1249,11 @@ void PortMenu::AddMenuSettings() {
     }
 
     // --- Audio ---
-    path.sidebarName = "Audio";
+    }
+
+void PortMenu::AddMenuSettingsAudio() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Audio";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Audio", 1);
 
@@ -1268,7 +1313,11 @@ void PortMenu::AddMenuSettings() {
             .DefaultValue(false));
 
     // --- Cheats ---
-    path.sidebarName = "Cheats";
+    }
+
+void PortMenu::AddMenuSettingsCheats() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Cheats";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Cheats", 1);
 
@@ -1289,7 +1338,11 @@ void PortMenu::AddMenuSettings() {
     AddWidget(path, "Unlock Sound Test Menu", WIDGET_CVAR_CHECKBOX).CVar("gCheats.UnlockSoundTest").RaceDisable(false);
 
     // --- Tools ---
-    path.sidebarName = "Tools";
+    }
+
+void PortMenu::AddMenuSettingsTools() {
+    WidgetPath path = { "Settings", "General", SECTION_COLUMN_1 };
+path.sidebarName = "Tools";
     path.column = SECTION_COLUMN_1;
     AddSidebarEntry("Settings", "Tools", 1);
 
@@ -1341,6 +1394,112 @@ void PortMenu::AddMenuSettings() {
             "and completing one launcher relaunch."));
 #endif
 }
+
+void PortMenu::AddMenuSettings() {
+    AddMenuEntry("Settings", CVAR_SETTING("Menu.SettingsSidebarSection"));
+    AddMenuSettingsGeneral();
+    AddMenuSettingsGraphics();
+    AddMenuSettingsGameplay();
+    AddMenuSettingsInputMappings();
+    AddMenuSettingsControlEnhancements(true);
+    AddMenuSettingsAudio();
+    AddMenuSettingsCheats();
+    AddMenuSettingsTools();
+}
+
+void PortMenu::ApplyNetplayEnhancementVisualLocks() {
+    static constexpr const char* kNetplayDeniedTooltip =
+        "Unavailable in netplay — this setting is ignored while playing online. "
+        "Change it in the offline build if you want it for local play.";
+    static constexpr const char* kNetplayForcedUnlockTooltip =
+        "Netplay always unlocks all characters and stages so every peer shares the same CSS/SSS.";
+
+    for (auto& [entryName, entry] : menuEntries) {
+        (void)entryName;
+        for (auto& [sidebarName, sidebar] : entry.sidebars) {
+            (void)sidebarName;
+            for (auto& column : sidebar.columnWidgets) {
+                for (auto& widget : column) {
+                    if (widget.cVar == nullptr || widget.cVar[0] == '\0') {
+                        continue;
+                    }
+                    /* Only enhancement/cheat namespaces are allowlist-gated. */
+                    const bool isEnhancement = std::strncmp(widget.cVar, "gEnhancements.", 14) == 0;
+                    const bool isCheat = std::strncmp(widget.cVar, "gCheats.", 8) == 0;
+                    if (!isEnhancement && !isCheat) {
+                        continue;
+                    }
+                    if (widget.options == nullptr) {
+                        continue;
+                    }
+
+                    /* Cheats: always unlocked at runtime on netplay — show locked UI. */
+                    if (isCheat) {
+                        WidgetFunc prior = widget.preFunc;
+                        widget.preFunc = [prior](WidgetInfo& info) {
+                            if (prior) {
+                                prior(info);
+                            }
+                            if (info.options == nullptr) {
+                                return;
+                            }
+                            info.options->disabled = true;
+                            info.options->disabledTooltip = kNetplayForcedUnlockTooltip;
+                        };
+                        continue;
+                    }
+
+                    if (port_enhancement_netplay_cvar_allowed(widget.cVar) != 0) {
+                        continue;
+                    }
+
+                    WidgetFunc prior = widget.preFunc;
+                    widget.preFunc = [prior](WidgetInfo& info) {
+                        if (prior) {
+                            prior(info);
+                        }
+                        if (info.options == nullptr) {
+                            return;
+                        }
+                        info.options->disabled = true;
+                        info.options->disabledTooltip = kNetplayDeniedTooltip;
+                    };
+                }
+            }
+        }
+    }
+}
+
+#ifndef DISABLE_SCRIPTING
+void PortMenu::ApplyNetplayScriptModsVisualLock() {
+    for (auto& [entryName, entry] : menuEntries) {
+        (void)entryName;
+        for (auto& [sidebarName, sidebar] : entry.sidebars) {
+            (void)sidebarName;
+            for (auto& column : sidebar.columnWidgets) {
+                for (auto& widget : column) {
+                    if (widget.type != WIDGET_CUSTOM || widget.name != "mods_panel") {
+                        continue;
+                    }
+                    WidgetFunc prior = widget.customFunction;
+                    widget.customFunction = [prior](WidgetInfo& info) {
+                        ImGui::TextWrapped(
+                            "Script Mods are unavailable in the netplay build (unbounded desync risk). "
+                            "Use the offline build to develop or run mods.");
+                        ImGui::Separator();
+                        ImGui::BeginDisabled();
+                        if (prior) {
+                            prior(info);
+                        }
+                        ImGui::EndDisabled();
+                    };
+                    return;
+                }
+            }
+        }
+    }
+}
+#endif
 
 void PortMenu::AddMenuAssets() {
     AddMenuEntry("Assets", CVAR_SETTING("Menu.AssetsSidebarSection"));

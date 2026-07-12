@@ -201,6 +201,8 @@ Saved VS replays are deterministic engine re-runs, not video captures. The curre
 
 Playback resets the VS netinput session, loads metadata, stages full-match replay inputs, sets replayed slots to `nSYNetInputSourceSaved`, restores the match-start RNG seed, and runs the normal game engine.
 
+**Diagnostic playback** (`SSB64_REPLAY_DIAGNOSTIC=1`, netmenu): same saved-input path, but also starts a local rollback session (no UDP). Snapshot ring + synctest + quantize/hardening run as in live netplay. Optional `SSB64_REPLAY_DIAGNOSTIC_RESIM_TICK` forces one solo load→resim. Users still share ordinary `.ssb64r` files; you enable diagnostics at playback time.
+
 The debug runner is controlled with environment variables:
 
 ```sh
@@ -209,7 +211,7 @@ SSB64_REPLAY_RECORD=/tmp/test.ssb64r SSB64_REPLAY_RECORD_FRAMES=43200 ./BattleSh
 SSB64_REPLAY_PLAY=/tmp/test.ssb64r ./BattleShip
 ```
 
-`SYNETINPUT_REPLAY_MAX_FRAMES` / default record ceiling is **43200** (~12 minutes @ 60 Hz). Automatch auto-save writes on **match end** (`syNetReplayFinishVSSession`); `SSB64_REPLAY_RECORD_FRAMES` is optional and only forces an early flush when set below the max (debug short captures). Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
+`SYNETINPUT_REPLAY_MAX_FRAMES` / default record ceiling is **43200** (~12 minutes @ 60 Hz). Automatch auto-save finalizes via `syNetReplayFinishVSSession` on **match end**, **VS session stop** (`syNetPeerStopVSSession`), or clean **`PortShutdown`**. Mid-match **checkpoints** (default every 300 frames / ~5 s; `SSB64_REPLAY_CHECKPOINT_FRAMES`, `0` to disable) rewrite the same path atomically (`.part` then rename) so a hard crash can still leave a playable partial file. `SSB64_REPLAY_RECORD_FRAMES` is optional and only forces an early finalize when set below the max (debug short captures). Record mode still uses the normal VS menus; playback mode loads the file and jumps directly into VS battle using the saved metadata.
 
 ## Debug P2P Netplay
 

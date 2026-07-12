@@ -16,11 +16,24 @@ extern void syNetReplayCaptureBattleMetadata(SCBattleState *battle_state, SYNetI
 extern void syNetReplayApplyBattleMetadata(const SYNetInputReplayMetadata *metadata);
 extern void syNetReplayStartVSSession(SCBattleState *battle_state);
 extern void syNetReplayUpdate(void);
+/** Finalize recording to disk (idempotent). Match end, VS session stop, and clean PortShutdown. */
 extern void syNetReplayFinishVSSession(void);
+/**
+ * Rewrite the in-progress `.ssb64r` without stopping recording (crash resilience).
+ * Safe to call while recording; no-op after Finish.
+ */
+extern void syNetReplayFlushRecordingCheckpoint(void);
 extern sb32 syNetReplayWriteDebugFile(const char *path);
 extern sb32 syNetReplayLoadDebugFile(const char *path);
 
 #if defined(PORT) && defined(SSB64_NETMENU)
+/**
+ * TRUE when a loaded `.ssb64r` is playing with `SSB64_REPLAY_DIAGNOSTIC=1`.
+ * Activates rollback semantics (quantize / synctest / hardening) without UDP peer session.
+ */
+extern sb32 syNetReplayIsDiagnosticPlaybackActive(void);
+/** `~(u32)0` when unset; otherwise one-shot forced load→resim at this completed sim tick. */
+extern u32 syNetReplayGetDiagnosticResimTick(void);
 extern void syNetReplayResolveUserDir(char *out, size_t cap);
 extern sb32 syNetReplayEnsureUserDir(void);
 extern sb32 syNetReplayMakeTimestampFilename(char *out, size_t cap);

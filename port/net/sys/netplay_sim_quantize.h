@@ -12,7 +12,8 @@
 extern sb32 syNetplaySimQuantizeActive(void);
 
 /*
- * TRUE when rollback/netplay policy may mutate live forward-sim behavior (active VS session or resim).
+ * TRUE when rollback/netplay policy may mutate live forward-sim behavior (active VS session,
+ * resim, or diagnostic `.ssb64r` playback with SSB64_REPLAY_DIAGNOSTIC).
  *
  * Dual boundary in decomp (see CLAUDE.md and docs/netplay_rollback_refactor_contracts.md):
  *
@@ -50,6 +51,20 @@ extern void syNetplayQuantizeVec3f(Vec3f *vec);
 extern void syNetplayQuantizeVec3fInto(Vec3f *dst, const Vec3f *src);
 
 extern void syNetplayQuantizeDObjAnimScalars(DObj *dobj);
+/* Quantize after wait-=speed in gcPlayDObjAnimJoint; collapses tiny leftover wait to 0 (NETMENU). */
+extern void syNetplayQuantizeDObjAnimScalarsAfterPlayStep(DObj *dobj);
+/*
+ * NETMENU + SimQuantizeActive: grid-quantize wait+addend (figatree payload / length).
+ * Otherwise: wait+addend. Use for every `anim_wait += payload` in DObj/MObj/CObj parse.
+ */
+extern f32 syNetplayAnimWaitAdd(f32 wait, f32 addend);
+/*
+ * NETMENU: fixed-point wait countdown then write *anim_wait / *anim_frame (always under
+ * NETMENU compile — not gated on SimQuantizeActive). Offline: f32 wait-=speed; frame+=speed.
+ */
+extern void syNetplayAnimCountdownFixedPoint(f32 *anim_wait, f32 *anim_frame, f32 anim_speed);
+/* NETMENU + SimQuantizeActive: collapse post-countdown wait in (0, 256/65536] to 0. */
+extern void syNetplayAnimWaitCollapseLeftover(f32 *anim_wait);
 extern void syNetplayQuantizeDObjTranslate(DObj *dobj);
 extern void syNetplayQuantizeDObjRotate(DObj *dobj);
 extern void syNetplayQuantizeDObjScale(DObj *dobj);
@@ -87,7 +102,7 @@ extern void syNetplayCanonicalizeActiveFightersForNetplay(void);
 
 /*
  * Before gcRunAll on pass-through platforms: re-anchor MPColl pos_prev to TopN for grounded fighters
- * on MAP_VERTEX_COLL_PASS so pass-floor integration matches cross-ISA.
+ * on MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF so pass/cliff-floor integration matches cross-ISA.
  */
 extern void syNetplayHardenPassPlatformCollBeforeSim(void);
 
@@ -98,12 +113,38 @@ extern void syNetplayHardenPassPlatformCollBeforeSim(void);
 extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
 
 /*
+ * Before gcRunAll: snap near-zero anim_frame to 0 on statuses that gate Wait/exit on
+ * anim_frame <= 0 (locomotion + JumpAerial/Landing/Squat/Damage/Catch/Attacks/items +
+ * GuardOff/Escape/Fura + GuardOn release / SpecialN / Kirby SpecialHi / cliff). Cross-ISA
+ * ULP otherwise delays the end transition by one tick (status_total_tics fork).
+ * Turn/TurnRun are excluded (dash-dance SetFlag1 / is_allow_turn_direction).
+ */
+extern void syNetplayHardenAnimEndWaitThresholdBeforeSim(void);
+
+/*
+ * `SSB64_TURN_DASH_WITNESS=1`: log Turn ProcUpdate/Interrupt dash-out gate state
+ * (flag1, is_allow_turn_direction, lr_dash, lr_turn, stick, tap, anim_frame).
+ * Grep `TURN_DASH_WITNESS`. Offline / non-NETMENU: no-op stub.
+ */
+extern void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32 flag1_before,
+                                            sb32 did_dash);
+
+/*
+ * NETMENU + rollback live/resim: repair turn.lr_turn when union +16 was stomped to 0
+ * (aliases attack4.lr / fallspecial.is_allow_interrupt). Soak 1378616925: flag1/allow OK but
+ * lr_turn==0 blocked stick*lr_turn dash-out. See docs/bugs/netplay_turn_lr_turn_stomp_2026-07-12.md.
+ */
+extern void syNetplayHardenTurnLrTurn(FTStruct *fp);
+
+/*
  * Grounded Captain Falcon Kick / landing slide: re-anchor MPColl pos_prev to TopN before gcRunAll so
  * flooredge diff-branch integration matches cross-ISA (soak2 session 458909621 FC @3120).
  */
 extern sb32 syNetplayFighterInCaptainGroundKickGroundCollScope(const struct FTStruct *fp);
 extern void syNetplayCanonicalizeCaptainGroundKickSimState(struct GObj *fighter_gobj);
 extern void syNetplayHardenCaptainGroundKickCollBeforeSim(void);
+extern sb32 syNetplayFighterInCaptainFalconDiveScope(const struct FTStruct *fp);
+extern void syNetplayCanonicalizeCaptainFalconDiveSimState(struct GObj *fighter_gobj);
 
 extern void syNetplayCanonicalizeWeaponSimState(GObj *weapon_gobj);
 extern void syNetplayCanonicalizeActiveWeaponsForNetplay(void);

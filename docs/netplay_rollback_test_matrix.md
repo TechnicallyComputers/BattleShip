@@ -21,9 +21,9 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Epoch pacing + analog decay soak | Same mixed-input env; expect `rollback_epoch_hold` with `epoch=` during peer resim; **no** live `sim` ahead of peer symmetric `target+slack` while peer epoch active; no mirrored `RESIM_BASELINE_MISMATCH` at same `load_tick`; `SSB64_NETPLAY_ROLLBACK_EPOCH_CAP_SLACK=99` bisect disables cap; `SSB64_NETPLAY_ANALOG_PRED_DECAY_TICKS=0` bisect disables decay |
 | Legacy gate proceed | `SSB64_NETPLAY_RESIM_BASELINE_PROCEED_ON_TIMEOUT=1` (unsafe; debug only) |
 | Snapshot save assert | `SSB64_NETPLAY_SNAPSHOT_SAVE_ASSERT=1` (one-shot log if save runs during `resim_pending`) |
-| ~200 ms RTT netem | `tc netem delay 95ms 15ms distribution normal loss 0.3%` both peers; expect `rtt_ms≈200`, `D≈6–7`, `phase_lock≈8` (capped), `rb_snap≥48`, `fuzz≥2`, `redundancy≥2`; watch `rb=` in NetSync (prediction + resim, not lockstep-only) |
-| ~84 ms RTT netem | `tc netem delay 38ms 8ms loss 0.2%` both peers; expect `rtt_ms≈80–90`, `tier=good`, `D≈5`, `phase_lock≈6`, `redundancy=2`; host and guest `rb=` should both increment under stick churn |
-| ~100 ms RTT soak | Auto-negotiate; expect `tier=good`, `D≥5`, `phase_lock≤7`; jump correction → full resim on both peers, not patch-only |
+| ~200 ms RTT netem | `tc netem delay 95ms 15ms distribution normal loss 0.3%` both peers; expect `rtt_ms≈200`, `D≈7`, `phase_lock≤7` (prediction max), `rb_snap≥48`, `fuzz≥2`, `redundancy≥2`; watch `rb=` in NetSync (prediction + resim, not lockstep-only) |
+| ~84 ms RTT netem | `tc netem delay 38ms 8ms loss 0.2%` both peers; expect `rtt_ms≈80–90`, `tier=good`, `D≈2`, `phase_lock` from one-way+margin (≤7), `redundancy=2`; host and guest `rb=` should both increment under stick churn |
+| ~100 ms RTT soak | Auto-negotiate; expect `tier=good`, `D≈3`, `phase_lock≤7`; jump correction → full resim on both peers, not patch-only |
 | Forced resim | `SSB64_NETPLAY_ROLLBACK_FORCE_MISMATCH=1`, `SSB64_NETPLAY_ROLLBACK_INJECT_TICK=<wire_or_sim per inject docs>` |
 | Load verify | `SSB64_NETPLAY_ROLLBACK_LOAD_HASH_VERIFY=1` (default); `=0` debug-only |
 | Catch-up budget | `SSB64_NETPLAY_ROLLBACK_RESIM_TICKS_PER_FRAME=4` |
@@ -32,7 +32,7 @@ See also: [`netplay_rollback_refactor_contracts.md`](netplay_rollback_refactor_c
 | Conservative remote buttons | Default: buttons predict **0** under delay; `SSB64_NETPLAY_PREDICT_REMOTE_BUTTONS_HOLD=1` restores hold-last (shield-tap churn risk) |
 | Digital tap patch (no resim) | **Off** during active rollback (force full resim). `SSB64_NETPLAY_PREDICTION_RECOVERY=1` re-enables legacy tap patch + recovery (debug) |
 | Prediction recovery | **Off** by default. `SSB64_NETPLAY_PREDICTION_RECOVERY=1` debug only |
-| Delay vs prediction ratio | See `NetSession: apply tier=…`: excellent → `D` 3–4, `phase_lock` ≤5; good → `D` 4–6, `phase_lock` 5–7; playable → `phase_lock` cap 6; high → `phase_lock` cap 7 |
+| Delay vs prediction ratio | See `NetSession: apply tier=…`: excellent → `D` 2, `phase_lock` ≤5; good → `D` 2–3, `phase_lock` ≤7 (RTT runway, not `D+D/2`); playable → `D` 5, `phase_lock` ≤7; high → `D` 7–8, `phase_lock` ≤7 |
 | State detail | `SSB64_NETPLAY_STATE_DETAIL_DIAG=1` (world); `=2` (+ fighter detail) |
 | NetSync / FC validation cadence | Default **120** sim ticks; WAN auto (**`rtt_ms >= 150`**) → **60**. Override: `SSB64_NETPLAY_FRAME_COMMIT_VALIDATION_TICKS=60` (both peers). Legacy: `SSB64_NETPLAY_NETSYNC_LOG_INTERVAL`. Log: `frame_commit_validation_ticks=` at execution begin; `NetSession: apply … fc_validation_ticks=` |
 | WAN FC cadence soak | Auto-negotiate with **`rtt_ms >= 150`** (or netem ~200 ms); `FRAME_COMMIT_DIAG=2`; pass = first `MM_POLL` boundaries @**60**/**120**/…, both peers same `fc_validation_ticks`, `resolved_load` valid on late diverge; fail = spurious `FRAME_COMMIT_TOKEN_MISMATCH` @120-only boundary with WAN RTT |

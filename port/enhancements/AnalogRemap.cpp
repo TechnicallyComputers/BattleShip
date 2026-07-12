@@ -1,6 +1,5 @@
 #include "enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
 #include <ship/Context.h>
 #include <ship/controller/controldeck/ControlDeck.h>
 #include <ship/controller/controldevice/controller/Controller.h>
@@ -61,7 +60,7 @@ constexpr float kAnalogRemapRangeDefault    = 1.00f;
 // output flows through to the game unchanged.
 extern "C" void port_enhancement_analog_remap(int player_index, signed char* stick_x, signed char* stick_y) {
     if (player_index < 0 || player_index >= PORT_ENHANCEMENT_MAX_PLAYERS) return;
-    if (!CVarGetInteger(kAnalogRemapEnableCVars[player_index], 0)) return;
+    if (!port_enhancement_cvar_get_integer(kAnalogRemapEnableCVars[player_index], 0)) return;
 
     auto ctx = Ship::Context::GetInstance();
     if (!ctx) return;
@@ -90,10 +89,11 @@ extern "C" void port_enhancement_analog_remap(int player_index, signed char* sti
     const float in_y = (up - down)    * (32767.0f / 85.0f);
 
     constexpr float XPAD_MAX = 32767.0f;
-    const float dz_pct =
-        std::clamp(CVarGetFloat(kAnalogRemapDeadzoneCVars[player_index], kAnalogRemapDeadzoneDefault), 0.0f, 0.99f);
-    const float rng_pct =
-        std::clamp(CVarGetFloat(kAnalogRemapRangeCVars[player_index], kAnalogRemapRangeDefault), 0.50f, 1.50f);
+    const float dz_pct = std::clamp(
+        port_enhancement_cvar_get_float(kAnalogRemapDeadzoneCVars[player_index], kAnalogRemapDeadzoneDefault), 0.0f,
+        0.99f);
+    const float rng_pct = std::clamp(
+        port_enhancement_cvar_get_float(kAnalogRemapRangeCVars[player_index], kAnalogRemapRangeDefault), 0.50f, 1.50f);
 
     const float n64_max     = 127.0f * rng_pct;
     const float dz_val      = dz_pct * XPAD_MAX;

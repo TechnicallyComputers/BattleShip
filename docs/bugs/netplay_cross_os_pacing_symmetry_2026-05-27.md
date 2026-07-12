@@ -65,6 +65,8 @@ Default **`SSB64_NETPLAY_DECOUPLE_DISPLAY_SIM=1`**: sim at contract VI Hz, displ
 
 Pre-exec: **`SSB64_NETPLAY_HOSTFRAME_GATE_PUMP=1`** forces ingress pump on high-Hz host frames while `execution_ready=0`.
 
+**Windows sleep (2026-07-11):** [`netplay_windows_timer_sleep_pacing_2026-07-11.md`](netplay_windows_timer_sleep_pacing_2026-07-11.md) — `syNetPeerOsSleepMicros` uses high-res waitable timer (Fast3D path); wall-slot finish no longer sleeps a full `gran_ms` when already late on a skip frame.
+
 ## Soak results
 
 | Pairing | Build | Result | Notes |

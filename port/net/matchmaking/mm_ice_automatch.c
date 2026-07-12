@@ -1253,10 +1253,7 @@ sb32 mnVSNetAutomatchAMIceBindTick(char *ice_sdp_out, u32 ice_sdp_cap)
 	mmIceSetCandidatePolicy(FALSE, signal_local, NULL, (sIceLocalLan[0] != '\0') ? sIceLocalLan : NULL);
 	if (mmIceGetLocalDescription(sdp, sizeof(sdp)) == FALSE)
 	{
-		if (port_log_debug_active())
-		{
-			port_log("SSB64 ICE: mmIceGetLocalDescription failed (bind tick)\n");
-		}
+		port_log("SSB64 ICE: mmIceGetLocalDescription failed (bind tick)\n");
 		return FALSE;
 	}
 	if (mmIceSdpHasIceUfrag(sdp) == FALSE)
@@ -1851,6 +1848,57 @@ ice_connect_done:
 const char *mnVSNetAutomatchAMIceConnectFailureReason(void)
 {
 	return sIceConnectFailReason;
+}
+
+void mnVSNetAutomatchAMIceLogConnectAbortDiag(const char *reason, u32 elapsed_ms)
+{
+	MmIceState st;
+	char local_path[128];
+	char remote_path[128];
+	char remote_typ[16];
+	char srflx[128];
+	char relay[128];
+	const char *why;
+	const char *fail_reason;
+	sb32 have_path;
+	sb32 have_typ;
+	sb32 have_srflx;
+	sb32 have_relay;
+
+	why = (reason != NULL && reason[0] != '\0') ? reason : "aborted";
+	fail_reason = (sIceConnectFailReason != NULL && sIceConnectFailReason[0] != '\0') ? sIceConnectFailReason
+											 : "(none)";
+	st = mmIceGetState();
+	local_path[0] = '\0';
+	remote_path[0] = '\0';
+	remote_typ[0] = '\0';
+	srflx[0] = '\0';
+	relay[0] = '\0';
+	have_path = mmIceGetSelectedPath(local_path, sizeof(local_path), remote_path, sizeof(remote_path));
+	have_typ = mmIceGetSelectedRemoteCandidateTyp(remote_typ, sizeof(remote_typ));
+	have_srflx = mmIceGetSrflxHostport(srflx, sizeof(srflx));
+	have_relay = mmIceGetRelayHostport(relay, sizeof(relay));
+
+	port_log(
+	    "SSB64 Automatch: connect_abort reason=%s ice_fail=%s ice_state=%s agent_live=%d connected=%d completed=%d "
+	    "failed=%d elapsed_ms=%u remote_typ=%s local_path=%s remote_path=%s local_lan=%s srflx=%s relay=%s "
+	    "host_role=%s connect_phase=%d validate_active=%d\n",
+	    why, fail_reason, mmIceStateName(st), (int)(mmIceAgentLive() != FALSE), (int)(mmIceIsConnected() != FALSE),
+	    (int)(mmIceIsCompleted() != FALSE), (int)(st == MM_ICE_STATE_FAILED), (unsigned int)elapsed_ms,
+	    (have_typ != FALSE && remote_typ[0] != '\0') ? remote_typ : "(none)",
+	    (have_path != FALSE && local_path[0] != '\0') ? local_path : "(none)",
+	    (have_path != FALSE && remote_path[0] != '\0') ? remote_path : "(none)",
+	    (sIceLocalLan[0] != '\0') ? sIceLocalLan : "(none)",
+	    (have_srflx != FALSE && srflx[0] != '\0') ? srflx : "(none)",
+	    (have_relay != FALSE && relay[0] != '\0') ? relay : "(none)",
+	    (sIceHostRole != FALSE) ? "controlling" : "controlled", (int)(sIceConnectPhaseActive != FALSE),
+	    (int)(sIceValidateMatchActive != FALSE));
+
+	/* Best-effort candidate typ/addr lines when a pair was nominated. */
+	if (have_path != FALSE)
+	{
+		mmIceLogSelectedCandidates();
+	}
 }
 
 void mnVSNetAutomatchAMIceNotifyPeerAbort(const MmMatchResult *mr)

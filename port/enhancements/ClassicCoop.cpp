@@ -1,5 +1,4 @@
 #include "enhancements.h"
-#include <libultraship/bridge/consolevariablebridge.h>
 
 namespace ssb64 {
     namespace enhancements {
@@ -27,7 +26,9 @@ static int sClassicCoopLatched = -1;
 static int sClassicCoopContext = 0;
 
 extern "C" void port_classic_coop_latch(void) {
-    sClassicCoopLatched = CVarGetInteger(ssb64::enhancements::ClassicCoopCVarName(), 1) != 0;
+    /* Offline default is ON (1). Netplay allowlist denies this CVar → 0. */
+    sClassicCoopLatched =
+        port_enhancement_cvar_get_integer(ssb64::enhancements::ClassicCoopCVarName(), 1) != 0;
 }
 
 extern "C" int port_enhancement_classic_coop(void) {
@@ -44,7 +45,7 @@ extern "C" int port_classic_coop_context(void) {
 // Live read (no latch): consumed once per stage setup, so a mid-run toggle
 // simply applies from the next stage.
 extern "C" int port_classic_coop_friendly_fire(void) {
-    return CVarGetInteger(ssb64::enhancements::ClassicCoopFriendlyFireCVarName(), 0) != 0;
+    return port_enhancement_cvar_get_integer(ssb64::enhancements::ClassicCoopFriendlyFireCVarName(), 0) != 0;
 }
 
 extern "C" void port_classic_coop_set_context(int active) {

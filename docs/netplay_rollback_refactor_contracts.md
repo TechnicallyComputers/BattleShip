@@ -11,7 +11,7 @@ This note tracks the **target** rollback architecture during the GGPO-style refa
 
 **Rule:** rollback/netplay policy must not mutate live forward sim outside an active netplay VS session.
 
-- **`syNetplayRollbackSemanticsActive()`** — TRUE when `syNetPeerIsVSSessionActive()` or `syNetRollbackIsResimulating()`.
+- **`syNetplayRollbackSemanticsActive()`** — TRUE when `syNetPeerIsVSSessionActive()` or `syNetRollbackIsResimulating()` or **diagnostic `.ssb64r` playback** (`SSB64_REPLAY_DIAGNOSTIC` + loaded replay; see [`netreplay.c`](../port/net/sys/netreplay.c)).
 - **`syNetplayRollbackLiveForwardSimEligible()`** — semantics active **and** not an offline battle mode (e.g. Training). Use for per-tick live reconcile, grab refresh, and catch-up hooks in `syNetRollbackAfterBattleUpdate`.
 - **`syNetplaySimQuantizeActive()`** — defers to rollback semantics (F32 grid + canonicalize paths).
 - **Port safety** (stale GObj guards, LP64 fixes) may stay under `#ifdef PORT` without the session gate.

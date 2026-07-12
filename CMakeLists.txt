@@ -613,6 +613,10 @@ list(APPEND SSB64_SRC_PORT
 # coroutine_test.cpp has its own main(); only built standalone when
 # SSB64_BUILD_COROUTINE_TEST=ON below. Never link it into the game.
 list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/coroutine_test\\.cpp$")
+# PortMenuNetplay is NETMENU-only (stripped Esc menu). Offline keeps full PortMenu.
+if(NOT SSB64_NETMENU)
+    list(FILTER SSB64_SRC_PORT EXCLUDE REGEX "port/gui/PortMenuNetplay\\.(cpp|h)$")
+endif()
 # port/mods/ (HookManager + SymbolResolver) wraps funchook, which isn't
 # fetched when the mod system is disabled. Drop it so nothing references the
 # missing backend. port/hooks/ (the event dispatch system) is funchook-free

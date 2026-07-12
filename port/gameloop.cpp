@@ -39,8 +39,12 @@ void syNetPeerPumpIngressTransport(const char *caller_tag);
 int syNetPeerWantsSyncPresentHold(void);
 int syNetPeerShouldBypassDecoupleSimPacingForTickGrid(void);
 unsigned long long syNetPeerOsMonotonicMs(void);
+void syNetPeerOsSleepMicros(unsigned usec);
 #endif
 unsigned int syNetInputGetTick(void);
+#if defined(SSB64_NETMENU)
+void syNetInputPollHardwareCaptureFifo(void);
+#endif
 extern unsigned int dSYTaskmanUpdateCount;
 extern unsigned int dSYTaskmanFrameCount;
 }
@@ -623,29 +627,50 @@ static unsigned long long port_decouple_sim_led_slot_mono_ms(unsigned int contra
 	return sVsDecoupleExecSyncAnchorMonotonicMs + (unsigned long long)sim_tick * gran_ms;
 }
 
+#if defined(PORT)
+/* Prefer netpeer OS sleep (Windows waitable timer) over sleep_for / Sleep. */
+static void port_vs_sleep_micros(unsigned long long usec)
+{
+	if (usec == 0ULL) {
+		return;
+	}
+	if (usec > 1000000ULL) {
+		usec = 1000000ULL;
+	}
+	syNetPeerOsSleepMicros((unsigned)usec);
+}
+#endif
+
 /*
  * Sim-led wall slot: sleep toward anchor + syNetInputGetTick() * gran_ms (monotonic).
  * Authoritative sim index owns slot placement; wall follows tick cadence from exec-sync latch.
  */
 static void port_vs_decouple_finish_wall_slot_sim_led(unsigned int contract_hz, bool run_game_sim_tick)
 {
-	unsigned long long gran_ms;
 	unsigned long long target_ms;
 	unsigned long long now_mono;
 
-	gran_ms = (unsigned long long)port_get_vs_contract_granularity_ms(contract_hz);
 	target_ms = port_decouple_sim_led_slot_mono_ms(contract_hz, syNetInputGetTick());
 	now_mono = syNetPeerOsMonotonicMs();
 	if (now_mono < target_ms) {
+#if defined(PORT)
+		port_vs_sleep_micros((target_ms - now_mono) * 1000ULL);
+#else
 		std::this_thread::sleep_for(std::chrono::milliseconds(target_ms - now_mono));
-	} else if (!run_game_sim_tick) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(gran_ms));
+#endif
 	}
+	/*
+	 * Already at/past the current sim-tick slot: do not sleep a full gran_ms.
+	 * A skip that crossed the deadline during frame work must offer the same
+	 * tick on the next push immediately (Windows coarse Sleep made this path
+	 * accumulate decouple_skips / feel ~45 Hz).
+	 */
+	(void)run_game_sim_tick;
 }
 
 /*
  * Legacy steady_clock grid (no exec-sync anchor): skip frames advance deadline at end;
- * skip-late slips one period from completion (sim-late does not re-anchor).
+ * skip-late does not re-anchor an extra period (avoids punitive full-slot sleep).
  */
 static void port_vs_decouple_finish_wall_slot_legacy(unsigned int contract_hz, bool run_game_sim_tick)
 {
@@ -657,9 +682,17 @@ static void port_vs_decouple_finish_wall_slot_legacy(unsigned int contract_hz, b
 
 	auto now = std::chrono::steady_clock::now();
 	if (now < sVsNextSimStepDeadline) {
+#if defined(PORT)
+		const auto remain = std::chrono::duration_cast<std::chrono::microseconds>(sVsNextSimStepDeadline - now);
+		if (remain.count() > 0) {
+			port_vs_sleep_micros((unsigned long long)remain.count());
+		}
+#else
 		std::this_thread::sleep_for(sVsNextSimStepDeadline - now);
+#endif
 	} else if (!run_game_sim_tick) {
-		sVsNextSimStepDeadline = now + period;
+		/* Past the advanced skip slot: catch up without sleeping another period. */
+		sVsNextSimStepDeadline = now;
 	}
 }
 
@@ -950,6 +983,10 @@ void PortPushFrame(void)
 #ifdef PORT
 		/* Decoupled sim skip: no VI or task tick this push — recv-only pump so remote rings keep filling. */
 		syNetPeerPumpIngressTransport("port_push");
+#if defined(SSB64_NETMENU)
+		/* Wall-rate HID capture while sim is skipped so stick trajectory is not lost. */
+		syNetInputPollHardwareCaptureFifo();
+#endif
 #endif
 	}
 
@@ -1087,7 +1124,14 @@ void PortPushFrame(void)
 			auto target = frameStart + std::chrono::microseconds(16667);
 			auto now = std::chrono::steady_clock::now();
 			if (now < target) {
+#if defined(PORT)
+				const auto remain = std::chrono::duration_cast<std::chrono::microseconds>(target - now);
+				if (remain.count() > 0) {
+					port_vs_sleep_micros((unsigned long long)remain.count());
+				}
+#else
 				std::this_thread::sleep_for(target - now);
+#endif
 			}
 		} else {
 		bool idlePresented = false;

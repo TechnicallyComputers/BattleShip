@@ -114,6 +114,9 @@ extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const stru
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern void syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects(void);
+extern void syNetRbSnapForwardPruneStaleKirbyFinalCutterBladeEffects(void);
+/* Unconditional Final Cutter blade teardown for one Kirby (ignores is_effect_attach). */
+extern void syNetRbSnapForceClearKirbyFinalCutterBlades(struct GObj *fighter_gobj);
 extern void syNetRbSnapForwardPruneStaleFoxReflectors(void);
 extern sb32 syNetRbSnapYoshiEggLayCaptureWindowActiveWithoutEgg(void);
 /* Coupled-weapon rebind + weapon hit positions only (no figatree presentation sync). */
@@ -145,6 +148,9 @@ extern sb32 syNetRbSnapThunderJoltProcAccessoryWillRun(struct GObj *fighter_gobj
 extern sb32 syNetRbSnapThunderJoltOwnedByFighter(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderJoltFromAccessory(struct GObj *fighter_gobj);
 extern void syNetRbSnapTrySpawnThunderFromSpecialLw(struct GObj *fighter_gobj);
+/* Link / Kirby CopyLink boomerang Phase 4: reacquire owned live boomerang; cull extras. */
+extern struct GObj *syNetRbSnapReacquireBoomerangForFighter(struct GObj *fighter_gobj);
+extern void syNetRbSnapCullOwnedBoomerangsForFighter(struct GObj *fighter_gobj, struct GObj *keep_boomerang_gobj);
 /* TRUE when the live effect pool currently holds the rebirth-halo (respawn platform) effect coupled to
  * this fighter. Diagnostic use: catch the tick a restore drops the halo so the platform goes invisible. */
 extern sb32 syNetRbSnapLiveFighterHasRebirthHalo(struct GObj *fighter_gobj);

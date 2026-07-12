@@ -607,3 +607,22 @@ hit. Two victims → init + 2 hit SFX (3 total) is expected offline.
 
 **Fix (Follow-on 23):** Remove `attack_state = New when Off` from explode coll repair; position-only
 sync via `itProcessUpdateAttackPositions` (F20 path, no record clear).
+
+### Follow-on 24 (explode sparkle/quake with item_count≥2 after quake exclusion, 2026-07-10)
+
+**Symptom:** One Link bomb exploding while another pre-explode bomb is still on stage — damage OK,
+sparkle/quake missing or inconsistent. F22 blob-apply sparkle helped only when an explode blob was
+present; ring replay stayed gated by `SkipLinkBombExplodeCosmeticReplayOnLoad` whenever *any*
+pre-explode bomb existed. Quakes are also `syNetRbSnapEffectHiddenFromRollback`
+(`netplay_quake_cosmetic_rollback_exclusion`), so `ShouldEnsureQuakeEffectsFromSlot` opening the
+gate for explode items could not restore a boom shake (`effect_count=0`).
+
+**Fix (Follow-on 24):**
+
+- `SkipLinkBombExplodeCosmeticReplayOnLoad`: return FALSE when the load slot has an explode item/
+  weapon cosmetic source (Link bomb / Marumine / Samus bomb / Yoshi egg), even if another
+  pre-explode Link bomb is live. Pre-explode-only + SpecialN pull still skip (soak1 @520 ghost).
+- Explode blob apply (Link bomb + Marumine): mint `efManagerQuakeMakeEffect(1)` with sparkle
+  (`syNetRbSnapReplayCosmeticExplodeQuake`), matching vanilla explode init.
+- `ReplayExplodeSparklesFromRing`: seed dedupe positions from the load slot's current explode
+  blobs (avoid double-mint vs blob apply); mint quake with hist Link/Marumine sparkle replays.

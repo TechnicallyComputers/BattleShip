@@ -1,12 +1,10 @@
 #include "enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 constexpr const char* kDisableHUDCVar = "gEnhancements.DisableHUD";
 
 extern "C" {
     bool port_enhancement_is_hud_disabled(void) {
-        return CVarGetInteger(kDisableHUDCVar, 0) != 0;
+        return port_enhancement_cvar_get_integer(kDisableHUDCVar, 0) != 0;
     }
 }
 

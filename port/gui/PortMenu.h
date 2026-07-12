@@ -29,15 +29,33 @@ class PortMenu : public Ship::Menu {
   protected:
     void AddSidebarEntry(std::string sectionName, std::string sidbarName, uint32_t columnCount);
     WidgetInfo& AddWidget(WidgetPath& pathInfo, std::string widgetName, WidgetType widgetType);
-    void AddMenuElements();
+    virtual void AddMenuElements();
     void AddMenuSettings();
+    void AddMenuSettingsGeneral();
+    void AddMenuSettingsGraphics();
+    void AddMenuSettingsGameplay();
+    void AddMenuSettingsDisplay();
+    void AddMenuSettingsInputMappings();
+    void AddMenuSettingsControlEnhancements(bool includeTapJump);
+    void AddMenuSettingsAudio();
+    void AddMenuSettingsCheats();
+    void AddMenuSettingsTools();
     void AddMenuAssets();
     void AddMenuAbout();
 #ifndef DISABLE_SCRIPTING
     void AddMenuMods();
 #endif
 
-  private:
+    /**
+     * NETMENU: keep full Settings presentation, but grey out / block interaction for
+     * gEnhancements.* / gCheats.* CVars not on the netplay allowlist. Checkbox state
+     * still reflects shared cfg; runtime honor is gated by port_enhancement_cvar_get_*.
+     */
+    void ApplyNetplayEnhancementVisualLocks();
+#ifndef DISABLE_SCRIPTING
+    void ApplyNetplayScriptModsVisualLock();
+#endif
+
     bool mShowReextractMessage = false;
     bool mMenuElementsInitialized = false;
 };

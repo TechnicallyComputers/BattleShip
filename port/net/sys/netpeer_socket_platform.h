@@ -63,7 +63,9 @@ u64 syNetPeerOsWallClockUnixMs(void);
 /* Monotonic ms since an arbitrary origin (not comparable across processes). */
 u64 syNetPeerOsMonotonicMs(void);
 
-/* Sleep roughly `usec` microseconds (best-effort). */
+/* Sleep roughly `usec` microseconds (best-effort).
+ * Windows: high-res waitable timer when available; Sleep() fallback.
+ * POSIX: usleep. */
 void syNetPeerOsSleepMicros(unsigned usec);
 
 int syNetPeerOsSocketLastError(void);

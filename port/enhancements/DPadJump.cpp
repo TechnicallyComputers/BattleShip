@@ -1,8 +1,6 @@
 #include "enhancements.h"
 #include "internal/buttons.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 namespace {
 
 constexpr const char* kDPadJumpCVars[PORT_ENHANCEMENT_MAX_PLAYERS] = {
@@ -18,7 +16,7 @@ extern "C" void port_enhancement_dpad_jump(int player_index, unsigned short* but
     using namespace ssb64::enhancements::internal;
 
     if (player_index < 0 || player_index >= PORT_ENHANCEMENT_MAX_PLAYERS) return;
-    if (!CVarGetInteger(kDPadJumpCVars[player_index], 0)) return;
+    if (!port_enhancement_cvar_get_integer(kDPadJumpCVars[player_index], 0)) return;
 
     // If any D-Pad direction is pressed, inject a C-Up (Jump) into the engine.
     if (*button_hold & (U_JPAD | D_JPAD | L_JPAD | R_JPAD)) {

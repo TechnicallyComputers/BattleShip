@@ -1,5 +1,4 @@
 #include "enhancements.h"
-#include <libultraship/bridge/consolevariablebridge.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -31,7 +30,7 @@ extern "C" {
     // 1 = Phase 1 (Stage locked, wait for music selection)
     // 2 = Phase 2 (Music locked, proceed to battle)
     int32_t port_enhancement_music_select_handle_a(uint32_t bgm_id) {
-        if (CVarGetInteger(kMusicSelectionCVar, 0) == 0) {
+        if (port_enhancement_cvar_get_integer(kMusicSelectionCVar, 0) == 0) {
             return 0;
         }
 

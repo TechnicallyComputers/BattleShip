@@ -148,6 +148,11 @@ sb32 syNetSessionParamsAdaptiveDelayEnvEnabled(void)
 	return ((e != NULL) && (atoi(e) != 0)) ? TRUE : FALSE;
 }
 
+/*
+ * Rollback-first delay: ~one-way RTT in frames (60 Hz), not one-way + large lockstep pad.
+ * Feel cost is paid in D; prediction/resim covers the rest via phase_lock.
+ * Prior table was 2/3/5/7/9/10 — retuned after rollback/resim hardening.
+ */
 static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
 {
 	if (rtt_ms < 60U)
@@ -156,21 +161,21 @@ static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
 	}
 	if (rtt_ms < 100U)
 	{
-		return 3U;
+		return 2U;
 	}
 	if (rtt_ms < 150U)
 	{
-		return 5U;
+		return 3U;
 	}
 	if (rtt_ms < 200U)
 	{
-		return 7U;
+		return 5U;
 	}
 	if (rtt_ms < 280U)
 	{
-		return 9U;
+		return 7U;
 	}
-	return 10U;
+	return 8U;
 }
 
 static u32 syNetSessionParamsComputeNegotiatedDelayCeil(u32 d_ticks, u32 headroom_field)
@@ -265,14 +270,14 @@ static const char *syNetSessionParamsRttTierName(u32 rtt_ms)
 
 /*
  * Fixed committed delay tiers by RTT (rollback-first; D does not creep unless adaptive env is on).
- * phase_lock stays RTT-derived for prediction / resim runway after D.
+ * phase_lock follows one-way RTT + margin (prediction / resim runway), not D+D/2 — low D must
+ * not starve the runway when feel-first delay tiers are below half-RTT in frames.
  */
 static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_ticks, u32 *out_d_ticks,
 							u32 *out_phase_lock)
 {
 	u32 d_ticks;
 	u32 phase_lock;
-	u32 pred_cap;
 	u32 runway;
 
 	if ((out_d_ticks == NULL) || (out_phase_lock == NULL))
@@ -297,11 +302,6 @@ static void syNetSessionParamsComputeDelayAndPrediction(u32 rtt_ms, u32 one_way_
 	if (phase_lock < runway)
 	{
 		phase_lock = runway;
-	}
-	pred_cap = d_ticks + (d_ticks / 2U);
-	if (phase_lock > pred_cap)
-	{
-		phase_lock = pred_cap;
 	}
 	if (phase_lock > SYNETSESSION_PARAMS_PREDICTION_MAX)
 	{
@@ -376,7 +376,7 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 	half_rtt_ms = (rtt_ms + 1U) / 2U;
 	one_way_ticks = syNetSessionParamsCeilDiv(half_rtt_ms, frame_ms_num);
 	/*
-	 * Rollback-first: committed D from fixed RTT tiers (2..10); phase_lock is prediction / rollback runway.
+	 * Rollback-first: committed D from fixed RTT tiers (2..8); phase_lock is prediction / rollback runway.
 	 */
 	syNetSessionParamsComputeDelayAndPrediction(rtt_ms, one_way_ticks, &d_ticks, &phase_lock);
 	if (d_ticks < SYNETSESSION_PARAMS_DELAY_MIN)

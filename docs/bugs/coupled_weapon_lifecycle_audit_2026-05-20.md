@@ -42,8 +42,8 @@ Snapshot layer already stores coupled weapon gobj ids ([`netrollback_fighter_cou
 
 | Character | Move | Coupled field | Weapon kind | Risk | Snapshot rebind | Phase 4 runtime |
 |-----------|------|---------------|-------------|------|-----------------|-----------------|
-| **Link** | Neutral B | `passive_vars.link.boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** — see below |
-| **Kirby** | Copy Link N-B | `passive_vars.kirby.copylink_boomerang_gobj` | `nWPKindLinkBoomerang` | Medium | Pointer rebind only | **Not done** |
+| **Link** | Neutral B | `passive_vars.link.boomerang_gobj` | `nWPKindBoomerang` | Medium | Pointer rebind only | **Shipped** (Phase 4 — see [`netplay_link_boomerang_phase4_2026-07-11.md`](netplay_link_boomerang_phase4_2026-07-11.md)) |
+| **Kirby** | Copy Link N-B | `passive_vars.kirby.copylink_boomerang_gobj` | `nWPKindBoomerang` | Medium | Pointer rebind only | **Shipped** (Phase 4 — same doc) |
 | **Link** | Up+B (spin) | `status_vars.link.specialhi.spin_attack_gobj` | `nWPKindSpinAttack` | Medium | Pointer rebind only | **Partial** — spawn guarded on NULL |
 | **Ness** | Up+B (PK Thunder) | `status_vars.ness.specialhi.pkthunder_gobj` | `nWPKindPKThunderHead` | Medium–High | Pointer rebind + cull | **Shipped** (Phase 4 — see [`netplay_ness_pkthunder_upb_segv_2026-05-22.md`](netplay_ness_pkthunder_upb_segv_2026-05-22.md)) |
 | **Pikachu** | Down+B (Thunder) | `status_vars.pikachu.speciallw.thunder_gobj` | `nWPKindPikachuThunderHead` | Medium | Pointer rebind only | **Not done** |
@@ -68,10 +68,10 @@ No persistent fighter↔weapon coupling across status changes; snapshot weapon r
 
 ### Link — Boomerang (`ftlinkspecialn.c`, `ftkirbycopylinkspecialn.c`)
 
-- **Spawn:** `ftLinkSpecialNMakeBoomerang` on anim `flag0` — **no NULL guard**, always assigns new gobj.
-- **Destroy:** `ftLinkSpecialNDestroyBoomerang` exists; called on catch/interrupt paths.
-- **Risk:** Synctest during throw anim could leave boomerang in flight while `boomerang_gobj` cleared → duplicate on next B or stale passive pointer.
-- **Suggested fix:** Reacquire live boomerang owned by fighter before spawn; cull extras; destroy on SpecialN anim-end if still coupled (boomerang returns via weapon logic — predicate TBD: in-flight vs held).
+- **Spawn:** `ftLinkSpecialNMakeBoomerang` on anim `flag0` — Phase 4 reacquire/cull under `PORT && SSB64_NETMENU`.
+- **Destroy:** `ftLinkSpecialNDestroyBoomerang` exists; netmenu also culls remaining owned boomerangs.
+- **Verify:** empty/unmatched `nWPKindBoomerang` slot verify cull (coupled preserve class).
+- **Status:** Shipped — [`netplay_link_boomerang_phase4_2026-07-11.md`](netplay_link_boomerang_phase4_2026-07-11.md).
 
 ### Link — Spin attack (`ftlinkspecialhi.c`)
 

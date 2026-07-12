@@ -24,6 +24,8 @@ extern sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr);
 /* 0 = in progress, 1 = ICE completed and path validated, -1 = failed */
 extern s32 mnVSNetAutomatchAMIceConnectTick(void);
 extern const char *mnVSNetAutomatchAMIceConnectFailureReason(void);
+/** Always-on abort summary for ssb64.log (ICE state, path, TURN/LAN hints). */
+extern void mnVSNetAutomatchAMIceLogConnectAbortDiag(const char *reason, u32 elapsed_ms);
 extern sb32 mnVSNetAutomatchAMIceShouldIgnorePollError(const MmMatchResult *ev);
 extern sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bind);
 /* Trickle poll cadence while ICE_CONNECT (0 = skip poll this tick). */
@@ -57,6 +59,7 @@ extern void mnVSNetAutomatchAMQueuePollReset(void);
 #define mnVSNetAutomatchAMIceBeginConnect(mr) FALSE
 #define mnVSNetAutomatchAMIceConnectTick() 0
 #define mnVSNetAutomatchAMIceConnectFailureReason() "ICE connection failed"
+#define mnVSNetAutomatchAMIceLogConnectAbortDiag(r, e) ((void)(r), (void)(e))
 #define mnVSNetAutomatchAMIceShouldIgnorePollError(ev) FALSE
 #define mnVSNetAutomatchAMIceBootstrapPeer(mr, b) FALSE
 #define mnVSNetAutomatchAMIceConnectTricklePollInterval() 0U

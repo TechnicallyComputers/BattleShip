@@ -86,6 +86,9 @@ extern sb32 mmIceValidateSelectedRemotePath(const char *peer_hostport, const cha
 extern sb32 mmIceSetIceControlling(sb32 controlling);
 extern sb32 mmIceSetRemoteGatheringDone(void);
 extern MmIceState mmIcePoll(void);
+/** Snapshot of last known ICE state without draining juice callbacks. */
+extern MmIceState mmIceGetState(void);
+extern const char *mmIceStateName(MmIceState st);
 extern sb32 mmIceIsConnected(void);
 extern sb32 mmIceIsCompleted(void);
 /*
@@ -143,6 +146,8 @@ typedef enum MmIceState
 #define mmIceSetIceControlling(c) ((void)(c), FALSE)
 #define mmIceSetRemoteGatheringDone() FALSE
 #define mmIcePoll() MM_ICE_STATE_IDLE
+#define mmIceGetState() MM_ICE_STATE_IDLE
+#define mmIceStateName(st) "disabled"
 #define mmIceIsConnected() FALSE
 #define mmIceIsCompleted() FALSE
 #define mmIceSend(b, l) (-1)

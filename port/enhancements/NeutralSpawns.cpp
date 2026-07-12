@@ -1,5 +1,4 @@
 #include "enhancements.h"
-#include <libultraship/bridge/consolevariablebridge.h>
 
 extern "C" int syNetPeerIsVSSessionActive(void);
 
@@ -17,5 +16,5 @@ extern "C" int port_enhancement_neutral_spawns(void) {
     if (syNetPeerIsVSSessionActive() != 0) {
         return 0;
     }
-    return CVarGetInteger(ssb64::enhancements::NeutralSpawnsCVarName(), 0) != 0;
+    return port_enhancement_cvar_get_integer(ssb64::enhancements::NeutralSpawnsCVarName(), 0) != 0;
 }

@@ -60,7 +60,7 @@ Build rollback netcode in phases:
 - Clear last published input so `button_tap` and `button_release` derive from the new match only.
 - Configure player slot ownership after reset: local, remote confirmed/predicted, saved, or future CPU/spectator modes.
 - Use the VS-local netinput tick for input frame history; do not key rollback input history directly on `dSYTaskmanUpdateCount`.
-- Debug replay record/playback is controlled by `SSB64_REPLAY_RECORD`, `SSB64_REPLAY_PLAY`, and optional `SSB64_REPLAY_RECORD_FRAMES` (early-flush only when set below the 43200-frame / ~12 min ceiling; automatch auto-save finalizes on match end).
+- Debug replay record/playback is controlled by `SSB64_REPLAY_RECORD`, `SSB64_REPLAY_PLAY`, and optional `SSB64_REPLAY_RECORD_FRAMES` (early-flush only when set below the 43200-frame / ~12 min ceiling). Automatch auto-save finalizes on match end, VS session stop, or clean `PortShutdown`; mid-match checkpoints (default every 300 frames / ~5s, `SSB64_REPLAY_CHECKPOINT_FRAMES`) rewrite the same `.ssb64r` for crash resilience.
 - Debug P2P is controlled by `SSB64_NETPLAY`, `SSB64_NETPLAY_LOCAL_PLAYER`, `SSB64_NETPLAY_REMOTE_PLAYER`, `SSB64_NETPLAY_BIND`, `SSB64_NETPLAY_PEER`, `SSB64_NETPLAY_DELAY`, `SSB64_NETPLAY_SESSION`, `SSB64_NETPLAY_BOOTSTRAP`, `SSB64_NETPLAY_HOST`, and `SSB64_NETPLAY_SEED`.
 - The start barrier should only gate bootstrap P2P sessions. Non-netplay, replay, and manual P2P sessions should return true from `syNetPeerCheckStartBarrierReleased()` and advance netinput normally.
 - The VS execution gate should only hold bootstrap P2P sessions. Non-netplay, replay, and manual P2P sessions should return true from `syNetPeerCheckBattleExecutionReady()` and run scene updates normally.

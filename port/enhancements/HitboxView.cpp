@@ -1,7 +1,5 @@
 #include "enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 namespace {
 
 constexpr const char* kHitboxViewCVar = "gEnhancements.HitboxView";
@@ -18,7 +16,7 @@ enum {
 } // namespace
 
 extern "C" int port_enhancement_hitbox_display_override(int current_mode) {
-    int setting = CVarGetInteger(kHitboxViewCVar, 0);
+    int setting = port_enhancement_cvar_get_integer(kHitboxViewCVar, 0);
     switch (setting) {
         case 1:
             return kDisplayModeHitCollisionFill;

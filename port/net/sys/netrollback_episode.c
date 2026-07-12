@@ -214,6 +214,28 @@ static void syNetRollbackEpisodeClearPendingPeerSealRows(void)
 	memset(sSYNetRollbackEpisodePendingSeal, 0, sizeof(sSYNetRollbackEpisodePendingSeal));
 }
 
+/* Drop only stashes that will not apply to the episode about to begin (keep early pre-Begin rows). */
+static void syNetRollbackEpisodeClearPendingPeerSealRowsExcept(u32 epoch_id, u32 mismatch_tick, u32 target_tick)
+{
+	u32 i;
+
+	for (i = 0; i < nSYNetRollbackEpisodePendingSealMax; i++)
+	{
+		SYNetRollbackEpisodePendingSealChunk *c;
+
+		c = &sSYNetRollbackEpisodePendingSeal[i];
+		if (c->used == FALSE)
+		{
+			continue;
+		}
+		if ((c->epoch_id == epoch_id) && (c->mismatch_tick == mismatch_tick) && (c->target_tick == target_tick))
+		{
+			continue;
+		}
+		c->used = FALSE;
+	}
+}
+
 static sb32 syNetRollbackEpisodeEpisodeTupleMatches(u32 epoch_id, u32 mismatch_tick, u32 target_tick)
 {
 	return ((epoch_id == sSYNetRollbackEpisodeFsm.epoch_id) &&
@@ -413,7 +435,8 @@ void syNetRollbackEpisodeFsmBegin(u32 epoch_id, u32 mismatch_tick, u32 load_tick
 		    (unsigned int)SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN);
 		sSYNetRollbackEpisodeFsm.target_tick = mismatch_tick + SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN;
 	}
-	syNetRollbackEpisodeClearPendingPeerSealRows();
+	syNetRollbackEpisodeClearPendingPeerSealRowsExcept(epoch_id, mismatch_tick,
+							   sSYNetRollbackEpisodeFsm.target_tick);
 	sSYNetRollbackEpisodeFsm.phase = nSYNetRollbackEpisodeFsmPhaseSealInputs;
 	port_log(
 	    "SSB64 NetRollback: EPISODE_FSM begin epoch=%u mismatch=%u load=%u target=%u role=%s corrected=%d\n",
@@ -1195,6 +1218,35 @@ sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick,
 	}
 	if (syNetRollbackEpisodeEpisodeTupleMatches(epoch_id, mismatch_tick, target_tick) == FALSE)
 	{
+		/*
+		 * Seals often race ahead of follower FsmBegin (ROLLBACK_SYNC still deferred while
+		 * baseline echo retry blocks quiesce). Stash by packet tuple while FSM is Live so
+		 * SealInputs can flush after Begin — do not require active_epoch match first.
+		 * See docs/bugs/netplay_follower_seal_reject_echo_retry_hang_2026-07-12.md.
+		 */
+		if (syNetRollbackEpisodeFsmIsActive() == FALSE)
+		{
+			if (syNetRollbackEpisodeStashPendingPeerSealRowsChunk(epoch_id, mismatch_tick, target_tick, slot,
+									      row_begin, rows, row_count) != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_SEAL_ROWS_EARLY_STASH epoch=%u mismatch=%u target=%u slot=%d begin=%u count=%u\n",
+				    epoch_id,
+				    mismatch_tick,
+				    target_tick,
+				    (int)slot,
+				    row_begin,
+				    row_count);
+				return TRUE;
+			}
+			port_log(
+			    "SSB64 NetRollback: EPISODE_SEAL_ROWS_REJECT reason=early_stash_full slot=%d pkt_epoch=%u pkt_mismatch=%u pkt_target=%u\n",
+			    (int)slot,
+			    epoch_id,
+			    mismatch_tick,
+			    target_tick);
+			return FALSE;
+		}
 		port_log(
 		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_REJECT reason=stale_episode_tuple slot=%d pkt_epoch=%u pkt_mismatch=%u pkt_target=%u active_epoch=%u active_mismatch=%u active_target=%u active_load=%u\n",
 		    (int)slot,

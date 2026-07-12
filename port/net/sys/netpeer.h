@@ -195,6 +195,8 @@ extern u32 syNetPeerGetPhaseLockPredictionWindowTicksFromEnv(void);
 extern u32 syNetPeerGetInputDelayCeil(void);
 extern sb32 syNetPeerSessionParamsNegotiationSatisfied(void);
 extern void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const char *tag);
+/* Training lab / bisect: set floor=0 and committed D without online min-1 bump. */
+extern void syNetPeerCommitLabInputDelay(u32 delay, const char *tag);
 extern void syNetPeerApplyAutoNegotiatedSkewLeadMax(u32 lead_max_ticks);
 extern void syNetPeerApplyAutoNegotiatedTransportParams(u32 phase_lock_ticks, u32 bundle_redundancy,
                                                         u32 ingress_extra_pumps, u32 strict_ring_fuzz_ticks);

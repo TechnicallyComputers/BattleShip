@@ -11,6 +11,32 @@
 static int s_wsa_started;
 static LARGE_INTEGER s_win_monotonic_freq;
 static int s_win_monotonic_freq_init;
+static HANDLE s_win_sleep_timer;
+static int s_win_sleep_timer_init;
+
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+static void syNetPeerOsSleepTimerEnsure(void)
+{
+	if (s_win_sleep_timer_init != 0)
+	{
+		return;
+	}
+	s_win_sleep_timer_init = 1;
+	/*
+	 * Same path as Fast3D present pacing (gfx_sdl2 / gfx_dxgi): high-res waitable
+	 * timer on Win10+, else auto-reset waitable timer. Avoids Sleep() ~1–15.6 ms
+	 * granularity that stretches VS wall slots and bootstrap retry slices.
+	 */
+	s_win_sleep_timer =
+	    CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+	if (s_win_sleep_timer == NULL)
+	{
+		s_win_sleep_timer = CreateWaitableTimerW(NULL, FALSE, NULL);
+	}
+}
 
 void syNetPeerSocketOsStartup(void)
 {
@@ -65,11 +91,32 @@ int syNetPeerOsSetsockoptRecvBuf(syNetPeerOsSocket s, int bytes)
 
 void syNetPeerOsSleepMicros(unsigned usec)
 {
-	/* Windows Sleep() is ~1 ms granularity; sub-ms polls round up to 1 ms. */
+	LARGE_INTEGER due;
+	LONGLONG hundred_ns;
+
 	if (usec == 0U)
 	{
 		return;
 	}
+
+	syNetPeerOsSleepTimerEnsure();
+	if (s_win_sleep_timer != NULL)
+	{
+		/* Relative due time: negative 100-ns units. */
+		hundred_ns = -((LONGLONG)usec * 10LL);
+		if (hundred_ns >= 0)
+		{
+			hundred_ns = -1LL;
+		}
+		due.QuadPart = hundred_ns;
+		if (SetWaitableTimer(s_win_sleep_timer, &due, 0, NULL, NULL, FALSE) != 0)
+		{
+			(void)WaitForSingleObject(s_win_sleep_timer, INFINITE);
+			return;
+		}
+	}
+
+	/* Fallback when waitable timer is unavailable or SetWaitableTimer fails. */
 	if (usec < 1000U)
 	{
 		Sleep(1U);

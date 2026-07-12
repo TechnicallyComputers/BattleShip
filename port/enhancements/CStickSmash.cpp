@@ -1,8 +1,6 @@
 #include "enhancements.h"
 #include "internal/buttons.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 namespace {
 
 constexpr const char* kCStickSmashCVars[PORT_ENHANCEMENT_MAX_PLAYERS] = {
@@ -18,7 +16,7 @@ extern "C" void port_enhancement_c_stick_smash(int player_index, unsigned short*
     using namespace ssb64::enhancements::internal;
 
     if (player_index < 0 || player_index >= PORT_ENHANCEMENT_MAX_PLAYERS) return;
-    if (!CVarGetInteger(kCStickSmashCVars[player_index], 0)) return;
+    if (!port_enhancement_cvar_get_integer(kCStickSmashCVars[player_index], 0)) return;
 
     // Always strip C-bits from both hold/tap so the engine never sees the raw
     // C-button input on this player when the remap is on (otherwise the stock

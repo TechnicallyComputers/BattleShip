@@ -162,6 +162,28 @@ static u32 sDoneCount;
 static char sBaseUrl[192];
 static char sPlayerId[48];
 static char sApiToken[192];
+/** Last successful matchmaking HTTPS total time (ms), from CURLINFO_TOTAL_TIME. */
+static double sLastHttpsRttMs;
+
+static long long mmClientUnixTimeMs(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+	{
+		return 0;
+	}
+	return ((long long)ts.tv_sec * 1000LL) + ((long long)ts.tv_nsec / 1000000LL);
+}
+
+static double mmLastHttpsRttMsOrZero(void)
+{
+	if ((sLastHttpsRttMs > 0.0) && (sLastHttpsRttMs < 2000.0))
+	{
+		return sLastHttpsRttMs;
+	}
+	return 0.0;
+}
 
 #if defined(SSB64_NETPLAY_ICE)
 static MmIceTurnBundle sCachedTurnBundle;
@@ -1034,8 +1056,9 @@ static sb32 mmCredVerifyLoaded(sb32 verbose)
 		return FALSE;
 	}
 	snprintf(jbuf, sizeof(jbuf),
-	         "{\"ticket_id\":\"00000000-0000-0000-0000-000000000000\",\"client_time_ms\":0,"
-	         "\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}");
+	         "{\"ticket_id\":\"00000000-0000-0000-0000-000000000000\",\"client_time_ms\":%lld,"
+	         "\"last_server_rtt_ms\":%.1f,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
+	         (long long)mmClientUnixTimeMs(), mmLastHttpsRttMsOrZero());
 	hc = mmHttpsRequest("POST", "/v1/heartbeat", jbuf, verbose, &resp);
 	if (hc == 404)
 	{
@@ -1534,6 +1557,14 @@ static long mmHttpsRequestInternal(const char *method, const char *path_suffix, 
 	}
 
 	curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+	{
+		double total_sec = 0.0;
+
+		if ((curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &total_sec) == CURLE_OK) && (total_sec > 0.0))
+		{
+			sLastHttpsRttMs = total_sec * 1000.0;
+		}
+	}
 	/*
 	 * Keep the thread-local handle alive for connection reuse; only free the per-request
 	 * header list. The next call resets the handle (mmCurlThreadHandle) before re-setting
@@ -1811,30 +1842,33 @@ static void mmRunJoin(const MmJob *job)
 	char jbuf[MM_JOIN_JSON_CAP];
 	long hc;
 	char *resp;
+	double rtt_ms;
 
 	if (mmCredentialsEnsureReady(FALSE) == FALSE)
 	{
 		mmPushDoneError(401, "no credentials — call ensure player first");
 		return;
 	}
+	rtt_ms = mmLastHttpsRttMsOrZero();
+	/* region "auto": server resolves from CF-IPCountry (or default). */
 	if (job->has_fighter_kind != FALSE)
 	{
 		if (job->has_lan_endpoint != FALSE)
 		{
 			snprintf(jbuf, sizeof(jbuf),
-			         "{\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\",\"region\":\"na-east\",\"game_version\":\"0.1.0\",\"fighter_kind\":%u,"
-			         "\"rtt_ms_server\":0.0,"
+			         "{\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\",\"region\":\"auto\",\"game_version\":\"0.1.0\",\"fighter_kind\":%u,"
+			         "\"rtt_ms_server\":%.1f,"
 			         "\"jitter_ms\":0.0,\"loss_pct\":0.0,\"avg_fps\":60.0,\"fps_drops_per_min\":0.0}",
-			         job->udp_endpoint, job->lan_endpoint, job->fighter_kind);
+			         job->udp_endpoint, job->lan_endpoint, job->fighter_kind, rtt_ms);
 		}
 		else
 		{
 			snprintf(
 			    jbuf, sizeof(jbuf),
-			    "{\"udp_endpoint\":\"%s\",\"region\":\"na-east\",\"game_version\":\"0.1.0\",\"fighter_kind\":%u,"
-			    "\"rtt_ms_server\":0.0,"
+			    "{\"udp_endpoint\":\"%s\",\"region\":\"auto\",\"game_version\":\"0.1.0\",\"fighter_kind\":%u,"
+			    "\"rtt_ms_server\":%.1f,"
 			    "\"jitter_ms\":0.0,\"loss_pct\":0.0,\"avg_fps\":60.0,\"fps_drops_per_min\":0.0}",
-			    job->udp_endpoint, job->fighter_kind);
+			    job->udp_endpoint, job->fighter_kind, rtt_ms);
 		}
 	}
 	else
@@ -1842,18 +1876,18 @@ static void mmRunJoin(const MmJob *job)
 		if (job->has_lan_endpoint != FALSE)
 		{
 			snprintf(jbuf, sizeof(jbuf),
-			         "{\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\",\"region\":\"na-east\",\"game_version\":\"0.1.0\","
-			         "\"rtt_ms_server\":0.0,"
+			         "{\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\",\"region\":\"auto\",\"game_version\":\"0.1.0\","
+			         "\"rtt_ms_server\":%.1f,"
 			         "\"jitter_ms\":0.0,\"loss_pct\":0.0,\"avg_fps\":60.0,\"fps_drops_per_min\":0.0}",
-			         job->udp_endpoint, job->lan_endpoint);
+			         job->udp_endpoint, job->lan_endpoint, rtt_ms);
 		}
 		else
 		{
 			snprintf(jbuf, sizeof(jbuf),
-			         "{\"udp_endpoint\":\"%s\",\"region\":\"na-east\",\"game_version\":\"0.1.0\","
-			         "\"rtt_ms_server\":0.0,"
+			         "{\"udp_endpoint\":\"%s\",\"region\":\"auto\",\"game_version\":\"0.1.0\","
+			         "\"rtt_ms_server\":%.1f,"
 			         "\"jitter_ms\":0.0,\"loss_pct\":0.0,\"avg_fps\":60.0,\"fps_drops_per_min\":0.0}",
-			         job->udp_endpoint);
+			         job->udp_endpoint, rtt_ms);
 		}
 	}
 	if (job->has_turn_endpoint != FALSE)
@@ -1909,9 +1943,17 @@ static void mmRunJoin(const MmJob *job)
 		}
 		else
 		{
+			char region[32];
+
 			memset(&out, 0, sizeof(out));
 			out.kind = MM_POLL_QUEUED;
 			snprintf(out.ticket_id, sizeof(out.ticket_id), "%s", tick);
+			if (mmJsonCopyQuotedValue(resp, "region", region, sizeof(region)) != FALSE)
+			{
+#ifdef PORT
+				port_log("SSB64 Automatch: queued region=%s rtt_ms=%.1f\n", region, mmLastHttpsRttMsOrZero());
+#endif
+			}
 			mmPushDone(&out);
 		}
 	}
@@ -1926,29 +1968,33 @@ static void mmRunHeartbeat(const MmJob *job)
 	char jbuf[512];
 	long hc;
 	char *resp;
+	double rtt_ms;
+	long long client_ms;
 
+	rtt_ms = mmLastHttpsRttMsOrZero();
+	client_ms = mmClientUnixTimeMs();
 	if (job->heartbeat_has_endpoints != FALSE)
 	{
 		if (job->has_lan_endpoint != FALSE)
 		{
 			snprintf(jbuf, sizeof(jbuf),
-			         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,"
+			         "{\"ticket_id\":\"%s\",\"client_time_ms\":%lld,\"last_server_rtt_ms\":%.1f,\"jitter_ms\":0.0,"
 			         "\"loss_pct\":0.0,\"udp_endpoint\":\"%s\",\"lan_endpoint\":\"%s\"}",
-			         job->ticket_id, job->udp_endpoint, job->lan_endpoint);
+			         job->ticket_id, (long long)client_ms, rtt_ms, job->udp_endpoint, job->lan_endpoint);
 		}
 		else
 		{
 			snprintf(jbuf, sizeof(jbuf),
-			         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,"
+			         "{\"ticket_id\":\"%s\",\"client_time_ms\":%lld,\"last_server_rtt_ms\":%.1f,\"jitter_ms\":0.0,"
 			         "\"loss_pct\":0.0,\"udp_endpoint\":\"%s\"}",
-			         job->ticket_id, job->udp_endpoint);
+			         job->ticket_id, (long long)client_ms, rtt_ms, job->udp_endpoint);
 		}
 	}
 	else
 	{
 		snprintf(jbuf, sizeof(jbuf),
-		         "{\"ticket_id\":\"%s\",\"client_time_ms\":0,\"last_server_rtt_ms\":0.0,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
-		         job->ticket_id);
+		         "{\"ticket_id\":\"%s\",\"client_time_ms\":%lld,\"last_server_rtt_ms\":%.1f,\"jitter_ms\":0.0,\"loss_pct\":0.0}",
+		         job->ticket_id, (long long)client_ms, rtt_ms);
 	}
 	if (job->has_turn_endpoint != FALSE)
 	{

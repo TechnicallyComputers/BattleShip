@@ -1,7 +1,5 @@
 #include "enhancements.h"
 
-#include <libultraship/bridge/consolevariablebridge.h>
-
 extern "C" int syNetPeerIsVSSessionActive(void);
 
 #include <cstddef>
@@ -215,7 +213,8 @@ void LatchBattleSettingIfNeeded() {
 
     BattleKey key = CurrentBattleKey();
     if (IsNewBattle(key)) {
-        sDisableHazardsForBattle = CVarGetInteger(kStageHazardsDisabledCVar, 0) != 0;
+        sDisableHazardsForBattle =
+            port_enhancement_cvar_get_integer(kStageHazardsDisabledCVar, 0) != 0;
     }
 
     sWasInBattle = true;

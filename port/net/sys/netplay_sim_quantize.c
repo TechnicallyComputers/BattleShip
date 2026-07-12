@@ -5,6 +5,7 @@
 #include <sys/netinput.h>
 
 #include <sys/netpeer.h>
+#include <sys/netreplay.h>
 #include <sys/netrollback.h>
 #include <sys/netrollbacksnapshot.h>
 #include <sys/obj.h>
@@ -87,6 +88,11 @@ sb32 syNetplayRollbackSemanticsActive(void)
 	{
 		return TRUE;
 	}
+	/* Saved-input `.ssb64r` playback with SSB64_REPLAY_DIAGNOSTIC — no UDP peer. */
+	if (syNetReplayIsDiagnosticPlaybackActive() != FALSE)
+	{
+		return TRUE;
+	}
 	return FALSE;
 #else
 	return FALSE;
@@ -164,7 +170,11 @@ f32 syNetplayQuantizeF32ForRollbackHash(f32 value)
 
 f32 syNetplayQuantizeAnimScalar(f32 value)
 {
-	if (value == AOBJ_ANIM_NULL)
+	/*
+	 * AOBJ sentinels are huge negatives (F32_MIN, F32_MIN/2, F32_MIN/3). Grid-rounding them
+	 * corrupts anim_wait retirement and can fork PlayAnim end detection cross-ISA.
+	 */
+	if ((value == AOBJ_ANIM_NULL) || (value == AOBJ_ANIM_CHANGED) || (value == AOBJ_ANIM_END))
 	{
 		return value;
 	}
@@ -207,6 +217,100 @@ void syNetplayQuantizeDObjAnimScalars(DObj *dobj)
 		dobj->parent_gobj->anim_frame = dobj->anim_frame;
 	}
 }
+
+f32 syNetplayAnimWaitAdd(f32 wait, f32 addend)
+{
+#if defined(SSB64_NETMENU)
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		return syNetplayQuantizeAnimScalar(wait + addend);
+	}
+#endif
+	return wait + addend;
+}
+
+void syNetplayAnimCountdownFixedPoint(f32 *anim_wait, f32 *anim_frame, f32 anim_speed)
+{
+#if defined(SSB64_NETMENU)
+	f32 q_wait;
+	f32 q_speed;
+	f32 q_frame;
+	s32 i_wait;
+	s32 i_speed;
+
+	if ((anim_wait == NULL) || (anim_frame == NULL))
+	{
+		return;
+	}
+	/*
+	 * Always fixed-point under NETMENU (prior gcPlayDObjAnimJoint behavior). Do not gate on
+	 * SimQuantizeActive — QuantizeAnimScalar is identity when the env is off; integer subtract
+	 * still canonicalizes wait>0 continue vs end cross-ISA.
+	 */
+	q_wait = syNetplayQuantizeAnimScalar(*anim_wait);
+	q_speed = syNetplayQuantizeAnimScalar(anim_speed);
+	if (!(q_speed > 0.0F))
+	{
+		q_speed = 1.0F;
+	}
+	i_wait = (s32)floor((f64)q_wait * 65536.0 + 0.5);
+	i_speed = (s32)floor((f64)q_speed * 65536.0 + 0.5);
+	if (i_speed <= 0)
+	{
+		i_speed = 65536;
+	}
+	i_wait -= i_speed;
+	*anim_wait = (f32)((f64)i_wait / 65536.0);
+	q_frame = syNetplayQuantizeAnimScalar(*anim_frame + q_speed);
+	*anim_frame = q_frame;
+#else
+	if ((anim_wait == NULL) || (anim_frame == NULL))
+	{
+		return;
+	}
+	*anim_wait -= anim_speed;
+	*anim_frame += anim_speed;
+#endif
+}
+
+void syNetplayAnimWaitCollapseLeftover(f32 *anim_wait)
+{
+#if defined(SSB64_NETMENU)
+	const f32 leftover_eps = (256.0F / 65536.0F);
+
+	if ((anim_wait == NULL) || (syNetplaySimQuantizeActive() == FALSE))
+	{
+		return;
+	}
+	if ((*anim_wait > 0.0F) && (*anim_wait <= leftover_eps))
+	{
+		*anim_wait = 0.0F;
+	}
+#else
+	(void)anim_wait;
+#endif
+}
+
+#if defined(SSB64_NETMENU)
+/*
+ * Called from gcPlayDObjAnimJoint immediately after wait-=speed. Collapse cross-ISA leftover
+ * so `if (wait > 0) continue` agrees on both peers (soak 100749819 Turn→Wait @594 vs @595).
+ */
+void syNetplayQuantizeDObjAnimScalarsAfterPlayStep(DObj *dobj)
+{
+	syNetplayQuantizeDObjAnimScalars(dobj);
+	if (dobj == NULL)
+	{
+		return;
+	}
+	syNetplayAnimWaitCollapseLeftover(&dobj->anim_wait);
+}
+#else
+void syNetplayQuantizeDObjAnimScalarsAfterPlayStep(DObj *dobj)
+{
+	syNetplayQuantizeDObjAnimScalars(dobj);
+}
+#endif
 
 void syNetplayQuantizeDObjTranslate(DObj *dobj)
 {
@@ -494,6 +598,8 @@ void syNetplayCanonicalizePikachuQuickAttackSimState(GObj *fighter_gobj)
 {
 	FTStruct *fp;
 	DObj *base_joint;
+	DObj *root_dobj;
+	s32 ji;
 	sb32 in_qa_scope;
 
 	if (syNetplaySimQuantizeActive() == FALSE)
@@ -517,18 +623,33 @@ void syNetplayCanonicalizePikachuQuickAttackSimState(GObj *fighter_gobj)
 	}
 	syNetplayQuantizePikachuQuickAttackStatusVars(fp, &fp->status_vars);
 	syNetplayQuantizePikachuQuickAttackLandingStatusVars(fp, &fp->status_vars);
-	if ((fp->coll_data.floor_flags & MAP_VERTEX_COLL_PASS) != 0U)
+	/*
+	 * Always grid-snap physics / MPColl / TopN in QA scope (not only pass-platform). Zip travel
+	 * and Start→Zip catch-up otherwise leave cross-ISA vel/pose forks that Ness jibaku already
+	 * hardens via full sim-state canonicalize. See docs/bugs/netplay_pikachu_quickattack_canonicalize_2026-07-10.md.
+	 */
+	syNetplayQuantizeFighterPhysics(&fp->physics);
+	syNetplayQuantizeMPCollData(&fp->coll_data);
+	root_dobj = DObjGetStruct(fighter_gobj);
+	if (root_dobj != NULL)
 	{
-		syNetplayQuantizeFighterPhysics(&fp->physics);
-		syNetplayQuantizeMPCollData(&fp->coll_data);
-		if (fp->joints[nFTPartsJointTopN] != NULL)
-		{
-			syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
-		}
+		syNetplayQuantizeDObjTranslate(root_dobj);
+	}
+	if (fp->joints[nFTPartsJointTopN] != NULL)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
 	}
 	if (syNetplayPikachuFighterInQuickAttackZipScope(fp->status_id) == FALSE)
 	{
 		return;
+	}
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			syNetplayQuantizeDObjTranslate(fp->joints[ji]);
+			syNetplayQuantizeDObjRotate(fp->joints[ji]);
+		}
 	}
 	base_joint = fp->joints[FTPIKACHU_QUICKATTACK_BASE_JOINT];
 	if (base_joint == NULL)
@@ -536,9 +657,9 @@ void syNetplayCanonicalizePikachuQuickAttackSimState(GObj *fighter_gobj)
 		return;
 	}
 	base_joint->rotate.vec.f.x = syNetplayQuantizeF32(base_joint->rotate.vec.f.x);
-	base_joint->scale.vec.f.x = syNetplayQuantizeF32(base_joint->scale.vec.f.x);
-	base_joint->scale.vec.f.y = syNetplayQuantizeF32(base_joint->scale.vec.f.y);
-	base_joint->scale.vec.f.z = syNetplayQuantizeF32(base_joint->scale.vec.f.z);
+	base_joint->scale.vec.f.x = syNetplayQuantizeF32(FTPIKACHU_QUICKATTACK_SCALE_X);
+	base_joint->scale.vec.f.y = syNetplayQuantizeF32(FTPIKACHU_QUICKATTACK_SCALE_Y);
+	base_joint->scale.vec.f.z = syNetplayQuantizeF32(FTPIKACHU_QUICKATTACK_SCALE_Z);
 }
 
 void syNetplayCanonicalizeFoxFirefoxSimState(GObj *fighter_gobj)
@@ -1243,7 +1364,12 @@ static sb32 syNetplayFighterInPassPlatformGroundCollScope(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	if ((fp->coll_data.floor_flags & MAP_VERTEX_COLL_PASS) == 0U)
+	/*
+	 * Dream Land soft platforms / ledge lines often carry MAP_VERTEX_COLL_CLIFF (0x8000) without
+	 * PASS (0x4000). soak2 session 362259664 FC @600: Kirby LandingAirF→Wait on fflags=0x8000
+	 * walked ~5u apart cross-ISA after matched AttackAirF fall; PASS-only harden never fired.
+	 */
+	if ((fp->coll_data.floor_flags & (MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF)) == 0U)
 	{
 		return FALSE;
 	}
@@ -1497,6 +1623,96 @@ void syNetplayCanonicalizeCaptainGroundKickSimState(GObj *fighter_gobj)
 	syNetplayHardenCaptainGroundKickCollForFighter(fighter_gobj);
 }
 
+sb32 syNetplayFighterInCaptainFalconDiveScope(const FTStruct *fp)
+{
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	if ((fp->fkind != nFTKindCaptain) && (fp->fkind != nFTKindNCaptain))
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTCaptainStatusSpecialHi:
+	case nFTCaptainStatusSpecialHiCatch:
+	case nFTCaptainStatusSpecialHiThrow:
+	case nFTCaptainStatusSpecialAirHi:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static void syNetplayHardenCaptainFalconDiveCollForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInCaptainFalconDiveScope(fp) == FALSE)
+	{
+		return;
+	}
+	if (fp->joints[nFTPartsJointTopN] == NULL)
+	{
+		return;
+	}
+	topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
+void syNetplayCanonicalizeCaptainFalconDiveSimState(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	DObj *topn_joint;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInCaptainFalconDiveScope(fp) == FALSE)
+	{
+		return;
+	}
+	fp->physics.vel_ground.x = syNetplayQuantizeF32(fp->physics.vel_ground.x);
+	fp->physics.vel_ground.y = syNetplayQuantizeF32(fp->physics.vel_ground.y);
+	fp->physics.vel_ground.z = syNetplayQuantizeF32(fp->physics.vel_ground.z);
+	fp->physics.vel_air.x = syNetplayQuantizeF32(fp->physics.vel_air.x);
+	fp->physics.vel_air.y = syNetplayQuantizeF32(fp->physics.vel_air.y);
+	fp->physics.vel_air.z = syNetplayQuantizeF32(fp->physics.vel_air.z);
+	fp->status_vars.captain.specialhi.vel.x = syNetplayQuantizeF32(fp->status_vars.captain.specialhi.vel.x);
+	fp->status_vars.captain.specialhi.vel.y = syNetplayQuantizeF32(fp->status_vars.captain.specialhi.vel.y);
+	fp->status_vars.captain.specialhi.vel.z = syNetplayQuantizeF32(fp->status_vars.captain.specialhi.vel.z);
+	topn_joint = fp->joints[nFTPartsJointTopN];
+	if (topn_joint != NULL)
+	{
+		syNetplayQuantizeDObjTranslate(topn_joint);
+		topn_joint->rotate.vec.f.z = syNetplayQuantizeF32(topn_joint->rotate.vec.f.z);
+	}
+	syNetplayHardenCaptainFalconDiveCollForFighter(fighter_gobj);
+}
+
 static void syNetplayHardenPassPlatformCollForFighter(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -1565,21 +1781,29 @@ static void syNetplayHardenAirborneDamageKnockbackCollForFighter(GObj *fighter_g
 /*
  * ftAnimEndSetWait / GuardOff release wait for anim_frame <= 0. Cross-ISA float can leave one peer
  * above zero for extra ProcUpdate ticks despite syNetplayQuantizeAnimScalar (soak2 @950765188 GuardOff
- * status_total_tics fork; @371591666 Link SpecialN charge end fork → CopyLink hit knockback FC @600).
- * Snap near-zero frames to zero before ProcUpdate on known anim-end-wait statuses.
+ * status_total_tics fork; @371591666 Link SpecialN charge end fork → CopyLink hit knockback FC @600;
+ * soak2 @1440881291 Kirby Turn/Dash status_total_tics ±1 with inputs MATCH;
+ * soak1 @900855595 Turn→WalkFast status_total_tics 2↔1 — anim_wait = speed+ULP skipped end one tick;
+ * soak1 @100749819 Turn→Wait @594 vs @595 — post-subtract quantize leftover in (0,eps]).
+ *
+ * Hardening:
+ * 1) BeforeSim / post-tick: gobj anim_frame near zero → 0 for ProcUpdate gates
+ * 2) BeforeSim / post-tick: per-joint anim_wait in (0, speed+16/65536] → exactly speed
+ * 3) In-play AfterPlayStep: post-subtract wait in (0, 16/65536] → 0 (fall into end path)
  */
 static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
 {
 	DObj *root_dobj;
 	f32 q_anim;
-	const f32 release_grid = (1.0F / 65536.0F);
+	/* Wider than one grid — ARM/x86 leftover after PlayAnim end can sit a few ULPs above 0. */
+	const f32 release_grid = (256.0F / 65536.0F);
 
 	if (fighter_gobj == NULL)
 	{
 		return;
 	}
 	q_anim = syNetplayQuantizeAnimScalar(fighter_gobj->anim_frame);
-	if (q_anim <= release_grid)
+	if ((q_anim > 0.0F) && (q_anim <= release_grid))
 	{
 		fighter_gobj->anim_frame = 0.0F;
 		root_dobj = DObjGetStruct(fighter_gobj);
@@ -1587,6 +1811,146 @@ static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
 		{
 			root_dobj->anim_frame = 0.0F;
 		}
+	}
+	else if (q_anim <= 0.0F)
+	{
+		/* Already non-positive (end leftover); pin exact 0 for ProcUpdate <= 0 gates. */
+		if (q_anim > AOBJ_ANIM_END)
+		{
+			fighter_gobj->anim_frame = 0.0F;
+			root_dobj = DObjGetStruct(fighter_gobj);
+			if (root_dobj != NULL)
+			{
+				root_dobj->anim_frame = 0.0F;
+			}
+		}
+	}
+}
+
+static void syNetplaySnapDObjAnimWaitIfAboutToEnd(DObj *dobj)
+{
+	f32 wait;
+	f32 speed;
+	f32 q_wait;
+	f32 q_speed;
+	/*
+	 * Fixed-point play still needs a before-play snap when wait sits a few grid units above
+	 * speed (figatree length accumulation). 256/65536 ≈ 1/256 frame.
+	 */
+	const f32 eps = (256.0F / 65536.0F);
+
+	if (dobj == NULL)
+	{
+		return;
+	}
+	wait = dobj->anim_wait;
+	/*
+	 * Live countdown only. Sentinels are <= 0 (F32_MIN family); retired joints use AOBJ_ANIM_END.
+	 */
+	if (!(wait > 0.0F))
+	{
+		return;
+	}
+	speed = dobj->anim_speed;
+	if (!(speed > 0.0F))
+	{
+		speed = 1.0F;
+	}
+	q_wait = syNetplayQuantizeAnimScalar(wait);
+	q_speed = syNetplayQuantizeAnimScalar(speed);
+	/*
+	 * gcPlayDObjAnimJoint: wait -= speed; if (wait > 0) continue; else end.
+	 * Only snap when wait is at/above one full step (speed … speed+eps]. Do not inflate
+	 * tiny leftovers up to speed — that would delay end by a full frame.
+	 */
+	if ((q_wait >= q_speed) && (q_wait <= (q_speed + eps)))
+	{
+		dobj->anim_wait = q_speed;
+	}
+}
+
+static void syNetplaySnapFighterAnimWaitsIfAboutToEnd(GObj *fighter_gobj, FTStruct *fp)
+{
+	DObj *root_dobj;
+	s32 ji;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	root_dobj = DObjGetStruct(fighter_gobj);
+	if (root_dobj != NULL)
+	{
+		syNetplaySnapDObjAnimWaitIfAboutToEnd(root_dobj);
+	}
+	if (fp == NULL)
+	{
+		return;
+	}
+	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+	{
+		if (fp->joints[ji] != NULL)
+		{
+			syNetplaySnapDObjAnimWaitIfAboutToEnd(fp->joints[ji]);
+		}
+	}
+}
+
+static sb32 syNetplayFighterInLocomotionAnimEndWaitScope(const FTStruct *fp)
+{
+	s32 status_id;
+
+	if (fp == NULL)
+	{
+		return FALSE;
+	}
+	status_id = fp->status_id;
+	/*
+	 * Unconditional / ftAnimEndCheckSetStatus gates on anim_frame <= 0.0F.
+	 * Ranges cover audit P0/P1 common families (docs/bugs/netplay_anim_end_harden_audit_2026-07-11.md).
+	 *
+	 * Turn / TurnRun are intentionally excluded: BeforeSim anim_frame / anim_wait snaps can
+	 * desync figatree SetFlag1 from Turn ProcUpdate (`is_allow_turn_direction`), which blocks
+	 * InvertLR Turn→Dash (dash-dance). See docs/bugs/netplay_turn_dash_allow_anim_harden_2026-07-12.md.
+	 */
+	if ((status_id == nFTCommonStatusWait) ||
+	    ((status_id >= nFTCommonStatusWalkSlow) && (status_id <= nFTCommonStatusRunBrake)) ||
+	    ((status_id >= nFTCommonStatusKneeBend) && (status_id <= nFTCommonStatusFallAerial)) ||
+	    ((status_id >= nFTCommonStatusSquat) && (status_id <= nFTCommonStatusLandingHeavy)) ||
+	    (status_id == nFTCommonStatusOttottoWait) || (status_id == nFTCommonStatusOttotto) ||
+	    ((status_id >= nFTCommonStatusDamageStart) && (status_id <= nFTCommonStatusDamageFall)) ||
+	    (status_id == nFTCommonStatusFallSpecial) || (status_id == nFTCommonStatusLandingFallSpecial) ||
+	    ((status_id >= nFTCommonStatusDokanStart) && (status_id <= nFTCommonStatusDokanWalk)) ||
+	    ((status_id >= nFTCommonStatusDownBounceD) && (status_id <= nFTCommonStatusPassive)) ||
+	    ((status_id >= nFTCommonStatusLightGet) && (status_id <= nFTCommonStatusLiftTurn)) ||
+	    ((status_id >= nFTCommonStatusLightThrowStart) &&
+	     (status_id <= nFTCommonStatusFireFlowerShootAir)) ||
+	    ((status_id >= nFTCommonStatusHammerStart) && (status_id <= nFTCommonStatusHammerEnd)) ||
+	    (status_id == nFTCommonStatusGuardOff) ||
+	    ((status_id >= nFTCommonStatusEscapeF) && (status_id <= nFTCommonStatusFuraSleep)) ||
+	    ((status_id >= nFTCommonStatusCatch) && (status_id <= nFTCommonStatusThrownEnd)) ||
+	    ((status_id >= nFTCommonStatusAttack11) && (status_id <= nFTCommonStatusLandingAirEnd)))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static sb32 syNetplayFighterInKirbySpecialHiAnimEndScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->fkind != nFTKindKirby))
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTKirbyStatusSpecialHi:
+	case nFTKirbyStatusSpecialHiLanding:
+	case nFTKirbyStatusSpecialAirHi:
+	case nFTKirbyStatusSpecialAirHiFall:
+		return TRUE;
+	default:
+		return FALSE;
 	}
 }
 
@@ -1600,13 +1964,22 @@ static void syNetplayCanonicalizeAnimEndWaitThreshold(GObj *fighter_gobj, FTStru
 	{
 		if (ftStatusVarsGuard(fp)->is_release != FALSE)
 		{
+			syNetplaySnapFighterAnimWaitsIfAboutToEnd(fighter_gobj, fp);
 			syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
 		}
 		return;
 	}
 	if ((syNetplayFighterInLinkSpecialNAnimEndScope(fp) != FALSE) ||
-	    (syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(fp) != FALSE))
+	    (syNetplayFighterInKirbyCopyLinkSpecialNAnimEndScope(fp) != FALSE) ||
+	    (syNetplayFighterInKirbySpecialHiAnimEndScope(fp) != FALSE))
 	{
+		syNetplaySnapFighterAnimWaitsIfAboutToEnd(fighter_gobj, fp);
+		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
+		return;
+	}
+	if (syNetplayFighterInLocomotionAnimEndWaitScope(fp) != FALSE)
+	{
+		syNetplaySnapFighterAnimWaitsIfAboutToEnd(fighter_gobj, fp);
 		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
 		return;
 	}
@@ -1618,8 +1991,25 @@ static void syNetplayCanonicalizeAnimEndWaitThreshold(GObj *fighter_gobj, FTStru
 	if ((fp->status_id >= nFTCommonStatusCliffCatch) &&
 	    (fp->status_id <= nFTCommonStatusCliffEscapeSlow2))
 	{
+		syNetplaySnapFighterAnimWaitsIfAboutToEnd(fighter_gobj, fp);
 		syNetplaySnapAnimFrameToEndIfNearZero(fighter_gobj);
 	}
+}
+
+static void syNetplayHardenAnimEndWaitThresholdForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (fp == NULL)
+	{
+		return;
+	}
+	syNetplayCanonicalizeAnimEndWaitThreshold(fighter_gobj, fp);
 }
 #endif
 
@@ -1695,6 +2085,7 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	syNetplayCanonicalizePikachuQuickAttackSimState(fighter_gobj);
 	syNetplayCanonicalizeFoxFirefoxSimState(fighter_gobj);
 	syNetplayCanonicalizeCaptainGroundKickSimState(fighter_gobj);
+	syNetplayCanonicalizeCaptainFalconDiveSimState(fighter_gobj);
 	if (syNetplayFighterInPassPlatformGroundCollScope(fp) != FALSE)
 	{
 		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
@@ -1704,6 +2095,122 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 	syNetplayCanonicalizeAnimEndWaitThreshold(fighter_gobj, fp);
 #endif
 }
+
+#if defined(SSB64_NETMENU)
+void syNetplayHardenAnimEndWaitThresholdBeforeSim(void)
+{
+	GObj *fighter_gobj;
+
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		syNetplayHardenAnimEndWaitThresholdForFighter(fighter_gobj);
+	}
+}
+
+void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32 flag1_before,
+                                      sb32 did_dash)
+{
+	static sb32 sTurnDashWitnessCached = -999;
+	FTStruct *fp;
+	ftCommonTurnStatusVars *turn;
+	const char *e;
+	u32 tick;
+
+	if (sTurnDashWitnessCached == -999)
+	{
+		e = getenv("SSB64_TURN_DASH_WITNESS");
+		sTurnDashWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	if (sTurnDashWitnessCached == 0)
+	{
+		return;
+	}
+	if ((fighter_gobj == NULL) || (phase == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (fp->status_id != nFTCommonStatusTurn))
+	{
+		return;
+	}
+	turn = ftStatusVarsTurn(fp);
+	tick = syNetInputGetTick();
+	port_log(
+	    "SSB64 TURN_DASH_WITNESS phase=%s tick=%u player=%d flag1=%d allow=%d disable_sa=%d "
+	    "lr_dash=%d lr_turn=%d lr=%d sx=%d tap_x=%u anim_frame=%.6f did_dash=%d\n",
+	    phase, (unsigned)tick, (int)fp->player, (int)flag1_before,
+	    (int)((turn != NULL) ? turn->is_allow_turn_direction : 0),
+	    (int)((turn != NULL) ? turn->is_disable_sa_interrupts : 0),
+	    (int)((turn != NULL) ? turn->lr_dash : 0), (int)((turn != NULL) ? turn->lr_turn : 0),
+	    (int)fp->lr, (int)fp->input.pl.stick_range.x, (unsigned)fp->tap_stick_x,
+	    (double)fighter_gobj->anim_frame, (int)did_dash);
+}
+
+void syNetplayHardenTurnLrTurn(FTStruct *fp)
+{
+	ftCommonTurnStatusVars *turn;
+	s32 repaired;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	if ((fp == NULL) || (fp->status_id != nFTCommonStatusTurn))
+	{
+		return;
+	}
+	turn = ftStatusVarsTurn(fp);
+	if ((turn == NULL) || (turn->lr_turn != 0))
+	{
+		return;
+	}
+	/*
+	 * InvertLR entry stores the same ±1 in lr_dash. Center turn has lr_dash==0; recover from
+	 * facing (pre-flip: opposite; post-allow: facing is already the turn direction).
+	 */
+	if (turn->lr_dash != 0)
+	{
+		repaired = turn->lr_dash;
+	}
+	else if (turn->is_allow_turn_direction != FALSE)
+	{
+		repaired = fp->lr;
+	}
+	else
+	{
+		repaired = -fp->lr;
+	}
+	if (repaired == 0)
+	{
+		return;
+	}
+	turn->lr_turn = repaired;
+}
+#else
+void syNetplayHardenAnimEndWaitThresholdBeforeSim(void)
+{
+}
+
+void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32 flag1_before,
+                                      sb32 did_dash)
+{
+	(void)fighter_gobj;
+	(void)phase;
+	(void)flag1_before;
+	(void)did_dash;
+}
+
+void syNetplayHardenTurnLrTurn(FTStruct *fp)
+{
+	(void)fp;
+}
+#endif
 
 void syNetplayQuantizeGMCameraState(GMCamera *camera, f32 *pause_eye_x, f32 *pause_eye_y)
 {
