@@ -113,6 +113,13 @@ extern void syNetplayHardenPassPlatformCollBeforeSim(void);
 extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
 
 /*
+ * Before gcRunAll: JumpAerial/Fall over PASS|CLIFF soft floors — re-anchor MPColl to TopN
+ * (grounded pass harden does not cover ga==Air; soak1 2239186208 FC @1440/@1801).
+ */
+extern void syNetplayHardenJumpAerialPassCollBeforeSim(void);
+extern sb32 syNetplayFighterInJumpAerialPassCollScope(const struct FTStruct *fp);
+
+/*
  * Before gcRunAll: snap near-zero anim_frame to 0 on statuses that gate Wait/exit on
  * anim_frame <= 0 (locomotion + JumpAerial/Landing/Squat/Damage/Catch/Attacks/items +
  * GuardOff/Escape/Fura + GuardOn release / SpecialN / Kirby SpecialHi / cliff). Cross-ISA
@@ -120,6 +127,24 @@ extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
  * Turn/TurnRun are excluded (dash-dance SetFlag1 / is_allow_turn_direction).
  */
 extern void syNetplayHardenAnimEndWaitThresholdBeforeSim(void);
+
+/*
+ * Snap GObj anim_frame near zero to exact 0 (same release grid as fighter anim-end harden).
+ * Used by stage map GObjs (Dream Land Whispy / flowers) whose FSM gates on anim_frame <= 0.
+ */
+extern void syNetplaySnapGobjAnimFrameToEndIfNearZero(GObj *gobj);
+
+/* Wider release grid for Pupupu map_gobj eyes/mouth (see SnapMapGobj* in .c). */
+extern void syNetplaySnapMapGobjAnimFrameToEndIfNearZero(GObj *gobj);
+
+/* TRUE when gobj anim has ended; under netplay rollback, snaps near-zero leftovers first. */
+extern sb32 syNetplayMapGobjAnimFrameEnded(GObj *gobj);
+
+/*
+ * BeforeSim: snap Pupupu Whispy/flower map_gobj anim cursors so Turn/Open/Stop/flower
+ * transitions agree cross-ISA. See docs/bugs/netplay_pupupu_ground_fold_whispy_anim_2026-07-12.md.
+ */
+extern void syNetplayHardenPupupuWhispyMapAnimBeforeSim(void);
 
 /*
  * `SSB64_TURN_DASH_WITNESS=1`: log Turn ProcUpdate/Interrupt dash-out gate state

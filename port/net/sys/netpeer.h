@@ -135,6 +135,10 @@ extern s32 syNetPeerGetRemoteHumanSlotCount(void);
 extern sb32 syNetPeerGetRemoteHumanSlotByIndex(s32 index, s32 *out_slot);
 extern u32 syNetPeerGetHighestRemoteTick(void);
 extern void syNetPeerTrySendRollbackBaselineDigest(void);
+/* Send a baseline digest for an arbitrary tick (hash-only echo; does not touch armed-baseline state). */
+extern sb32 syNetPeerSendRollbackBaselineDigestDirect(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
+						      u32 weapon, u32 map, u32 camera, u32 effect,
+						      const u32 *fighter_slot);
 extern sb32 syNetPeerTrySendEpisodeSealRows(void);
 extern void syNetPeerTrySendRollbackSyncNotice(void);
 extern void syNetPeerSendLocalInput(void);

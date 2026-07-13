@@ -245,7 +245,7 @@ Match metadata sync, input tick start sync, and VS execution sync are separate l
 
 The execution gate is intentionally shaped as a reusable readiness query. Future runtime pacing, peer advertised ticks, and rollback readiness checks should build on this boundary instead of adding more one-off checks to the VS scene.
 
-Bootstrap P2P input packets (`INPUT`, wire version `SYNETPEER_VERSION` 2):
+Bootstrap P2P input packets (`INPUT`, wire version `SYNETPEER_VERSION`; 8/9 as of 2026-07-12 — appends the sender's authoritative wire frontier u32 so runway/future-ahead rows land as gap-filled, never RemoteConfirmed). Gap-fill raises `hr` for pacing but does **not** satisfy shared-commit `ring_ready` (`HasRemoteInputForWireTick` is strict-only under NETMENU — see `docs/bugs/netplay_provisional_ring_ready_blocks_predict_2026-07-12.md`):
 
 - Carry a strictly increasing UDP send `packet_seq`, included in the packet checksum and surfaced as cumulative `gap` / `dup` / `ooo` counters when sequence jumps repeat, advance with holes, or arrive behind the observed high watermark.
 - Bundle the last 16 simulated local frames (`SYNETPEER_MAX_PACKET_FRAMES`), each with delayed tick + buttons/stick, serialized explicitly (not raw struct casts).

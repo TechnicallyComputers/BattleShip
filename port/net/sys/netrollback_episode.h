@@ -136,6 +136,8 @@ extern sb32 syNetRollbackEpisodePeerSealRowsComplete(s32 player);
 extern sb32 syNetRollbackEpisodeAllPeerSealRowsComplete(void);
 /* Timeout fallback: fill missing peer-authority rows from wire-confirmed local history (all-or-nothing). */
 extern sb32 syNetRollbackEpisodeTrySelfSealMissingPeerRows(void);
+/* Re-apply stashed / compatible-mismatch seal chunks after a seal wait timeout. */
+extern void syNetRollbackEpisodePumpPendingPeerSealRows(void);
 extern sb32 syNetRollbackEpisodeLocalSealRowsSendComplete(void);
 extern u32 syNetRollbackEpisodeGetLocalSealRowsSendPendingMask(void);
 extern u32 syNetRollbackEpisodeGetSealSpan(void);

@@ -328,6 +328,7 @@ extern void syNetRbSnapRepairStageSetVerifyOnly(sb32 verify_only);
 extern sb32 syNetRbSnapRepairStageIsVerifyOnly(void);
 extern void syNetRbSnapResetSectorArwingRepairDedup(void);
 #endif
+/* Slot hashes for tick; any out-param may be NULL (existence-only probe). FALSE if slot missing. */
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashes(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng);
 extern sb32 syNetRbSnapshotGetStoredSubsystemHashesEx(u32 tick, u32 *figh, u32 *world, u32 *item, u32 *rng,
 						    u32 *effect);

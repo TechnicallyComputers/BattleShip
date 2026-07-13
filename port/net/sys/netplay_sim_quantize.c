@@ -12,8 +12,10 @@
 #include <sys/objtypes.h>
 #include <ft/fighter.h>
 #include <ft/ftchar/ftpikachu/ftpikachu.h>
+#include <gr/ground.h>
 #include <mp/map.h>
 #include <mp/mpdef.h>
+#include <sc/scene.h>
 
 #include <lb/lbcommon.h>
 
@@ -1459,6 +1461,40 @@ static sb32 syNetplayFighterInAirborneDamageKnockbackScope(const FTStruct *fp)
 	return (fp->status_id == nFTCommonStatusDamageFall) ? TRUE : FALSE;
 }
 
+/*
+ * JumpAerial / Fall over PASS|CLIFF soft floors: CliffFloorCeil MpLanding `branch=diff` accumulates
+ * cross-ISA TopN X while grounded pass harden never fires (ga==Air). soak1 seed 2239186208 FC
+ * @1440/@1801 Kirby JumpAerialB/F topn_tx ~0.7–5.3u with inputs MATCH.
+ * See docs/bugs/netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md.
+ */
+sb32 syNetplayFighterInJumpAerialPassCollScope(const FTStruct *fp)
+{
+	if ((fp == NULL) || (fp->ga != nMPKineticsAir))
+	{
+		return FALSE;
+	}
+	if ((fp->coll_data.floor_flags & (MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF)) == 0U)
+	{
+		return FALSE;
+	}
+	switch (fp->status_id)
+	{
+	case nFTCommonStatusJumpAerialF:
+	case nFTCommonStatusJumpAerialB:
+	case nFTCommonStatusFall:
+	case nFTCommonStatusFallAerial:
+		return TRUE;
+	default:
+		break;
+	}
+	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusJumpAerialF1) &&
+	    (fp->status_id <= nFTKirbyStatusJumpAerialF5))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 #if defined(SSB64_NETMENU)
 static u32 syNetplayKirbyCopyLinkFloatBits(f32 value)
 {
@@ -1777,6 +1813,38 @@ static void syNetplayHardenAirborneDamageKnockbackCollForFighter(GObj *fighter_g
 	fp->coll_data.pos_diff.z = 0.0F;
 }
 
+static void syNetplayHardenJumpAerialPassCollForFighter(GObj *fighter_gobj)
+{
+	FTStruct *fp;
+	Vec3f *topn;
+
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if (syNetplayFighterInJumpAerialPassCollScope(fp) == FALSE)
+	{
+		return;
+	}
+	if (fp->joints[nFTPartsJointTopN] == NULL)
+	{
+		return;
+	}
+	topn = &fp->joints[nFTPartsJointTopN]->translate.vec.f;
+	if (syNetplaySimQuantizeActive() != FALSE)
+	{
+		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
 #if defined(SSB64_NETMENU)
 /*
  * ftAnimEndSetWait / GuardOff release wait for anim_frame <= 0. Cross-ISA float can leave one peer
@@ -1791,22 +1859,22 @@ static void syNetplayHardenAirborneDamageKnockbackCollForFighter(GObj *fighter_g
  * 2) BeforeSim / post-tick: per-joint anim_wait in (0, speed+16/65536] → exactly speed
  * 3) In-play AfterPlayStep: post-subtract wait in (0, 16/65536] → 0 (fall into end path)
  */
-static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
+void syNetplaySnapGobjAnimFrameToEndIfNearZero(GObj *gobj)
 {
 	DObj *root_dobj;
 	f32 q_anim;
 	/* Wider than one grid — ARM/x86 leftover after PlayAnim end can sit a few ULPs above 0. */
 	const f32 release_grid = (256.0F / 65536.0F);
 
-	if (fighter_gobj == NULL)
+	if (gobj == NULL)
 	{
 		return;
 	}
-	q_anim = syNetplayQuantizeAnimScalar(fighter_gobj->anim_frame);
+	q_anim = syNetplayQuantizeAnimScalar(gobj->anim_frame);
 	if ((q_anim > 0.0F) && (q_anim <= release_grid))
 	{
-		fighter_gobj->anim_frame = 0.0F;
-		root_dobj = DObjGetStruct(fighter_gobj);
+		gobj->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(gobj);
 		if (root_dobj != NULL)
 		{
 			root_dobj->anim_frame = 0.0F;
@@ -1817,14 +1885,93 @@ static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
 		/* Already non-positive (end leftover); pin exact 0 for ProcUpdate <= 0 gates. */
 		if (q_anim > AOBJ_ANIM_END)
 		{
-			fighter_gobj->anim_frame = 0.0F;
-			root_dobj = DObjGetStruct(fighter_gobj);
+			gobj->anim_frame = 0.0F;
+			root_dobj = DObjGetStruct(gobj);
 			if (root_dobj != NULL)
 			{
 				root_dobj->anim_frame = 0.0F;
 			}
 		}
 	}
+}
+
+/*
+ * Stage map GObjs (Whispy eyes/mouth) leave larger post-PlayAnim leftovers than fighters.
+ * 256/65536 was enough for figatree wait gates but Dream Land Open→Blow still skewed one
+ * tick cross-ISA (soak1 3628321978 @2399/@2400). Use 1/16 frame.
+ */
+void syNetplaySnapMapGobjAnimFrameToEndIfNearZero(GObj *gobj)
+{
+	DObj *root_dobj;
+	f32 q_anim;
+	const f32 release_grid = (4096.0F / 65536.0F);
+
+	if (gobj == NULL)
+	{
+		return;
+	}
+	q_anim = syNetplayQuantizeAnimScalar(gobj->anim_frame);
+	if ((q_anim > 0.0F) && (q_anim <= release_grid))
+	{
+		gobj->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(gobj);
+		if (root_dobj != NULL)
+		{
+			root_dobj->anim_frame = 0.0F;
+		}
+	}
+	else if (q_anim <= 0.0F)
+	{
+		if (q_anim > AOBJ_ANIM_END)
+		{
+			gobj->anim_frame = 0.0F;
+			root_dobj = DObjGetStruct(gobj);
+			if (root_dobj != NULL)
+			{
+				root_dobj->anim_frame = 0.0F;
+			}
+		}
+	}
+}
+
+static void syNetplaySnapAnimFrameToEndIfNearZero(GObj *fighter_gobj)
+{
+	syNetplaySnapGobjAnimFrameToEndIfNearZero(fighter_gobj);
+}
+
+sb32 syNetplayMapGobjAnimFrameEnded(GObj *gobj)
+{
+	if (gobj == NULL)
+	{
+		return TRUE;
+	}
+#if defined(SSB64_NETMENU)
+	if (syNetplayRollbackSemanticsActive() != FALSE)
+	{
+		syNetplaySnapMapGobjAnimFrameToEndIfNearZero(gobj);
+	}
+#endif
+	return (gobj->anim_frame <= 0.0F) ? TRUE : FALSE;
+}
+
+void syNetplayHardenPupupuWhispyMapAnimBeforeSim(void)
+{
+#if defined(SSB64_NETMENU)
+	s32 i;
+
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+	if ((gSCManagerBattleState == NULL) || (gSCManagerBattleState->gkind != nGRKindPupupu))
+	{
+		return;
+	}
+	for (i = 0; i < 4; i++)
+	{
+		syNetplaySnapMapGobjAnimFrameToEndIfNearZero(gGRCommonStruct.pupupu.map_gobj[i]);
+	}
+#endif
 }
 
 static void syNetplaySnapDObjAnimWaitIfAboutToEnd(DObj *dobj)
@@ -2091,6 +2238,7 @@ void syNetplayCanonicalizeFighterSimState(GObj *fighter_gobj)
 		syNetplayHardenPassPlatformCollForFighter(fighter_gobj);
 	}
 	syNetplayHardenAirborneDamageKnockbackCollForFighter(fighter_gobj);
+	syNetplayHardenJumpAerialPassCollForFighter(fighter_gobj);
 #if defined(SSB64_NETMENU)
 	syNetplayCanonicalizeAnimEndWaitThreshold(fighter_gobj, fp);
 #endif
@@ -2413,6 +2561,23 @@ void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void)
 	     fighter_gobj = fighter_gobj->link_next)
 	{
 		syNetplayHardenAirborneDamageKnockbackCollForFighter(fighter_gobj);
+	}
+}
+
+void syNetplayHardenJumpAerialPassCollBeforeSim(void)
+{
+	GObj *fighter_gobj;
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if (syNetplayRollbackLiveForwardSimEligible() == FALSE)
+	{
+		return;
+	}
+#endif
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		syNetplayHardenJumpAerialPassCollForFighter(fighter_gobj);
 	}
 }
 

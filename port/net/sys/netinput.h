@@ -68,6 +68,17 @@ typedef struct SYNetInputFrame
 
 } SYNetInputFrame;
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Remote authority ledger origin (Phase 1 of confirmed-authority contract).
+ * Two writers only: wire (within sender auth frontier) and episode seal rows (win).
+ * See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+ */
+#define SYNETINPUT_AUTH_LEDGER_ORIGIN_NONE 0U
+#define SYNETINPUT_AUTH_LEDGER_ORIGIN_WIRE 1U
+#define SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL 2U
+#endif
+
 typedef struct SYNetInputReplayMetadata /* Header written alongside recorded frame payloads (magic/version + rules). */
 {
 	u32 magic;
@@ -200,7 +211,10 @@ typedef struct SYNetTickCommitVerdict
 
 extern void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickCommitVerdict *out);
 extern sb32 syNetTickCommitAllowsBattleSimFromLastFuncReadEvaluate(void);
-/* Confirmed remote-ring presence check by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets). */
+/*
+ * Remote-ring presence by wire key (`SYNetInputFrame.tick` as staged by peer INPUT packets).
+ * NETMENU: strict RemoteConfirmed only (provisional gap-fill does not count — shared-commit ring_ready).
+ */
 extern sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick);
 /*
  * Cached getenv for `SSB64_NETPLAY_STRICT_REMOTE_LEAD_BUFFER_TICKS` (reset in `syNetInputRefreshCachedNetplayEnvForNewMatch`).
@@ -231,6 +245,9 @@ extern void syNetInputSetRemoteInput(s32 player, u32 tick, u16 buttons, s8 stick
 #ifdef PORT
 extern sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y,
                                                u32 packet_seq, u32 current_tick, s32 frame_index);
+/* provisional=TRUE: wire tick above sender's auth frontier — store gap-filled, never RemoteConfirmed. */
+extern sb32 syNetInputSetRemoteInputFromPacketEx(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y,
+                                                 u32 packet_seq, u32 current_tick, s32 frame_index, sb32 provisional);
 #endif
 extern void syNetInputSetSavedInput(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y);
 extern sb32 syNetInputGetHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
@@ -337,6 +354,21 @@ extern void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick,
 extern void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 from_tick, u32 to_tick);
 /* Copy one reconciled frame into published history (episode FSM commit promote). */
 extern void syNetInputStorePublishedHistoryFrame(s32 player, const SYNetInputFrame *frame);
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Remote authority ledger (sim-tick keyed). Dual-write from wire confirm + seal commit;
+ * TryGetRemoteConfirmed prefers ledger when present. Phase 1 — published ring still written.
+ */
+extern void syNetInputAuthorityLedgerCommitWire(s32 player, u32 sim_tick, const SYNetInputFrame *frame);
+extern void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const SYNetInputFrame *frame);
+extern sb32 syNetInputAuthorityLedgerTryGet(s32 player, u32 sim_tick, SYNetInputFrame *out_frame, u8 *out_origin);
+/*
+ * SSB64_NETPLAY_STRICT_INPUT=1 — log-only input-authority witness. Enumerates confirmed-row
+ * overwrites / fabricated confirms on the wire and published rings (migration to write-once
+ * confirmed store). Summary flush + counter reset; called on VS session start.
+ */
+extern void syNetInputStrictWitnessLogMatchSummary(const char *when);
+#endif
 /* Episode seal: local-authority row from transmitted ring (wire source of truth), else non-predicted published. */
 extern sb32 syNetInputCopyEpisodeLocalAuthoritySealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern sb32 syNetInputCopyEpisodeRemoteAuthoritySealFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
@@ -348,6 +380,8 @@ extern sb32 syNetInputRemoteHumanWireReadyForSimTick(u32 sim_tick);
 /* Pump ingress + rewrite remote `gSYControllerDevices` for `tick` immediately before battle sim (wire after FuncRead). */
 extern sb32 syNetInputRepublishRemoteHumanControllersForTick(u32 tick);
 extern u32 syNetInputFindEarliestRemoteAuthorityMismatch(s32 remote_slot, u32 from_tick, u32 to_tick);
+/* All remote-human slots strict-confirmed at sim_tick AND published gameplay matches (snapshot load-safe promotion). */
+extern sb32 syNetInputRemoteHumanPublishedMatchesConfirmedForSimTick(u32 sim_tick);
 /* TRUE when episode FSM has sealed inputs and tick is inside the active span. */
 extern sb32 syNetInputEpisodeSealedSpanBlocksPatch(u32 sim_tick);
 /* Earliest t in [from,to) where published(slot,t) != transmitted(slot,t); ~(u32)0 if none. */
@@ -375,6 +409,17 @@ extern sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *o
 extern sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new);
 extern sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, const SYNetInputFrame *published,
                                                          const SYNetInputFrame *remote);
+#if defined(SSB64_NETMENU)
+/*
+ * Stick REPLACE → GGPO policy (feel-0 / late wire / pre-promote):
+ * completed sim (`GetTick() > sim_tick`): any gameplay delta → rewind;
+ * release (analog → nearer/at neutral): always rewind (never onset-ahead defer);
+ * else: confirmed-deadband significance (not predict-14), unless true onset-ahead defer.
+ * `defer_published` may be NULL (falls back to `old_frame` for the defer check).
+ */
+extern sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
+                                              const SYNetInputFrame *wire, const SYNetInputFrame *defer_published);
+#endif
 /* TRUE when published vs remote sticks disagree with neutral vs analog (GGPO stick-mismatch recovery). */
 extern sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote);
 /* TRUE: patch published row only (skip GGPO resim) for isolated digital keyboard tap/release under delay. */

@@ -191,8 +191,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
  */
 #define SYNETPEER_VERSION_LEGACY_CONNECT 4
 #define SYNETPEER_VERSION_DUAL_LOCAL_LEGACY 5
-#define SYNETPEER_VERSION 6
-#define SYNETPEER_VERSION_DUAL_LOCAL 7
+/* 6/7 (pre auth-frontier) retired 2026-07-12; 8/9 append auth_wire_frontier to the INPUT header. */
+#define SYNETPEER_VERSION 8
+#define SYNETPEER_VERSION_DUAL_LOCAL 9
 #define SYNETPEER_MAX_PACKET_FRAMES 16
 #define SYNETPEER_FRAME_BYTES 8
 /* Per slot: last_confirmed u32, disconnect u8, symmetric rollback mismatch tick u24, resim target u24. */
@@ -203,7 +204,16 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_INPUT_HEADER_BASE_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 1 + 1)
 /* Wire 4/5: append peer_connect_status (last_confirmed tick + disconnect + sym ticks) per slot. */
 #define SYNETPEER_INPUT_HEADER_BYTES_LEGACY (SYNETPEER_INPUT_HEADER_BASE_BYTES + SYNETPEER_CONNECT_BLOCK_BYTES_LEGACY)
-#define SYNETPEER_INPUT_HEADER_BYTES (SYNETPEER_INPUT_HEADER_BASE_BYTES + SYNETPEER_CONNECT_BLOCK_BYTES)
+/*
+ * Wire 8/9: append sender's authoritative wire frontier u32 after the connect block. Frames with
+ * tick > frontier are provisional runway/future-ahead extrapolations — the receiver stores them
+ * as gap-filled (hold-last), never RemoteConfirmed. Without the stamp those rows entered the ring
+ * as fake confirmations and write-once/reconcile contracts protected them against the real input
+ * (seed 3284691918 kill @596). See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+ */
+#define SYNETPEER_AUTH_FRONTIER_BYTES 4
+#define SYNETPEER_INPUT_HEADER_BYTES \
+	(SYNETPEER_INPUT_HEADER_BASE_BYTES + SYNETPEER_CONNECT_BLOCK_BYTES + SYNETPEER_AUTH_FRONTIER_BYTES)
 #define SYNETPEER_PACKET_BYTES_LEGACY_V2                                                                               \
 	((SYNETPEER_INPUT_HEADER_BASE_BYTES) + ((SYNETPEER_MAX_PACKET_FRAMES) * (SYNETPEER_FRAME_BYTES)) + 4)
 #define SYNETPEER_PACKET_BYTES_LEGACY_V3                                                                               \
@@ -375,6 +385,8 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_WIRE_HAS_SECONDARY_BUNDLE(W)                                                                           \
 	(((u16)(W) == (u16)SYNETPEER_WIRE_LEGACY_INPUT_DUAL) || ((u16)(W) == (u16)SYNETPEER_VERSION_DUAL_LOCAL_LEGACY) ||   \
 	 ((u16)(W) == (u16)SYNETPEER_VERSION_DUAL_LOCAL))
+#define SYNETPEER_WIRE_HAS_AUTH_FRONTIER(W)                                                                            \
+	(((u16)(W) == (u16)SYNETPEER_VERSION) || ((u16)(W) == (u16)SYNETPEER_VERSION_DUAL_LOCAL))
 
 #define SYNETPEER_AUTOMATCH_OFFER_BYTES (4 + 2 + 2 + 4 + 2 + 1 + 1 + 4 + 4)
 /* Host-authoritative automatch rules: 4 stocks, no timer (SCBattleState.stocks is 0-based). */
@@ -417,7 +429,7 @@ static sb32 syNetPeerValidateRemoteReceiveList(void);
 static sb32 syNetPeerValidatePeerSenderList(void);
 static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames, s32 *out_frame_count);
 static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketFrame *frames, s32 frame_count,
-                                       u32 current_tick, u32 packet_seq);
+                                       u32 current_tick, u32 packet_seq, u32 auth_wire_frontier);
 
 sb32 sSYNetPeerIsEnabled;
 sb32 sSYNetPeerIsConfigured;
@@ -998,7 +1010,8 @@ u32 syNetPeerChecksumInputPacket(u32 session_id, u32 ack_tick, u32 packet_seq, u
                                  const SYNetPeerPacketFrame *frames, u8 secondary_slot, u8 sec_frame_count,
                                  const SYNetPeerPacketFrame *sec_frames, const s32 *connect_last_tick,
                                  const u8 *connect_disconnected, const s32 *symmetric_mismatch_tick,
-                                 const s32 *symmetric_target_tick, const u8 *symmetric_notify_flags)
+                                 const s32 *symmetric_target_tick, const u8 *symmetric_notify_flags,
+                                 u32 auth_wire_frontier)
 {
 	u32 checksum = 2166136261U;
 	s32 i;
@@ -1011,6 +1024,10 @@ u32 syNetPeerChecksumInputPacket(u32 session_id, u32 ack_tick, u32 packet_seq, u
 	checksum = syNetPeerChecksumAccumulateU32(checksum, packet_seq);
 	checksum = syNetPeerChecksumAccumulateU32(checksum, player);
 	checksum = syNetPeerChecksumAccumulateU32(checksum, frame_count);
+	if (SYNETPEER_WIRE_HAS_AUTH_FRONTIER(wire_version) != FALSE)
+	{
+		checksum = syNetPeerChecksumAccumulateU32(checksum, auth_wire_frontier);
+	}
 
 	if (SYNETPEER_WIRE_HAS_CONNECT_STATUS(wire_version) != FALSE)
 	{
@@ -5552,6 +5569,7 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	}
 #endif
 	required_wire = out->required_wire;
+	/* Strict RemoteConfirmed only — provisional gap-fill must fall through to prediction. */
 	ring_ready = syNetPeerRemoteInputsPresentForWireTick(required_wire);
 	if (ring_ready != FALSE)
 	{
@@ -8095,6 +8113,7 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 	s32 i;
 	u16 wire_version;
 	u8 secondary_slot_byte;
+	u32 auth_wire_frontier;
 	s32 conn_last_tick[MAXCONTROLLERS];
 	u8 conn_disc[MAXCONTROLLERS];
 	s32 conn_symmetric_tick[MAXCONTROLLERS];
@@ -8130,10 +8149,17 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 	syNetInputExportPeerConnectStatus(conn_last_tick, conn_disc, MAXCONTROLLERS);
 	syNetRollbackExportPeerSymmetricNotify(conn_symmetric_tick, conn_symmetric_target, conn_symmetric_flags,
 					       MAXCONTROLLERS);
+	/*
+	 * Authoritative wire frontier: highest wire tick backed by a locally simulated (or committed
+	 * delay-buffered) input. Bundle rows above this are provisional runway / future-ahead
+	 * extrapolations; receiver stores them gap-filled, not RemoteConfirmed.
+	 */
+	auth_wire_frontier = syNetPeerDelayWireTickFromSim(syNetInputGetTick());
 	checksum = syNetPeerChecksumInputPacket(sSYNetPeerSessionID, sSYNetPeerHighestRemoteTick, sSYNetPeerSendSeq,
 	                                       wire_version, (u8)sSYNetPeerLocalPlayer, (u8)frame_count, frames,
 	                                       secondary_slot_byte, (u8)sec_frame_count, sec_frames, conn_last_tick, conn_disc,
-	                                       conn_symmetric_tick, conn_symmetric_target, conn_symmetric_flags);
+	                                       conn_symmetric_tick, conn_symmetric_target, conn_symmetric_flags,
+	                                       auth_wire_frontier);
 
 	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
 	syNetPeerWriteU16(&cursor, wire_version);
@@ -8173,6 +8199,7 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 			syNetPeerWriteU8(&cursor, sym_flags);
 		}
 	}
+	syNetPeerWriteU32(&cursor, auth_wire_frontier);
 
 	for (i = 0; i < SYNETPEER_MAX_PACKET_FRAMES; i++)
 	{
@@ -8401,6 +8428,10 @@ static void syNetPeerLogInputSendDiag(const u8 *buffer, u32 size)
 		c += SYNETPEER_WIRE_HAS_SYM_NOTIFY_FLAGS(wv) ? SYNETPEER_CONNECT_BLOCK_BYTES
 		                                               : SYNETPEER_CONNECT_BLOCK_BYTES_LEGACY;
 	}
+	if (SYNETPEER_WIRE_HAS_AUTH_FRONTIER(wv) != FALSE)
+	{
+		c += SYNETPEER_AUTH_FRONTIER_BYTES;
+	}
 	for (pkt_i = 0U; pkt_i < (u32)SYNETPEER_MAX_PACKET_FRAMES; pkt_i++)
 	{
 		(void)syNetPeerReadU32(&c);
@@ -8555,12 +8586,16 @@ static void syNetPeerLogUdpInputBundleDiag(u32 packet_seq, u32 ack_tick, u32 cur
 #endif
 
 static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketFrame *frames, s32 frame_count,
-                                       u32 current_tick, u32 packet_seq)
+                                       u32 current_tick, u32 packet_seq, u32 auth_wire_frontier)
 {
 	s32 i;
 
 	for (i = 0; i < frame_count; i++)
 	{
+		sb32 provisional;
+
+		/* Frames above the sender's authoritative frontier are runway extrapolation, not input. */
+		provisional = ((auth_wire_frontier != 0U) && (frames[i].tick > auth_wire_frontier)) ? TRUE : FALSE;
 #ifdef PORT
 		if (syNetInputForkDiagWireInWindow(frames[i].tick) != FALSE)
 		{
@@ -8609,8 +8644,8 @@ static void syNetPeerStagePacketBundle(s32 target_player, const SYNetPeerPacketF
 				}
 			}
 		}
-		if (syNetInputSetRemoteInputFromPacket(target_player, frames[i].tick, frames[i].buttons, frames[i].stick_x,
-		                                       frames[i].stick_y, packet_seq, current_tick, i) != FALSE)
+		if (syNetInputSetRemoteInputFromPacketEx(target_player, frames[i].tick, frames[i].buttons, frames[i].stick_x,
+		                                         frames[i].stick_y, packet_seq, current_tick, i, provisional) != FALSE)
 		{
 			sSYNetPeerFramesStaged++;
 			sSYNetPeerInputChecksum = syNetPeerChecksumAccumulateU32(sSYNetPeerInputChecksum, (u32)target_player);
@@ -8654,6 +8689,7 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 	u8 secondary_slot;
 	u8 sec_frame_count;
 	u32 current_tick = syNetInputGetTick();
+	u32 recv_auth_frontier = 0U;
 	s32 i;
 	sb32 is_dual;
 	s32 recv_conn_tick[MAXCONTROLLERS];
@@ -8993,6 +9029,10 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 			chk_disc = recv_conn_disc;
 			syNetPeerMergeIncomingConnectStatus(recv_conn_tick, recv_conn_disc);
 		}
+		if (SYNETPEER_WIRE_HAS_AUTH_FRONTIER(wire_version) != FALSE)
+		{
+			recv_auth_frontier = syNetPeerReadU32(&cursor);
+		}
 		for (i = 0; i < SYNETPEER_MAX_PACKET_FRAMES; i++)
 		{
 			frames[i].tick = syNetPeerReadU32(&cursor);
@@ -9026,7 +9066,8 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 		checksum = syNetPeerReadU32(&cursor);
 		expected_checksum = syNetPeerChecksumInputPacket(session_id, ack_tick, packet_seq, wire_version, player, frame_count,
 		                                                 frames, secondary_slot, sec_frame_count, sec_frames, chk_tick, chk_disc,
-		                                                 recv_sym_mismatch_tick, recv_sym_target_tick, recv_sym_notify_flags);
+		                                                 recv_sym_mismatch_tick, recv_sym_target_tick, recv_sym_notify_flags,
+		                                                 recv_auth_frontier);
 
 		if (checksum != expected_checksum)
 		{
@@ -9159,10 +9200,11 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 	                               secondary_slot, sec_frame_count, sec_frames);
 #endif
 
-	syNetPeerStagePacketBundle((s32)player, frames, frame_count, current_tick, packet_seq);
+	syNetPeerStagePacketBundle((s32)player, frames, frame_count, current_tick, packet_seq, recv_auth_frontier);
 	if ((is_dual != FALSE) && (sec_frame_count > 0))
 	{
-		syNetPeerStagePacketBundle((s32)secondary_slot, sec_frames, sec_frame_count, current_tick, packet_seq);
+		syNetPeerStagePacketBundle((s32)secondary_slot, sec_frames, sec_frame_count, current_tick, packet_seq,
+		                           recv_auth_frontier);
 	}
 }
 
@@ -10071,6 +10113,50 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 #endif
 		sSYNetPeerFrameCommitItemOnlySkewCount = 0U;
 		sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
+		if (local->input_digest != peer->input_digest)
+		{
+			u32 snap_tick;
+
+			snap_tick = (vtick > 0U) ? (vtick - 1U) : 0U;
+			/*
+			 * Prediction miss already queued as input GGPO, or authority peer waiting
+			 * for that episode: do not open competing FC state recovery.
+			 * See docs/bugs/netplay_fc_rebirth_stick_drop_input_skew_2026-07-12.md.
+			 */
+			if (syNetRollbackDeferredInputCorrectionCoversTick(snap_tick) != FALSE)
+			{
+				if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+				{
+					sSYNetPeerFrameCommitMismatchLogCount++;
+					port_log(
+					    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_PENDING_GGPO validation=%u snap=%u "
+					    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
+					    "defer to input GGPO\n",
+					    vtick,
+					    snap_tick,
+					    local->fighter_digest,
+					    peer->fighter_digest,
+					    local->input_digest,
+					    peer->input_digest);
+				}
+				return;
+			}
+			if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+			{
+				sSYNetPeerFrameCommitMismatchLogCount++;
+				port_log(
+				    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_WAIT validation=%u snap=%u "
+				    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
+				    "not arming state resim (expect peer input GGPO)\n",
+				    vtick,
+				    snap_tick,
+				    local->fighter_digest,
+				    peer->fighter_digest,
+				    local->input_digest,
+				    peer->input_digest);
+			}
+			return;
+		}
 		if (syNetPeerFrameCommitDiagLevel() >= 2)
 		{
 			u32 live_figh;
@@ -10280,34 +10366,19 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	}
 }
 
-void syNetPeerTrySendRollbackBaselineDigest(void)
+sb32 syNetPeerSendRollbackBaselineDigestDirect(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
+					       u32 weapon, u32 map, u32 camera, u32 effect, const u32 *fighter_slot)
 {
 	u8 buf[SYNETPEER_ROLLBACK_BASELINE_BYTES];
 	u8 *cursor;
-	u32 load_tick;
-	u32 figh;
-	u32 world;
-	u32 item;
-	u32 rng;
-	u32 anim;
-	u32 weapon;
-	u32 map;
-	u32 camera;
-	u32 effect;
-	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
 	u32 chk;
 	s32 si;
 	int sent;
 
-	if (syNetRollbackTakePeerBaselineDigestForSend(&load_tick, &figh, &world, &item, &rng, &anim, &weapon, &map,
-						     &camera, &effect, fighter_slot, GMCOMMON_PLAYERS_MAX) == FALSE)
-	{
-		return;
-	}
 	if (syNetPeerDatagramSocketIsUsable() == FALSE)
 	{
 		port_log("SSB64 NetPeer: RESIM_BASELINE_SEND_FAIL load_tick=%u reason=transport_unusable\n", load_tick);
-		return;
+		return FALSE;
 	}
 	cursor = buf;
 	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
@@ -10326,7 +10397,7 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	syNetPeerWriteU32(&cursor, effect);
 	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
 	{
-		syNetPeerWriteU32(&cursor, fighter_slot[si]);
+		syNetPeerWriteU32(&cursor, (fighter_slot != NULL) ? fighter_slot[si] : 0U);
 	}
 	chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
 	syNetPeerWriteU32(&cursor, chk);
@@ -10339,7 +10410,7 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 		    figh,
 		    sent,
 		    (unsigned int)sizeof(buf));
-		return;
+		return FALSE;
 	}
 	sSYNetPeerPacketsSent++;
 	port_log(
@@ -10352,6 +10423,33 @@ void syNetPeerTrySendRollbackBaselineDigest(void)
 	    map,
 	    camera,
 	    (unsigned int)sizeof(buf));
+	return TRUE;
+}
+
+void syNetPeerTrySendRollbackBaselineDigest(void)
+{
+	u32 load_tick;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 anim;
+	u32 weapon;
+	u32 map;
+	u32 camera;
+	u32 effect;
+	u32 fighter_slot[GMCOMMON_PLAYERS_MAX];
+
+	if (syNetRollbackTakePeerBaselineDigestForSend(&load_tick, &figh, &world, &item, &rng, &anim, &weapon, &map,
+						     &camera, &effect, fighter_slot, GMCOMMON_PLAYERS_MAX) == FALSE)
+	{
+		return;
+	}
+	if (syNetPeerSendRollbackBaselineDigestDirect(load_tick, figh, world, item, rng, anim, weapon, map, camera,
+						      effect, fighter_slot) == FALSE)
+	{
+		return;
+	}
 	syNetRollbackNotePeerBaselineDigestSent();
 }
 
@@ -11016,7 +11114,12 @@ void syNetPeerLogNetSyncValidation(u32 tick)
 			    tick, fighter_hash, figh_full, ring_figh);
 		}
 	}
+#if defined(SSB64_NETMENU)
+	/* Align FC validation map with CollectHashes / resim baseline (includes ground_fold). */
+	map_hash = syNetRbSnapshotComputeMapHashLive();
+#else
 	map_hash = syNetSyncHashMapCollisionKinematics();
+#endif
 	world_hash = syNetSyncHashRollbackWorld();
 	item_hash = syNetSyncHashActiveItemsForRollback();
 	weapon_hash = syNetSyncHashActiveWeaponsForRollback();
@@ -11285,6 +11388,18 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 
 		completed_tick = syNetInputGetTick();
 		validation_tick = completed_tick + 1U;
+		/*
+		 * Hold FC sampling while an input GGPO covers the just-completed tick — otherwise
+		 * we mint diverge tokens for a prediction miss that is already queued to rewind
+		 * (RebirthWait stick drop class). Do not bump LastFrameCommitValidationTick so the
+		 * interval retries after the episode completes.
+		 */
+		if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
+		    ((completed_tick > 0U) &&
+		     (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)))
+		{
+			return;
+		}
 		fc_interval = syNetPeerNetSyncLogInterval();
 		fc_interval = syNetRbSnapshotFrameCommitIntervalCap(fc_interval);
 		if ((validation_tick == 0U) ||
@@ -11901,8 +12016,18 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 		return;
 	}
 	f = syNetSyncHashBattleFighters();
+	/*
+	 * mph must match resim baseline / CollectHashes map (kin + ground_fold). Kinematics-only
+	 * mph hid Dream Land Pupupu ground_fold forks until GGPO load (soak1 @538).
+	 * See docs/bugs/netplay_pupupu_ground_fold_whispy_anim_2026-07-12.md.
+	 */
+#if defined(SSB64_NETMENU)
+	m = syNetRbSnapshotComputeMapHashLive();
+#else
 	m = syNetSyncHashMapCollisionKinematics();
+#endif
 	{
+		u32 mph_kin = syNetSyncHashMapCollisionKinematics();
 		u32 world_h = syNetSyncHashRollbackWorld();
 		u32 item_h = syNetSyncHashActiveItemsForRollback();
 		u32 wpn_h = syNetSyncHashActiveWeaponsForRollback();
@@ -12029,10 +12154,11 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 			                    syNetPeerGetPhaseLockPredictionWindowTicks())
 			                 : 0U;
 			port_log(
-			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X eff=0x%08X cseed=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d\n",
+			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X mph_kin=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X eff=0x%08X cseed=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d\n",
 			    tick,
 			    f,
 			    m,
+			    mph_kin,
 			    world_h,
 			    item_h,
 			    wpn_h,

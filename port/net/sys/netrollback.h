@@ -114,6 +114,11 @@ extern void syNetRollbackOnPeerSymmetricRollbackNotifyEx(s32 slot, u32 mismatch_
 extern void syNetRollbackExportPeerSymmetricEpisode(s32 slot, u32 *out_load_tick, u32 *out_epoch_id);
 /* Queue one resim for a remote input correction that arrived during an active resim span. */
 extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
+/*
+ * Stick REPLACE scheduling: widen open resim/deferred episode, else queue a fresh GGPO via Request.
+ * Prefer this over RequestInputCorrection from CommitRemote stick-replace paths (storm coalesce).
+ */
+extern void syNetRollbackQueueOrWidenStickCorrection(s32 player, u32 sim_tick);
 /* GGPO-style: confirmed input corrects speculative remote input already simulated at `sim_tick`. */
 extern void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick);
 /* Host/local authority: retransmit revised gameplay for `sim_tick`; queue symmetric + local resim. */
@@ -130,6 +135,12 @@ extern void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, con
 extern void syNetRollbackOnFrameCommitLiveHashGuard(u32 validation_tick, const SYNetFrameCommitToken *local,
 						    const SYNetFrameCommitToken *peer, u32 live_figh, u32 live_world);
 extern void syNetRollbackNoteFrameCommitStateAgreed(u32 validation_tick);
+/*
+ * TRUE when a deferred input GGPO episode already covers `tick` (inclusive mismatch..target-1).
+ * Frame-commit must not open a competing state-only resim while this is armed — prediction miss
+ * (e.g. RebirthWait stick drop → Fall) is healed by the input episode.
+ */
+extern sb32 syNetRollbackDeferredInputCorrectionCoversTick(u32 tick);
 extern u32 syNetRollbackGetLastFrameCommitStateAgreedTick(void);
 extern void syNetRollbackTryEmitResimPostHandshake(void);
 extern void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatch_tick, u32 target_tick,

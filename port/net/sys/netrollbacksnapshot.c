@@ -8679,10 +8679,12 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	 * re-anchor forked the load hash against the raw captured scratch (soak2 @1974820229 tick 3509/3629:
 	 * Kirby DamageFlyHi/DamageFall, live pos_diff=0 vs blob nonzero -> false LOAD_HASH_DRIFT figh).
 	 * Fold the same re-anchored values here. Keep this scope in sync with the Refresh*CollAfterLoad
-	 * passes (airborne knockback, grounded down-tech, pass-platform grounded, captain ground-kick slide).
+	 * passes (airborne knockback, grounded down-tech, pass-platform grounded, jump-aerial PASS/CLIFF,
+	 * captain ground-kick slide).
 	 * See docs/bugs/netplay_knockback_coll_posdiff_fold_2026-07-03.md and
 	 * docs/bugs/netplay_frame_commit_pass_platform_fork_2026-07-04.md and
-	 * docs/bugs/netplay_captain_ground_kick_fc_drift_2026-07-09.md.
+	 * docs/bugs/netplay_captain_ground_kick_fc_drift_2026-07-09.md and
+	 * docs/bugs/netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md.
 	 */
 	if (((fp->ga == nMPKineticsAir) &&
 	     (((fp->status_id >= nFTCommonStatusDamageFlyHi) && (fp->status_id <= nFTCommonStatusDamageFlyRoll)) ||
@@ -8691,6 +8693,7 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	     (fp->status_id >= nFTCommonStatusDownBounceD) && (fp->status_id <= nFTCommonStatusDownWaitU)) ||
 	    ((fp->ga == nMPKineticsGround) &&
 	     ((fp->coll_data.floor_flags & (MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF)) != 0U)) ||
+	    (syNetplayFighterInJumpAerialPassCollScope(fp) != FALSE) ||
 	    (syNetplayFighterInCaptainGroundKickGroundCollScope(fp) != FALSE))
 	{
 		Vec3f *knockback_topn = syNetRbSnapFighterMPCollTranslatePtrTopN(fp);
@@ -23041,6 +23044,52 @@ static void syNetRbSnapRefreshPassPlatformGroundCollAfterLoad(GObj *fighter_gobj
 	fp->coll_data.pos_diff.z = 0.0F;
 }
 
+/*
+ * JumpAerial/Fall over PASS|CLIFF: same stale pos_prev vs TopN class as grounded pass harden, but
+ * ga==Air so RefreshPassPlatformGroundCollAfterLoad never fires (soak1 2239186208 JumpAerialB/F).
+ */
+static void syNetRbSnapRefreshJumpAerialPassCollAfterLoad(GObj *fighter_gobj, FTStruct *fp)
+{
+	Vec3f *topn;
+	sb32 stale_integration;
+
+	if ((fighter_gobj == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	if (syNetplayFighterInJumpAerialPassCollScope(fp) == FALSE)
+	{
+		return;
+	}
+	topn = syNetRbSnapFighterMPCollTranslatePtrTopN(fp);
+	if (topn == NULL)
+	{
+		return;
+	}
+	stale_integration = FALSE;
+	if ((fp->coll_data.pos_diff.x != 0.0F) || (fp->coll_data.pos_diff.y != 0.0F) ||
+	    (fp->coll_data.pos_diff.z != 0.0F))
+	{
+		stale_integration = TRUE;
+	}
+	else if ((topn->x != fp->coll_data.pos_prev.x) || (topn->y != fp->coll_data.pos_prev.y) ||
+		 (topn->z != fp->coll_data.pos_prev.z))
+	{
+		stale_integration = TRUE;
+	}
+	if (stale_integration == FALSE)
+	{
+		return;
+	}
+	fp->coll_data.p_translate = topn;
+	fp->coll_data.p_lr = &fp->lr;
+	fp->coll_data.p_map_coll = &fp->coll_data.map_coll;
+	fp->coll_data.pos_prev = *topn;
+	fp->coll_data.pos_diff.x = 0.0F;
+	fp->coll_data.pos_diff.y = 0.0F;
+	fp->coll_data.pos_diff.z = 0.0F;
+}
+
 static void syNetRbSnapRefreshCaptainGroundKickGroundCollAfterLoad(GObj *fighter_gobj, FTStruct *fp)
 {
 	Vec3f *topn;
@@ -23098,6 +23147,7 @@ static void syNetRbSnapRefreshKnockdownCollFromSlot(const SYNetRbSnapshotSlot *s
 			syNetRbSnapRefreshAirborneDamageKnockbackCollAfterLoad(fighter_gobj, fp);
 			syNetRbSnapRefreshGroundedDownTechCollAfterLoad(fighter_gobj, fp);
 			syNetRbSnapRefreshPassPlatformGroundCollAfterLoad(fighter_gobj, fp);
+			syNetRbSnapRefreshJumpAerialPassCollAfterLoad(fighter_gobj, fp);
 			syNetRbSnapRefreshCaptainGroundKickGroundCollAfterLoad(fighter_gobj, fp);
 		}
 	}
@@ -25606,6 +25656,50 @@ static void syNetRbSnapResyncPupupuWhispyFlowerPresentation(GRCommonGroundVarsPu
 #endif
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Pupupu ground blob restores FSM scalars only — map_gobj anim_frame is live leftover.
+ * After GGPO load that leftover (often a mid-blink eyes anim from the pre-rewind timeline)
+ * blocks blink decrement. Soak1 3628321978: resim @2372 kept blink=2 while forward had
+ * counted to 0; later Open→Blow @2399 vs @2400 burned game RNG → FC diverged=rng.
+ */
+static void syNetRbSnapRefreshPupupuWhispyMapAnimAfterLoad(GRCommonGroundVarsPupupu *pu)
+{
+	DObj *root_dobj;
+
+	if (pu == NULL)
+	{
+		return;
+	}
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	/*
+	 * No pending eyes request: pin eyes ended so blink wait can tick. Leave mouth alone —
+	 * Open→Blow keys off map_gobj[1] progress; snapping it to 0 would fire Blow immediately.
+	 */
+	if ((pu->whispy_eyes_status == -1) && (pu->map_gobj[0] != NULL))
+	{
+		pu->map_gobj[0]->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(pu->map_gobj[0]);
+		if (root_dobj != NULL)
+		{
+			root_dobj->anim_frame = 0.0F;
+		}
+	}
+	if ((pu->whispy_eyes_status != -1) || (pu->whispy_mouth_status != -1) ||
+	    (pu->whispy_mouth_texture != -1) || (pu->whispy_eyes_texture != -1))
+	{
+		grPupupuUpdateGObjAnims();
+	}
+	/* Flower / eyes-texture gobjs only — never wide-snap mouth mid-Open. */
+	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[0]);
+	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[2]);
+	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[3]);
+}
+#endif
+
 static void syNetRbSnapApplyGround(const SYNetRbSnapshotSlot *slot)
 {
 	const SYNetRbSnapGroundBlob *ground;
@@ -25944,6 +26038,10 @@ static void syNetRbSnapApplyGround(const SYNetRbSnapshotSlot *slot)
 				dst->whispy_eyes_texture = src->whispy_eyes_texture;
 			}
 			syNetRbSnapResyncPupupuWhispyFlowerPresentation(dst, has_extended_blob);
+#if defined(PORT) && defined(SSB64_NETMENU)
+			/* SSB64_NETMENU: stripped from offline builds. Runtime: active VS/resim only. */
+			syNetRbSnapRefreshPupupuWhispyMapAnimAfterLoad(dst);
+#endif
 		}
 		break;
 	case nGRKindCastle:
@@ -26248,6 +26346,36 @@ static void syNetRbSnapshotLogMapHashSaveCompactDiag(u32 tick, u32 hash_map, con
 	    "SSB64 NetRbSnapshot: map_hash_save tick=%u hash_map=0x%08X kin=0x%08X ground_fold=0x%08X gkind=%u\n",
 	    (unsigned int)tick, hash_map, kin, ground_fold,
 	    (unsigned int)((ground != NULL) ? ground->gkind : 0U));
+#if defined(SSB64_NETMENU)
+	/*
+	 * Pupupu ground-fold bisect: dump Whispy FSM scalars that feed SYNetRbSnapGroundPupupu.
+	 * Cross-peer diff at first diverge tick names the field (soak1 session 914062045 @538).
+	 * See docs/bugs/netplay_pupupu_ground_fold_whispy_anim_2026-07-12.md.
+	 */
+	if ((ground != NULL) && (ground->gkind == (u8)nGRKindPupupu) &&
+	    (ground->payload_len >= (u16)sizeof(SYNetRbSnapGroundPupupu)))
+	{
+		const SYNetRbSnapGroundPupupu *pu = (const SYNetRbSnapGroundPupupu *)ground->payload;
+
+		port_log(
+		    "SSB64 NetRbSnapshot: pupupu_ground tick=%u wind_wait=%u wind_dur=%u blink=%d status=%u eyes=%d mouth=%d lr=%d "
+		    "fl_b=%u/%u fl_f=%u/%u tex_m=%d tex_e=%d\n",
+		    (unsigned int)tick,
+		    (unsigned int)pu->whispy_wind_wait,
+		    (unsigned int)pu->whispy_wind_duration,
+		    (int)pu->whispy_blink_wait,
+		    (unsigned int)pu->whispy_status,
+		    (int)pu->whispy_eyes_status,
+		    (int)pu->whispy_mouth_status,
+		    (int)pu->lr_players,
+		    (unsigned int)pu->flowers_back_status,
+		    (unsigned int)pu->flowers_back_wait,
+		    (unsigned int)pu->flowers_front_status,
+		    (unsigned int)pu->flowers_front_wait,
+		    (int)pu->whispy_mouth_texture,
+		    (int)pu->whispy_eyes_texture);
+	}
+#endif
 }
 
 #if defined(SSB64_NETMENU)
@@ -48303,19 +48431,35 @@ sb32 syNetRbSnapshotGetStoredSubsystemHashesEx(u32 tick, u32 *figh, u32 *world, 
 {
 	SYNetRbSnapshotSlot *slot;
 
-	if ((figh == NULL) || (world == NULL) || (item == NULL) || (rng == NULL))
-	{
-		return FALSE;
-	}
+	/*
+	 * Out-params are optional: NULL means existence-only probe (promote sweep /
+	 * ResolveLoadTick / hash-only echo). Requiring non-NULL made every
+	 * GetStoredSubsystemHashes(t, NULL,…) return FALSE — LOADSAFE_PROMOTE never
+	 * pinned, and EPISODE_LOAD_REWIND always fell through to FindLatestLoadSafe
+	 * (soak 2187301316: 0× LOADSAFE_PROMOTE, Linux 734→720).
+	 * See docs/bugs/netplay_divergent_load_tick_baseline_stall_2026-07-12.md.
+	 */
 	slot = syNetRbSnapshotSlotForTick(tick);
 	if ((slot->is_valid == FALSE) || (slot->tick != tick))
 	{
 		return FALSE;
 	}
-	*figh = slot->hash_fighter;
-	*world = slot->hash_world;
-	*item = slot->hash_item;
-	*rng = slot->hash_rng;
+	if (figh != NULL)
+	{
+		*figh = slot->hash_fighter;
+	}
+	if (world != NULL)
+	{
+		*world = slot->hash_world;
+	}
+	if (item != NULL)
+	{
+		*item = slot->hash_item;
+	}
+	if (rng != NULL)
+	{
+		*rng = slot->hash_rng;
+	}
 	if (effect != NULL)
 	{
 		*effect = slot->hash_effect;

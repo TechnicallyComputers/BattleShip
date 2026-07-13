@@ -245,6 +245,81 @@ static sb32 syNetRollbackEpisodeEpisodeTupleMatches(u32 epoch_id, u32 mismatch_t
 	           : FALSE;
 }
 
+/*
+ * Same epoch + same target, different mismatch (stacked GGPO / FC deepen fork). Map peer rows by
+ * absolute sim tick into the local seal table. Overlap fills holes the peer sealed under their
+ * mismatch; ticks outside local [mismatch, target) are ignored.
+ * See docs/bugs/netplay_seal_tuple_fork_asymmetric_stall_2026-07-12.md.
+ */
+static sb32 syNetRollbackEpisodeApplyCompatiblePeerSealRowsChunk(u32 epoch_id, u32 pkt_mismatch, u32 pkt_target,
+								 s32 slot, u32 row_begin,
+								 const SYNetInputFrame *rows, u32 row_count)
+{
+	u32 local_mismatch;
+	u32 local_target;
+	u32 local_span;
+	u32 i;
+	u32 applied;
+
+	if ((rows == NULL) || (slot < 0) || (slot >= MAXCONTROLLERS) || (row_count == 0U))
+	{
+		return FALSE;
+	}
+	if ((epoch_id != sSYNetRollbackEpisodeFsm.epoch_id) || (pkt_target != sSYNetRollbackEpisodeFsm.target_tick))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackEpisodeInputsSealed() == FALSE)
+	{
+		return FALSE;
+	}
+	local_mismatch = sSYNetRollbackEpisodeFsm.mismatch_tick;
+	local_target = sSYNetRollbackEpisodeFsm.target_tick;
+	local_span = syNetRollbackEpisodeSealSpan();
+	if ((local_span == 0U) || (pkt_mismatch >= pkt_target))
+	{
+		return FALSE;
+	}
+	applied = 0U;
+	for (i = 0U; i < row_count; i++)
+	{
+		u32 t;
+		u32 local_idx;
+
+		t = pkt_mismatch + row_begin + i;
+		if ((t < local_mismatch) || (t >= local_target))
+		{
+			continue;
+		}
+		local_idx = t - local_mismatch;
+		if (local_idx >= SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN)
+		{
+			continue;
+		}
+		sSYNetRollbackEpisodeFsm.sealed[local_idx][slot] = rows[i];
+		syNetRollbackEpisodeNormalizeSealedFrameTick(&sSYNetRollbackEpisodeFsm.sealed[local_idx][slot], t);
+		sSYNetRollbackEpisodeFsm.sealed_valid[local_idx][slot] = TRUE;
+		syNetRollbackEpisodeMarkPeerSealTick(slot, local_idx);
+		applied++;
+	}
+	if (applied == 0U)
+	{
+		return FALSE;
+	}
+	port_log(
+	    "SSB64 NetRollback: EPISODE_SEAL_ROWS_COMPATIBLE_APPLY epoch=%u pkt_mismatch=%u local_mismatch=%u target=%u slot=%d begin=%u count=%u applied=%u slot_span_digest=0x%08X\n",
+	    epoch_id,
+	    pkt_mismatch,
+	    local_mismatch,
+	    pkt_target,
+	    (int)slot,
+	    row_begin,
+	    row_count,
+	    applied,
+	    syNetRollbackEpisodeComputeSlotSpanInputDigest(slot, local_mismatch, local_target));
+	return TRUE;
+}
+
 static sb32 syNetRollbackEpisodeStashPendingPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick, u32 target_tick,
 							      s32 slot, u32 row_begin,
 							      const SYNetInputFrame *rows, u32 row_count)
@@ -313,7 +388,14 @@ static void syNetRollbackEpisodeFlushPendingPeerSealRows(void)
 		}
 	}
 }
+
+void syNetRollbackEpisodePumpPendingPeerSealRows(void)
+{
+#ifdef PORT
+	syNetRollbackEpisodeFlushPendingPeerSealRows();
 #endif
+}
+#endif /* PORT — static seal helpers */
 
 sb32 syNetRollbackEpisodeFsmEnabled(void)
 {
@@ -1247,6 +1329,38 @@ sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick,
 			    target_tick);
 			return FALSE;
 		}
+		/*
+		 * Active FSM, same epoch+target, different mismatch (Android deepen 502 vs Linux 504
+		 * soak1): accept overlapping ticks instead of stale reject → asymmetric stall.
+		 */
+		if ((epoch_id == sSYNetRollbackEpisodeFsm.epoch_id) &&
+		    (target_tick == sSYNetRollbackEpisodeFsm.target_tick))
+		{
+			if (syNetRollbackEpisodeInputsSealed() != FALSE)
+			{
+				if (syNetRollbackEpisodeApplyCompatiblePeerSealRowsChunk(epoch_id, mismatch_tick,
+											 target_tick, slot, row_begin,
+											 rows, row_count) != FALSE)
+				{
+					return TRUE;
+				}
+			}
+			else if (syNetRollbackEpisodeStashPendingPeerSealRowsChunk(epoch_id, mismatch_tick, target_tick,
+										   slot, row_begin, rows,
+										   row_count) != FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_SEAL_ROWS_COMPATIBLE_STASH epoch=%u pkt_mismatch=%u local_mismatch=%u target=%u slot=%d begin=%u count=%u\n",
+				    epoch_id,
+				    mismatch_tick,
+				    sSYNetRollbackEpisodeFsm.mismatch_tick,
+				    target_tick,
+				    (int)slot,
+				    row_begin,
+				    row_count);
+				return TRUE;
+			}
+		}
 		port_log(
 		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_REJECT reason=stale_episode_tuple slot=%d pkt_epoch=%u pkt_mismatch=%u pkt_target=%u active_epoch=%u active_mismatch=%u active_target=%u active_load=%u\n",
 		    (int)slot,
@@ -1986,6 +2100,9 @@ void syNetRollbackEpisodeFsmOnPostMatch(void)
 void syNetRollbackEpisodeEnqueueEvent(const SYNetRollbackEpisodeEvent *e)
 {
 	(void)e;
+}
+void syNetRollbackEpisodePumpPendingPeerSealRows(void)
+{
 }
 u32 syNetRollbackEpisodeComputeSpanInputDigest(u32 from_tick, u32 to_tick)
 {

@@ -281,6 +281,15 @@ SYNetInputFrame sSYNetInputRemoteHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENG
 SYNetInputFrame sSYNetInputSavedHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
 SYNetInputFrame sSYNetInputReplayFrames[MAXCONTROLLERS][SYNETINPUT_REPLAY_MAX_FRAMES];
 SYNetInputReplayMetadata sSYNetInputReplayMetadata;
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Sim-tick keyed remote authority ledger. Dual-written by wire confirm + episode seal;
+ * seal origin outranks wire. Read path prefers ledger over the wire ring.
+ * See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+ */
+static SYNetInputFrame sSYNetInputRemoteAuthorityLedger[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+static u8 sSYNetInputRemoteAuthorityLedgerOrigin[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+#endif
 u32 sSYNetInputTick;
 #ifdef PORT
 /* Completed VS battle scene-update steps since session reset — advances with netinput tick after each full battle update. */
@@ -813,8 +822,28 @@ void syNetInputMakeFrame(SYNetInputFrame *frame, u32 tick, u16 buttons, s8 stick
 	frame->is_valid = TRUE;
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* SSB64_NETPLAY_STRICT_INPUT=1 — log-only input-authority witness (defined with the other ring helpers). */
+static void syNetInputStrictWitnessOnStore(SYNetInputFrame history[][SYNETINPUT_HISTORY_LENGTH], s32 player,
+                                           const SYNetInputFrame *frame);
+static void syNetInputStrictWitnessTagWriter(const char *tag);
+#define SYNETINPUT_STRICT_TAG(tag) syNetInputStrictWitnessTagWriter(tag)
+static sb32 syNetInputFrameIsRemoteStrictConfirmed(const SYNetInputFrame *frame);
+static sb32 syNetInputRemoteConfirmedWriteOnceBlocks(s32 player, const SYNetInputFrame *existing,
+                                                     const SYNetInputFrame *incoming, const char *reason);
+static void syNetInputRemoteConfirmedWriteOnceQueueCorrection(s32 player, u32 sim_tick,
+                                                              SYNetInputFrame *published_mut);
+/* Phase 2: published ring refresh from ledger only (confirmed path). */
+static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_tick, const char *reason);
+#else
+#define SYNETINPUT_STRICT_TAG(tag) ((void)0)
+#endif
+
 void syNetInputStoreFrame(SYNetInputFrame history[][SYNETINPUT_HISTORY_LENGTH], s32 player, SYNetInputFrame *frame)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	syNetInputStrictWitnessOnStore(history, player, frame);
+#endif
 	history[player][frame->tick % SYNETINPUT_HISTORY_LENGTH] = *frame;
 }
 
@@ -1409,6 +1438,25 @@ void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick)
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Phase 2: confirmed published comes only from the authority ledger. If resolve saw wire
+	 * but ledger is empty (ordering race), dual-write then refresh. Hold-last predicted path
+	 * below is the only non-ledger publish promote may still invent.
+	 * See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+	 */
+	if (source_rank == nSYNetRemoteAuthoritySourceWireConfirmed)
+	{
+		if (syNetInputAuthorityLedgerTryGet(player, tick, NULL, NULL) == FALSE)
+		{
+			syNetInputAuthorityLedgerCommitWire(player, tick, &resolved);
+		}
+		if (syNetInputRefreshPublishedFromAuthorityLedger(player, tick, "promote_remote_authority") != FALSE)
+		{
+			return;
+		}
+	}
+#endif
 	had_published = syNetInputGetHistoryFrame(player, tick, &published);
 	if ((had_published == FALSE) && (syNetInputFrameStickGameplayNeutral(&resolved) != FALSE))
 	{
@@ -1435,6 +1483,24 @@ void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick)
 		}
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Thin write-once safety: hold-last / non-ledger path must not mutate confirmed published.
+	 * Ledger refresh above bypasses this gate.
+	 */
+	if ((had_published != FALSE) &&
+	    (syNetInputRemoteConfirmedWriteOnceBlocks(player, &published, &resolved, "promote_remote_authority") !=
+	     FALSE))
+	{
+		syNetInputRemoteConfirmedWriteOnceQueueCorrection(player, tick, &published);
+		return;
+	}
+	/* Confirmed invent without ledger must not happen — refuse. */
+	if (source_rank == nSYNetRemoteAuthoritySourceWireConfirmed)
+	{
+		return;
+	}
+#endif
 	sim_now = syNetInputGetTick();
 	if ((syNetInputAuthorityPublishLogEnabled() != FALSE) && (source_rank == nSYNetRemoteAuthoritySourceWireConfirmed) &&
 	    (sim_now > tick) && ((sim_now - tick) > 2U))
@@ -1442,6 +1508,7 @@ void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick)
 		port_log("SSB64 NetInput: REMOTE_PUBLISH_LATE player=%d sim_tick=%u sim_now=%u sx=%d sy=%d\n", (int)player,
 		         (unsigned int)tick, (unsigned int)sim_now, (int)resolved.stick_x, (int)resolved.stick_y);
 	}
+	SYNETINPUT_STRICT_TAG("promote_remote_authority");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &resolved);
 	syNetInputStrictReadyCacheInvalidate();
 	if ((syNetInputAuthorityPublishLogEnabled() != FALSE) &&
@@ -1634,6 +1701,47 @@ u32 syNetInputFindEarliestRemoteAuthorityMismatch(s32 remote_slot, u32 from_tick
 	}
 	return ~(u32)0;
 }
+
+/*
+ * TRUE when every remote-human slot has strict-confirmed (ledger/wire) input for `sim_tick`
+ * AND the published history row matches it gameplay-wise. Used to retroactively promote
+ * rollback snapshots captured under prediction to load-safe once the prediction is proven
+ * correct. See docs/bugs/netplay_divergent_load_tick_baseline_stall_2026-07-12.md.
+ */
+sb32 syNetInputRemoteHumanPublishedMatchesConfirmedForSimTick(u32 sim_tick)
+{
+	SYNetInputFrame confirmed;
+	SYNetInputFrame published;
+	s32 i;
+	s32 n;
+	s32 slot;
+
+	if (sim_tick == 0U)
+	{
+		return FALSE;
+	}
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, sim_tick, &confirmed) == FALSE)
+		{
+			return FALSE;
+		}
+		if (syNetInputGetHistoryFrame(slot, sim_tick, &published) == FALSE)
+		{
+			return FALSE;
+		}
+		if (syNetInputFrameGameplayEquals(&published, &confirmed) == FALSE)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
 #endif
 
 void syNetInputReset(void)
@@ -1729,6 +1837,8 @@ void syNetInputReset(void)
 			syNetInputClearFrame(&sSYNetInputLocalDelayHistory[player][i]);
 #if defined(SSB64_NETMENU)
 			syNetInputClearFrame(&sSYNetInputLocalGameplayHistory[player][i]);
+			syNetInputClearFrame(&sSYNetInputRemoteAuthorityLedger[player][i]);
+			sSYNetInputRemoteAuthorityLedgerOrigin[player][i] = SYNETINPUT_AUTH_LEDGER_ORIGIN_NONE;
 #endif
 			sSYNetInputRemotePacketSeqHistory[player][i] = 0U;
 			sSYNetInputRemotePacketSeqValid[player][i] = FALSE;
@@ -1745,6 +1855,10 @@ void syNetInputReset(void)
 
 void syNetInputStartVSSession(void)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* Flush previous match's strict-input witness counters before rings reset. */
+	syNetInputStrictWitnessLogMatchSummary("session_start");
+#endif
 	syNetInputReset();
 #ifdef PORT
 	syNetRollbackClearLoadFailBattleHold();
@@ -2992,7 +3106,43 @@ static void syNetInputMaybeStorePredictedOverlayForDiag(s32 player, u32 tick);
 /*
  * Predicted analog onset ahead of wire delay: published history may carry peek/onset sticks while the remote
  * ring row is still neutral. Defer rollback until wire confirms or peek shows a conflicting value.
+ *
+ * Release (published analog → wire nearer/at neutral) must never defer — that is the opposite of
+ * onset-ahead and silent Promote forks pose (soak 2132381039: 24× REPLACE, 0× GGPO after ep4).
  */
+static sb32 syNetInputStickReplaceIsRelease(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
+{
+	u32 confirmed_db;
+	s32 old_mag;
+	s32 wire_mag;
+
+	if ((old_frame == NULL) || (wire == NULL))
+	{
+		return FALSE;
+	}
+	confirmed_db = syNetInputGgpoStickDeadband();
+	if (syNetInputFrameSticksNearNeutralWithDeadband(old_frame, confirmed_db) != FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetInputFrameSticksNearNeutralWithDeadband(wire, confirmed_db) != FALSE)
+	{
+		return TRUE;
+	}
+	old_mag = syNetInputAbsS8Diff(old_frame->stick_x, 0);
+	if (syNetInputAbsS8Diff(old_frame->stick_y, 0) > old_mag)
+	{
+		old_mag = syNetInputAbsS8Diff(old_frame->stick_y, 0);
+	}
+	wire_mag = syNetInputAbsS8Diff(wire->stick_x, 0);
+	if (syNetInputAbsS8Diff(wire->stick_y, 0) > wire_mag)
+	{
+		wire_mag = syNetInputAbsS8Diff(wire->stick_y, 0);
+	}
+	/* Clearly shedding magnitude (not a same-intent ramp up). */
+	return ((wire_mag + (s32)confirmed_db) < old_mag) ? TRUE : FALSE;
+}
+
 sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, const SYNetInputFrame *published,
                                                     const SYNetInputFrame *remote)
 {
@@ -3001,6 +3151,21 @@ sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, co
 
 	if ((published == NULL) || (remote == NULL) || (sim_tick == 0U) ||
 	    (syNetInputIsRemoteHumanSlot(player) == FALSE))
+	{
+		return FALSE;
+	}
+	/*
+	 * Already-simulated ticks must rewind on significant wire replace. Feel-0 marks a
+	 * superseded provisional publish predicted then RequestInputCorrection; without this
+	 * gate, analog→neutral release hits the onset-ahead defer and Promote silently forks
+	 * (same class as post-jump stick REPLACE storms after debounce).
+	 */
+	if (syNetInputGetTick() > sim_tick)
+	{
+		return FALSE;
+	}
+	/* Release is not onset-ahead — never defer (see StickReplaceIsRelease). */
+	if (syNetInputStickReplaceIsRelease(published, remote) != FALSE)
 	{
 		return FALSE;
 	}
@@ -3035,6 +3200,65 @@ sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, co
 	return FALSE;
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
+                                       const SYNetInputFrame *wire, const SYNetInputFrame *defer_published)
+{
+	const SYNetInputFrame *pub;
+
+	if ((old_frame == NULL) || (wire == NULL) || (sim_tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetInputFrameGameplayEquals(old_frame, wire) != FALSE)
+	{
+		return FALSE;
+	}
+	/*
+	 * Already-simulated tick: any gameplay delta must rewind.
+	 * See docs/bugs/netplay_feel0_release_deadband_skips_ggpo_2026-07-12.md.
+	 */
+	if (syNetInputGetTick() > sim_tick)
+	{
+		return TRUE;
+	}
+	/*
+	 * Analog→neutral / shedding magnitude: never treat as onset-ahead defer, always rewind.
+	 * See docs/bugs/netplay_stick_ramp_predict_deadband_silent_promote_2026-07-12.md.
+	 */
+	if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
+	{
+		return TRUE;
+	}
+	pub = (defer_published != NULL) ? defer_published : old_frame;
+	if (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, pub, wire) != FALSE)
+	{
+		return FALSE;
+	}
+	/*
+	 * Runway / feel-0 REPLACE: use confirmed deadband (default 4), not predict (14).
+	 * Continuous stick ramps (Δ≈5–12) were "insignificant" under predict and Promote'd
+	 * without GGPO → p1 topn phase lag → FC inputs+figh diverge.
+	 */
+	return syNetInputGameplayCorrectionIsSignificantEx(old_frame, wire, FALSE);
+}
+
+static void syNetInputMarkPublishedPredictedForStickReplace(s32 player, SYNetInputFrame *published)
+{
+	if ((published == NULL) || (syNetInputCheckPlayer(player) == FALSE))
+	{
+		return;
+	}
+	published->is_predicted = TRUE;
+	if (published->source == nSYNetInputSourceRemoteConfirmed)
+	{
+		published->source = nSYNetInputSourceRemotePredicted;
+	}
+	SYNETINPUT_STRICT_TAG("mark_predicted_replace");
+	syNetInputStoreFrame(sSYNetInputHistory, player, published);
+}
+#endif
+
 /* Strict wire authority: real INPUT packets only (not hold-last gap fill). */
 static sb32 syNetInputFrameIsRemoteStrictConfirmed(const SYNetInputFrame *frame)
 {
@@ -3044,7 +3268,107 @@ static sb32 syNetInputFrameIsRemoteStrictConfirmed(const SYNetInputFrame *frame)
 	           : FALSE;
 }
 
-/* Admission / stall pacing: gap-filled hold-last rows count as present on the wire ring. */
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Sealed-episode rows outrank write-once. The seal-rows exchange is the definitive cross-peer
+ * input agreement (each peer contributes its own local-authority rows), so a store whose
+ * gameplay matches the sealed row for that sim tick is the mechanical reconcile path — never
+ * block it. Soak (seed 3284691918, kill @596): publish_frame/store_published_api write-once
+ * swapped Android's sealed -74 back to a stale provisional-confirmed -43 mid-resim → figh fork.
+ */
+static sb32 syNetInputFrameMatchesSealedEpisodeRow(s32 player, u32 sim_tick, const SYNetInputFrame *incoming)
+{
+	SYNetInputFrame sealed;
+
+	if ((incoming == NULL) || (sim_tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetRollbackEpisodeGetSealedFrame(player, sim_tick, &sealed) == FALSE)
+	{
+		return FALSE;
+	}
+	return syNetInputFrameGameplayEquals(&sealed, incoming);
+}
+
+/*
+ * Refuse mutating an already-confirmed published remote row with different gameplay.
+ * Compare sticks/buttons only — callers pass published[sim_tick] vs wire/resolved whose
+ * `.tick` may be a wire tick (patch_publish); requiring tick equality let patch bypass
+ * write-once (soak 1468769950). Sealed-episode rows always pass (mechanical reconcile).
+ * resim_wire* / mark_predicted_replace still StoreFrame directly.
+ * See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+ */
+static sb32 syNetInputRemoteConfirmedWriteOnceBlocks(s32 player, const SYNetInputFrame *existing,
+                                                     const SYNetInputFrame *incoming, const char *reason)
+{
+	if ((existing == NULL) || (incoming == NULL) || (syNetInputIsRemoteHumanSlot(player) == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetInputFrameIsRemoteStrictConfirmed(existing) == FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetInputFrameGameplayEquals(existing, incoming) != FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetInputFrameMatchesSealedEpisodeRow(player, existing->tick, incoming) != FALSE)
+	{
+		if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetInput: REMOTE_PUBLISH_SEAL_OVERRIDE player=%d sim_tick=%u writer=%s "
+			    "old btn=0x%04X sx=%d sy=%d | sealed btn=0x%04X sx=%d sy=%d\n",
+			    (int)player, (unsigned int)existing->tick, (reason != NULL) ? reason : "?",
+			    (unsigned int)existing->buttons, (int)existing->stick_x, (int)existing->stick_y,
+			    (unsigned int)incoming->buttons, (int)incoming->stick_x, (int)incoming->stick_y);
+		}
+		return FALSE;
+	}
+	if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetInput: REMOTE_PUBLISH_SKIP player=%d sim_tick=%u reason=confirmed_write_once(%s) "
+		    "old btn=0x%04X sx=%d sy=%d | new btn=0x%04X sx=%d sy=%d\n",
+		    (int)player,
+		    (unsigned int)existing->tick,
+		    (reason != NULL) ? reason : "?",
+		    (unsigned int)existing->buttons,
+		    (int)existing->stick_x,
+		    (int)existing->stick_y,
+		    (unsigned int)incoming->buttons,
+		    (int)incoming->stick_x,
+		    (int)incoming->stick_y);
+	}
+	return TRUE;
+}
+
+/* Write-once blocked a confirmed publish mutate: force mechanical rewind instead of silent drift. */
+static void syNetInputRemoteConfirmedWriteOnceQueueCorrection(s32 player, u32 sim_tick,
+                                                              SYNetInputFrame *published_mut)
+{
+	if ((sim_tick == 0U) || (published_mut == NULL) || (syNetRollbackIsActive() == FALSE))
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	syNetInputMarkPublishedPredictedForStickReplace(player, published_mut);
+	syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
+}
+#endif
+
+/*
+ * Wire-ring presence including provisional gap-fill (hold-last / auth-frontier runway).
+ * Used for hold-last resolve and resim reconcile fallbacks — NOT for shared-commit ring_ready.
+ * Gap-fill still raises `hr` via StoreFrame; counting it as ring_ready forced the confirmed
+ * path while WireReady required strict → R-stall instead of phase_lock prediction.
+ * See docs/bugs/netplay_provisional_ring_ready_blocks_predict_2026-07-12.md.
+ */
 static sb32 syNetInputFrameIsRemoteConfirmed(const SYNetInputFrame *frame)
 {
 	return ((frame != NULL) && (frame->is_valid != FALSE) &&
@@ -3171,6 +3495,25 @@ static void syNetInputPatchPublishedFromRemoteConfirmedReason(s32 player, u32 wi
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Phase 2: patch no longer invents confirmed published from the wire row. Dual-write ledger
+	 * (wire already committed in CommitRemoteConfirmedWire) then refresh published from ledger.
+	 */
+	if (syNetInputIsRemoteHumanSlot(player) != FALSE)
+	{
+		SYNetInputFrame ledger_wire;
+
+		ledger_wire = *confirmed;
+		ledger_wire.tick = sim_tick;
+		syNetInputAuthorityLedgerCommitWire(player, sim_tick, &ledger_wire);
+		if (syNetInputRefreshPublishedFromAuthorityLedger(player, sim_tick,
+		                                                  (reason != NULL) ? reason : "patch_publish") != FALSE)
+		{
+			return;
+		}
+	}
+#endif
 	if ((syNetInputIsRemoteHumanSlot(player) != FALSE) &&
 	    (syNetInputAuthoritativeWireContractEnabled() != FALSE))
 	{
@@ -3184,6 +3527,20 @@ static void syNetInputPatchPublishedFromRemoteConfirmedReason(s32 player, u32 wi
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if ((published.is_valid != FALSE) &&
+	    (syNetInputRemoteConfirmedWriteOnceBlocks(player, &published, confirmed, "patch_publish") != FALSE))
+	{
+		/* Gameplay differs: do not Store; mark predicted + GGPO (sim_tick keyed, not wire tick). */
+		syNetInputRemoteConfirmedWriteOnceQueueCorrection(player, sim_tick, &published);
+		return;
+	}
+	/* Non-ledger invent of confirmed published is refused (Phase 2). */
+	if (syNetInputIsRemoteHumanSlot(player) != FALSE)
+	{
+		return;
+	}
+#endif
 	wire_view = *confirmed;
 	wire_view.tick = sim_tick;
 	if (syNetInputPatchPublishLogEnabled() != FALSE)
@@ -3200,6 +3557,7 @@ static void syNetInputPatchPublishedFromRemoteConfirmedReason(s32 player, u32 wi
 	store = wire_view;
 	store.source = nSYNetInputSourceRemoteConfirmed;
 	store.is_predicted = FALSE;
+	SYNETINPUT_STRICT_TAG("patch_publish");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &store);
 	syNetInputStrictReadyCacheInvalidate();
 }
@@ -3278,6 +3636,7 @@ static void syNetInputStoreRemoteConfirmedFrame(s32 player, const SYNetInputFram
 		return;
 	}
 	store = *frame;
+	SYNETINPUT_STRICT_TAG("wire_commit");
 	syNetInputStoreFrame(sSYNetInputRemoteHistory, player, &store);
 	if ((sSYNetInputRemoteConfirmedLastWire[player] < 0) ||
 	    (frame->tick > (u32)sSYNetInputRemoteConfirmedLastWire[player]))
@@ -3304,6 +3663,20 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 #ifdef PORT
 	syNetInputMaybeLogForkDiagRemoteWire(player, wire_tick, sim_tick, frame, "commit_remote_wire");
 #endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Dual-write authority ledger (sim-tick keyed). Provisional path never reaches here.
+	 * Seal origin already present with different gameplay is preserved (store helper).
+	 */
+	if (sim_tick != 0U)
+	{
+		SYNetInputFrame ledger_wire;
+
+		ledger_wire = *frame;
+		ledger_wire.tick = sim_tick;
+		syNetInputAuthorityLedgerCommitWire(player, sim_tick, &ledger_wire);
+	}
+#endif
 	{
 		SYNetInputFrame published;
 		SYNetInputFrame wire_view;
@@ -3316,29 +3689,44 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 		queued_predicted_correction = FALSE;
 #if defined(PORT) && defined(SSB64_NETMENU)
 		/*
-		 * Feel-0 send-lead: provisional ahead rows are still sent as RemoteConfirmed (no predicted bit on
-		 * INPUT packets). Peer may sim that hold-last as wire-ready, then REPLACE with the real sample.
-		 * PublishedSimUsedPrediction is false for those confirms, so RequestInputCorrection would no-op and
-		 * leave a permanent +1 status-phase lag (soak 1648332797 Android p0 behind Linux after every stick
-		 * onset; FC@600 inputs=DIFFER). Mark superseded publish as predicted so GGPO can rewind.
+		 * Stick REPLACE policy (syNetInputStickReplaceNeedsRewind + QueueOrWiden):
+		 * Feel-0 provisional / gap-fill priors stamped RemoteConfirmed need mark-predicted + GGPO
+		 * before Promote. Completed-sim any delta; release never deferred; runway uses confirmed
+		 * deadband (not predict-14) so stick ramps queue GGPO. Open episodes absorb via widen.
+		 * See docs/bugs/netplay_stick_ramp_predict_deadband_silent_promote_2026-07-12.md.
 		 */
 		if ((sim_tick != 0U) && (had_published != FALSE) && (had_prior_ring != FALSE) && (prior_ring != NULL) &&
 		    (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
-		    (syNetInputFrameIsRemoteStrictConfirmed(prior_ring) != FALSE) &&
-		    (syNetInputFrameGameplayEquals(prior_ring, frame) == FALSE) &&
+		    ((syNetInputFrameIsRemoteStrictConfirmed(prior_ring) != FALSE) ||
+		     (syNetInputFrameIsRemoteGapFilled(prior_ring) != FALSE)) &&
 		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
-		    (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, &published, &wire_view) == FALSE) &&
-		    (syNetInputGameplayCorrectionIsSignificantEx(prior_ring, frame, TRUE) != FALSE))
+		    (syNetInputStickReplaceNeedsRewind(player, sim_tick, prior_ring, &wire_view, &published) != FALSE))
 		{
-			published.is_predicted = TRUE;
-			if (published.source == nSYNetInputSourceRemoteConfirmed)
-			{
-				published.source = nSYNetInputSourceRemotePredicted;
-			}
-			syNetInputStoreFrame(sSYNetInputHistory, player, &published);
+			syNetInputMarkPublishedPredictedForStickReplace(player, &published);
 			syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
-			                              "feel0_provisional_replace", &published, &wire_view);
-			syNetRollbackRequestInputCorrection(player, sim_tick);
+			                              (syNetInputFrameIsRemoteGapFilled(prior_ring) != FALSE)
+			                                  ? "feel0_gapfill_replace"
+			                                  : ((syNetInputGetTick() > sim_tick)
+			                                         ? "feel0_completed_sim_replace"
+			                                         : "feel0_provisional_replace"),
+			                              &published, &wire_view);
+			syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
+			queued_predicted_correction = TRUE;
+			had_published = TRUE;
+		}
+		/*
+		 * Late wire for an already-completed sim tick when the prior ring was not strict/gap-fill
+		 * (or feel0 path missed). Promote alone rewrites history without rewind — force GGPO.
+		 */
+		if ((queued_predicted_correction == FALSE) && (sim_tick != 0U) && (had_published != FALSE) &&
+		    (syNetInputIsRemoteHumanSlot(player) != FALSE) && (syNetInputGetTick() > sim_tick) &&
+		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
+		    (syNetInputStickReplaceNeedsRewind(player, sim_tick, &published, &wire_view, &published) != FALSE))
+		{
+			syNetInputMarkPublishedPredictedForStickReplace(player, &published);
+			syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
+			                              "late_wire_completed_sim", &published, &wire_view);
+			syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
 			queued_predicted_correction = TRUE;
 			had_published = TRUE;
 		}
@@ -3350,16 +3738,25 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 		 */
 		if ((sim_tick != 0U) && (had_published != FALSE) && (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
 		    ((published.is_predicted != FALSE) || (published.source == nSYNetInputSourceRemotePredicted)) &&
-		    (syNetInputFrameGameplayEquals(&published, &wire_view) == FALSE) &&
 		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
+#if defined(PORT) && defined(SSB64_NETMENU)
+		    (syNetInputStickReplaceNeedsRewind(player, sim_tick, &published, &wire_view, &published) != FALSE)
+#else
+		    (syNetInputFrameGameplayEquals(&published, &wire_view) == FALSE) &&
 		    (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, &published, &wire_view) == FALSE) &&
-		    (syNetInputGameplayCorrectionIsSignificantEx(&published, &wire_view, TRUE) != FALSE))
+		    (syNetInputGameplayCorrectionIsSignificantEx(&published, &wire_view, TRUE) != FALSE)
+#endif
+		    )
 		{
 			if (queued_predicted_correction == FALSE)
 			{
 				syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
 				                              "pre_promote_ggpo", &published, &wire_view);
+#if defined(PORT) && defined(SSB64_NETMENU)
+				syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
+#else
 				syNetRollbackRequestInputCorrection(player, sim_tick);
+#endif
 			}
 			queued_predicted_correction = TRUE;
 		}
@@ -3395,7 +3792,13 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 		}
 		if ((had_prior_ring != FALSE) && (prior_ring != NULL) && (prior_ring->is_predicted != FALSE) &&
 		    (syNetRollbackShouldQueueGgpoCorrection(sim_tick) != FALSE) &&
-		    (syNetInputGameplayCorrectionIsSignificantEx(prior_ring, frame, TRUE) != FALSE))
+#if defined(PORT) && defined(SSB64_NETMENU)
+		    (syNetInputStickReplaceNeedsRewind(player, sim_tick, prior_ring, &wire_view,
+		                                       (had_published != FALSE) ? &published : NULL) != FALSE)
+#else
+		    (syNetInputGameplayCorrectionIsSignificantEx(prior_ring, frame, TRUE) != FALSE)
+#endif
+		    )
 		{
 			if (had_published != FALSE)
 			{
@@ -3407,7 +3810,11 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 				syNetInputLogInputGameplayRow("defer_analog_correction", player, sim_tick, wire_tick,
 				                              "ggpo_queued", prior_ring, &wire_view);
 			}
+#if defined(PORT) && defined(SSB64_NETMENU)
+			syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
+#else
 			syNetRollbackRequestInputCorrection(player, sim_tick);
+#endif
 			return;
 		}
 	}
@@ -3506,6 +3913,7 @@ static void syNetInputFillRemoteConfirmedGap(s32 player, u32 tick)
 		}
 		syNetInputMakeFrame(&gap, t, seed.buttons, seed.stick_x, seed.stick_y,
 		                    nSYNetInputSourceRemoteGapFilled, FALSE);
+		SYNETINPUT_STRICT_TAG("wire_gap_fill");
 		syNetInputStoreFrame(sSYNetInputRemoteHistory, player, &gap);
 		syNetInputClearRemotePacketSeq(player, t);
 		if (sSYNetInputRemoteGapFillLogBudget > 0U)
@@ -3523,8 +3931,8 @@ static void syNetInputFillRemoteConfirmedGap(s32 player, u32 tick)
 	syNetInputStrictReadyCacheInvalidate();
 }
 
-sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y, u32 packet_seq,
-                                        u32 current_tick, s32 frame_index)
+sb32 syNetInputSetRemoteInputFromPacketEx(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y, u32 packet_seq,
+                                          u32 current_tick, s32 frame_index, sb32 provisional)
 {
 	SYNetInputFrame frame;
 	SYNetInputFrame existing;
@@ -3542,6 +3950,34 @@ sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 st
 		syNetInputClearFrame(&sSYNetInputSlots[player].last_non_neutral);
 	}
 #endif
+	/*
+	 * Sender-stamped provisional row (wire tick above the sender's authoritative frontier):
+	 * runway / future-ahead extrapolation the sender has not simulated. Store gap-filled so it
+	 * raises hr / pacing and hold-last resolution, but is never RemoteConfirmed — fake confirms
+	 * poisoned write-once/reconcile against the real input (seed 3284691918 kill @596).
+	 * Real (non-provisional) wire for the same tick replaces it via the normal commit below.
+	 */
+	if (provisional != FALSE)
+	{
+		sb32 have_existing;
+
+		have_existing = syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, tick, &existing);
+		if ((have_existing != FALSE) && (syNetInputFrameIsRemoteStrictConfirmed(&existing) != FALSE))
+		{
+			return FALSE;
+		}
+		syNetInputMakeFrame(&frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteGapFilled, FALSE);
+		if ((have_existing != FALSE) && (existing.source == nSYNetInputSourceRemoteGapFilled) &&
+		    (syNetInputFrameGameplayEquals(&existing, &frame) != FALSE))
+		{
+			return FALSE;
+		}
+		SYNETINPUT_STRICT_TAG("wire_provisional");
+		syNetInputStoreFrame(sSYNetInputRemoteHistory, player, &frame);
+		syNetInputClearRemotePacketSeq(player, tick);
+		syNetInputStrictReadyCacheInvalidate();
+		return TRUE;
+	}
 	syNetInputMakeFrame(&frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteConfirmed, FALSE);
 	syNetInputFillRemoteConfirmedGap(player, tick);
 	if (syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, tick, &existing) != FALSE)
@@ -3630,6 +4066,13 @@ sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 st
 		                                    had_prior_ring ? &existing : NULL, had_prior_ring);
 	}
 	return TRUE;
+}
+
+sb32 syNetInputSetRemoteInputFromPacket(s32 player, u32 tick, u16 buttons, s8 stick_x, s8 stick_y, u32 packet_seq,
+                                        u32 current_tick, s32 frame_index)
+{
+	return syNetInputSetRemoteInputFromPacketEx(player, tick, buttons, stick_x, stick_y, packet_seq, current_tick,
+	                                            frame_index, FALSE);
 }
 #endif
 
@@ -3990,10 +4433,146 @@ static sb32 syNetInputTryGetRemoteHistoryForSimTick(s32 player, u32 sim_tick, SY
 	return ok;
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+sb32 syNetInputAuthorityLedgerTryGet(s32 player, u32 sim_tick, SYNetInputFrame *out_frame, u8 *out_origin)
+{
+	u32 index;
+	const SYNetInputFrame *row;
+	u8 origin;
+
+	if ((syNetInputCheckPlayer(player) == FALSE) || (sim_tick == 0U))
+	{
+		return FALSE;
+	}
+	index = sim_tick % SYNETINPUT_HISTORY_LENGTH;
+	origin = sSYNetInputRemoteAuthorityLedgerOrigin[player][index];
+	row = &sSYNetInputRemoteAuthorityLedger[player][index];
+	if ((origin == SYNETINPUT_AUTH_LEDGER_ORIGIN_NONE) || (row->is_valid == FALSE) || (row->tick != sim_tick))
+	{
+		return FALSE;
+	}
+	if (out_frame != NULL)
+	{
+		*out_frame = *row;
+		out_frame->tick = sim_tick;
+		out_frame->source = nSYNetInputSourceRemoteConfirmed;
+		out_frame->is_predicted = FALSE;
+		out_frame->is_valid = TRUE;
+	}
+	if (out_origin != NULL)
+	{
+		*out_origin = origin;
+	}
+	return TRUE;
+}
+
+static void syNetInputAuthorityLedgerStore(s32 player, u32 sim_tick, const SYNetInputFrame *frame, u8 origin)
+{
+	u32 index;
+	SYNetInputFrame store;
+
+	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (sim_tick == 0U) ||
+	    (origin == SYNETINPUT_AUTH_LEDGER_ORIGIN_NONE))
+	{
+		return;
+	}
+	if (syNetInputIsRemoteHumanSlot(player) == FALSE)
+	{
+		return;
+	}
+	index = sim_tick % SYNETINPUT_HISTORY_LENGTH;
+	/*
+	 * Seal outranks wire: a wire commit must not replace a sealed ledger row with different
+	 * gameplay (the prior fake-confirm vs seal fight). Matching gameplay is a no-op refresh.
+	 */
+	if ((origin == SYNETINPUT_AUTH_LEDGER_ORIGIN_WIRE) &&
+	    (sSYNetInputRemoteAuthorityLedgerOrigin[player][index] == SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL) &&
+	    (sSYNetInputRemoteAuthorityLedger[player][index].is_valid != FALSE) &&
+	    (sSYNetInputRemoteAuthorityLedger[player][index].tick == sim_tick) &&
+	    (syNetInputFrameGameplayEquals(&sSYNetInputRemoteAuthorityLedger[player][index], frame) == FALSE))
+	{
+		return;
+	}
+	store = *frame;
+	store.tick = sim_tick;
+	store.source = nSYNetInputSourceRemoteConfirmed;
+	store.is_predicted = FALSE;
+	store.is_valid = TRUE;
+	sSYNetInputRemoteAuthorityLedger[player][index] = store;
+	sSYNetInputRemoteAuthorityLedgerOrigin[player][index] = origin;
+}
+
+void syNetInputAuthorityLedgerCommitWire(s32 player, u32 sim_tick, const SYNetInputFrame *frame)
+{
+	syNetInputAuthorityLedgerStore(player, sim_tick, frame, SYNETINPUT_AUTH_LEDGER_ORIGIN_WIRE);
+}
+
+void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const SYNetInputFrame *frame)
+{
+	syNetInputAuthorityLedgerStore(player, sim_tick, frame, SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL);
+}
+
+/*
+ * Phase 2: copy ledger → published history. Confirmed published authority is ledger-owned;
+ * promote/patch/publish call this instead of inventing RemoteConfirmed from wire/hold-last.
+ * Write-once does not block ledger refresh (ledger outranks published).
+ */
+static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_tick, const char *reason)
+{
+	SYNetInputFrame ledger;
+	SYNetInputFrame published;
+	u8 origin;
+	sb32 had_published;
+
+	if ((syNetInputCheckPlayer(player) == FALSE) || (sim_tick == 0U) ||
+	    (syNetInputIsRemoteHumanSlot(player) == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetInputAuthorityLedgerTryGet(player, sim_tick, &ledger, &origin) == FALSE)
+	{
+		return FALSE;
+	}
+	had_published = syNetInputGetHistoryFrame(player, sim_tick, &published);
+	if ((had_published != FALSE) && (syNetInputFrameGameplayEquals(&published, &ledger) != FALSE) &&
+	    (published.is_predicted == FALSE) && (published.source == nSYNetInputSourceRemoteConfirmed))
+	{
+		return TRUE;
+	}
+	SYNETINPUT_STRICT_TAG("ledger_publish_refresh");
+	syNetInputStoreFrame(sSYNetInputHistory, player, &ledger);
+	syNetInputStrictReadyCacheInvalidate();
+	if ((syNetInputAuthorityPublishLogEnabled() != FALSE) &&
+	    ((ledger.stick_x != 0) || (ledger.stick_y != 0) || (ledger.buttons != 0)))
+	{
+		port_log(
+		    "SSB64 NetInput: REMOTE_PUBLISH player=%d sim_tick=%u sx=%d sy=%d source=ledger_%s writer=%s\n",
+		    (int)player, (unsigned int)sim_tick, (int)ledger.stick_x, (int)ledger.stick_y,
+		    (origin == SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL) ? "seal" : "wire",
+		    (reason != NULL) ? reason : "?");
+	}
+	return TRUE;
+}
+#endif
+
 #ifdef PORT
 static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame)
 {
 	SYNetInputFrame frame;
+#if defined(SSB64_NETMENU)
+	/*
+	 * Prefer authority ledger (wire/seal dual-write) over the wire ring. Ledger is sim-tick
+	 * keyed and seal-outranks-wire; wire ring still holds provisional gap-fill for pacing.
+	 */
+	if (syNetInputAuthorityLedgerTryGet(player, sim_tick, &frame, NULL) != FALSE)
+	{
+		if (out_frame != NULL)
+		{
+			*out_frame = frame;
+		}
+		return TRUE;
+	}
+#endif
 
 	if (syNetInputTryGetRemoteHistoryForSimTick(player, sim_tick, &frame) == FALSE)
 	{
@@ -4039,6 +4618,199 @@ sb32 syNetInputIsRemoteHumanSlot(s32 player)
 	}
 	return FALSE;
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Strict input-authority witness (SSB64_NETPLAY_STRICT_INPUT=1, log-only, netmenu builds).
+ *
+ * Target end-state (docs/bugs/netplay_strict_input_authority_witness_2026-07-12.md): confirmed remote
+ * input is single-writer + write-once; rollback is a mechanical consumed-vs-confirmed compare; frame
+ * commit covers confirmed inputs only. This witness enumerates every writer that violates those
+ * invariants today so the migration can retire the replace/deadband heuristics call site by call site.
+ *
+ * Violation kinds (all log-only, zero behavior change):
+ * - wire_overwrite      : strict-confirmed wire ring row rewritten with different gameplay (the
+ *                         feel-0 runway resend — sender fabricated a future tick as confirmed).
+ * - wire_downgrade      : strict-confirmed wire ring row rewritten by a non-strict source.
+ * - fabricated_confirm  : published row stamped RemoteConfirmed with no matching strict wire row
+ *                         (sealed-row reconcile, gap-fill promotion, runway stamping).
+ * - confirm_rewrite     : confirmed published row rewritten by confirmed with different gameplay.
+ * - confirm_downgrade   : confirmed published row rewritten by a non-confirmed source with
+ *                         different gameplay (Promote/predict paths un-confirming history).
+ */
+#define SYNETINPUT_STRICT_WITNESS_KINDS 5
+#define SYNETINPUT_STRICT_WITNESS_LOG_BUDGET 200U
+static const char *sSYNetInputStrictWitnessKindNames[SYNETINPUT_STRICT_WITNESS_KINDS] = {
+	"wire_overwrite", "wire_downgrade", "fabricated_confirm", "confirm_rewrite", "confirm_downgrade",
+};
+enum
+{
+	nSYNetInputStrictWitnessWireOverwrite = 0,
+	nSYNetInputStrictWitnessWireDowngrade,
+	nSYNetInputStrictWitnessFabricatedConfirm,
+	nSYNetInputStrictWitnessConfirmRewrite,
+	nSYNetInputStrictWitnessConfirmDowngrade
+};
+static u32 sSYNetInputStrictWitnessCounts[SYNETINPUT_STRICT_WITNESS_KINDS];
+static u32 sSYNetInputStrictWitnessLogsUsed;
+static const char *sSYNetInputStrictWitnessWriterTag;
+
+static sb32 syNetInputStrictWitnessEnabled(void)
+{
+	static s32 sCached = -999;
+	const char *e;
+
+	if (sCached == -999)
+	{
+		e = getenv("SSB64_NETPLAY_STRICT_INPUT");
+		sCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	return (sCached != 0) ? TRUE : FALSE;
+}
+
+static void syNetInputStrictWitnessTagWriter(const char *tag)
+{
+	sSYNetInputStrictWitnessWriterTag = tag;
+}
+
+static sb32 syNetInputStrictWitnessGameplayDiffers(const SYNetInputFrame *a, const SYNetInputFrame *b)
+{
+	/* Tick excluded on purpose: wire vs sim keying differs across rings. */
+	return ((a->buttons != b->buttons) || (a->stick_x != b->stick_x) || (a->stick_y != b->stick_y)) ? TRUE : FALSE;
+}
+
+static void syNetInputStrictWitnessReport(s32 kind, s32 player, const SYNetInputFrame *old_frame,
+                                          const SYNetInputFrame *new_frame, const char *writer)
+{
+	u32 total;
+	s32 i;
+
+	sSYNetInputStrictWitnessCounts[kind]++;
+	total = 0U;
+	for (i = 0; i < SYNETINPUT_STRICT_WITNESS_KINDS; i++)
+	{
+		total += sSYNetInputStrictWitnessCounts[i];
+	}
+	if (sSYNetInputStrictWitnessLogsUsed < SYNETINPUT_STRICT_WITNESS_LOG_BUDGET)
+	{
+		sSYNetInputStrictWitnessLogsUsed++;
+		port_log(
+		    "SSB64 NetInput: STRICT_INPUT kind=%s writer=%s player=%d tick=%u cur_tick=%u "
+		    "old btn=0x%04X sx=%d sy=%d src=%d pred=%u | new btn=0x%04X sx=%d sy=%d src=%d pred=%u\n",
+		    sSYNetInputStrictWitnessKindNames[kind], (writer != NULL) ? writer : "untagged", (int)player,
+		    (unsigned int)new_frame->tick, (unsigned int)syNetInputGetTick(),
+		    (old_frame != NULL) ? (unsigned int)old_frame->buttons : 0U,
+		    (old_frame != NULL) ? (int)old_frame->stick_x : 0, (old_frame != NULL) ? (int)old_frame->stick_y : 0,
+		    (old_frame != NULL) ? (int)old_frame->source : -1,
+		    (old_frame != NULL) ? (unsigned int)old_frame->is_predicted : 0U, (unsigned int)new_frame->buttons,
+		    (int)new_frame->stick_x, (int)new_frame->stick_y, (int)new_frame->source,
+		    (unsigned int)new_frame->is_predicted);
+	}
+	if ((total % 256U) == 0U)
+	{
+		port_log(
+		    "SSB64 NetInput: STRICT_INPUT_SUMMARY total=%u wire_overwrite=%u wire_downgrade=%u "
+		    "fabricated_confirm=%u confirm_rewrite=%u confirm_downgrade=%u logged=%u\n",
+		    total, sSYNetInputStrictWitnessCounts[0], sSYNetInputStrictWitnessCounts[1],
+		    sSYNetInputStrictWitnessCounts[2], sSYNetInputStrictWitnessCounts[3],
+		    sSYNetInputStrictWitnessCounts[4], sSYNetInputStrictWitnessLogsUsed);
+	}
+}
+
+static void syNetInputStrictWitnessOnStore(SYNetInputFrame history[][SYNETINPUT_HISTORY_LENGTH], s32 player,
+                                           const SYNetInputFrame *frame)
+{
+	const SYNetInputFrame *old_row;
+	const char *writer;
+	sb32 old_matches_tick;
+	sb32 new_is_confirmed;
+
+	writer = sSYNetInputStrictWitnessWriterTag;
+	sSYNetInputStrictWitnessWriterTag = NULL;
+	if ((syNetInputStrictWitnessEnabled() == FALSE) || (frame == NULL) || (frame->is_valid == FALSE) ||
+	    (syNetInputCheckPlayer(player) == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	old_row = &history[player][frame->tick % SYNETINPUT_HISTORY_LENGTH];
+	old_matches_tick = ((old_row->is_valid != FALSE) && (old_row->tick == frame->tick)) ? TRUE : FALSE;
+	new_is_confirmed = syNetInputFrameIsRemoteStrictConfirmed(frame);
+
+	if (history == sSYNetInputRemoteHistory)
+	{
+		if ((old_matches_tick == FALSE) || (syNetInputFrameIsRemoteStrictConfirmed(old_row) == FALSE))
+		{
+			return;
+		}
+		if (syNetInputStrictWitnessGameplayDiffers(old_row, frame) == FALSE)
+		{
+			return;
+		}
+		syNetInputStrictWitnessReport((new_is_confirmed != FALSE) ? nSYNetInputStrictWitnessWireOverwrite
+		                                                          : nSYNetInputStrictWitnessWireDowngrade,
+		                              player, old_row, frame, writer);
+		return;
+	}
+	if (history != sSYNetInputHistory)
+	{
+		return;
+	}
+	if (syNetInputIsRemoteHumanSlot(player) == FALSE)
+	{
+		return;
+	}
+	if (new_is_confirmed != FALSE)
+	{
+		SYNetInputFrame wire;
+
+		if ((syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, frame->tick, &wire) == FALSE) ||
+		    (syNetInputStrictWitnessGameplayDiffers(&wire, frame) != FALSE))
+		{
+			syNetInputStrictWitnessReport(nSYNetInputStrictWitnessFabricatedConfirm, player, old_row, frame,
+			                              writer);
+		}
+	}
+	if ((old_matches_tick == FALSE) || (syNetInputFrameIsRemoteStrictConfirmed(old_row) == FALSE) ||
+	    (syNetInputStrictWitnessGameplayDiffers(old_row, frame) == FALSE))
+	{
+		return;
+	}
+	syNetInputStrictWitnessReport((new_is_confirmed != FALSE) ? nSYNetInputStrictWitnessConfirmRewrite
+	                                                          : nSYNetInputStrictWitnessConfirmDowngrade,
+	                              player, old_row, frame, writer);
+}
+
+void syNetInputStrictWitnessLogMatchSummary(const char *when)
+{
+	u32 total;
+	s32 i;
+
+	if (syNetInputStrictWitnessEnabled() == FALSE)
+	{
+		return;
+	}
+	total = 0U;
+	for (i = 0; i < SYNETINPUT_STRICT_WITNESS_KINDS; i++)
+	{
+		total += sSYNetInputStrictWitnessCounts[i];
+	}
+	if (total != 0U)
+	{
+		port_log(
+		    "SSB64 NetInput: STRICT_INPUT_SUMMARY when=%s total=%u wire_overwrite=%u wire_downgrade=%u "
+		    "fabricated_confirm=%u confirm_rewrite=%u confirm_downgrade=%u logged=%u\n",
+		    (when != NULL) ? when : "unknown", total, sSYNetInputStrictWitnessCounts[0],
+		    sSYNetInputStrictWitnessCounts[1], sSYNetInputStrictWitnessCounts[2],
+		    sSYNetInputStrictWitnessCounts[3], sSYNetInputStrictWitnessCounts[4],
+		    sSYNetInputStrictWitnessLogsUsed);
+	}
+	for (i = 0; i < SYNETINPUT_STRICT_WITNESS_KINDS; i++)
+	{
+		sSYNetInputStrictWitnessCounts[i] = 0U;
+	}
+	sSYNetInputStrictWitnessLogsUsed = 0U;
+}
+#endif /* PORT && SSB64_NETMENU */
 
 /*
  * Hold-last for prediction: prefer the newest confirmed remote or published row before `tick` so brief
@@ -4103,6 +4875,7 @@ static void syNetInputStoreRemotePredictedWireFromSimTick(s32 player, u32 sim_ti
 	store = *frame;
 	wt = syNetInputRemoteHistoryWireLookupTick(sim_tick);
 	store.tick = wt;
+	SYNETINPUT_STRICT_TAG("wire_predicted");
 	syNetInputStoreFrame(sSYNetInputRemoteHistory, player, &store);
 	syNetInputStrictReadyCacheInvalidate();
 }
@@ -4287,12 +5060,36 @@ void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 {
 	SYNetInputFrame *last_published = &sSYNetInputSlots[player].last_published;
 	SYNetInputFrame prev_tick_frame;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	SYNetInputFrame confirmed_keep;
+#endif
 	u16 prev_buttons = 0;
 	u16 preserved_tap = 0;
 	u16 preserved_release = 0;
 	u16 pressed;
 	u16 released;
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Phase 2: remote publish prefers authority ledger over inventing sticks. Thin write-once
+	 * remains if ledger is empty and published is already confirmed.
+	 */
+	if ((frame != NULL) && (syNetInputIsRemoteHumanSlot(player) != FALSE) && (frame->tick != 0U))
+	{
+		SYNetInputFrame ledger;
+
+		if (syNetInputAuthorityLedgerTryGet(player, frame->tick, &ledger, NULL) != FALSE)
+		{
+			*frame = ledger;
+		}
+		else if ((syNetInputGetHistoryFrame(player, frame->tick, &confirmed_keep) != FALSE) &&
+		         (syNetInputRemoteConfirmedWriteOnceBlocks(player, &confirmed_keep, frame, "publish_frame") !=
+		          FALSE))
+		{
+			*frame = confirmed_keep;
+		}
+	}
+#endif
 	if (last_published->is_valid != FALSE)
 	{
 		if (last_published->tick == frame->tick)
@@ -4325,6 +5122,7 @@ void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 	gSYControllerDevices[player].stick_range.y = frame->stick_y;
 
 	sSYNetInputSlots[player].last_published = *frame;
+	SYNETINPUT_STRICT_TAG("publish_frame");
 	syNetInputStoreFrame(sSYNetInputHistory, player, frame);
 }
 
@@ -5201,7 +5999,15 @@ sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick)
 	{
 		return FALSE;
 	}
-#ifdef PORT
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Shared-commit ring_ready / strict admission: only real RemoteConfirmed counts.
+	 * Auth-frontier / feel-0 provisional gap-fill raises hr but must not short-circuit
+	 * EvaluateSharedCommitStep into the confirmed path (WireReady is strict/ledger-only → R).
+	 * See docs/bugs/netplay_provisional_ring_ready_blocks_predict_2026-07-12.md.
+	 */
+	return syNetInputFrameIsRemoteStrictConfirmed(&frame);
+#elif defined(PORT)
 	return syNetInputFrameIsRemoteConfirmed(&frame);
 #else
 	return TRUE;
@@ -5222,6 +6028,7 @@ void syNetInputDebugXorPublishedHistoryButtons(s32 player, u32 tick, u16 xor_mas
 		return;
 	}
 	hist.buttons ^= xor_mask;
+	SYNETINPUT_STRICT_TAG("debug_xor");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &hist);
 }
 #endif
@@ -6142,8 +6949,11 @@ static void syNetInputMaybeLogDelaySyncDiag(u32 sim_tick_for_read)
 
 /*
  * Strict wire admission (`nSYNetTickCommitPhase_FuncReadWireAdmission`): `syNetPeerEvaluateSharedCommitStep` first
- * requires **every remote human slot** to have a ring cell at **`wire_base = sim_tick + D`** (`syNetPeerRemoteInputsPresentForWireTick`),
+ * requires **every remote human slot** to have a **strict** RemoteConfirmed ring cell at
+ * **`wire_base = sim_tick + D`** (`syNetPeerRemoteInputsPresentForWireTick` → `HasRemoteInputForWireTick`),
  * or admits via the bounded phase_lock prediction window (`uses_prediction`).
+ * Provisional `RemoteGapFilled` (auth-frontier / feel-0 runway) raises `hr` but does **not** satisfy ring_ready —
+ * otherwise shared commit takes the confirmed path and FuncRead's `WireReady` (strict/ledger) R-stalls.
  * `hr` from `syNetPeerGetHighestRemoteTick()` is the highest **wire index** seen in ingress (not sim tick).
  * **`wire_strict = wire_base + strict_slack`** (`SSB64_NETPLAY_STRICT_SLACK_FRAMES` et al., capped 0..4) caps how far
  * `syNetPeerEffectiveWireFrontierFromHr` may sit ahead when resolving frames elsewhere (`syNetPeerIsRemoteInputReadyForSimTickEx`);
@@ -6940,6 +7750,7 @@ static void syNetInputRollbackReconcileRemoteSlotFromWire(s32 slot, u32 t)
 		row.tick = t;
 		row.source = nSYNetInputSourceRemoteConfirmed;
 		row.is_predicted = FALSE;
+		SYNETINPUT_STRICT_TAG("resim_wire");
 		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
 		return;
 	}
@@ -6952,6 +7763,7 @@ static void syNetInputRollbackReconcileRemoteSlotFromWire(s32 slot, u32 t)
 		if (syNetInputTryGetRemoteHistoryForSimTick(slot, t, &row) != FALSE)
 		{
 			row.tick = t;
+			SYNETINPUT_STRICT_TAG("resim_wire_pred");
 			syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
 			return;
 		}
@@ -6971,6 +7783,7 @@ static void syNetInputRollbackReconcileRemoteSlotFromWire(s32 slot, u32 t)
 		if ((syNetInputTryGetRemoteHistoryForSimTick(slot, t, &wire) != FALSE) &&
 		    (syNetInputFrameIsRemoteConfirmed(&wire) != FALSE))
 		{
+			SYNETINPUT_STRICT_TAG("post_resim_wire");
 			syNetInputStoreFrame(sSYNetInputHistory, slot, &wire);
 		}
 	}
@@ -7023,11 +7836,26 @@ static void syNetInputRollbackReconcileRemoteSlotFromSealed(s32 slot, u32 t)
 {
 	SYNetInputFrame row;
 
+	/*
+	 * Prefer strict wire when present so seal-stamped wrong sticks (publish_frame downgrade
+	 * before seal) cannot fabricate confirm. Fall back to episode seal rows.
+	 * See docs/bugs/netplay_confirmed_publish_write_once_2026-07-12.md.
+	 */
+	if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, t, &row) != FALSE)
+	{
+		row.tick = t;
+		row.source = nSYNetInputSourceRemoteConfirmed;
+		row.is_predicted = FALSE;
+		SYNETINPUT_STRICT_TAG("resim_wire");
+		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
+		return;
+	}
 	if (syNetRollbackEpisodeGetSealedFrame(slot, t, &row) != FALSE)
 	{
 		row.tick = t;
 		row.source = nSYNetInputSourceRemoteConfirmed;
 		row.is_predicted = FALSE;
+		SYNETINPUT_STRICT_TAG("resim_sealed");
 		syNetInputStoreFrame(sSYNetInputHistory, slot, &row);
 	}
 }
@@ -7311,12 +8139,35 @@ void syNetInputRollbackReconcilePeerSymmetricAuthority(s32 authority_slot, u32 f
 void syNetInputStorePublishedHistoryFrame(s32 player, const SYNetInputFrame *frame)
 {
 	SYNetInputFrame store;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	SYNetInputFrame existing;
+#endif
 
 	if ((frame == NULL) || (syNetInputCheckPlayer(player) == FALSE))
 	{
 		return;
 	}
 	store = *frame;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Same write-once as promote/patch/publish: store_published_api must not confirm_downgrade
+	 * a sealed remote row (soak 1468769950 mid-resim). Mechanical resim_wire* uses StoreFrame.
+	 * Sealed-episode rows pass write-once (SEAL_OVERRIDE) and dual-write the authority ledger.
+	 */
+	if ((syNetInputIsRemoteHumanSlot(player) != FALSE) && (store.tick != 0U) &&
+	    (syNetInputGetHistoryFrame(player, store.tick, &existing) != FALSE) &&
+	    (syNetInputRemoteConfirmedWriteOnceBlocks(player, &existing, &store, "store_published_api") != FALSE))
+	{
+		syNetInputRemoteConfirmedWriteOnceQueueCorrection(player, store.tick, &existing);
+		return;
+	}
+	if ((syNetInputIsRemoteHumanSlot(player) != FALSE) && (store.tick != 0U) &&
+	    (syNetInputFrameMatchesSealedEpisodeRow(player, store.tick, &store) != FALSE))
+	{
+		syNetInputAuthorityLedgerCommitSeal(player, store.tick, &store);
+	}
+#endif
+	SYNETINPUT_STRICT_TAG("store_published_api");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &store);
 	syNetInputStrictReadyCacheInvalidate();
 }
