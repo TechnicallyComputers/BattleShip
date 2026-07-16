@@ -57,6 +57,8 @@ typedef struct SYNetRollbackEpisodePendingSealChunk
 static SYNetRollbackEpisodeFsmState sSYNetRollbackEpisodeFsm;
 static SYNetRollbackEpisodePendingSealChunk sSYNetRollbackEpisodePendingSeal[nSYNetRollbackEpisodePendingSealMax];
 static int sSYNetRollbackEpisodeFsmEnvCache = -999;
+/* Any peer seal chunk received (applied, compatible or stashed) since FsmBegin — peer is alive and sealing. */
+static sb32 sSYNetRollbackEpisodePeerSealChunkSeen;
 
 #ifdef PORT
 static u32 syNetRollbackEpisodeFsmSealIndex(u32 tick)
@@ -426,7 +428,13 @@ void syNetRollbackEpisodeFsmSessionReset(void)
 	sSYNetRollbackEpisodeFsm.phase = nSYNetRollbackEpisodeFsmPhaseLive;
 	memset(sSYNetRollbackEpisodeFsm.seal_send_row_begin, nSYNetRollbackEpisodeSealSendDone,
 	       sizeof(sSYNetRollbackEpisodeFsm.seal_send_row_begin));
+	sSYNetRollbackEpisodePeerSealChunkSeen = FALSE;
 	syNetRollbackEpisodeClearPendingPeerSealRows();
+}
+
+sb32 syNetRollbackEpisodePeerSealActivitySeen(void)
+{
+	return (sSYNetRollbackEpisodePeerSealChunkSeen != FALSE) ? TRUE : FALSE;
 }
 
 SYNetRollbackEpisodeFsmPhase syNetRollbackEpisodeFsmGetPhase(void)
@@ -500,6 +508,7 @@ void syNetRollbackEpisodeFsmBegin(u32 epoch_id, u32 mismatch_tick, u32 load_tick
 	sSYNetRollbackEpisodeFsm.frozen_post_input_digest = 0U;
 	sSYNetRollbackEpisodeFsm.peer_convergence_target = 0U;
 	sSYNetRollbackEpisodeFsm.peer_convergence_active = FALSE;
+	sSYNetRollbackEpisodePeerSealChunkSeen = FALSE;
 	sSYNetRollbackEpisodeFsm.epoch_id = epoch_id;
 	sSYNetRollbackEpisodeFsm.mismatch_tick = mismatch_tick;
 	sSYNetRollbackEpisodeFsm.load_tick = load_tick;
@@ -717,16 +726,101 @@ void syNetRollbackEpisodeSealInputs(u32 mismatch_tick, u32 target_tick, s32 corr
 #endif
 }
 
+/*
+ * Deeper restart widens the seal span backwards (mismatch moves to deeper_load+1) but the peer
+ * stays on the original tuple and will never send seal rows for the prefix ticks — its span
+ * starts at the original mismatch (soak1 @861: Android reseal 862→861 span=3, Linux tuple 862
+ * span=2 → slot0 row 861 missing forever → SEAL_ROWS_TIMEOUT → unilateral self-seal replay).
+ * The deepen precondition is "inputs agree through load", so the prefix rows are already
+ * cross-peer wire-confirmed: fill them locally at reseal time so the exchange only waits on
+ * rows the peer will actually send. Rows that fail strict-confirmed resolve stay missing and
+ * the timeout path fails closed.
+ * See docs/bugs/netplay_input_authority_tuple_fork_fail_closed_2026-07-15.md.
+ */
+#ifdef PORT
+static void syNetRollbackEpisodeSelfSealPeerPrefixRows(u32 from_tick, u32 to_tick)
+{
+	s32 slots[MAXCONTROLLERS];
+	s32 count;
+	s32 i;
+	u32 t;
+
+	if ((from_tick >= to_tick) || (syNetRollbackEpisodeSealRowsExchangeEnabled() == FALSE))
+	{
+		return;
+	}
+	if (syNetRollbackEpisodeEnumerateRequiredPeerSealSlots(slots, MAXCONTROLLERS, &count) == FALSE)
+	{
+		return;
+	}
+	for (i = 0; i < count; i++)
+	{
+		s32 player;
+		u32 filled;
+
+		player = slots[i];
+		if ((player < 0) || (player >= MAXCONTROLLERS))
+		{
+			continue;
+		}
+		filled = 0U;
+		for (t = from_tick; t < to_tick; t++)
+		{
+			SYNetInputFrame frame;
+			u32 idx;
+
+			idx = t - sSYNetRollbackEpisodeFsm.mismatch_tick;
+			if (idx >= SYNETROLLBACK_EPISODE_SEAL_MAX_SPAN)
+			{
+				continue;
+			}
+			if (sSYNetRollbackEpisodeFsm.sealed_valid[idx][player] != FALSE)
+			{
+				syNetRollbackEpisodeMarkPeerSealTick(player, idx);
+				continue;
+			}
+			if (syNetInputGetRemoteHistoryFrame(player, t, &frame) == FALSE)
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_SEAL_ROWS_PREFIX_SKIP slot=%d tick=%u reason=not_wire_confirmed\n",
+				    (int)player,
+				    t);
+				continue;
+			}
+			syNetRollbackEpisodeNormalizeSealedFrameTick(&frame, t);
+			frame.source = nSYNetInputSourceRemoteConfirmed;
+			frame.is_predicted = FALSE;
+			frame.is_valid = TRUE;
+			sSYNetRollbackEpisodeFsm.sealed[idx][player] = frame;
+			sSYNetRollbackEpisodeFsm.sealed_valid[idx][player] = TRUE;
+			syNetRollbackEpisodeMarkPeerSealTick(player, idx);
+			filled++;
+		}
+		if (filled != 0U)
+		{
+			port_log(
+			    "SSB64 NetRollback: EPISODE_SEAL_ROWS_PREFIX_FILL slot=%d filled=%u from=%u to=%u (deeper reseal; inputs agree through load)\n",
+			    (int)player,
+			    filled,
+			    from_tick,
+			    to_tick);
+		}
+	}
+}
+#endif
+
 void syNetRollbackEpisodeResealForDeeperLoad(u32 load_tick, u32 mismatch_tick, u32 target_tick, s32 correction_player)
 {
 #ifdef PORT
 	u32 span;
+	u32 prior_mismatch;
 	SYNetRollbackEpisodeFsmPhase phase;
 
 	if (syNetRollbackEpisodeFsmEnabled() == FALSE)
 	{
 		return;
 	}
+	prior_mismatch = sSYNetRollbackEpisodeFsm.mismatch_tick;
 	phase = sSYNetRollbackEpisodeFsm.phase;
 	if ((phase == nSYNetRollbackEpisodeFsmPhaseReplay) || (phase == nSYNetRollbackEpisodeFsmPhaseVerify) ||
 	    (phase == nSYNetRollbackEpisodeFsmPhaseCommit))
@@ -750,6 +844,10 @@ void syNetRollbackEpisodeResealForDeeperLoad(u32 load_tick, u32 mismatch_tick, u
 	sSYNetRollbackEpisodeFsm.frozen_post_input_digest = 0U;
 	syNetRollbackEpisodeClearPendingPeerSealRows();
 	syNetRollbackEpisodeSealInputs(mismatch_tick, sSYNetRollbackEpisodeFsm.target_tick, correction_player);
+	if ((prior_mismatch != 0U) && (mismatch_tick < prior_mismatch))
+	{
+		syNetRollbackEpisodeSelfSealPeerPrefixRows(mismatch_tick, prior_mismatch);
+	}
 	port_log(
 	    "SSB64 NetRollback: EPISODE_FSM reseal_deeper load=%u mismatch=%u target=%u span=%u correction_player=%d\n",
 	    load_tick,
@@ -1297,6 +1395,10 @@ sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick,
 		port_log("SSB64 NetRollback: EPISODE_SEAL_ROWS_REJECT reason=bad_args slot=%d count=%u\n", (int)slot,
 			 row_count);
 		return FALSE;
+	}
+	if ((syNetRollbackEpisodeFsmIsActive() != FALSE) && (epoch_id == sSYNetRollbackEpisodeFsm.epoch_id))
+	{
+		sSYNetRollbackEpisodePeerSealChunkSeen = TRUE;
 	}
 	if (syNetRollbackEpisodeEpisodeTupleMatches(epoch_id, mismatch_tick, target_tick) == FALSE)
 	{

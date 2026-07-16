@@ -2830,6 +2830,63 @@ def _sim_state_item_skew_expected_force_mismatch(
     return all(fa.get(k) == fb.get(k) and k in fa and k in fb for k in core_keys)
 
 
+_MAP_HASH_SAVE_RE = re.compile(r"map_hash_save tick=(\d+) hash_map=0x([0-9A-Fa-f]+)")
+_POST_RESIM_LIVE_RE = re.compile(r"POST_RESIM_LIVE sim=(\d+) target=(\d+)")
+
+
+def _collect_map_hash_by_tick(lines: list[str]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for ln in lines:
+        m = _MAP_HASH_SAVE_RE.search(ln)
+        if m is not None:
+            out[int(m.group(1))] = m.group(2).lower()
+    return out
+
+
+def _detect_map_phase_fork_note(
+    lines_a: list[str], lines_b: list[str], label_a: str, label_b: str, min_span: int = 8
+) -> str | None:
+    """Peer-only +1 map phase skew (map_hash_save), blind to local synctest."""
+    by_a = _collect_map_hash_by_tick(lines_a)
+    by_b = _collect_map_hash_by_tick(lines_b)
+    common = sorted(set(by_a) & set(by_b))
+    if len(common) < min_span:
+        return None
+    best_start: int | None = None
+    best_span = 0
+    run_start: int | None = None
+    run_span = 0
+    for t in common:
+        ha, hb = by_a[t], by_b[t]
+        if ha == hb:
+            run_start, run_span = None, 0
+            continue
+        phase = (by_b.get(t - 1) == ha) or (by_a.get(t - 1) == hb)
+        if phase:
+            if run_start is None:
+                run_start = t
+                run_span = 1
+            else:
+                run_span += 1
+            if run_span > best_span:
+                best_start, best_span = run_start, run_span
+        else:
+            run_start, run_span = None, 0
+    if best_start is None or best_span < min_span:
+        return None
+    post: list[int] = []
+    for ln in lines_a + lines_b:
+        m = _POST_RESIM_LIVE_RE.search(ln)
+        if m is not None:
+            post.append(int(m.group(1)))
+    near = max((p for p in post if p <= best_start), default=None)
+    suffix = f" after POST_RESIM_LIVE sim={near}" if near is not None else ""
+    return (
+        f"  !! PEER_MAP_PHASE_FORK [{label_a}/{label_b}]: "
+        f"map_hash +1 phase skew from tick {best_start} span={best_span}{suffix}"
+    )
+
+
 def diff_sync_report_pair(
     metrics_a: SyncReportMetrics,
     lines_a: list[str],
@@ -2843,10 +2900,20 @@ def diff_sync_report_pair(
     common = sorted(set(by_a.keys()) & set(by_b.keys()), key=int)
     if not common:
         out.append("  pair: no overlapping sim_state_tick rows")
+        # Android often lacks sim_state_tick while map_hash_save still shows a
+        # peer-only Whispy +1 phase fork (soak 662223406).
+        phase_note = _detect_map_phase_fork_note(
+            lines_a, lines_b, metrics_a.label, metrics_b.label
+        )
+        if phase_note is not None:
+            out.append(phase_note)
+            return out, True
         return out, False
 
     force_inject = _pair_force_mismatch_inject_tick(lines_a, lines_b)
-    compare_keys = ["figh", "item", "anim", "eff", "world", "wpn"]
+    # mph = map partition (Whispy/ground). Omitting it let peer-only +1 map phase
+    # forks pass sync-report while local synctest stayed clean (soak 662223406).
+    compare_keys = ["figh", "item", "anim", "eff", "world", "wpn", "mph"]
     skipped_gen = 0
     expected_item_skew = 0
     first_expected_note: str | None = None
@@ -2873,8 +2940,20 @@ def diff_sync_report_pair(
         out.append(f"  pair: first sim_state mismatch tick={tick} fields={','.join(diffs)}")
         for k in diffs:
             out.append(f"    {k}: {metrics_a.label}={fa.get(k)} {metrics_b.label}={fb.get(k)}")
+        if set(diffs) == {"mph"} or "mph" in diffs:
+            # Classify sustained +1 map phase skew via map_hash_save when present.
+            phase_note = _detect_map_phase_fork_note(lines_a, lines_b, metrics_a.label, metrics_b.label)
+            if phase_note is not None:
+                out.append(phase_note)
         if first_expected_note is not None:
             out.append(first_expected_note)
+        return out, True
+
+    # Even when sim_state_tick rows align (or one peer lacks mph rows), map_hash_save
+    # can still show a peer-only +1 Whispy phase fork after post-resim exclusive save.
+    phase_note = _detect_map_phase_fork_note(lines_a, lines_b, metrics_a.label, metrics_b.label)
+    if phase_note is not None:
+        out.append(phase_note)
         return out, True
 
     note = f"  pair: sim_state_tick aligned on {len(common)} overlapping ticks"

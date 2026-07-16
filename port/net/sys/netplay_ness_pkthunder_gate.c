@@ -319,6 +319,24 @@ sb32 syNetplayNessFighterInFcResimDeferScope(s32 status_id)
 	return FALSE;
 }
 
+sb32 syNetplayNessFighterInPkHoldAimScope(s32 status_id)
+{
+	switch (status_id)
+	{
+	case nFTNessStatusSpecialHiStart:
+	case nFTNessStatusSpecialHiHold:
+	case nFTNessStatusSpecialHiEnd:
+	case nFTNessStatusSpecialAirHiStart:
+	case nFTNessStatusSpecialAirHiHold:
+	case nFTNessStatusSpecialAirHiEnd:
+		return TRUE;
+
+	default:
+		break;
+	}
+	return FALSE;
+}
+
 static void syNetplayNessClearPkScopeEarliestLoadTick(s32 player)
 {
 	if ((player >= 0) && (player < GMCOMMON_PLAYERS_MAX))
@@ -575,6 +593,27 @@ sb32 syNetplayNessAnyLiveFighterInFcResimDeferScope(void)
 			continue;
 		}
 		if (syNetplayNessFighterInFcResimDeferScope(fp->status_id) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+sb32 syNetplayNessAnyLiveFighterInPkHoldAimScope(void)
+{
+	GObj *fighter_gobj;
+
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if ((fp == NULL) || ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess)))
+		{
+			continue;
+		}
+		if (syNetplayNessFighterInPkHoldAimScope(fp->status_id) != FALSE)
 		{
 			return TRUE;
 		}

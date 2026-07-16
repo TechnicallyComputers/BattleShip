@@ -41,3 +41,5 @@ Re-soak Dream Land through a stick GGPO during Whispy Open and into first Blow a
 - `pupupu_ground` Blow onset tick matches cross-peer
 - No map-only `PEER_SNAPSHOT_DIVERGE` deepen chain after Blow
 - Resim after stick correction: blink should continue decrementing (not freeze at a positive wait for many ticks)
+
+Follow-up (2026-07-15): 4-tick Open→Blow skew without FC rng fork — tick gate in [`netplay_pupupu_whispy_open_blow_tick_gate_2026-07-15.md`](netplay_pupupu_whispy_open_blow_tick_gate_2026-07-15.md).

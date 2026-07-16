@@ -113,8 +113,9 @@ extern void syNetplayHardenPassPlatformCollBeforeSim(void);
 extern void syNetplayHardenAirborneDamageKnockbackCollBeforeSim(void);
 
 /*
- * Before gcRunAll: JumpAerial/Fall over PASS|CLIFF soft floors — re-anchor MPColl to TopN
- * (grounded pass harden does not cover ga==Air; soak1 2239186208 FC @1440/@1801).
+ * Before gcRunAll: any airborne fighter over PASS|CLIFF soft floors — re-anchor MPColl to TopN
+ * (grounded pass harden does not cover ga==Air; JumpAerial/Fall soak1 2239186208; JumpB /
+ * CopyMario SpecialAirN soak1 325987316).
  */
 extern void syNetplayHardenJumpAerialPassCollBeforeSim(void);
 extern sb32 syNetplayFighterInJumpAerialPassCollScope(const struct FTStruct *fp);

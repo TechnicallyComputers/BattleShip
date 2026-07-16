@@ -1462,10 +1462,20 @@ static sb32 syNetplayFighterInAirborneDamageKnockbackScope(const FTStruct *fp)
 }
 
 /*
- * JumpAerial / Fall over PASS|CLIFF soft floors: CliffFloorCeil MpLanding `branch=diff` accumulates
- * cross-ISA TopN X while grounded pass harden never fires (ga==Air). soak1 seed 2239186208 FC
- * @1440/@1801 Kirby JumpAerialB/F topn_tx ~0.7–5.3u with inputs MATCH.
- * See docs/bugs/netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md.
+ * Airborne over PASS|CLIFF soft floors: CliffFloorCeil MpLanding `branch=diff` accumulates
+ * cross-ISA TopN X while grounded pass harden never fires (ga==Air).
+ *
+ * Originally status-gated to JumpAerial/Fall (+ Kirby F1–F5); soak1 `325987316` @720/@919 still
+ * forked JumpB→JumpAerialF and Kirby CopyMario SpecialAirN (Ness) on PASS|CLIFF with inputs MATCH
+ * because those statuses were outside the gate. Re-anchor is status-agnostic for any air fighter
+ * on PASS|CLIFF: pos_prev := TopN, pos_diff := 0 at BeforeSim so the tick's collision segment is
+ * exactly that tick's physics displacement (same class as grounded pass harden).
+ * Note: ftMainProcPhysicsMap already snapshots pos_prev=TopN each tick; this harden mainly
+ * covers snapshot capture/load + quantize. Live Cross-ISA TopN.x forks on CLIFF-only lips are
+ * AdjNew wall-from-floor (PASS skips that path) — see
+ * docs/bugs/netplay_airborne_cliff_lip_wall_from_floor_fc_drift_2026-07-13.md.
+ * See also docs/bugs/netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md and
+ * docs/bugs/netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md.
  */
 sb32 syNetplayFighterInJumpAerialPassCollScope(const FTStruct *fp)
 {
@@ -1477,22 +1487,7 @@ sb32 syNetplayFighterInJumpAerialPassCollScope(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	switch (fp->status_id)
-	{
-	case nFTCommonStatusJumpAerialF:
-	case nFTCommonStatusJumpAerialB:
-	case nFTCommonStatusFall:
-	case nFTCommonStatusFallAerial:
-		return TRUE;
-	default:
-		break;
-	}
-	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusJumpAerialF1) &&
-	    (fp->status_id <= nFTKirbyStatusJumpAerialF5))
-	{
-		return TRUE;
-	}
-	return FALSE;
+	return TRUE;
 }
 
 #if defined(SSB64_NETMENU)

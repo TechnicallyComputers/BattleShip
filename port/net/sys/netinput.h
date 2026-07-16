@@ -393,6 +393,16 @@ extern void syNetInputPromoteAllLocalAuthoritySlots(u32 tick);
 extern void syNetInputMaybeLogFrameCommitLocalAuthorityDiag(u32 validation_tick, u32 win_begin);
 extern void syNetInputMaybeLogFrameCommitSealLocalMismatch(u32 validation_tick, u32 win_begin, u32 win_end);
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
+#if defined(SSB64_NETMENU)
+/*
+ * Feel-0: highest sim tick with a local gameplay sample. INPUT auth_wire_frontier must be derived
+ * from this (not GetTick) so send-before-sample delay[sim] rows stay RemoteGapFilled until HID lands.
+ * See docs/bugs/netplay_feel0_send_before_sample_release_skew_2026-07-13.md.
+ */
+extern u32 syNetInputGetLocalGameplayAuthSimTick(s32 player);
+/* Gameplay or Transmitted row for bundle resend when published skipped neutral (release path). */
+extern sb32 syNetInputTryGetLocalWireResendFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
+#endif
 extern void syNetInputPatchPublishedFromRemoteConfirmed(s32 player, u32 wire_tick,
 						      const SYNetInputFrame *confirmed);
 /* Per-player published vs remote-confirmed mismatch summary for one NetSync validation window. */

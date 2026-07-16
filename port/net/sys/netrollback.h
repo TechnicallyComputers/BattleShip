@@ -79,6 +79,12 @@ extern u32 syNetRollbackGetEpochId(void);
 extern sb32 syNetRollbackEpisodeFsmEnabled(void);
 
 extern void syNetRollbackAfterBattleUpdate(void); /* Snapshot completed tick into ring (post-`scVSBattleFuncUpdate`). */
+/*
+ * Gate live AfterBattleUpdate + frame-commit + Advance after a just-finished resim.
+ * `live_battle_sim_ran` / `tick_at_live_battle` must name the GetTick captured when
+ * `ifCommonBattleUpdateInterfaceAll` ran this FuncUpdate pass. FALSE → skip save/advance.
+ */
+extern sb32 syNetRollbackAllowLivePostBattleSave(sb32 live_battle_sim_ran, u32 tick_at_live_battle);
 /* Begin deferred GGPO/state correction and load snapshot before the next battle sim step (figatree freeze). */
 extern void syNetRollbackPumpCorrectionBeforeBattleSim(void);
 extern void syNetRollbackUpdate(void);            /* NetPeer: detect mismatch, load snapshot, resim forward. */

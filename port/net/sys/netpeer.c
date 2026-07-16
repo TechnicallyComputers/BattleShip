@@ -7828,6 +7828,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 	SYNetInputFrame published_frame;
 	SYNetInputFrame history_frame;
 	u32 latest_tick;
+	u32 sim_tick;
 	s32 frame_count;
 	s32 back;
 
@@ -7835,6 +7836,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 #ifdef PORT
 	syNetPeerAppendDelayedLocalRowsToBundle(slot, frames, &frame_count);
 #endif
+	sim_tick = syNetInputGetTick();
 	if (syNetInputGetPublishedFrame(slot, &published_frame) == FALSE)
 	{
 #ifdef PORT
@@ -7847,13 +7849,53 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 		return FALSE;
 	}
 	latest_tick = published_frame.tick;
-#ifdef PORT
-	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (latest_tick != syNetInputGetTick()))
+	if ((sim_tick != 0U) && (sim_tick > latest_tick))
 	{
-		u32 sim_tick;
+		latest_tick = sim_tick;
+	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Feel-0 skips LOCAL_PUBLISH for neutral releases, so published.tick can lag GetTick by many
+	 * frames. The old early-return (MakeLocalFrame(sim)+return) dropped history retransmission of
+	 * the just-sampled release — Android kept hold_last (-8,-10) after Linux released to (0,0).
+	 * Walk from max(published,sim) and fill holes from gameplay/transmitted.
+	 * See docs/bugs/netplay_feel0_send_before_sample_release_skew_2026-07-13.md.
+	 */
+	for (back = 0; back < (s32)SYNETPEER_MAX_PACKET_FRAMES; back++)
+	{
+		u32 t;
+
+		if (frame_count >= SYNETPEER_MAX_PACKET_FRAMES)
+		{
+			break;
+		}
+		if (latest_tick < (u32)back)
+		{
+			break;
+		}
+		t = latest_tick - (u32)back;
+		if (t == 0U)
+		{
+			continue;
+		}
+		if (syNetInputGetHistoryFrame(slot, t, &history_frame) != FALSE)
+		{
+			syNetPeerAppendInputFrameToBundle(slot, frames, &frame_count, &history_frame);
+			continue;
+		}
+		if (syNetInputTryGetLocalWireResendFrame(slot, t, &history_frame) != FALSE)
+		{
+			syNetPeerAppendInputFrameToBundleEx(slot, frames, &frame_count, &history_frame, FALSE);
+		}
+	}
+	*out_frame_count = frame_count;
+	return TRUE;
+#else
+#ifdef PORT
+	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (published_frame.tick != sim_tick))
+	{
 		SYNetInputFrame lf;
 
-		sim_tick = syNetInputGetTick();
 		syNetInputMakeLocalFrame(slot, sim_tick, &lf);
 		syNetPeerAppendInputFrameToBundle(slot, frames, &frame_count, &lf);
 		*out_frame_count = frame_count;
@@ -7875,6 +7917,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 	}
 	*out_frame_count = frame_count;
 	return TRUE;
+#endif
 }
 
 /*
@@ -8150,11 +8193,30 @@ static void syNetPeerBuildIngressPacketCore(u8 *buffer, u32 *out_size, sb32 allo
 	syNetRollbackExportPeerSymmetricNotify(conn_symmetric_tick, conn_symmetric_target, conn_symmetric_flags,
 					       MAXCONTROLLERS);
 	/*
-	 * Authoritative wire frontier: highest wire tick backed by a locally simulated (or committed
-	 * delay-buffered) input. Bundle rows above this are provisional runway / future-ahead
-	 * extrapolations; receiver stores them gap-filled, not RemoteConfirmed.
+	 * Authoritative wire frontier: highest wire tick backed by a locally *sampled* gameplay
+	 * row (feel-0). Do not use GetTick() — send often runs before FuncRead stages HID for the
+	 * admitted sim tick, which would stamp delay[sim] hold-last as Strict and then GatherHistory
+	 * failed to retransmit the real release (soak1 4134815356 @563).
+	 * See docs/bugs/netplay_feel0_send_before_sample_release_skew_2026-07-13.md.
 	 */
-	auth_wire_frontier = syNetPeerDelayWireTickFromSim(syNetInputGetTick());
+	{
+		u32 auth_sim;
+
+		auth_sim = 0U;
+#if defined(SSB64_NETMENU)
+		auth_sim = syNetInputGetLocalGameplayAuthSimTick(sSYNetPeerLocalPlayer);
+		if ((sSYNetPeerExtraLocalSenderSlot >= 0) &&
+		    (syNetInputGetLocalGameplayAuthSimTick(sSYNetPeerExtraLocalSenderSlot) > auth_sim))
+		{
+			auth_sim = syNetInputGetLocalGameplayAuthSimTick(sSYNetPeerExtraLocalSenderSlot);
+		}
+#endif
+		if (auth_sim == 0U)
+		{
+			auth_sim = syNetInputGetTick();
+		}
+		auth_wire_frontier = syNetPeerDelayWireTickFromSim(auth_sim);
+	}
 	checksum = syNetPeerChecksumInputPacket(sSYNetPeerSessionID, sSYNetPeerHighestRemoteTick, sSYNetPeerSendSeq,
 	                                       wire_version, (u8)sSYNetPeerLocalPlayer, (u8)frame_count, frames,
 	                                       secondary_slot_byte, (u8)sec_frame_count, sec_frames, conn_last_tick, conn_disc,

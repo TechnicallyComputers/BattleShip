@@ -17,6 +17,11 @@ Focuses on the failure classes that indicate a resim capture/reload hole:
                                could still print RESULT: WARN.
   * PEER_BASELINE_RESYNC_STORM - the deferred resim could not reanchor and aborted
                                (terminal, unrecoverable desync -> usually VS session stop)
+  * peer-only map phase fork   - paired map_hash_save / pupupu_ground show a sustained
+                               +1 tick phase skew (Android[t] == Linux[t-1]) after resim
+                               even when local SYNCTEST / LOAD_HASH_DRIFT stay clean.
+                               Catches silent Whispy blink/wind_wait forks that only
+                               surface later as PEER_SNAPSHOT_DIVERGE.
 
 It also surfaces, without failing the run:
   * SYNCTEST_OK count        - proves synctest actually probed (0 == it never ran)
@@ -116,6 +121,17 @@ RESYNC_STORM_RE = re.compile(
 # Session teardown markers (terminal): a local stop or a received END.
 SESSION_STOP_RE = re.compile(r"VS session stop\b|received VS_SESSION_END\b")
 
+# Peer-only map phase fork (Whispy / ground map) — local synctest is blind to this.
+MAP_HASH_SAVE_RE = re.compile(
+    r"map_hash_save tick=(\d+) hash_map=0x([0-9A-Fa-f]+)"
+)
+PUPUPU_GROUND_RE = re.compile(
+    r"pupupu_ground tick=(\d+) wind_wait=(-?\d+) wind_dur=(-?\d+) blink=(-?\d+)"
+)
+POST_RESIM_LIVE_RE = re.compile(
+    r"POST_RESIM_LIVE sim=(\d+) target=(\d+)"
+)
+
 # Pair-session identity (mirror of netplay-trim-logs.py regexes).
 MM_POLL_MATCHED_RE = re.compile(r"MM_POLL_MATCHED .+ session=(\d+) host=(\d+)")
 BOOTSTRAP_APPLIED_RE = re.compile(r"bootstrap metadata applied host=\d+ stage=\d+ seed=(\d+)")
@@ -191,6 +207,10 @@ class FileScan:
     session_stops: int = 0
     session_id: str | None = None
     seed: str | None = None
+    # tick -> last map_hash_save / pupupu_ground observed (forward+resim; last write wins).
+    map_hash_by_tick: dict[int, str] = field(default_factory=dict)
+    pupupu_by_tick: dict[int, tuple[int, int]] = field(default_factory=dict)  # blink, wind_wait
+    post_resim_live: list[tuple[int, int]] = field(default_factory=list)  # (sim, target)
 
     def severity(self) -> int:
         sev = SEV_PASS
@@ -293,6 +313,24 @@ def scan_file(label: str, path: str) -> FileScan:
                 scan.session_stops += 1
                 continue
 
+            mm = MAP_HASH_SAVE_RE.search(line)
+            if mm:
+                scan.map_hash_by_tick[int(mm.group(1))] = mm.group(2).lower()
+                continue
+
+            pm = PUPUPU_GROUND_RE.search(line)
+            if pm:
+                scan.pupupu_by_tick[int(pm.group(1))] = (
+                    int(pm.group(4)),
+                    int(pm.group(2)),
+                )
+                continue
+
+            pr = POST_RESIM_LIVE_RE.search(line)
+            if pr:
+                scan.post_resim_live.append((int(pr.group(1)), int(pr.group(2))))
+                continue
+
             if DRIFT_TOKEN in line:
                 tm = TICK_RE.search(line)
                 tick = int(tm.group(1)) if tm else -1
@@ -346,6 +384,86 @@ def fmt_pair_session(scans: list[FileScan]) -> list[str]:
     else:
         out.append(f"pair session: OK session={sids.pop()} seed={(seeds or {'?'}).copy().pop()}")
     return out
+
+
+def detect_peer_map_phase_fork(
+    a: FileScan, b: FileScan, min_span: int = 8
+) -> tuple[str, int, int] | None:
+    """Detect sustained +1 map phase skew between two peers.
+
+    Returns (detail, first_tick, span) or None. A fork is when for >= min_span
+    consecutive overlapping ticks, a[t] matches b[t-1] (or b[t+1]) on map_hash
+    while a[t] != b[t]. Prefer map_hash_save; fall back to pupupu blink/wind_wait.
+    """
+    common = sorted(set(a.map_hash_by_tick) & set(b.map_hash_by_tick))
+    if len(common) >= min_span:
+        # Scan for longest run of a[t]==b[t-1] with a[t]!=b[t].
+        best: tuple[int, int] | None = None  # start, span
+        run_start: int | None = None
+        run_span = 0
+        for t in common:
+            ha, hb = a.map_hash_by_tick[t], b.map_hash_by_tick[t]
+            if ha == hb:
+                run_start, run_span = None, 0
+                continue
+            hb_prev = b.map_hash_by_tick.get(t - 1)
+            ha_prev = a.map_hash_by_tick.get(t - 1)
+            phase = (hb_prev is not None and ha == hb_prev) or (
+                ha_prev is not None and hb == ha_prev
+            )
+            if phase:
+                if run_start is None:
+                    run_start = t
+                    run_span = 1
+                else:
+                    run_span += 1
+                if best is None or run_span > best[1]:
+                    best = (run_start, run_span)
+            else:
+                run_start, run_span = None, 0
+        if best is not None and best[1] >= min_span:
+            # Tie to nearest prior POST_RESIM_LIVE when available.
+            post_ticks = [sim for sim, _ in (a.post_resim_live + b.post_resim_live)]
+            near = max((p for p in post_ticks if p <= best[0]), default=None)
+            detail = (
+                f"map_hash +1 phase skew from tick {best[0]} span={best[1]}"
+                + (f" after POST_RESIM_LIVE sim={near}" if near is not None else "")
+            )
+            return detail, best[0], best[1]
+
+    # pupupu blink/wind_wait fallback (same phase-skew pattern).
+    common_p = sorted(set(a.pupupu_by_tick) & set(b.pupupu_by_tick))
+    if len(common_p) < min_span:
+        return None
+    best = None
+    run_start = None
+    run_span = 0
+    for t in common_p:
+        pa, pb = a.pupupu_by_tick[t], b.pupupu_by_tick[t]
+        if pa == pb:
+            run_start, run_span = None, 0
+            continue
+        pb_prev = b.pupupu_by_tick.get(t - 1)
+        pa_prev = a.pupupu_by_tick.get(t - 1)
+        phase = (pb_prev is not None and pa == pb_prev) or (
+            pa_prev is not None and pb == pa_prev
+        )
+        if phase:
+            if run_start is None:
+                run_start = t
+                run_span = 1
+            else:
+                run_span += 1
+            if best is None or run_span > best[1]:
+                best = (run_start, run_span)
+        else:
+            run_start, run_span = None, 0
+    if best is not None and best[1] >= min_span:
+        detail = (
+            f"pupupu blink/wind_wait +1 phase skew from tick {best[0]} span={best[1]}"
+        )
+        return detail, best[0], best[1]
+    return None
 
 
 SEV_NAME = {SEV_PASS: "PASS", SEV_WARN: "WARN", SEV_FAIL: "FAIL"}
@@ -507,6 +625,21 @@ def report(scans: list[FileScan], strict: bool, show_lines: bool, quiet: bool) -
                     body.append(
                         f"  !! [{s.label}] recovery ABORTED (baseline resync storm) x{len(s.resync_storms)}"
                     )
+        # Peer-only map phase fork: local SYNCTEST/LOAD_HASH can PASS while Whispy is +1 skewed.
+        existing = [s for s in scans if s.exists]
+        if len(existing) >= 2:
+            fork = detect_peer_map_phase_fork(existing[0], existing[1])
+            if fork is not None:
+                detail, first_tick, span = fork
+                overall = max(overall, SEV_FAIL)
+                body.append(
+                    f"  !! PEER_MAP_PHASE_FORK [{existing[0].label}/{existing[1].label}]: "
+                    f"{detail}"
+                )
+                body.append(
+                    f"    first_skew_tick={first_tick} span={span} "
+                    "(local synctest may still PASS — map mislabeled after post-resim save)"
+                )
         for s in scans:
             if not s.exists:
                 continue

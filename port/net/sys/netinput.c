@@ -40,6 +40,7 @@
 #if defined(SSB64_NETMENU)
 #include <ft/fighter.h>
 #include <sys/objman_gcport.h>
+#include <sys/netplay_ness_pkthunder_gate.h>
 #endif
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -61,6 +62,8 @@ static SYNetInputFrame sSYNetInputLocalDelayHistory[MAXCONTROLLERS][SYNETINPUT_H
 #if defined(SSB64_NETMENU)
 /* Gameplay ring: HID owned by sample tick (feel 0). MakeLocalFrame / local authority read this. */
 static SYNetInputFrame sSYNetInputLocalGameplayHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
+/* Highest sample tick with a gameplay row — auth_wire_frontier must not exceed this (send-before-sample). */
+static u32 sSYNetInputLocalGameplayLastTick[MAXCONTROLLERS];
 #endif
 /* Last gameplay row enqueued for wire transmit per sim tick (peer-symmetric authority for local slot). */
 static SYNetInputFrame sSYNetInputTransmittedHistory[MAXCONTROLLERS][SYNETINPUT_HISTORY_LENGTH];
@@ -354,6 +357,18 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 			sLastHoldBlockedAdvanceLogTick = next_sim_tick;
 		}
 		return FALSE;
+	}
+	/*
+	 * Resim BattleSimOnly must always Advance to the exclusive frontier. Wire/hr caps are
+	 * live-pacing only. Soak 1133978048: Android follower hr starved Advance after the last
+	 * replayed tick → POST_RESIM_LIVE sim=target-1 → live re-sim under resolved_through
+	 * save-skip → permanent +1 phase skew (map/figh) → PEER_SNAPSHOT_DIVERGE.
+	 * See docs/bugs/netplay_post_resim_exclusive_tick_wire_cap_skew_2026-07-15.md.
+	 */
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		(void)next_sim_tick;
+		return TRUE;
 	}
 #endif
 	if ((syNetSessionParamsRollbackEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
@@ -1009,12 +1024,48 @@ static void syNetInputBuildLocalFrameFromLatch(s32 player, u32 owner_tick, SYNet
 #endif
 }
 
+#if defined(SSB64_NETMENU)
+/*
+ * Local sample ticks peers already share: TransmittedHistory (NoteTransmit lock) or published
+ * History (LOCAL_PUBLISH during epoch hold before egress NoteTransmit). soak1 1842112848: Linux
+ * LOCAL_PUBLISH@753 sx=18 under tick_commit blocked with Transmitted miss; post-resim
+ * STICK_SAMPLE@753 hold-last 12 while Android REMOTE_PUBLISH@753 sx=18 → FC@840 figh inputs MATCH.
+ * See docs/bugs/netplay_post_resim_wirelocked_hid_restage_2026-07-13.md.
+ */
+static sb32 syNetInputTryGetLocalWireLockedSample(s32 player, u32 sample_tick, SYNetInputFrame *out_frame)
+{
+	SYNetInputFrame published;
+
+	if ((out_frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (sample_tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, sample_tick, out_frame) != FALSE)
+	{
+		return TRUE;
+	}
+	if (syNetInputGetHistoryFrame(player, sample_tick, &published) == FALSE)
+	{
+		return FALSE;
+	}
+	if ((published.is_valid == FALSE) || (published.is_predicted != FALSE) ||
+	    (published.source != nSYNetInputSourceLocal) || (published.tick != sample_tick))
+	{
+		return FALSE;
+	}
+	*out_frame = published;
+	return TRUE;
+}
+#endif
+
 static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 sample_tick)
 {
 	SYNetInputFrame frame;
 #if defined(SSB64_NETMENU)
 	u32 lead_tick;
 	u32 ahead_tick;
+	SYNetInputFrame prior_tx;
+	sb32 wire_locked;
 #endif
 
 	if (syNetInputIsLocalDelaySlot(player) == FALSE)
@@ -1022,8 +1073,35 @@ static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 sample_tick)
 		return;
 	}
 #if defined(SSB64_NETMENU)
-	syNetInputBuildLocalFrameFromLatch(player, sample_tick, &frame);
+	/*
+	 * Wire-locked sample is authority for this sim tick. After exclusive-target GGPO rewind, FuncRead
+	 * restages the same tick from the wall-rate HID FIFO — a later physical sample — and must not
+	 * overwrite gameplay / NoteTransmit-align transmitted to that FIFO (soak1 2017633508: Linux
+	 * LOCAL_PUBLISH@510 sx=11,82 already on the wire; post-resim STICK_SAMPLE@510 used sx=8,49 while
+	 * Android promoted remote 11,82 → FC@520 figh inputs MATCH). TransmittedHistory OR published
+	 * local History (hold-window LOCAL_PUBLISH before NoteTransmit) both count as wire-locked.
+	 * See docs/bugs/netplay_post_resim_wirelocked_hid_restage_2026-07-13.md.
+	 */
+	wire_locked = syNetInputTryGetLocalWireLockedSample(player, sample_tick, &prior_tx);
+	if (wire_locked != FALSE)
+	{
+		frame = prior_tx;
+		frame.tick = sample_tick;
+		frame.source = nSYNetInputSourceLocal;
+		frame.is_predicted = FALSE;
+		frame.is_valid = TRUE;
+		/* Promote History-only locks into Transmitted so later Resync / restage hits stay stable. */
+		syNetInputStoreFrame(sSYNetInputTransmittedHistory, player, &frame);
+	}
+	else
+	{
+		syNetInputBuildLocalFrameFromLatch(player, sample_tick, &frame);
+	}
 	syNetInputStoreFrame(sSYNetInputLocalGameplayHistory, player, &frame);
+	if ((sample_tick != 0U) && (sample_tick > sSYNetInputLocalGameplayLastTick[player]))
+	{
+		sSYNetInputLocalGameplayLastTick[player] = sample_tick;
+	}
 	/*
 	 * Send-lead: authoritative row at sample_tick (wire = sample+D) plus hold-last provisional rows
 	 * through sample+D so AppendDelayed can raise hr past DelaySim frontier during intro Wait.
@@ -1036,10 +1114,11 @@ static void syNetInputStoreLocalDelayFrameFromLatch(s32 player, u32 sample_tick)
 	/*
 	 * If egress NoteTransmitted provisional delay[sim] before this sample, realign transmitted +
 	 * published to the feel-0 HID row now (NoteTransmitted refuses pre-sample locks).
+	 * Skip when restaging an already wire-locked tick — that realign is what destroyed host sim
+	 * vs peer wire after exclusive-target resim.
 	 */
+	if (wire_locked == FALSE)
 	{
-		SYNetInputFrame prior_tx;
-
 		if ((syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, frame.tick, &prior_tx) != FALSE) &&
 		    (syNetInputFrameGameplayEquals(&prior_tx, &frame) == FALSE))
 		{
@@ -1116,6 +1195,44 @@ static sb32 syNetInputGetLocalGameplayFrame(s32 player, u32 tick, SYNetInputFram
 		return FALSE;
 	}
 	return syNetInputGetStoredFrame(sSYNetInputLocalGameplayHistory, player, tick, out_frame);
+}
+
+u32 syNetInputGetLocalGameplayAuthSimTick(s32 player)
+{
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return 0U;
+	}
+	return sSYNetInputLocalGameplayLastTick[player];
+}
+
+sb32 syNetInputTryGetLocalWireResendFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	SYNetInputFrame frame;
+
+	if ((out_frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetInputGetLocalGameplayFrame(player, tick, &frame) != FALSE)
+	{
+		*out_frame = frame;
+		out_frame->tick = tick;
+		out_frame->source = nSYNetInputSourceLocal;
+		out_frame->is_predicted = FALSE;
+		out_frame->is_valid = TRUE;
+		return TRUE;
+	}
+	if (syNetInputGetStoredFrame(sSYNetInputTransmittedHistory, player, tick, &frame) != FALSE)
+	{
+		*out_frame = frame;
+		out_frame->tick = tick;
+		out_frame->source = nSYNetInputSourceLocal;
+		out_frame->is_predicted = FALSE;
+		out_frame->is_valid = TRUE;
+		return TRUE;
+	}
+	return FALSE;
 }
 #endif
 
@@ -1485,6 +1602,31 @@ void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick)
 	}
 #if defined(PORT) && defined(SSB64_NETMENU)
 	/*
+	 * Hold-last invent into published is the seed of completed-sim LEDGER_REFRESH corrections.
+	 * Skip promote invent when tick is already completed — inventing provisional stick onto
+	 * finished history only creates a later ±1 GGPO when wire arrives.
+	 * Do NOT skip invent during live Hold via PublishFrame: soaking without durable
+	 * provisional rows made ledger refresh silent (inputs MATCH, thunder head forked).
+	 * Mid-Hold GGPO is preferred; weapon-only baseline absorb covers deepen storms.
+	 * See docs/bugs/netplay_ness_pk_hold_skip_durable_aim_fork_2026-07-15.md.
+	 */
+	if (source_rank == nSYNetRemoteAuthoritySourceHoldLast)
+	{
+		u32 now_sim = syNetInputGetTick();
+
+		if ((tick < now_sim) || (syNetplayNessAnyLiveFighterInFcResimDeferScope() != FALSE))
+		{
+			if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetInput: REMOTE_PUBLISH_SKIP player=%d sim_tick=%u reason=%s\n",
+				    (int)player, (unsigned int)tick,
+				    (tick < now_sim) ? "hold_last_completed_sim" : "hold_last_ness_pk_scope");
+			}
+			return;
+		}
+	}
+	/*
 	 * Thin write-once safety: hold-last / non-ledger path must not mutate confirmed published.
 	 * Ledger refresh above bypasses this gate.
 	 */
@@ -1844,6 +1986,9 @@ void syNetInputReset(void)
 			sSYNetInputRemotePacketSeqValid[player][i] = FALSE;
 #endif
 		}
+#if defined(PORT) && defined(SSB64_NETMENU)
+		sSYNetInputLocalGameplayLastTick[player] = 0U;
+#endif
 		for (i = 0; i < SYNETINPUT_REPLAY_MAX_FRAMES; i++)
 		{
 			syNetInputClearFrame(&sSYNetInputReplayFrames[player][i]);
@@ -3996,9 +4141,12 @@ sb32 syNetInputSetRemoteInputFromPacketEx(s32 player, u32 tick, u16 buttons, s8 
 				}
 				return TRUE;
 			}
-			syNetInputStoreRemoteConfirmedFrame(player, &frame);
-			syNetInputStoreRemotePacketSeq(player, tick, packet_seq);
-			syNetInputTimelineOnRemoteConfirmedWire(player, tick, &frame);
+			/*
+			 * GapFilled → matching Strict: must still Commit (ledger dual-write + promote/
+			 * GGPO vs predicted published). Silent StoreRemoteConfirmed left hold_last
+			 * published without a ledger row and skipped release REPLACE follow-ups.
+			 */
+			syNetInputCommitRemoteConfirmedWire(player, tick, packet_seq, &frame, &existing, TRUE);
 			return TRUE;
 		}
 		if ((syNetInputFrameIsRemoteStrictConfirmed(&existing) != FALSE) &&
@@ -4539,6 +4687,17 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 	{
 		return TRUE;
 	}
+	/*
+	 * If durable history was skipped for this tick (legacy hold_confirmed_only), the stick the
+	 * sim consumed still lives in last_published — treat that as the published baseline for
+	 * completed-sim correction. See docs/bugs/netplay_ness_pk_hold_skip_durable_aim_fork_2026-07-15.md.
+	 */
+	if ((had_published == FALSE) && (sSYNetInputSlots[player].last_published.is_valid != FALSE) &&
+	    (sSYNetInputSlots[player].last_published.tick == sim_tick))
+	{
+		published = sSYNetInputSlots[player].last_published;
+		had_published = TRUE;
+	}
 	SYNETINPUT_STRICT_TAG("ledger_publish_refresh");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &ledger);
 	syNetInputStrictReadyCacheInvalidate();
@@ -4550,6 +4709,32 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 		    (int)player, (unsigned int)sim_tick, (int)ledger.stick_x, (int)ledger.stick_y,
 		    (origin == SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL) ? "seal" : "wire",
 		    (reason != NULL) ? reason : "?");
+	}
+	/*
+	 * Completed-sim tick and the ledger row changed the gameplay the sim already consumed
+	 * (hold-last / provisional publish superseded by confirmed wire): the published rewrite
+	 * alone silently forks the snapshot history — the state at sim_tick was built from the
+	 * old row while published now claims confirmed truth, so "inputs agree" checks pass on a
+	 * forked universe (soak1 @861: ±1 stick absorb → RESIM_BASELINE_MISMATCH with inputs
+	 * agreeing through load). Any published≠ledger delta on an already-simmed tick must
+	 * queue a correction, regardless of deadband significance.
+	 * See docs/bugs/netplay_input_authority_tuple_fork_fail_closed_2026-07-15.md.
+	 */
+	if ((had_published != FALSE) && (published.is_valid != FALSE) &&
+	    (syNetInputFrameGameplayEquals(&published, &ledger) == FALSE) &&
+	    (syNetInputGetTick() > sim_tick) && (syNetRollbackIsResimulating() == FALSE))
+	{
+		if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetInput: LEDGER_REFRESH_COMPLETED_SIM_CORRECT player=%d sim_tick=%u sim_now=%u "
+			    "old_sx=%d old_sy=%d old_btn=0x%04X new_sx=%d new_sy=%d new_btn=0x%04X writer=%s\n",
+			    (int)player, (unsigned int)sim_tick, (unsigned int)syNetInputGetTick(),
+			    (int)published.stick_x, (int)published.stick_y, (unsigned int)published.buttons,
+			    (int)ledger.stick_x, (int)ledger.stick_y, (unsigned int)ledger.buttons,
+			    (reason != NULL) ? reason : "?");
+		}
+		syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
 	}
 	return TRUE;
 }
@@ -7714,6 +7899,14 @@ void syNetInputRollbackPrepareForResim(u32 resim_start_tick)
 #ifdef PORT
 	syNetInputTimelineClearIncorrectFrom(resim_start_tick);
 #endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Pre-rewind sim may have already latched exclusive-target+ ticks. Force FuncRead to restage
+	 * after exit so wire-locked StoreLocalDelay (above) can re-pin gameplay from TransmittedHistory
+	 * instead of silently keeping a stale PortHwLatchTick and skipping consume.
+	 */
+	sSYNetInputPortHwLatchTick = ~(u32)0;
+#endif
 	if (resim_start_tick > 0)
 	{
 		for (player = 0; player < MAXCONTROLLERS; player++)
@@ -7974,6 +8167,13 @@ void syNetInputRollbackResyncControllersAfterResim(u32 mismatch_tick, u32 target
 	u32 seed_tick;
 	s32 player;
 	SYNetInputFrame frame;
+#if defined(SSB64_NETMENU)
+	u32 restore_end;
+	u32 frontier;
+	u32 t;
+	s32 local_slot;
+	s32 extra_slot;
+#endif
 
 	if ((mismatch_tick == 0U) || (mismatch_tick == ~(u32)0U) || (target_tick == 0U) || (target_tick == ~(u32)0U) ||
 	    (target_tick <= mismatch_tick))
@@ -8000,6 +8200,42 @@ void syNetInputRollbackResyncControllersAfterResim(u32 mismatch_tick, u32 target
 		gSYControllerDevices[player].button_release = 0;
 	}
 #if defined(SSB64_NETMENU)
+	/*
+	 * Exclusive target is the first live tick after replay. Re-pin feel-0 gameplay from wire-locked
+	 * transmitted OR published History for target..frontier so MakeLocalFrame cannot sim a FIFO
+	 * restage that peers never saw (host LOCAL_PUBLISH vs Android REMOTE_PUBLISH split). History
+	 * covers LOCAL_PUBLISH during tick_commit blocked before egress NoteTransmit (soak1 1842112848).
+	 */
+	restore_end = target_tick + 1U;
+	frontier = syNetInputGetTick();
+	if ((frontier != ~(u32)0) && ((frontier + 1U) > restore_end))
+	{
+		restore_end = frontier + 1U;
+	}
+	local_slot = syNetPeerGetLocalSimSlot();
+	extra_slot = syNetPeerGetExtraLocalSenderSimSlot();
+	for (t = target_tick; t < restore_end; t++)
+	{
+		for (player = 0; player < MAXCONTROLLERS; player++)
+		{
+			if ((player != local_slot) && (player != extra_slot))
+			{
+				continue;
+			}
+			if (syNetInputTryGetLocalWireLockedSample(player, t, &frame) == FALSE)
+			{
+				continue;
+			}
+			frame.tick = t;
+			frame.source = nSYNetInputSourceLocal;
+			frame.is_predicted = FALSE;
+			frame.is_valid = TRUE;
+			syNetInputStoreFrame(sSYNetInputLocalGameplayHistory, player, &frame);
+			syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &frame);
+			syNetInputStoreFrame(sSYNetInputTransmittedHistory, player, &frame);
+			syNetInputPublishFrame(player, &frame);
+		}
+	}
 	syNetInputRollbackResyncFighterPlLatchFromControllers(target_tick);
 #endif
 	syNetInputPublishMainController();

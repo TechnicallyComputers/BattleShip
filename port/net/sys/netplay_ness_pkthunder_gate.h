@@ -16,9 +16,14 @@ extern sb32 syNetplayNessFighterInPKThunderLandingFallScope(const struct FTStruc
 
 extern sb32 syNetplayNessFighterInFcResimDeferScope(s32 status_id);
 
+/* Start/Hold/End only (no jibaku/bound) — mid-Hold aim / weapon-hash absorb scope. */
+extern sb32 syNetplayNessFighterInPkHoldAimScope(s32 status_id);
+
 extern sb32 syNetplayNessAnyLiveFighterInJibakuBurstScope(void);
 
 extern sb32 syNetplayNessAnyLiveFighterInFcResimDeferScope(void);
+
+extern sb32 syNetplayNessAnyLiveFighterInPkHoldAimScope(void);
 
 extern sb32 syNetplayNessAnyLiveFighterInFcStateRecoveryDeferScope(void);
 
@@ -105,8 +110,10 @@ extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStr
 #define syNetplayNessFighterInPKJibakuCatchUpScope(fp) (FALSE)
 #define syNetplayNessFighterInPKThunderLandingFallScope(fp) (FALSE)
 #define syNetplayNessFighterInFcResimDeferScope(status_id) (FALSE)
+#define syNetplayNessFighterInPkHoldAimScope(status_id) (FALSE)
 #define syNetplayNessAnyLiveFighterInJibakuBurstScope() (FALSE)
 #define syNetplayNessAnyLiveFighterInFcResimDeferScope() (FALSE)
+#define syNetplayNessAnyLiveFighterInPkHoldAimScope() (FALSE)
 #define syNetplayNessAnyLiveFighterInFcStateRecoveryDeferScope() (FALSE)
 #define syNetplayNessClampFcRecoveryLoadTick(io_load_tick, io_mismatch_tick) (FALSE)
 #define syNetplayNessResimReplayHardeningAfterLoadStep() ((void)0)

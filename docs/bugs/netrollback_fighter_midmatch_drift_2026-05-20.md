@@ -49,7 +49,7 @@ Use `SSB64_NETPLAY_ROLLBACK_SYNCTEST=1` + `SNAPSHOT_FIGHTER_FIELD_DIFF=1` to sep
 
 ## Recovery policy changes
 
-- **`BASELINE_UNIVERSE_MISMATCH`** with **no** `syNetRollbackFindEarliestInputMismatch`: prefer `syNetRollbackAbortPendingResimForBaselineMismatch` (deeper load) before input-correction queue.
+- **`BASELINE_UNIVERSE_MISMATCH`** — **input-poisoned** only when `FindEarliestInputMismatch` ≤ `load_tick` → GGPO. If inputs agree through load (mismatch after load / none) → deeper load / peer resync, not invent `load+1` or re-queue the post-load stick episode. See [`netplay_baseline_universe_state_vs_input_routing_2026-07-13.md`](netplay_baseline_universe_state_vs_input_routing_2026-07-13.md).
 - **`seal_authority_mismatch`**: same deeper-load-first path when sealed inputs agree but `figh` differs.
 - Baseline retransmit storm cap when the same `(load_tick, peer_figh, local_figh)` repeats (>12).
 

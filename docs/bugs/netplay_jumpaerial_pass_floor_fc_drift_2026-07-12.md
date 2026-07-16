@@ -21,7 +21,7 @@ Grounded pass/cliff harden (`syNetplayFighterInPassPlatformGroundCollScope`) req
 
 ## Fix
 
-- `syNetplayFighterInJumpAerialPassCollScope` — air + (JumpAerialF/B | Fall | FallAerial | Kirby JumpAerialF1–F5) + PASS|CLIFF
+- `syNetplayFighterInJumpAerialPassCollScope` — air + PASS|CLIFF (status-gated JumpAerial/Fall originally; broadened 2026-07-13 — see [`netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md`](netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md))
 - BeforeSim + post-tick canonicalize: `syNetplayHardenJumpAerialPassCollBeforeSim` / `HardenJumpAerialPassCollForFighter`
 - Snapshot capture fold + `syNetRbSnapRefreshJumpAerialPassCollAfterLoad` (keep in sync with other Refresh*CollAfterLoad passes)
 - Wired from `scVSBattle` BeforeSim sites (`PORT && SSB64_NETMENU`)

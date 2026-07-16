@@ -7791,6 +7791,14 @@ static void syNetRbSnapRebindFighterCoupledGObjs(const SYNetRbSnapshotSlot *slot
 				                                blob->coupled_pkthunder_weapon_gobj_id, pkthunder_gobj);
 				syNetplayNessReconcilePKThunderWeaponsAfterApply(fighter_gobj);
 			}
+			else if (syNetplayNessFighterInPKJibakuCatchUpScope(fp) != FALSE)
+			{
+				/*
+				 * Deferred jibaku teardown: Head may already be Collide/Destroy, so Reconcile's
+				 * reacquire+cull-orphans path would mass-destroy the still-snapshotted trail ring.
+				 * Leave slot-restored weapons alone until live post-cull at cull_at_tick.
+				 */
+			}
 			else
 			{
 				/*
@@ -11725,6 +11733,14 @@ static void syNetRbSnapApplyFighterNetplayPost(GObj *fighter_gobj, FTStruct *fp,
 					fp->status_vars.ness.specialhi.pkthunder_gobj = pkthunder_gobj;
 				}
 				syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, pkthunder_gobj);
+			}
+			else if (syNetplayNessFighterInPKJibakuCatchUpScope(fp) != FALSE)
+			{
+				/*
+				 * Deferred teardown window: slot may still list Head+Trails + PK wave. Mass-cull
+				 * here emptied wpn/eff on synctest load (soak 2002670733 @2071). Leave weapons;
+				 * do not clear is_effect_attach while a slot-restored wave may still be live.
+				 */
 			}
 			else
 			{
@@ -17574,7 +17590,7 @@ static sb32 syNetRbSnapSlotListsRebirthHaloForFighter(const SYNetRbSnapshotSlot 
 
 static sb32 syNetRbSnapFighterInNessPKWaveScope(const FTStruct *fp)
 {
-	if ((fp == NULL) || (fp->fkind != nFTKindNess))
+	if ((fp == NULL) || ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess)))
 	{
 		return FALSE;
 	}
@@ -21811,6 +21827,13 @@ static sb32 syNetRbSnapBlobInNessPKWaveScope(const SYNetRbSnapFighterBlob *blob)
 	case nFTNessStatusSpecialHiHold:
 	case nFTNessStatusSpecialAirHiStart:
 	case nFTNessStatusSpecialAirHiHold:
+	/*
+	 * Deferred jibaku teardown keeps the Hold wave live with the weapon ring
+	 * (soak 1277442040 @751: capture stamped respawn=0 once status hit AirHiJibaku).
+	 */
+	case nFTNessStatusSpecialHiJibaku:
+	case nFTNessStatusSpecialAirHiJibaku:
+	case nFTNessStatusSpecialAirHiBound:
 		return TRUE;
 
 	default:
@@ -22279,6 +22302,16 @@ static void syNetRbSnapPruneStaleNessPKWaveEffects(const SYNetRbSnapshotSlot *sl
 			fp = ftGetStruct(ep->fighter_gobj);
 			if ((fp == NULL) || (syNetRbSnapFighterInNessPKWaveScope(fp) == FALSE))
 			{
+				/*
+				 * Live forward prune (slot==NULL) only runs after jibaku defer expires — Hold-only
+				 * scope correctly drops the wave then. Slot apply/verify must keep the deferred wave
+				 * during jibaku/bound (listed or reminted; soak 1277442040 @751).
+				 */
+				if ((slot != NULL) && (fp != NULL) &&
+				    (syNetplayNessFighterInPKJibakuCatchUpScope(fp) != FALSE))
+				{
+					continue;
+				}
 				if (fp != NULL)
 				{
 					fp->is_effect_attach = FALSE;
@@ -23045,8 +23078,9 @@ static void syNetRbSnapRefreshPassPlatformGroundCollAfterLoad(GObj *fighter_gobj
 }
 
 /*
- * JumpAerial/Fall over PASS|CLIFF: same stale pos_prev vs TopN class as grounded pass harden, but
- * ga==Air so RefreshPassPlatformGroundCollAfterLoad never fires (soak1 2239186208 JumpAerialB/F).
+ * Airborne over PASS|CLIFF: same stale pos_prev vs TopN class as grounded pass harden, but
+ * ga==Air so RefreshPassPlatformGroundCollAfterLoad never fires (JumpAerial soak1 2239186208;
+ * JumpB / CopyMario SpecialAirN soak1 325987316).
  */
 static void syNetRbSnapRefreshJumpAerialPassCollAfterLoad(GObj *fighter_gobj, FTStruct *fp)
 {
@@ -24007,6 +24041,33 @@ static sb32 syNetRbSnapVerifyProtectKirbyFinalCutterBlade(const GObj *gobj, EFSt
 	return TRUE;
 }
 
+static sb32 syNetRbSnapVerifyProtectNessPKWaveShell(const GObj *gobj, EFStruct *ep)
+{
+	FTStruct *fp;
+
+	if ((gobj == NULL) || (ep == NULL) || (ep->fighter_gobj == NULL))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapLiveEffectIsNessPKWave(gobj, ep) == FALSE)
+	{
+		return FALSE;
+	}
+	fp = ftGetStruct(ep->fighter_gobj);
+	if ((fp == NULL) || (syNetplayNessFighterInPKJibakuCatchUpScope(fp) == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+	{
+		port_log("SSB64 NetRbSnapshot: effect_protect reason=ness_pk_wave_jibaku_verify tick=%u "
+		         "gobj_id=%u player=%d status=%d\n",
+		         (unsigned int)syNetInputGetTick(), (unsigned int)gobj->id, (int)fp->player,
+		         (int)fp->status_id);
+	}
+	return TRUE;
+}
+
 static void syNetRbSnapLogKirbyFinalCutterProtectMiss(const GObj *gobj, EFStruct *ep)
 {
 	FTStruct *owner_fp;
@@ -24074,6 +24135,15 @@ static void syNetRbSnapEjectHiddenCosmeticEffectShellForVerify(const SYNetRbSnap
 	}
 	/* Kirby Final Cutter blade must survive mid-SpecialHi SYNCTEST verify (soak2 @2070+). */
 	if (syNetRbSnapVerifyProtectKirbyFinalCutterBlade(gobj, ep) != FALSE)
+	{
+		return;
+	}
+	/*
+	 * Ness PK wave during jibaku deferred teardown must survive hidden_cosmetic_verify. Hold-only
+	 * identity left respawn=NONE shells excluded+ejected and cleared is_effect_attach before Ensure
+	 * could remint (soak 1277442040 @751).
+	 */
+	if (syNetRbSnapVerifyProtectNessPKWaveShell(gobj, ep) != FALSE)
 	{
 		return;
 	}
@@ -24592,8 +24662,14 @@ u8 syNetRbSnapEffectRespawnKindFromLive(const GObj *gobj, const EFStruct *ep)
 		{
 			return SYNETRB_EFFECT_RESPAWN_REBIRTH_HALO;
 		}
-		if ((fp != NULL) && (syNetRbSnapFighterInNessPKWaveScope(fp) != FALSE))
+		if ((fp != NULL) &&
+		    ((syNetRbSnapFighterInNessPKWaveScope(fp) != FALSE) ||
+		     (syNetplayNessFighterInPKJibakuCatchUpScope(fp) != FALSE)))
 		{
+			/*
+			 * Jibaku defer keeps the Hold wave live; Hold-only scope would stamp respawn=NONE and
+			 * verify could not remint (soak 1277442040 @751 eff fold count=1 → verify 0).
+			 */
 			return SYNETRB_EFFECT_RESPAWN_NESS_PK_WAVE;
 		}
 		if ((fp != NULL) && (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE))
@@ -25677,7 +25753,8 @@ static void syNetRbSnapRefreshPupupuWhispyMapAnimAfterLoad(GRCommonGroundVarsPup
 	}
 	/*
 	 * No pending eyes request: pin eyes ended so blink wait can tick. Leave mouth alone —
-	 * Open→Blow keys off map_gobj[1] progress; snapping it to 0 would fire Blow immediately.
+	 * Open→Blow is tick-gated via whispy_wind_wait under rollback (not mouth leftover).
+	 * Snapping mouth to 0 here is unnecessary and would desync presentation only.
 	 */
 	if ((pu->whispy_eyes_status == -1) && (pu->map_gobj[0] != NULL))
 	{
@@ -47141,6 +47218,22 @@ static sb32 syNetRbSnapFighterIsInPKThunderSpecialHiStatus(const FTStruct *fp)
 	return FALSE;
 }
 
+/*
+ * Hold/Start keep a live coupled head. Jibaku/Bound (catch-up scope) also keep the Head+Trail
+ * ring for SY_NETPLAY_NESS_PK_DEFER_CULL_TICKS after trigger — save skips CullAllOrphan while
+ * global defer is armed, so synctest/rollback loads of those ticks must not mass-cull either.
+ * Do not key this on IsPKThunderGlobalDeferActive(): synctest probes often run with GetTick past
+ * cull_at after the latch cleared. See docs/bugs/netplay_ness_pkthunder_jibaku_defer_synctest_2026-07-15.md.
+ */
+static sb32 syNetRbSnapFighterShouldPreservePKThunderWeapons(const FTStruct *fp)
+{
+	if (syNetRbSnapFighterIsInPKThunderSpecialHiStatus(fp) != FALSE)
+	{
+		return TRUE;
+	}
+	return syNetplayNessFighterInPKJibakuCatchUpScope(fp);
+}
+
 static sb32 syNetRbSnapWeaponPKThunderHeadIsActive(const WPStruct *wp, GObj *owner_gobj)
 {
 	(void)owner_gobj;
@@ -47193,7 +47286,7 @@ static sb32 syNetRbSnapLiveWeaponIsPKThunderPreserve(const SYNetRbSnapshotSlot *
 	}
 	fp = ftGetStruct(owner_gobj);
 	if ((fp == NULL) || ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess)) ||
-	    (syNetRbSnapFighterIsInPKThunderSpecialHiStatus(fp) == FALSE))
+	    (syNetRbSnapFighterShouldPreservePKThunderWeapons(fp) == FALSE))
 	{
 		return FALSE;
 	}
@@ -47202,10 +47295,19 @@ static sb32 syNetRbSnapLiveWeaponIsPKThunderPreserve(const SYNetRbSnapshotSlot *
 	 * Slot-aware: with an authoritative snapshot, unmatched PK Thunder must eject.
 	 * CoupledReference may still preserve while the pointer is live — empty-slot
 	 * verify cull is the authoritative empty-ring fix (Pikachu Thunder Head pattern).
+	 *
+	 * Exception: jibaku deferred teardown still lists Head+Trails in the slot. Rematch can
+	 * miss after respawn (new instance ids); unconditional slot!=NULL FALSE then mass-ejects
+	 * the ring before hash verify (soak 1277442040 @751 wpn → empty).
 	 */
 	if (slot != NULL)
 	{
-		return FALSE;
+		if ((syNetplayNessFighterInPKJibakuCatchUpScope(fp) == FALSE) ||
+		    (syNetRbSnapCountSlotPKThundersForPlayer(slot, (s8)fp->player) <= 0))
+		{
+			return FALSE;
+		}
+		return TRUE;
 	}
 #else
 	(void)slot;
@@ -47247,15 +47349,23 @@ void syNetRbSnapCullAllOrphanPKThunderLive(void)
 		{
 			continue;
 		}
-		if (syNetRbSnapFighterIsInPKThunderSpecialHiStatus(fp) != FALSE)
+		if (syNetRbSnapFighterShouldPreservePKThunderWeapons(fp) != FALSE)
 		{
-			keep_head_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
-			if ((keep_head_gobj == NULL) || (wpGetStruct(keep_head_gobj) == NULL))
+			if (syNetRbSnapFighterIsInPKThunderSpecialHiStatus(fp) != FALSE)
 			{
-				keep_head_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(fighter_gobj);
-				fp->status_vars.ness.specialhi.pkthunder_gobj = keep_head_gobj;
+				keep_head_gobj = fp->status_vars.ness.specialhi.pkthunder_gobj;
+				if ((keep_head_gobj == NULL) || (wpGetStruct(keep_head_gobj) == NULL))
+				{
+					keep_head_gobj = syNetRbSnapReacquirePKThunderHeadForFighter(fighter_gobj);
+					fp->status_vars.ness.specialhi.pkthunder_gobj = keep_head_gobj;
+				}
+				syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, keep_head_gobj);
 			}
-			syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, keep_head_gobj);
+			/*
+			 * Jibaku/Bound deferred window: Head is often already Collide/Destroy, so the Hold
+			 * reacquire path would keep_head=NULL and mass-cull the still-live trail ring.
+			 * Skip — live jibaku_post_cull owns teardown at cull_at_tick.
+			 */
 		}
 		else
 		{
