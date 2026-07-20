@@ -1100,7 +1100,9 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     # discord-rpc v3.4.0's CMakeLists declares cmake_minimum_required(VERSION 2.x),
     # which CMake 3.30+ refuses to honor. Force a baseline policy version for the
     # fetched subdir so the build still configures with current CMake.
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "" FORCE)
+    # 3.10+: CMake 3.31+ deprecates policy floors below 3.10 (same warning class as
+    # other FetchContent deps); 3.5 was enough to load discord-rpc but re-warns.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE INTERNAL "" FORCE)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     # BattleShip links against the static CRT on Windows (see the
     # MSVC_RUNTIME_LIBRARY setting on the ssb64 / ssb64_game targets below).

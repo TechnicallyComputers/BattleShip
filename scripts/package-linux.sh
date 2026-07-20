@@ -208,20 +208,23 @@ step "Encoding credits text"
 )
 
 # ── 1. Configure + build with NON_PORTABLE=ON ──
+# Use ccache as the compiler launcher when it's on PATH (CI installs it and
+# warms a cross-run cache; harmless locally when it isn't present).
+CCACHE_ARGS=()
+if command -v ccache >/dev/null 2>&1; then
+	CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 if [[ "$IS_NETPLAY" -eq 1 ]]; then
 	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=ON)"
 else
-	# Use ccache as the compiler launcher when it's on PATH (CI installs it and
-# warms a cross-run cache; harmless locally when it isn't present). Shrinks the
-# compile window so a slow / mid-compile-stalling hosted runner is likelier to
-# finish before the timeout.
-CCACHE_ARGS=()
-if command -v ccache >/dev/null 2>&1; then
-    CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+	step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
 fi
-step "Configuring release build with NON_PORTABLE=ON (SSB64_NETMENU=OFF)"
-fi
+# -Wno-deprecated: FetchContent deps (hidapi / spirv-cross / prism / funchook /
+# discord-rpc) still declare cmake_minimum_required < 3.10; CMake 3.31+ prints a
+# Deprecation Warning per subproject on every configure. Harmless — not ours to
+# bump in vendored trees. stdout already discarded; these land on stderr.
 cmake -B "$BUILD_DIR" "$ROOT" \
+    -Wno-deprecated \
     -DCMAKE_BUILD_TYPE=Release \
     -DNON_PORTABLE=ON \
     -DSSB64_VERSION="$VER" \

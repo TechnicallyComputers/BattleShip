@@ -52,6 +52,9 @@ extern sb32 mnVSNetAutomatchAMPollAbortDuringBootstrap(void);
 #include <stdlib.h>
 #if defined(SSB64_NETPLAY_ICE)
 #include "mm_ice.h"
+#if defined(PORT) && defined(SSB64_NETMENU)
+#include "mm_lan_detect.h"
+#endif
 static sb32 sSYNetPeerIceTransport;
 #endif
 
@@ -234,7 +237,17 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES                                                                          \
 	(SYNETPEER_EPISODE_SEAL_ROWS_HEADER_BYTES +                                                                      \
 	 (SYNETROLLBACK_EPISODE_SEAL_ROWS_CHUNK_MAX * SYNETROLLBACK_EPISODE_SEAL_ROWS_WIRE_FRAME_BYTES) + 4U)
-#define SYNETPEER_PACKET_RECV_MAX                                                                                      \
+/*
+ * Frame-commit wire size must be folded into RECV_MAX. soak1 2026-07-18: FC=392B >
+ * INPUT-only RECV_MAX=338B → mmIcePopReceived left the FC at ICE queue head forever
+ * (send OK, INPUT/hr/FC recv stuck). See docs/bugs/netplay_fc_recv_max_ice_queue_jam_2026-07-18.md.
+ */
+#define SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S 20
+#define SYNETPEER_FRAME_COMMIT_TOKEN_U32S                                                                              \
+	(9 + SYNET_FRAME_COMMIT_FIGHTER_SLOTS +                                                                          \
+	 (SYNET_FRAME_COMMIT_FIGHTER_SLOTS * SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S))
+#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + (SYNETPEER_FRAME_COMMIT_TOKEN_U32S * 4) + 4)
+#define SYNETPEER_PACKET_RECV_MAX_INPUT_OR_SEAL                                                                        \
 	(((SYNETPEER_PACKET_BYTES_LEGACY_V3) > (SYNETPEER_PACKET_BYTES_V7))                                            \
 	     ? (((SYNETPEER_PACKET_BYTES_LEGACY_V3) > (SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES))                           \
 	            ? (SYNETPEER_PACKET_BYTES_LEGACY_V3)                                                               \
@@ -242,6 +255,10 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 	     : (((SYNETPEER_PACKET_BYTES_V7) > (SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES))                                 \
 	            ? (SYNETPEER_PACKET_BYTES_V7)                                                                      \
 	            : (SYNETPEER_EPISODE_SEAL_ROWS_MAX_BYTES)))
+#define SYNETPEER_PACKET_RECV_MAX                                                                                      \
+	(((SYNETPEER_PACKET_RECV_MAX_INPUT_OR_SEAL) > (SYNETPEER_FRAME_COMMIT_BYTES))                                   \
+	     ? (SYNETPEER_PACKET_RECV_MAX_INPUT_OR_SEAL)                                                               \
+	     : (SYNETPEER_FRAME_COMMIT_BYTES))
 #define SYNETPEER_MAX_REMOTE_PLAYLIST 4
 #define SYNETPEER_SECONDARY_SLOT_ABSENT 255
 /* Default validation window; runtime uses syNetSessionParamsGetEffectiveFrameCommitValidationTicks(). */
@@ -397,18 +414,16 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_INPUT_DELAY_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
-/* Frame commit token (NetSync validation cadence): header + validation + token + checksum. */
-#define SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S 16
-#define SYNETPEER_FRAME_COMMIT_TOKEN_U32S \
-	(9 + SYNET_FRAME_COMMIT_FIGHTER_SLOTS + \
-	 (SYNET_FRAME_COMMIT_FIGHTER_SLOTS * SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S))
-#define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + (SYNETPEER_FRAME_COMMIT_TOKEN_U32S * 4) + 4)
+/* SYNETPEER_FRAME_COMMIT_* sized above with SYNETPEER_PACKET_RECV_MAX. */
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_V1 (68)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES (72)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_V2 (72)
 #define SYNETPEER_ROLLBACK_SYNC_BYTES_LEGACY (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
-#define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4)
+/* Pre-frontier: epoch + load, no resolved_through. */
+#define SYNETPEER_ROLLBACK_SYNC_BYTES_V1 (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4)
+/* Shared correction frontier: + resolved_through after load_tick. */
+#define SYNETPEER_ROLLBACK_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4 + 4)
 #define SYNETPEER_RESIM_POST_BYTES (12 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4)
 #define SYNETPEER_BARRIER_SKEW_RETRY_MAX 3U
 #define SYNETPEER_STRICT_DISCONNECT_LATCH_K 4U
@@ -2944,16 +2959,28 @@ static int syNetPeerRecvDatagramUnwrap(u8 *buffer, int cap, struct sockaddr_in *
 		*would_block_out = FALSE;
 	}
 #if defined(SSB64_NETPLAY_ICE)
-	if ((sSYNetPeerIceTransport != FALSE) && (mmIcePopReceived(buffer, (u32)cap, &ice_len) != FALSE))
+	/*
+	 * ICE-active path owns ingress. Do not fall through to OsRecvFrom on empty/oversized
+	 * Pop — that path inflated `dropped` while the real queue was jammed behind FC.
+	 */
+	if (sSYNetPeerIceTransport != FALSE)
 	{
-		if (from_out != NULL)
+		if (mmIcePopReceived(buffer, (u32)cap, &ice_len) != FALSE)
 		{
-			memset(from_out, 0, sizeof(*from_out));
-			from_out->sin_family = AF_INET;
-			memcpy(&from_out->sin_addr, &sSYNetPeerPeerAddress.sin_addr, sizeof(from_out->sin_addr));
-			from_out->sin_port = sSYNetPeerPeerAddress.sin_port;
+			if (from_out != NULL)
+			{
+				memset(from_out, 0, sizeof(*from_out));
+				from_out->sin_family = AF_INET;
+				memcpy(&from_out->sin_addr, &sSYNetPeerPeerAddress.sin_addr, sizeof(from_out->sin_addr));
+				from_out->sin_port = sSYNetPeerPeerAddress.sin_port;
+			}
+			return (int)ice_len;
 		}
-		return (int)ice_len;
+		if (would_block_out != NULL)
+		{
+			*would_block_out = TRUE;
+		}
+		return -1;
 	}
 #endif
 	size = syNetPeerOsRecvFrom(sSYNetPeerSocket, buffer, (size_t)cap, would_block_out);
@@ -4350,9 +4377,37 @@ void syNetPeerReceiveBootstrapPackets(void);
 static sb32 syNetPeerAutomatchExchangeOffers(void)
 {
 	s32 i;
+	s32 retries;
 
 	sSYAutoGotPeerOffer = FALSE;
-	for (i = 0; i < (s32)syNetPeerBootstrapRetryCount(); i++)
+	retries = (s32)syNetPeerBootstrapRetryCount();
+#if defined(SSB64_NETPLAY_ICE)
+	/*
+	 * ICE: guest may still be CONNECTED→COMPLETED (Android poll/HTTPS pause) while
+	 * the host already entered bootstrap. Default ~6s is too short for that skew.
+	 */
+	if (sSYNetPeerIceTransport != FALSE)
+	{
+		s32 ice_retries;
+
+		ice_retries = retries * 2;
+		if (ice_retries < 720)
+		{
+			ice_retries = 720;
+		}
+		if (ice_retries > (s32)SYNETPEER_BOOTSTRAP_RETRY_COUNT_MAX)
+		{
+			ice_retries = (s32)SYNETPEER_BOOTSTRAP_RETRY_COUNT_MAX;
+		}
+		if (ice_retries != retries)
+		{
+			port_log("SSB64 NetPeer: ICE offer exchange window retries=%d (~%.1fs)\n", ice_retries,
+			         (double)ice_retries * (double)syNetPeerBootstrapRetrySleepUs() / 1000000.0);
+			retries = ice_retries;
+		}
+	}
+#endif
+	for (i = 0; i < retries; i++)
 	{
 		if (syNetPeerPollAutomatchBootstrapAbort() != FALSE)
 		{
@@ -6751,9 +6806,63 @@ void syNetPeerNotifyAutomatchBootstrapPeerAbort(const char *bind_hostport, const
                                                 sb32 you_are_host)
 {
 #if defined(PORT) && defined(SSB64_NETMENU)
-	if ((bind_hostport == NULL) || (peer_hostport == NULL) || (bind_hostport[0] == '\0') || (peer_hostport[0] == '\0'))
+	if ((peer_hostport == NULL) || (peer_hostport[0] == '\0'))
 	{
 		return;
+	}
+#if defined(SSB64_NETPLAY_ICE)
+	/*
+	 * Prefer the live ICE channel. Opening a raw UDP socket on the selected
+	 * path races libjuice's fd and often picks srflx/WAN (EADDRNOTAVAIL).
+	 * Callers must notify before mmIceShutdown(). BootstrapFailTeardown clears
+	 * IsActive — temporarily re-arm so SendBytes/DatagramSocketIsUsable work.
+	 */
+	if ((sSYNetPeerIceTransport != FALSE) && (mmIceIsConnected() != FALSE))
+	{
+		sb32 was_active;
+
+		if (session_id != 0U)
+		{
+			sSYNetPeerSessionID = session_id;
+		}
+		sSYNetPeerBootstrapIsHost = (you_are_host != FALSE) ? TRUE : FALSE;
+		if ((peer_hostport != NULL) &&
+		    (syNetPeerParseIPv4Address(peer_hostport, &sSYNetPeerPeerAddress) != FALSE))
+		{
+			/* peer address recorded for logs only; egress is mmIceSend */
+		}
+		was_active = sSYNetPeerIsActive;
+		sSYNetPeerIsActive = TRUE;
+		syNetPeerSendBootstrapAbortBurst();
+		sSYNetPeerIsActive = was_active;
+		port_log("SSB64 NetPeer: bootstrap abort burst sent path=ICE peer=%s session=%u host=%d\n", peer_hostport,
+		         (unsigned int)session_id, (int)you_are_host);
+		return;
+	}
+#endif
+	if ((bind_hostport == NULL) || (bind_hostport[0] == '\0'))
+	{
+		port_log("SSB64 NetPeer: bootstrap abort notify skipped (no bind; ICE inactive) peer=%s\n", peer_hostport);
+		return;
+	}
+	{
+		char ip[64];
+		const char *colon;
+
+		colon = syNetPeerFindPortSeparator(bind_hostport);
+		if ((colon == NULL) || (colon <= bind_hostport) || ((u32)(colon - bind_hostport) >= sizeof(ip)))
+		{
+			port_log("SSB64 NetPeer: bootstrap abort notify skipped (bad bind=%s)\n", bind_hostport);
+			return;
+		}
+		memcpy(ip, bind_hostport, (size_t)(colon - bind_hostport));
+		ip[colon - bind_hostport] = '\0';
+		if (mmLanIpv4StringIsRfc1918(ip) == FALSE)
+		{
+			port_log("SSB64 NetPeer: bootstrap abort notify skipped (non-LAN bind=%s peer=%s)\n", bind_hostport,
+			         peer_hostport);
+			return;
+		}
 	}
 	if (syNetPeerConfigureUdpForAutomatch(bind_hostport, peer_hostport, session_id, you_are_host, 2U, FALSE) == FALSE)
 	{
@@ -8536,11 +8645,17 @@ void syNetPeerSendLocalInput(void)
 	{
 		return;
 	}
-	/* While sim is stalled (strict MISS / skew hold), cap redundant INPUT spam per sim tick. */
+	/*
+	 * While sim is stalled (wire_need / skew hold), cap redundant INPUT spam per sim tick —
+	 * but keep a long enough runway that the peer's hr can still advance. soak1 post-Go:
+	 * wire_need hold + 3-send cap → Android sent 4 packets then silence for seconds while
+	 * wall frames pumped; peer starved after consuming the burst. See
+	 * docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md.
+	 */
 	sim_tick = syNetInputGetTick();
 	if (sim_tick == sLastInputSendSimTick)
 	{
-		if (sInputSendsThisSimTick >= 3U)
+		if (sInputSendsThisSimTick >= 48U)
 		{
 			static int s_input_send_cap_diag_cache = -999;
 			const char *e;
@@ -9384,15 +9499,15 @@ void syNetPeerPumpIngressTransport(const char *caller_tag)
 	}
 #if defined(SSB64_NETPLAY_ICE)
 	/*
-	 * Android poll mode: matchmaking HTTPS may leave juice io_pause_depth > 0 (send works, recv
-	 * blocked). Unstick before PopReceived during execution hold / bind / exec-sync startup.
+	 * Android poll mode: matchmaking HTTPS (or any stacked juice_pause_io) may leave
+	 * io_pause_depth > 0 — send still works, recv is blocked. Always drain before PopReceived,
+	 * not only during execution hold: soak 1277821635 froze mid-intro Appear with recv stuck
+	 * at 257 while INPUT send continued (hr never advanced past 243).
+	 * See docs/bugs/netplay_intro_wait_advance_frontier_deadlock_2026-07-18.md.
 	 */
 	if (sSYNetPeerIceTransport != FALSE)
 	{
-		if (syNetPeerCheckBattleExecutionReady() == FALSE)
-		{
-			mmIceEnsureIoResumed();
-		}
+		mmIceEnsureIoResumed();
 		(void)mmIcePoll();
 	}
 #endif
@@ -9619,6 +9734,10 @@ static void syNetPeerWriteFrameCommitFighterDiag(u8 **cursor, const SYNetFrameCo
 	syNetPeerWriteU32(cursor, diag->vel_damage_air_x);
 	syNetPeerWriteU32(cursor, diag->vel_damage_air_y);
 	syNetPeerWriteU32(cursor, diag->fox_anim_frames);
+	syNetPeerWriteU32(cursor, diag->tap_stick_x);
+	syNetPeerWriteU32(cursor, diag->tap_stick_y);
+	syNetPeerWriteU32(cursor, diag->hold_stick_x);
+	syNetPeerWriteU32(cursor, diag->hold_stick_y);
 }
 
 static void syNetPeerReadFrameCommitFighterDiag(const u8 **cursor, SYNetFrameCommitFighterDiag *diag)
@@ -9639,6 +9758,10 @@ static void syNetPeerReadFrameCommitFighterDiag(const u8 **cursor, SYNetFrameCom
 	diag->vel_damage_air_x = syNetPeerReadU32(cursor);
 	diag->vel_damage_air_y = syNetPeerReadU32(cursor);
 	diag->fox_anim_frames = syNetPeerReadU32(cursor);
+	diag->tap_stick_x = syNetPeerReadU32(cursor);
+	diag->tap_stick_y = syNetPeerReadU32(cursor);
+	diag->hold_stick_x = syNetPeerReadU32(cursor);
+	diag->hold_stick_y = syNetPeerReadU32(cursor);
 }
 
 static void syNetPeerLogFrameCommitFighterFieldDiff(u32 vtick, u32 snap_tick, s32 player, const char *field,
@@ -9674,7 +9797,9 @@ static sb32 syNetPeerFrameCommitFighterDiagDiffers(const SYNetFrameCommitFighter
 	    (local->coll_pos_diff_y != peer->coll_pos_diff_y) ||
 	    (local->vel_damage_air_x != peer->vel_damage_air_x) ||
 	    (local->vel_damage_air_y != peer->vel_damage_air_y) ||
-	    (local->fox_anim_frames != peer->fox_anim_frames))
+	    (local->fox_anim_frames != peer->fox_anim_frames) ||
+	    (local->tap_stick_x != peer->tap_stick_x) || (local->tap_stick_y != peer->tap_stick_y) ||
+	    (local->hold_stick_x != peer->hold_stick_x) || (local->hold_stick_y != peer->hold_stick_y))
 	{
 		return TRUE;
 	}
@@ -9745,6 +9870,14 @@ static void syNetPeerLogFrameCommitFighterDiagDiff(u32 vtick, const SYNetFrameCo
 		                                        ld->vel_damage_air_y, pd->vel_damage_air_y);
 		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "fox_anim_frames",
 		                                        ld->fox_anim_frames, pd->fox_anim_frames);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "tap_stick_x", ld->tap_stick_x,
+		                                        pd->tap_stick_x);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "tap_stick_y", ld->tap_stick_y,
+		                                        pd->tap_stick_y);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "hold_stick_x", ld->hold_stick_x,
+		                                        pd->hold_stick_x);
+		syNetPeerLogFrameCommitFighterFieldDiff(vtick, snap_tick, si, "hold_stick_y", ld->hold_stick_y,
+		                                        pd->hold_stick_y);
 	}
 	if (logged_slots == 0)
 	{
@@ -10547,11 +10680,13 @@ void syNetPeerTrySendRollbackSyncNotice(void)
 		}
 		u32 load_tick;
 		u32 epoch_id;
+		u32 resolved_through;
 
 		mismatch_tick = (u32)conn_symmetric_tick[slot];
 		target_tick = (conn_symmetric_target[slot] > 0) ? (u32)conn_symmetric_target[slot] : 0U;
 		sync_flags = conn_symmetric_flags[slot];
 		syNetRollbackExportPeerSymmetricEpisode((s32)slot, &load_tick, &epoch_id);
+		resolved_through = syNetRollbackGetEpisodeResolvedThrough();
 		cursor = buf;
 		syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
 		syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
@@ -10563,6 +10698,7 @@ void syNetPeerTrySendRollbackSyncNotice(void)
 		syNetPeerWriteU8(&cursor, sync_flags);
 		syNetPeerWriteU32(&cursor, epoch_id);
 		syNetPeerWriteU32(&cursor, load_tick);
+		syNetPeerWriteU32(&cursor, resolved_through);
 		chk = syNetPeerChecksumBytes(buf, (u32)(sizeof(buf) - 4U));
 		syNetPeerWriteU32(&cursor, chk);
 		sent = syNetPeerSendControlDatagram(buf, (u32)sizeof(buf));
@@ -10570,12 +10706,13 @@ void syNetPeerTrySendRollbackSyncNotice(void)
 		{
 			sSYNetPeerPacketsSent++;
 			port_log(
-			    "SSB64 NetPeer: ROLLBACK_SYNC_SEND slot=%d mismatch_tick=%u target_tick=%u load_tick=%u epoch=%u flags=0x%02X bytes=%u\n",
+			    "SSB64 NetPeer: ROLLBACK_SYNC_SEND slot=%d mismatch_tick=%u target_tick=%u load_tick=%u epoch=%u resolved=%u flags=0x%02X bytes=%u\n",
 			    (int)slot,
 			    mismatch_tick,
 			    target_tick,
 			    load_tick,
 			    epoch_id,
+			    resolved_through,
 			    (unsigned int)sync_flags,
 			    (unsigned int)sizeof(buf));
 		}
@@ -10593,13 +10730,15 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	u32 target_tick;
 	u32 load_tick;
 	u32 epoch_id;
+	u32 resolved_through;
 	u8 slot;
 	u8 flags;
 	u16 reserved;
 	u32 checksum;
 	u32 expected;
 
-	if ((size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES) && (size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES_LEGACY))
+	if ((size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES) && (size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES_V1) &&
+	    (size != (s32)SYNETPEER_ROLLBACK_SYNC_BYTES_LEGACY))
 	{
 		sSYNetPeerPacketsDropped++;
 		return;
@@ -10616,7 +10755,14 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	flags = syNetPeerReadU8(&c);
 	load_tick = 0U;
 	epoch_id = 0U;
+	resolved_through = 0U;
 	if (size == (s32)SYNETPEER_ROLLBACK_SYNC_BYTES)
+	{
+		epoch_id = syNetPeerReadU32(&c);
+		load_tick = syNetPeerReadU32(&c);
+		resolved_through = syNetPeerReadU32(&c);
+	}
+	else if (size == (s32)SYNETPEER_ROLLBACK_SYNC_BYTES_V1)
 	{
 		epoch_id = syNetPeerReadU32(&c);
 		load_tick = syNetPeerReadU32(&c);
@@ -10643,6 +10789,10 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 		    (session_id != sSYNetPeerSessionID) ? 1U : 0U);
 		return;
 	}
+	if (resolved_through != 0U)
+	{
+		syNetRollbackNotePeerResolvedThrough(resolved_through);
+	}
 	if (syNetRollbackAcceptPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick) == FALSE)
 	{
 		sSYNetPeerPacketsReceived++;
@@ -10650,12 +10800,13 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	}
 	sSYNetPeerPacketsReceived++;
 	port_log(
-	    "SSB64 NetPeer: ROLLBACK_SYNC_RECV slot=%d mismatch_tick=%u target_tick=%u load_tick=%u epoch=%u flags=0x%02X wire=%u\n",
+	    "SSB64 NetPeer: ROLLBACK_SYNC_RECV slot=%d mismatch_tick=%u target_tick=%u load_tick=%u epoch=%u resolved=%u flags=0x%02X wire=%u\n",
 	    (int)slot,
 	    mismatch_tick,
 	    target_tick,
 	    load_tick,
 	    epoch_id,
+	    resolved_through,
 	    (unsigned int)flags,
 	    (unsigned int)wire_version);
 	syNetRollbackOnPeerSymmetricRollbackNotifyEx(
@@ -11443,6 +11594,30 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 	{
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Defer FC mint/send through intro Wait. Appear is force-neutral + synctest-skipped;
+	 * FC@120/240 correlated with Android INPUT recv blackholes and Advance stalls.
+	 * Still advance the cadence tick so the first post-Go step does not mint a catch-up
+	 * FC for the entire Wait span (LastFrameCommitValidationTick stayed 0 → immediate
+	 * FC@Go). See docs/bugs/netplay_intro_wait_advance_frontier_deadlock_2026-07-18.md
+	 * and docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md.
+	 */
+	if ((gSCManagerBattleState != NULL) &&
+	    (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+	{
+		u32 wait_completed;
+		u32 wait_validation;
+
+		wait_completed = syNetInputGetTick();
+		wait_validation = wait_completed + 1U;
+		if (wait_validation > sSYNetPeerLastFrameCommitValidationTick)
+		{
+			sSYNetPeerLastFrameCommitValidationTick = wait_validation;
+		}
+		return;
+	}
+#endif
 	{
 		u32 completed_tick;
 		u32 validation_tick;
@@ -12376,6 +12551,9 @@ void syNetPeerStopVSSession(void)
 		         sSYNetPeerPacketsSent, sSYNetPeerPacketsReceived, sSYNetPeerPacketsDropped,
 		         sSYNetPeerFramesStaged, sSYNetPeerLateFrames, sSYNetPeerInputChecksum);
 		syNetInputLogAdmissionStatsSummary("vs_stop", TRUE);
+#if defined(SSB64_NETMENU)
+		syNetInputLogGgpoCorrectionClassSummary();
+#endif
 	}
 	syNetPeerInputBindReset();
 	syNetPeerBattleExecSyncReset();

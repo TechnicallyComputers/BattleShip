@@ -79,6 +79,7 @@ Each remote human slot should expose one logical row per sim tick with explicit 
 - **Rollback episode** — `SYNetRollbackEpisode` tracks mismatch/load/target and phase (`AwaitingBaseline` / `ForwardResim`); syncs to legacy `ResimPending` / baseline gate flags.
 - **Unified episode FSM (2026-05-20)** — **Default on** via [`port/net/sys/netrollback_episode.c`](../port/net/sys/netrollback_episode.c): `Live → SealInputs → AwaitingBaseline → Replay → Verify → Commit|Abort`. Sealed input table is the sole replay read set; per-tick replay log drives `RESIM_POST` input digest; live sim cap derived from FSM phase (not min of six legacy cap sources). `SSB64_NETPLAY_ROLLBACK_EPISODE_FSM=0` restores legacy resim input path for bisect.
 - **EPISODE_SEAL_ROWS (2026-05-20)** — `SYNETPEER_PACKET_EPISODE_SEAL_ROWS` (26): after seal, each peer sends locally-authoritative sealed rows for `[mismatch, target)`; peer overwrites remote slots in `sealed[]`. `Replay` gated on baseline match **and** all required peer seal rows received (retransmit with `ROLLBACK_BASELINE`). Bundled with episode FSM when enabled.
+- **Shared correction frontier (2026-07-19)** — `resolved_through` is a monotonic correction frontier (local + peer via `ROLLBACK_SYNC`). Ordinary GGPO clamps to / must not Begin behind the frontier; only FC/state-hash deepen may reanchor past it. Seal-wait with matched baseline and `mismatch < shared_frontier` → `FRONTIER_SEAL_CANCEL` (Live), not hard desync. See `docs/bugs/netplay_shared_correction_frontier_2026-07-19.md`.
 - **Remote-human analog authority (2026-05-20)** — When episode FSM is on, remote-human live sim and published history use wire-confirmed / hold-last only (`syNetInputResolveRemoteHumanAuthoritativeFrame`); no optimistic `analog_onset_predict` in authoritative paths. Precursor to full [`netinput_timeline.c`](../port/net/sys/netinput_timeline.c) rewrite. See [`netinput_remote_analog_authority_2026-05-20.md`](bugs/netinput_remote_analog_authority_2026-05-20.md).
 
 ## Unified episode FSM (target, gated)
@@ -162,22 +163,60 @@ All digests are **current-frame snapshots** (no trajectory). Consumers must not 
 
 **Cross-peer resim boundary:** `SYNETPEER_PACKET_RESIM_POST` (type 25) carries `(epoch, load, mismatch, target)` + `figh/item/rng/input_digest`; compare when local forward resim completes and keys match pending peer token.
 
+## Layer certificates (observe-only)
+
+Rollback failures should answer **which layer failed** before chasing sim bugs as protocol (or the reverse). Certificates are **observe-only** — they do not add session-stop gates.
+
+```mermaid
+flowchart TD
+  transport[Network_transport]
+  inputHist[Input_history_confirmation]
+  tuple[Rollback_tuple]
+  snap[Snapshot_availability]
+  resim[Resimulation]
+  hashCmp[Hash_comparison]
+  transport --> inputHist --> tuple --> snap --> resim --> hashCmp
+```
+
+| Layer | Certificate | Failure class |
+| ----- | ----------- | ------------- |
+| Input confirmation | per-slot `last_confirmed` + earliest incorrect | PROTOCOL |
+| Tuple | mismatch/load/target + `reason=` / `source=` | PROTOCOL |
+| Snapshot | `load` present + local digest | SNAPSHOT_FIDELITY |
+| Seal | `[mismatch,target)` complete | PROTOCOL |
+| Baseline | peer/local universe digest | PROTOCOL if input-poisoned; else sim subclass |
+| Post-replay hash | partitions + `inp_match` | SNAPSHOT_FIDELITY if load/immediate; REPLAY_DETERMINISM if post-load with inputs agreed |
+
+**Sim subclass (determinism split):**
+
+- **SNAPSHOT_FIDELITY** — `LOAD_HASH_DRIFT`, synctest load fail, restore≠ring before replay advances
+- **REPLAY_DETERMINISM** — `inputs agree through load` + baseline/FC/PEER figh (etc.) diverge; `RESIM_POST_DIVERGE` with matching input digest
+
+**FallSpecial-style example:** protocol certified (`agree_through_load=1`, inputs MATCH) + figh PEER diverge → investigate **replay determinism** (sim), not input confirmation / tuple.
+
+Always-on proof line (netmenu VS): `EPISODE_PROOF event=begin|diverge … snap=… seal=… agree_through_load=0|1 class=protocol|snapshot_fidelity|replay_determinism`. Soak: `scripts/netplay-trim-logs.py --sync-report` prints `bucket=` on UNSTABLE.
+
+**Non-goals of this certificate work:** no C32 / parallel overlay storage; no per-status FallSpecial/CLIFF physics harden; no new fail-closed protocol gates.
+
 ## Log signatures (regression)
 
 | Log | Interpretation |
 |-----|----------------|
-| `LOAD_HASH_DRIFT` | Snapshot apply did not reproduce saved hashes — **stop session** (target) |
+| `EPISODE_PROOF` | Always-on layer certificate (begin / terminal diverge); `class=` maps to soak `bucket=` |
+| `LOAD_HASH_DRIFT` | Snapshot apply did not reproduce saved hashes — **stop session** (target); tagged `class=snapshot_fidelity` |
 | `ROLLBACK_IDENTITY_DRIFT` | Resim with unchanged confirmed input did not reproduce pre-resim hashes |
 | `REMOTE_CONFIRMED_CONFLICT` | Two authoritative confirmed packets disagree on same wire tick |
 | `remote_gap_fill` | Synthetic hold-last wire row (admission-only target) |
 | `peer symmetric rollback` | Peer notice queued resim (transitional gameplay contract) |
 | `ROLLBACK_SYNC_SEND` / `ROLLBACK_SYNC_RECV` | Dedicated symmetric rollback notice packet (type 24) |
 | `RESIM_BASELINE_ECHO` | Passive peer echoed baseline digest without local resim episode |
-| `RESIM_POST_MATCH` / `RESIM_POST_DIVERGE` | Cross-peer post-resim digest handshake |
+| `RESIM_POST_MATCH` / `RESIM_POST_DIVERGE` | Cross-peer post-resim digest handshake (`class=` by inp match) |
+| `BASELINE_UNIVERSE_MISMATCH` | Peer/local load digest disagree — poisoned→PROTOCOL, agree-through-load→REPLAY_DETERMINISM |
+| `PEER_SNAPSHOT_DIVERGE` | Terminal deepen-exhaust / baseline hard diverge (`class=` by poison at load) |
 | `FRAME_COMMIT_PAIRING_FAIL` | Same `frame_id` but `\|tick_anchor_local - tick_anchor_peer\| > 1` |
 | `FRAME_COMMIT_DIAG` | Shutdown counter summary (`fc_sent`, `fc_compared`, …) |
 | `STRICT MISS (R)` | Strict admission stall on missing exact wire row |
 
 ## Related bug write-ups
 
-See [`docs/bugs/README.md`](bugs/README.md) entries: `netrollback_symmetric_rollback`, `netrollback_prediction_recovery_storm`, `netrollback_strict_wire_gap_stall`, `netrollback_rng_item_identity_drift`, `netrollback_remote_confirmed_conflict`.
+See [`docs/bugs/README.md`](bugs/README.md) entries: `netrollback_symmetric_rollback`, `netrollback_prediction_recovery_storm`, `netrollback_strict_wire_gap_stall`, `netrollback_rng_item_identity_drift`, `netrollback_remote_confirmed_conflict`, `netplay_episode_proof_layer_certs`.

@@ -3108,6 +3108,14 @@ void mmMatchmakingEnqueuePollIceTrickle(sb32 verbose, const char *ticket_id)
 {
 	MmJob j;
 
+	/*
+	 * Central gate: shared-LAN / CONNECTED / wall-clock throttle. Stops the
+	 * ~30 Hz CONNECTING GET storm even if a caller bypasses ConnectTricklePollInterval.
+	 */
+	if (mnVSNetAutomatchAMIceConnectTrickleMayEnqueue() == FALSE)
+	{
+		return;
+	}
 	memset(&j, 0, sizeof(j));
 	j.kind = MM_JOB_POLL_MATCH;
 	j.verbose = verbose;
@@ -3117,6 +3125,7 @@ void mmMatchmakingEnqueuePollIceTrickle(sb32 verbose, const char *ticket_id)
 		snprintf(j.ticket_id, sizeof(j.ticket_id), "%s", ticket_id);
 	}
 	mmEnqueueSubmit(&j);
+	mnVSNetAutomatchAMIceConnectTrickleNoteEnqueued();
 }
 
 sb32 mmMatchmakingPollMatchIceTrickleSyncEx(const char *ticket_id, sb32 ice_serialize)

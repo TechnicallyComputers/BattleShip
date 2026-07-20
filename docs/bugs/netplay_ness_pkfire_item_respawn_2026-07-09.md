@@ -47,6 +47,11 @@ Fix: resolve airborne PK Fire owner by `blob->player`; extend `syNetRbSnapReconc
 - No item-only `LOAD_HASH_DRIFT` in PK Fire / rollback-load window
 - `FRAME_COMMIT_STATE_DIVERGE @600` should clear if it was purely missing-item resim drift (re-soak to confirm)
 
+## Follow-up: NULL parent SIGSEGV (2026-07-19)
+
+The respawn maker copied vanilla `(COLLPROJECT \| PARENT_WEAPON)` but passed `parent_gobj=NULL`, crashing both peers at `fault_addr=0xe0` during synctest restore (soak `383687403`). Fix: [`netplay_ness_pkfire_respawn_null_parent_segv_2026-07-19.md`](netplay_ness_pkfire_respawn_null_parent_segv_2026-07-19.md).
+
 ## Related
 
 - [`netplay_linkbomb_synctest_segv_2026-05-22.md`](netplay_linkbomb_synctest_segv_2026-05-22.md) — Link bomb fighter-item respawn pattern; doc noted PK Fire still unsupported
+- [`netplay_ness_pkfire_respawn_null_parent_segv_2026-07-19.md`](netplay_ness_pkfire_respawn_null_parent_segv_2026-07-19.md)

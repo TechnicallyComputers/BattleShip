@@ -80,9 +80,21 @@ extern sb32 syNetRollbackEpisodeFsmEnabled(void);
 
 extern void syNetRollbackAfterBattleUpdate(void); /* Snapshot completed tick into ring (post-`scVSBattleFuncUpdate`). */
 /*
+ * Mark that live ifCommonBattleUpdateInterfaceAll ran this FuncUpdate. FinishForwardResim
+ * defers closing to Live until the next OnLiveFuncUpdateBegin when this is set.
+ */
+extern void syNetRollbackNoteLiveInterfaceRanThisPass(void);
+/*
+ * Flush deferred FinishForwardResim (if any), then clear same-pass save block. Call at
+ * scVSBattleFuncUpdate entry before interface / PeerUpdate.
+ */
+extern void syNetRollbackOnLiveFuncUpdateBegin(void);
+/*
  * Gate live AfterBattleUpdate + frame-commit + Advance after a just-finished resim.
  * `live_battle_sim_ran` / `tick_at_live_battle` must name the GetTick captured when
  * `ifCommonBattleUpdateInterfaceAll` ran this FuncUpdate pass. FALSE → skip save/advance.
+ * While Finish is deferred to the next FuncUpdate begin, returns FALSE without restoring
+ * world state (no emergency/ring SamePass undo).
  */
 extern sb32 syNetRollbackAllowLivePostBattleSave(sb32 live_battle_sim_ran, u32 tick_at_live_battle);
 /* Begin deferred GGPO/state correction and load snapshot before the next battle sim step (figatree freeze). */
@@ -118,6 +130,11 @@ extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_ti
 extern void syNetRollbackOnPeerSymmetricRollbackNotifyEx(s32 slot, u32 mismatch_tick, u32 target_tick, u32 load_tick,
 						       u32 epoch_id, sb32 follower_local_auth);
 extern void syNetRollbackExportPeerSymmetricEpisode(s32 slot, u32 *out_load_tick, u32 *out_epoch_id);
+/* Local correction frontier (last completed episode target); advertised on ROLLBACK_SYNC. */
+extern u32 syNetRollbackGetEpisodeResolvedThrough(void);
+/* Peer-advertised frontier from ROLLBACK_SYNC; monotonic max. */
+extern void syNetRollbackNotePeerResolvedThrough(u32 peer_resolved_through);
+extern u32 syNetRollbackGetPeerResolvedThrough(void);
 /* Queue one resim for a remote input correction that arrived during an active resim span. */
 extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
 /*

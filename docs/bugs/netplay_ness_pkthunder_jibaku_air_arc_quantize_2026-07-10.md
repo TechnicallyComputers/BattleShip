@@ -44,7 +44,7 @@ Launch canonicalize (`syNetplayCanonicalizeNessPKJibakuLaunchState`) grid-aligns
 | Layer | Change |
 |-------|--------|
 | **Air decel** | `syNetplayNessHardenPKJibakuAirVelFromAngle` — after ProcPhysics decel (and wall bounce angle update), quantize angle + speed magnitude, re-derive `vel_air` from grid |
-| **Model pitch** | `ftNessSpecialHiUpdateModelPitch` — netplay jibaku scope uses `pkjibaku_angle * lr` instead of `ArcTan2(vel)` |
+| **Model pitch** | `ftNessSpecialHiUpdateModelPitch` — netplay jibaku scope uses `-pkjibaku_angle` (= vanilla `(atan2(vx,vy)*lr)-90°`) instead of live `ArcTan2(vel)`. Early draft used `(angle*lr)-90°` (nose-up); corrected in [`netplay_ness_pkthunder_jibaku_model_pitch_2026-07-18.md`](netplay_ness_pkthunder_jibaku_model_pitch_2026-07-18.md). |
 | **Jibaku sim** | `syNetplayCanonicalizeNessPKJibakuSimState` — `syNetplayQuantizeDObjRotate` on all joints |
 | **Resim** | `syNetplayNessResimReplayHardeningAfterLoadStep` — canonicalize after jibaku catch-up |
 

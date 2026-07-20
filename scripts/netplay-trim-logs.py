@@ -23,7 +23,8 @@ Options:
   --collapse-r-stall    Collapse repeated path=R frame_commit_diag and frozen sim_state_tick (default on)
   --no-collapse-r-stall Disable R-stall collapse
   --summary-only      Print summary block only (no merged body)
-  --sync-report       Brief stability report to stdout (hash drift, synctest, resim, pair diff)
+  --sync-report       Brief stability report to stdout (hash drift, synctest, resim, pair diff);
+                      UNSTABLE lines include bucket=PROTOCOL|SNAPSHOT_FIDELITY|REPLAY_DETERMINISM
   --diff-ticks        Report first sim_state_tick field mismatch between first two inputs
 
 Summary and --sync-report include a pair session check (session_id + bootstrap rng_seed) so
@@ -77,6 +78,10 @@ DEFAULT_INCLUDE = [
     r"SSB64 NetRbSnapshot: gobj_link_audit ",
     r"SSB64 NetRbSnapshot:",
     r"SSB64 NetRollback:",
+    # Cliff soft-lip / MpLanding TopN.x bisect (SOFTLIP_X_DIAG / LANDING_BRANCH_DIAG).
+    r"SSB64 SoftLipX:",
+    r"SSB64 SoftLipPhase:",
+    r"SSB64 MpLanding:",
     # Ness PK Thunder throw / jibaku timing (SSB64_NETPLAY_NESS_PKTHUNDER_GATE_DIAG=1).
     r"SSB64 Netplay: NESS_PKTHUNDER_GATE ",
     # FTStatusVars overlay witness (SSB64_NETPLAY_STATUSVARS_WITNESS=1).
@@ -224,6 +229,16 @@ FRAME_COMMIT_DIAG_RE = re.compile(
     r"SSB64 NetInput: frame_commit_diag tick=(\d+) path=(\S+)"
 )
 RESIM_COMPLETE_RE = re.compile(r"SSB64 NetRollback: resim complete")
+GGPO_QUEUED_CLASS_RE = re.compile(
+    r"SSB64 NetRollback: GGPO input correction queued(?: class=(\w+))?"
+)
+GGPO_SKIP_MICRO_RE = re.compile(
+    r"SSB64 NetInput: GGPO stick replace skipped class=micro_stick"
+)
+GGPO_CLASS_SUMMARY_RE = re.compile(
+    r"SSB64 NetInput: GGPO_CLASS_SUMMARY queued button=(\d+) onset_from_zero=(\d+) "
+    r"release=(\d+) real_stick=(\d+) micro_stick=(\d+) \| skipped_micro=(\d+)"
+)
 POST_RESIM_LIVE_RE = re.compile(
     r"SSB64 NetRollback: POST_RESIM_LIVE sim=(\d+) target=(\d+) hr=(\d+) next_wire=(\d+) wire_gap=(\d+)"
 )
@@ -336,6 +351,22 @@ LOAD_HASH_ABORT_RE = re.compile(
 )
 PEER_SNAPSHOT_DIVERGE_RE = re.compile(
     r"SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE — stopping VS session"
+)
+PEER_SNAPSHOT_HASH_RE = re.compile(
+    r"SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE load_tick="
+)
+LAYER_CLASS_RE = re.compile(
+    r"\bclass=(protocol|snapshot_fidelity|replay_determinism)\b"
+)
+EPISODE_PROOF_RE = re.compile(
+    r"SSB64 NetRollback: EPISODE_PROOF event=(begin|diverge)\b.*?class=(\w+)"
+)
+RESIM_POST_DIVERGE_RE = re.compile(r"SSB64 NetRollback: RESIM_POST_DIVERGE\b")
+BASELINE_UNIVERSE_AGREE_RE = re.compile(
+    r"BASELINE_UNIVERSE_MISMATCH.*inputs agree through load"
+)
+BASELINE_UNIVERSE_POISON_RE = re.compile(
+    r"BASELINE_UNIVERSE_MISMATCH.*→ input correction"
 )
 RESIM_SIM_CORE_REJECT_RE = re.compile(
     r"SSB64 NetRollback: resim-sim-core-reject tick=(\d+)"
@@ -2325,6 +2356,23 @@ class SyncReportMetrics:
     desync_report: int = 0
     ring_save_figh_bad: int = 0
     ring_save_anim_bad: int = 0
+    # Input-contract GGPO telemetry (class= on queue lines + session summary + micro skips).
+    ggpo_queued: int = 0
+    ggpo_queued_button: int = 0
+    ggpo_queued_onset: int = 0
+    ggpo_queued_release: int = 0
+    ggpo_queued_real_stick: int = 0
+    ggpo_queued_micro: int = 0
+    ggpo_queued_unclassified: int = 0
+    ggpo_skipped_micro: int = 0
+    ggpo_summary_seen: bool = False
+    # Layer certificates (EPISODE_PROOF / class= tags) — observe-only soak buckets.
+    episode_proof_diverge_classes: list[str] = field(default_factory=list)
+    peer_snapshot_class: str | None = None
+    resim_post_inp_match: int = 0
+    resim_post_inp_differ: int = 0
+    baseline_universe_agree: int = 0
+    baseline_universe_poisoned: int = 0
 
 
 def _sync_report_bump_tick(current: int | None, tick_s: str) -> int | None:
@@ -2409,6 +2457,48 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
             m.resim_complete += 1
             continue
 
+        ggpo_q = GGPO_QUEUED_CLASS_RE.search(ln)
+        if ggpo_q is not None:
+            m.ggpo_queued += 1
+            cls = ggpo_q.group(1)
+            if cls == "button":
+                m.ggpo_queued_button += 1
+            elif cls == "onset_from_zero":
+                m.ggpo_queued_onset += 1
+            elif cls == "release":
+                m.ggpo_queued_release += 1
+            elif cls == "real_stick":
+                m.ggpo_queued_real_stick += 1
+            elif cls == "micro_stick":
+                m.ggpo_queued_micro += 1
+            else:
+                m.ggpo_queued_unclassified += 1
+            continue
+
+        if GGPO_SKIP_MICRO_RE.search(ln) is not None:
+            m.ggpo_skipped_micro += 1
+            continue
+
+        ggpo_sum = GGPO_CLASS_SUMMARY_RE.search(ln)
+        if ggpo_sum is not None:
+            m.ggpo_summary_seen = True
+            # Prefer session counters when present (covers log-budget truncation).
+            m.ggpo_queued_button = int(ggpo_sum.group(1))
+            m.ggpo_queued_onset = int(ggpo_sum.group(2))
+            m.ggpo_queued_release = int(ggpo_sum.group(3))
+            m.ggpo_queued_real_stick = int(ggpo_sum.group(4))
+            m.ggpo_queued_micro = int(ggpo_sum.group(5))
+            m.ggpo_skipped_micro = int(ggpo_sum.group(6))
+            m.ggpo_queued = (
+                m.ggpo_queued_button
+                + m.ggpo_queued_onset
+                + m.ggpo_queued_release
+                + m.ggpo_queued_real_stick
+                + m.ggpo_queued_micro
+            )
+            m.ggpo_queued_unclassified = 0
+            continue
+
         if RESIM_SIM_CORE_RE.search(ln) is not None:
             m.resim_sim_core_ok += 1
             continue
@@ -2445,6 +2535,44 @@ def collect_sync_report_metrics(label: str, path: Path, lines: list[str]) -> Syn
 
         if PEER_SNAPSHOT_DIVERGE_RE.search(ln) is not None:
             m.peer_snapshot_diverge += 1
+            continue
+
+        peer_hash = PEER_SNAPSHOT_HASH_RE.search(ln)
+        if peer_hash is not None:
+            cm = LAYER_CLASS_RE.search(ln)
+            if cm is not None:
+                m.peer_snapshot_class = cm.group(1)
+            continue
+
+        proof_m = EPISODE_PROOF_RE.search(ln)
+        if proof_m is not None:
+            if proof_m.group(1) == "diverge":
+                m.episode_proof_diverge_classes.append(proof_m.group(2))
+            continue
+
+        if RESIM_POST_DIVERGE_RE.search(ln) is not None:
+            cm = LAYER_CLASS_RE.search(ln)
+            if cm is not None:
+                if cm.group(1) == "replay_determinism":
+                    m.resim_post_inp_match += 1
+                elif cm.group(1) == "protocol":
+                    m.resim_post_inp_differ += 1
+            else:
+                # Pre-class= logs: compare trailing inp digests when present.
+                inps = re.findall(r"inp=0x([0-9A-Fa-f]+)", ln)
+                if len(inps) >= 2:
+                    if inps[0].lower() == inps[1].lower():
+                        m.resim_post_inp_match += 1
+                    else:
+                        m.resim_post_inp_differ += 1
+            continue
+
+        if BASELINE_UNIVERSE_AGREE_RE.search(ln) is not None:
+            m.baseline_universe_agree += 1
+            continue
+
+        if BASELINE_UNIVERSE_POISON_RE.search(ln) is not None:
+            m.baseline_universe_poisoned += 1
             continue
 
         if VS_SESSION_STOP_RE.search(ln) is not None:
@@ -2689,6 +2817,40 @@ def evaluate_pair_session(
     return ok, out
 
 
+def sync_report_layer_bucket(m: SyncReportMetrics, *, pair_unpaired: bool = False) -> str | None:
+    """Map soak fail signals to PROTOCOL | SNAPSHOT_FIDELITY | REPLAY_DETERMINISM."""
+    _map = {
+        "protocol": "PROTOCOL",
+        "snapshot_fidelity": "SNAPSHOT_FIDELITY",
+        "replay_determinism": "REPLAY_DETERMINISM",
+    }
+    if pair_unpaired:
+        return "PROTOCOL"
+    if m.episode_proof_diverge_classes:
+        return _map.get(m.episode_proof_diverge_classes[-1])
+    if m.peer_snapshot_class:
+        return _map.get(m.peer_snapshot_class)
+    if m.load_hash_abort or m.synctest_fail or m.resim_sim_core_reject:
+        return "SNAPSHOT_FIDELITY"
+    if m.resim_post_inp_differ and not m.resim_post_inp_match:
+        return "PROTOCOL"
+    if m.baseline_universe_poisoned and not m.baseline_universe_agree:
+        return "PROTOCOL"
+    if m.peer_snapshot_diverge:
+        if m.baseline_universe_poisoned and not m.baseline_universe_agree:
+            return "PROTOCOL"
+        if m.baseline_universe_agree or m.frame_commit_diverge_inputs_match:
+            return "REPLAY_DETERMINISM"
+        return "REPLAY_DETERMINISM"
+    if m.frame_commit_state_diverge:
+        if m.frame_commit_diverge_inputs_match > 0:
+            return "REPLAY_DETERMINISM"
+        return "PROTOCOL"
+    if m.resim_post_inp_match:
+        return "REPLAY_DETERMINISM"
+    return None
+
+
 def sync_report_verdict(m: SyncReportMetrics) -> tuple[str, list[str]]:
     """Return (verdict_label, reason_strings) for one peer log."""
     reasons: list[str] = []
@@ -2887,6 +3049,146 @@ def _detect_map_phase_fork_note(
     )
 
 
+_MPLANDING_RE = re.compile(
+    r"SSB64 MpLanding: landing_branch gut=(\d+).*?"
+    r"fflags=(0x[0-9A-Fa-f]+).*?"
+    r"tr_x=(0x[0-9A-Fa-f]+) tr_y=(0x[0-9A-Fa-f]+)"
+)
+_FC_SEED_HINT_RE = re.compile(
+    r"FRAME_COMMIT_SEED_HINT\s+validation=(\d+)\s+onset=(\d+)\s+last_agreed=(\d+)\s+"
+    r"recovery_seed=(\d+)\s+physics_seed=(\d+)"
+)
+
+
+def _collect_mplanding_by_gut(lines: list[str]) -> dict[int, tuple[str, str, str]]:
+    out: dict[int, tuple[str, str, str]] = {}
+    for ln in lines:
+        m = _MPLANDING_RE.search(ln)
+        if m is not None:
+            out[int(m.group(1))] = (
+                m.group(2).lower(),
+                m.group(3).lower(),
+                m.group(4).lower(),
+            )
+    return out
+
+
+def _detect_physics_fork_onset_note(
+    lines_a: list[str],
+    lines_b: list[str],
+    label_a: str,
+    label_b: str,
+) -> tuple[str, int] | None:
+    """First MpLanding gut with tr_x/tr_y bit mismatch (soft-lip TopN.x class)."""
+    by_a = _collect_mplanding_by_gut(lines_a)
+    by_b = _collect_mplanding_by_gut(lines_b)
+    common = sorted(set(by_a) & set(by_b))
+    for gut in common:
+        fa, txa, tya = by_a[gut]
+        fb, txb, tyb = by_b[gut]
+        fields: list[str] = []
+        if txa != txb:
+            fields.append("topn_tx")
+        if tya != tyb:
+            fields.append("topn_ty")
+        if not fields:
+            continue
+        fflag_note = f" fflags={fa}" if fa == fb else f" fflags={label_a}:{fa}/{label_b}:{fb}"
+        return (
+            f"  !! PHYSICS_FORK_ONSET gut={gut} fields={','.join(fields)}{fflag_note} "
+            f"({label_a} tr_x={txa} tr_y={tya} | {label_b} tr_x={txb} tr_y={tyb}) "
+            f"— prefer over FRAME_COMMIT onset/seed when FC fires later",
+            gut,
+        )
+    return None
+
+
+_GGPO_MISMATCH_TICK_RE = re.compile(
+    r"(?:GGPO input correction queued\b.*?sim_tick=(\d+)|CORRECTION_TUPLE\b.*?mismatch=(\d+))"
+)
+_PEER_SNAPSHOT_LOAD_RE = re.compile(r"PEER_SNAPSHOT_DIVERGE\b.*?load_tick=(\d+)")
+
+
+def _physics_fork_compound_lines(lines_a: list[str], lines_b: list[str], gut: int) -> list[str]:
+    ggpo: set[int] = set()
+    peer: set[int] = set()
+    for ln in lines_a + lines_b:
+        gm = _GGPO_MISMATCH_TICK_RE.search(ln)
+        if gm is not None:
+            tick = gm.group(1) or gm.group(2)
+            if tick is not None:
+                ggpo.add(int(tick))
+        pm = _PEER_SNAPSHOT_LOAD_RE.search(ln)
+        if pm is not None:
+            peer.add(int(pm.group(1)))
+    near_ggpo = sorted(t for t in ggpo if abs(t - gut) <= 1)
+    near_peer = sorted(t for t in peer if abs(t - gut) <= 2)
+    if not near_ggpo and not near_peer:
+        return []
+    bits: list[str] = []
+    if near_ggpo:
+        bits.append(f"ggpo_mismatch={','.join(str(t) for t in near_ggpo)}")
+    if near_peer:
+        bits.append(f"peer_snapshot_load={','.join(str(t) for t in near_peer)}")
+    return [
+        f"    compound={'+'.join(bits)} — treat soft-lip/TopN as primary when "
+        f"fflags=CLIFF; stick GGPO at same tick is concurrent, not the X writer"
+    ]
+
+
+def _detect_sim_state_cadence_note(
+    lines_a: list[str],
+    lines_b: list[str],
+    label_a: str,
+    label_b: str,
+) -> list[str]:
+    """WARN when one peer lacks sim_state_tick coverage (Android debug.env lag)."""
+    na = sum(1 for ln in lines_a if "SSB64 NetSync: sim_state_tick tick=" in ln)
+    nb = sum(1 for ln in lines_b if "SSB64 NetSync: sim_state_tick tick=" in ln)
+    out: list[str] = []
+    max_n = max(na, nb)
+    if max_n < 32:
+        return out
+    for label, n in ((label_a, na), (label_b, nb)):
+        if n * 10 < max_n:
+            out.append(
+                f"  !! [{label}] SIM_STATE cadence gap: sim_state_tick={n} "
+                f"(peer max={max_n}) — enable SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL=1 "
+                f"on BOTH peers"
+            )
+    if na == 0 or nb == 0:
+        out.append(
+            "  !! pair: no overlapping sim_state_tick attributable to cadence gap "
+            "(not necessarily a hash mismatch)"
+        )
+    return out
+
+
+def _detect_softlipx_coverage_note(
+    lines_a: list[str],
+    lines_b: list[str],
+    label_a: str,
+    label_b: str,
+    *,
+    fc_figh: bool,
+) -> list[str]:
+    if not fc_figh:
+        return []
+    out: list[str] = []
+    for label, lines in ((label_a, lines_a), (label_b, lines_b)):
+        if not any("SSB64 SoftLipX:" in ln for ln in lines):
+            out.append(
+                f"  !! [{label}] FC figh diverge without SoftLipX — "
+                f"enable SSB64_NETPLAY_SOFTLIP_X_DIAG=1"
+            )
+        if not any("SSB64 MpLanding:" in ln for ln in lines):
+            out.append(
+                f"  !! [{label}] FC figh diverge without MpLanding — "
+                f"enable SSB64_NETPLAY_LANDING_BRANCH_DIAG=1"
+            )
+    return out
+
+
 def diff_sync_report_pair(
     metrics_a: SyncReportMetrics,
     lines_a: list[str],
@@ -2897,6 +3199,45 @@ def diff_sync_report_pair(
     by_a = collect_sim_state_by_tick(lines_a)
     by_b = collect_sim_state_by_tick(lines_b)
     out: list[str] = []
+    fc_figh = (
+        "figh" in metrics_a.frame_commit_diverged_fields
+        or "figh" in metrics_b.frame_commit_diverged_fields
+    )
+    phys = _detect_physics_fork_onset_note(
+        lines_a, lines_b, metrics_a.label, metrics_b.label
+    )
+    phys_gut: int | None = None
+    if phys is not None:
+        out.append(phys[0])
+        phys_gut = phys[1]
+        out.extend(_physics_fork_compound_lines(lines_a, lines_b, phys_gut))
+    out.extend(
+        _detect_sim_state_cadence_note(
+            lines_a, lines_b, metrics_a.label, metrics_b.label
+        )
+    )
+    peer_figh = any(
+        "PEER_SNAPSHOT_DIVERGE" in ln and "figh=" in ln for ln in (lines_a + lines_b)
+    )
+    out.extend(
+        _detect_softlipx_coverage_note(
+            lines_a,
+            lines_b,
+            metrics_a.label,
+            metrics_b.label,
+            fc_figh=fc_figh or peer_figh or phys_gut is not None,
+        )
+    )
+    for lines in (lines_a, lines_b):
+        for ln in lines:
+            hm = _FC_SEED_HINT_RE.search(ln)
+            if hm is not None:
+                out.append(
+                    f"  FC seed hint: validation={hm.group(1)} onset={hm.group(2)} "
+                    f"last_agreed={hm.group(3)} recovery_seed={hm.group(4)} "
+                    f"physics_seed={hm.group(5)} (onset may predate physics fork)"
+                )
+                break
     common = sorted(set(by_a.keys()) & set(by_b.keys()), key=int)
     if not common:
         out.append("  pair: no overlapping sim_state_tick rows")
@@ -2908,7 +3249,8 @@ def diff_sync_report_pair(
         if phase_note is not None:
             out.append(phase_note)
             return out, True
-        return out, False
+        # Physics fork alone is a hard mismatch even without sim_state overlap.
+        return out, phys_gut is not None
 
     force_inject = _pair_force_mismatch_inject_tick(lines_a, lines_b)
     # mph = map partition (Whispy/ground). Omitting it let peer-only +1 map phase
@@ -2967,7 +3309,9 @@ def diff_sync_report_pair(
         if first_expected_note is not None:
             out.append(first_expected_note)
     out.append(note)
-    return out, False
+    # Soft-lip TopN.x can fork while light figh hash still matches for a while;
+    # surface PHYSICS_FORK_ONSET as mismatch even when sim_state rows align.
+    return out, phys_gut is not None
 
 
 def pair_sync_verdict(metrics: list[SyncReportMetrics], pair_mismatch: bool) -> str:
@@ -2983,7 +3327,7 @@ def pair_sync_verdict(metrics: list[SyncReportMetrics], pair_mismatch: bool) -> 
     return "STABLE"
 
 
-def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
+def format_sync_report_line(label: str, m: SyncReportMetrics, *, pair_unpaired: bool = False) -> list[str]:
     verdict, reasons = sync_report_verdict(m)
     tick_s = str(m.max_sim_tick) if m.max_sim_tick is not None else "?"
     parts = [
@@ -3008,6 +3352,18 @@ def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
         parts.append(
             f"    resim_core_ok={m.resim_sim_core_ok} resim_core_reject={m.resim_sim_core_reject}"
         )
+    if m.ggpo_queued or m.ggpo_skipped_micro or m.ggpo_summary_seen:
+        parts.append(
+            f"    ggpo_queued={m.ggpo_queued} button={m.ggpo_queued_button} "
+            f"onset={m.ggpo_queued_onset} release={m.ggpo_queued_release} "
+            f"real_stick={m.ggpo_queued_real_stick} micro={m.ggpo_queued_micro}"
+            + (
+                f" unclassified={m.ggpo_queued_unclassified}"
+                if m.ggpo_queued_unclassified
+                else ""
+            )
+            + f" skipped_micro={m.ggpo_skipped_micro}"
+        )
     if m.session_stop or m.css_return or m.sigsegv:
         parts.append(
             f"    session_stop={m.session_stop} css_return={m.css_return} sigsegv={m.sigsegv}"
@@ -3017,7 +3373,15 @@ def format_sync_report_line(label: str, m: SyncReportMetrics) -> list[str]:
             f"    ring_save_bad figh={m.ring_save_figh_bad} anim={m.ring_save_anim_bad}"
         )
     if reasons:
-        parts.append(f"    reasons: {'; '.join(reasons)}")
+        bucket = None
+        if verdict.startswith("UNSTABLE"):
+            bucket = sync_report_layer_bucket(m, pair_unpaired=pair_unpaired)
+        bucket_s = f" bucket={bucket}" if bucket else ""
+        parts.append(f"    reasons: {'; '.join(reasons)}{bucket_s}")
+    elif verdict.startswith("UNSTABLE"):
+        bucket = sync_report_layer_bucket(m, pair_unpaired=pair_unpaired)
+        if bucket:
+            parts.append(f"    reasons: (none) bucket={bucket}")
     return parts
 
 
@@ -3029,12 +3393,14 @@ def build_sync_report(
     """Return (report lines, unstable)."""
     out: list[str] = ["=== sync-report ==="]
     unstable = False
+    pair_unpaired = False
 
     if identities is not None and len(identities) >= 2:
         paired, pair_session_lines = evaluate_pair_session(identities[0], identities[1])
         out.extend(pair_session_lines)
         if not paired:
             unstable = True
+            pair_unpaired = True
         for ident in identities:
             out.extend(format_session_identity_lines(ident))
 
@@ -3042,7 +3408,7 @@ def build_sync_report(
         verdict, _ = sync_report_verdict(m)
         if verdict.startswith("UNSTABLE"):
             unstable = True
-        out.extend(format_sync_report_line(m.label, m))
+        out.extend(format_sync_report_line(m.label, m, pair_unpaired=pair_unpaired))
 
     pair_mismatch = False
     if len(metrics) >= 2:

@@ -30,6 +30,9 @@ extern sb32 mnVSNetAutomatchAMIceShouldIgnorePollError(const MmMatchResult *ev);
 extern sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bind);
 /* Trickle poll cadence while ICE_CONNECT (0 = skip poll this tick). */
 extern u32 mnVSNetAutomatchAMIceConnectTricklePollInterval(void);
+/** Wall-clock gate for CONNECTING trickle GETs (shared LAN always FALSE). */
+extern sb32 mnVSNetAutomatchAMIceConnectTrickleMayEnqueue(void);
+extern void mnVSNetAutomatchAMIceConnectTrickleNoteEnqueued(void);
 extern void mnVSNetAutomatchAMIceNotifyPeerAbort(const MmMatchResult *mr);
 /** Android: serialize matchmaking HTTPS with libjuice (fdsan). Worker holds lock through curl. */
 extern void mnVSNetAutomatchAMIceHttpsLockBeforeRequest(void);
@@ -63,6 +66,8 @@ extern void mnVSNetAutomatchAMQueuePollReset(void);
 #define mnVSNetAutomatchAMIceShouldIgnorePollError(ev) FALSE
 #define mnVSNetAutomatchAMIceBootstrapPeer(mr, b) FALSE
 #define mnVSNetAutomatchAMIceConnectTricklePollInterval() 0U
+#define mnVSNetAutomatchAMIceConnectTrickleMayEnqueue() FALSE
+#define mnVSNetAutomatchAMIceConnectTrickleNoteEnqueued() ((void)0)
 #define mnVSNetAutomatchAMIceNotifyPeerAbort(mr) ((void)0)
 #define mnVSNetAutomatchAMIceHttpsLockBeforeRequest() ((void)0)
 #define mnVSNetAutomatchAMIceHttpsUnlockAfterRequest() ((void)0)

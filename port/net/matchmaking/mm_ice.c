@@ -1955,22 +1955,32 @@ sb32 mmIcePopReceived(u8 *out, u32 out_cap, u32 *out_len)
 	}
 	*out_len = 0U;
 	(void)pthread_mutex_lock(&sIceMutex);
-	if (sRecvCount == 0U)
+	/*
+	 * Never leave an oversized head parked: returning FALSE without dequeue jammed the
+	 * whole ICE recv ring (INPUT/FC blackhole). Discard + continue so later datagrams drain.
+	 * See docs/bugs/netplay_fc_recv_max_ice_queue_jam_2026-07-18.md.
+	 */
+	while (sRecvCount > 0U)
 	{
+		u32 head_len = sRecvQ[sRecvHead].len;
+
+		if (head_len > out_cap)
+		{
+			port_log("SSB64 ICE: discard oversized recv head len=%u out_cap=%u q=%u\n", head_len, out_cap,
+			         sRecvCount);
+			sRecvHead = (sRecvHead + 1U) % MM_ICE_RECV_QUEUE;
+			sRecvCount--;
+			continue;
+		}
+		memcpy(out, sRecvQ[sRecvHead].data, head_len);
+		*out_len = head_len;
+		sRecvHead = (sRecvHead + 1U) % MM_ICE_RECV_QUEUE;
+		sRecvCount--;
 		(void)pthread_mutex_unlock(&sIceMutex);
-		return FALSE;
+		return TRUE;
 	}
-	if (sRecvQ[sRecvHead].len > out_cap)
-	{
-		(void)pthread_mutex_unlock(&sIceMutex);
-		return FALSE;
-	}
-	memcpy(out, sRecvQ[sRecvHead].data, sRecvQ[sRecvHead].len);
-	*out_len = sRecvQ[sRecvHead].len;
-	sRecvHead = (sRecvHead + 1U) % MM_ICE_RECV_QUEUE;
-	sRecvCount--;
 	(void)pthread_mutex_unlock(&sIceMutex);
-	return TRUE;
+	return FALSE;
 }
 
 sb32 mmIceGetSelectedPath(char *local, u32 local_cap, char *remote, u32 remote_cap)
@@ -2182,24 +2192,40 @@ sb32 mmIceGetBootstrapBindHostport(const char *peer_hostport, char *out, u32 out
 {
 	char local[JUICE_MAX_ADDRESS_STRING_LEN];
 	char remote[JUICE_MAX_ADDRESS_STRING_LEN];
+	char ip[64];
+	const char *colon;
 
 	if ((out == NULL) || (out_cap < 8U))
 	{
 		return FALSE;
 	}
 	out[0] = '\0';
+	/*
+	 * Bind must be locally assignable. Never fall through to srflx/WAN
+	 * (EADDRNOTAVAIL / err=99). ICE transport uses the selected path for
+	 * bookkeeping; raw-UDP abort/fallback needs a host/LAN address only.
+	 */
 	if (mmIceGetSelectedPath(local, sizeof(local), remote, sizeof(remote)) != FALSE && local[0] != '\0' &&
 	    mmIceHostportHasValidPort(local) != FALSE)
 	{
-		snprintf(out, out_cap, "%s", local);
-		return TRUE;
+		colon = strrchr(local, ':');
+		if ((colon != NULL) && (colon > local) && ((u32)(colon - local) < sizeof(ip)))
+		{
+			memcpy(ip, local, (size_t)(colon - local));
+			ip[colon - local] = '\0';
+			if (mmLanIpv4StringIsRfc1918(ip) != FALSE)
+			{
+				snprintf(out, out_cap, "%s", local);
+				return TRUE;
+			}
+		}
 	}
 	if (mmIceGetLocalHostHostportForPeer(peer_hostport, out, out_cap) != FALSE &&
 	    mmIceHostportHasValidPort(out) != FALSE)
 	{
 		return TRUE;
 	}
-	if (mmIceGetReflexiveHostport(out, out_cap) != FALSE && mmIceHostportHasValidPort(out) != FALSE)
+	if (mmIceGetLocalHostHostport(out, out_cap) != FALSE && mmIceHostportHasValidPort(out) != FALSE)
 	{
 		return TRUE;
 	}

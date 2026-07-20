@@ -21,9 +21,25 @@ extern sb32 syNetplayNessFighterInPkHoldAimScope(s32 status_id);
 
 extern sb32 syNetplayNessAnyLiveFighterInJibakuBurstScope(void);
 
+/*
+ * Stick-only GGPO absorb: jibaku/bound trajectory is locked at entry; stick REPLACE during
+ * those statuses must not open ness_pk_defer storms (soak 11903082 @661 sy Δ→ span-18).
+ * Hold/Start still rewind — aim lives there.
+ */
+extern sb32 syNetplayNessPlayerInJibakuStickAbsorbScope(s32 player);
+
 extern sb32 syNetplayNessAnyLiveFighterInFcResimDeferScope(void);
 
 extern sb32 syNetplayNessAnyLiveFighterInPkHoldAimScope(void);
+
+/*
+ * SamePass DEFER Hold restore: capture sticky pkthunder_pos before ring/emergency load,
+ * skip Hold delay/gravity sanitize while armed (ApplySlot sanitize → HoldEntry sync only),
+ * then re-apply aim + SyncHoldEntry so reconcile cannot promote head → aim or reset
+ * pkthunder_gravity_delay (soaks 1623117354 / 2082786682).
+ */
+extern void syNetplayNessBeginSamePassDeferHoldAimPreserve(void);
+extern void syNetplayNessEndSamePassDeferHoldAimPreserve(void);
 
 extern sb32 syNetplayNessAnyLiveFighterInFcStateRecoveryDeferScope(void);
 
@@ -31,7 +47,7 @@ extern sb32 syNetplayNessClampFcRecoveryLoadTick(u32 *io_load_tick, u32 *io_mism
 
 extern void syNetplayNessResimReplayHardeningAfterLoadStep(void);
 
-extern void syNetplayNessResimHardeningAfterSnapshotLoad(void);
+extern void syNetplayNessResimHardeningAfterSnapshotLoad(u32 load_tick);
 
 extern void syNetRbSnapRebindNessPKJibakuProcs(struct GObj *fighter_gobj, struct FTStruct *fp);
 
@@ -112,12 +128,15 @@ extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStr
 #define syNetplayNessFighterInFcResimDeferScope(status_id) (FALSE)
 #define syNetplayNessFighterInPkHoldAimScope(status_id) (FALSE)
 #define syNetplayNessAnyLiveFighterInJibakuBurstScope() (FALSE)
+#define syNetplayNessPlayerInJibakuStickAbsorbScope(player) (FALSE)
 #define syNetplayNessAnyLiveFighterInFcResimDeferScope() (FALSE)
 #define syNetplayNessAnyLiveFighterInPkHoldAimScope() (FALSE)
+#define syNetplayNessBeginSamePassDeferHoldAimPreserve() ((void)0)
+#define syNetplayNessEndSamePassDeferHoldAimPreserve() ((void)0)
 #define syNetplayNessAnyLiveFighterInFcStateRecoveryDeferScope() (FALSE)
 #define syNetplayNessClampFcRecoveryLoadTick(io_load_tick, io_mismatch_tick) (FALSE)
 #define syNetplayNessResimReplayHardeningAfterLoadStep() ((void)0)
-#define syNetplayNessResimHardeningAfterSnapshotLoad() ((void)0)
+#define syNetplayNessResimHardeningAfterSnapshotLoad(load_tick) ((void)0)
 #define syNetRbSnapRebindNessPKJibakuProcs(fighter_gobj, fp) ((void)0)
 #define syNetplayNessSanitizePKJibakuStatusVars(fp) ((void)0)
 #define syNetplayNessSanitizePKThunderThrowStatusVars(fp) ((void)0)

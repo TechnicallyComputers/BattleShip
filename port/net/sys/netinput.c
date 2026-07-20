@@ -78,6 +78,13 @@ static sb32 sSYNetInputRemoteAnalogOnsetPredEnvCache = -999;
 /* Raw analog without quantize: wider defaults avoid first-gesture GGPO over correction. */
 #define SYNETINPUT_GGPO_STICK_DEADBAND_DEFAULT 12
 #define SYNETINPUT_GGPO_STICK_DEADBAND_PREDICT_DEFAULT 14
+/*
+ * Completed-sim REPLACE used to rewind on any stick delta (feel-0 release hammer). That opened
+ * span-2 episodes for ±1–3 same-intent noise (soak 1490370675). Cap micro skips here; larger
+ * same-intent ramps and all releases/onsets still rewind. See
+ * docs/bugs/netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md.
+ */
+#define SYNETINPUT_GGPO_STICK_COMPLETED_SIM_MICRO_DEADBAND_DEFAULT 3
 #define SYNETINPUT_ANALOG_ONSET_STICK_MAG_DEFAULT 28
 #define SYNETINPUT_ANALOG_ONSET_STICK_MAG_MAX 80
 #define SYNETINPUT_ANALOG_ONSET_LOOKBACK_DEFAULT 60
@@ -88,6 +95,24 @@ static sb32 sSYNetInputRemoteAnalogOnsetPredEnvCache = -999;
 #define SYNETINPUT_ANALOG_ONSET_WIRE_PEEK_AHEAD_DEFAULT 8U
 static s32 sSYNetInputGgpoStickDeadband = -1;
 static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
+static s32 sSYNetInputGgpoStickCompletedSimMicroDeadband = -1;
+#if defined(SSB64_NETMENU)
+static u32 sSYNetInputGgpoClassQueuedButton;
+static u32 sSYNetInputGgpoClassQueuedOnset;
+static u32 sSYNetInputGgpoClassQueuedRelease;
+static u32 sSYNetInputGgpoClassQueuedRealStick;
+static u32 sSYNetInputGgpoClassQueuedMicro; /* should stay ~0 after micro skip */
+static u32 sSYNetInputGgpoClassSkippedMicro;
+static u32 sSYNetInputGgpoSkipMicroLogsRemaining;
+/*
+ * Wait skips wire_need/runway so Appear survives Android hr pauses. At Go those gates
+ * snap on while hr may still be frozen → permanent hang (soak1: wire_need next=399
+ * hr=394). Soft-pace for a short post-Go window so ingress/send can recover.
+ * See docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md.
+ */
+static sb32 sSYNetInputSawIntroWait = FALSE;
+static u32 sSYNetInputPostGoWirePacingGraceUntil = ~(u32)0;
+#endif
 static s32 sSYNetInputAnalogOnsetStickMag = -1;
 static s32 sSYNetInputAnalogOnsetLookback = -1;
 static s32 sSYNetInputAnalogOnsetFacingThresh = -1;
@@ -375,8 +400,94 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	{
 		return TRUE;
 	}
+#if defined(PORT)
+	{
+		sb32 soft_wire_pacing;
+		sb32 intro_wait;
+		sb32 post_go_grace;
+
+		soft_wire_pacing = FALSE;
+		intro_wait = FALSE;
+		post_go_grace = FALSE;
+#if defined(SSB64_NETMENU)
+		if ((gSCManagerBattleState != NULL) &&
+		    (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+		{
+			intro_wait = TRUE;
+			sSYNetInputSawIntroWait = TRUE;
+		}
+		else if ((gSCManagerBattleState != NULL) &&
+		         (gSCManagerBattleState->game_status == nSCBattleGameStatusGo) &&
+		         (sSYNetInputSawIntroWait != FALSE))
+		{
+			if (sSYNetInputPostGoWirePacingGraceUntil == ~(u32)0)
+			{
+				u32 grace;
+
+				/*
+				 * Cover pred+D plus a short ICE/hr recovery window. soak1 froze hr at 394
+				 * from late Wait through Go; hard wire_need at next=399 hung forever.
+				 */
+				grace = syNetPeerGetCommittedInputDelay() +
+				        syNetPeerGetPhaseLockPredictionWindowTicks() + 24U;
+				if (grace < 32U)
+				{
+					grace = 32U;
+				}
+				sSYNetInputPostGoWirePacingGraceUntil = next_sim_tick + grace;
+				port_log(
+				    "SSB64 NetInput: post_go_wire_pacing_grace until=%u next_sim=%u grace=%u hr=%u\n",
+				    (unsigned int)sSYNetInputPostGoWirePacingGraceUntil,
+				    (unsigned int)next_sim_tick,
+				    (unsigned int)grace,
+				    (unsigned int)syNetPeerGetHighestRemoteTick());
+			}
+			if (next_sim_tick <= sSYNetInputPostGoWirePacingGraceUntil)
+			{
+				post_go_grace = TRUE;
+			}
+		}
+#else
+		intro_wait = ((gSCManagerBattleState != NULL) &&
+		              (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+		                 ? TRUE
+		                 : FALSE;
+#endif
+		/*
+		 * Intro Wait (force-neutral Appear) and a short post-Go grace: do not apply
+		 * wire_need / runway_cap. Those gates stall sim when hr pauses (Android ICE recv
+		 * blackholes). SYNCTEST_SKIP intro_wait only skips hash compare.
+		 * See docs/bugs/netplay_intro_wait_advance_frontier_deadlock_2026-07-18.md and
+		 * docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md.
+		 */
+		soft_wire_pacing = ((intro_wait != FALSE) || (post_go_grace != FALSE)) ? TRUE : FALSE;
+		if (soft_wire_pacing != FALSE)
+		{
+			hr = syNetPeerGetHighestRemoteTick();
+			if (hr == 0U)
+			{
+				static u32 sLastSoftHr0AdvanceHoldLogTick = ~(u32)0;
+
+				if (next_sim_tick != sLastSoftHr0AdvanceHoldLogTick)
+				{
+					port_log(
+					    "SSB64 NetInput: sim advance blocked (%s) next_sim=%u "
+					    "peer_vs_active=%d\n",
+					    (intro_wait != FALSE) ? "intro_wait_hr0" : "post_go_grace_hr0",
+					    (unsigned int)next_sim_tick, (int)syNetPeerIsVSSessionActive());
+					sLastSoftHr0AdvanceHoldLogTick = next_sim_tick;
+				}
+				return FALSE;
+			}
+			return TRUE;
+		}
+	}
+#endif
 #ifdef PORT
-	/* Startup: do not advance sim until remote wire frontier covers sim+D (reduces strict-R abort at tick 1–4). */
+	/*
+	 * Live (post-Go) wire-contract pacing. Subtract phase_lock so this is not stricter than
+	 * FuncRead prediction (D==lead otherwise collapses to hr>=next_sim).
+	 */
 	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
 	{
 		u32 wire_need;
@@ -392,34 +503,40 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 		{
 			wire_need = 0U;
 		}
+		if ((syNetSessionParamsRollbackEnabled() != FALSE) && (syNetInputGetUseInputPrediction() != FALSE))
+		{
+			u32 pred_window;
+
+			pred_window = syNetPeerGetPhaseLockPredictionWindowTicks();
+			if (wire_need > pred_window)
+			{
+				wire_need -= pred_window;
+			}
+			else
+			{
+				wire_need = 0U;
+			}
+		}
 		hr = syNetPeerGetHighestRemoteTick();
 		if (hr < wire_need)
 		{
+			static u32 sLastWireNeedAdvanceHoldLogTick = ~(u32)0;
+
+			if (next_sim_tick != sLastWireNeedAdvanceHoldLogTick)
+			{
+				port_log(
+				    "SSB64 NetInput: sim advance blocked (wire_need) next_sim=%u hr=%u wire_need=%u D=%u "
+				    "lead_b=%u pred=%u\n",
+				    (unsigned int)next_sim_tick, (unsigned int)hr, (unsigned int)wire_need,
+				    (unsigned int)syNetPeerGetCommittedInputDelay(), (unsigned int)lead_b,
+				    (unsigned int)syNetPeerGetPhaseLockPredictionWindowTicks());
+				sLastWireNeedAdvanceHoldLogTick = next_sim_tick;
+			}
 			return FALSE;
 		}
 	}
 #endif
 	hr = syNetPeerGetHighestRemoteTick();
-#if defined(PORT)
-	/* Intro wait: do not run host-ahead sim without peer wire; cap to remote sim frontier. */
-	if ((gSCManagerBattleState != NULL) &&
-	    (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
-	{
-		if (hr == 0U)
-		{
-			return FALSE;
-		}
-		{
-			u32 remote_sim_frontier;
-
-			remote_sim_frontier = syNetPeerDelaySimTickFromWire(hr);
-			if (next_sim_tick > remote_sim_frontier)
-			{
-				return FALSE;
-			}
-		}
-	}
-#endif
 	if (hr == 0U)
 	{
 		return TRUE;
@@ -428,6 +545,19 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	      syNetPeerGetPhaseLockPredictionWindowTicks();
 	if (next_sim_tick > cap)
 	{
+		static u32 sLastRunwayAdvanceHoldLogTick = ~(u32)0;
+
+		if (next_sim_tick != sLastRunwayAdvanceHoldLogTick)
+		{
+			port_log(
+			    "SSB64 NetInput: sim advance blocked (runway_cap) next_sim=%u hr=%u cap=%u frontier_sim=%u "
+			    "D=%u pred=%u\n",
+			    (unsigned int)next_sim_tick, (unsigned int)hr, (unsigned int)cap,
+			    (unsigned int)syNetPeerDelaySimTickFromWire(hr),
+			    (unsigned int)syNetPeerGetCommittedInputDelay(),
+			    (unsigned int)syNetPeerGetPhaseLockPredictionWindowTicks());
+			sLastRunwayAdvanceHoldLogTick = next_sim_tick;
+		}
 		return FALSE;
 	}
 #ifdef PORT
@@ -942,6 +1072,13 @@ static u32 syNetInputLocalSendLeadOwnerTick(u32 sample_tick)
 
 #ifdef PORT
 static sb32 syNetInputFrameGameplayEquals(const SYNetInputFrame *a, const SYNetInputFrame *b);
+#if defined(SSB64_NETMENU)
+static void syNetInputFillHoldLastSoftOnsetIfNeeded(s32 player, u32 tick, SYNetInputFrame *out_frame);
+static sb32 syNetInputStickReplaceIsRelease(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire);
+static sb32 syNetInputStickSameAnalogIntent(s8 ax, s8 ay, s8 bx, s8 by);
+static sb32 syNetInputStickLooksAnalog(s8 stick_x, s8 stick_y);
+static u32 syNetInputGgpoStickCompletedSimMicroDeadband(void);
+#endif
 /* One-frame taps (Start pause) live in button_tap; history rings must OR tap into stored buttons. */
 static u16 syNetInputButtonsFromController(const SYController *controller)
 {
@@ -1533,6 +1670,14 @@ static sb32 syNetInputResolveRemoteHumanAuthorityFrameEx(s32 player, u32 tick, S
 	 * as RemoteConfirmed (legacy) made phase-lock prediction invisible to recovery.
 	 */
 	syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemotePredicted, TRUE);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Episode-FSM authoritative resolve hold-lasts last_confirmed. When that is hard zero and wire for an
+	 * onset already sits in the ring (send-lead / ahead), peek and publish a soft onset instead of guaranteeing
+	 * GGPO against (0,0). Ahead-only — never lookback (see FillHoldLastSoftOnsetIfNeeded).
+	 */
+	syNetInputFillHoldLastSoftOnsetIfNeeded(player, tick, out_frame);
+#endif
 	if (out_source_rank != NULL)
 	{
 		*out_source_rank = nSYNetRemoteAuthoritySourceHoldLast;
@@ -1914,6 +2059,18 @@ void syNetInputReset(void)
 	sSYNetInputStrictCache.is_valid = FALSE;
 	sSYNetInputRemoteConfirmedConflictLogsRemaining = 64U;
 	sSYNetInputRemoteGapFillLogBudget = 32U;
+#if defined(SSB64_NETMENU)
+	sSYNetInputGgpoStickCompletedSimMicroDeadband = -1;
+	sSYNetInputGgpoClassQueuedButton = 0U;
+	sSYNetInputGgpoClassQueuedOnset = 0U;
+	sSYNetInputGgpoClassQueuedRelease = 0U;
+	sSYNetInputGgpoClassQueuedRealStick = 0U;
+	sSYNetInputGgpoClassQueuedMicro = 0U;
+	sSYNetInputGgpoClassSkippedMicro = 0U;
+	sSYNetInputGgpoSkipMicroLogsRemaining = 16U;
+	sSYNetInputSawIntroWait = FALSE;
+	sSYNetInputPostGoWirePacingGraceUntil = ~(u32)0;
+#endif
 	{
 		const char *env_onset_log;
 
@@ -2297,6 +2454,35 @@ static u32 syNetInputGgpoStickDeadbandPredict(void)
 	sSYNetInputGgpoStickDeadbandPredict = parsed;
 	return (u32)sSYNetInputGgpoStickDeadbandPredict;
 }
+
+#if defined(SSB64_NETMENU)
+static u32 syNetInputGgpoStickCompletedSimMicroDeadband(void)
+{
+	const char *env;
+	s32 parsed;
+
+	if (sSYNetInputGgpoStickCompletedSimMicroDeadband >= 0)
+	{
+		return (u32)sSYNetInputGgpoStickCompletedSimMicroDeadband;
+	}
+	parsed = SYNETINPUT_GGPO_STICK_COMPLETED_SIM_MICRO_DEADBAND_DEFAULT;
+	env = getenv("SSB64_NETPLAY_GGPO_STICK_COMPLETED_SIM_MICRO_DEADBAND");
+	if ((env != NULL) && (env[0] != '\0'))
+	{
+		parsed = atoi(env);
+		if (parsed < 0)
+		{
+			parsed = 0;
+		}
+		if (parsed > 127)
+		{
+			parsed = 127;
+		}
+	}
+	sSYNetInputGgpoStickCompletedSimMicroDeadband = parsed;
+	return (u32)sSYNetInputGgpoStickCompletedSimMicroDeadband;
+}
+#endif
 
 #ifdef PORT
 static s32 syNetInputEnvClampS32(s32 value, s32 min_v, s32 max_v)
@@ -2799,19 +2985,29 @@ static sb32 syNetInputTryPeekRemoteAnalogForOnset(s32 player, u32 tick, u32 max_
 	u32 oldest;
 	u32 newest;
 	u32 peek_ahead;
+	u32 ahead_start;
 
-	if ((out_frame == NULL) || (tick == 0U) || (max_lookback == 0U))
+	if ((out_frame == NULL) || (tick == 0U))
 	{
 		return FALSE;
 	}
 	peek_ahead = syNetInputAnalogOnsetWirePeekAheadFrames();
 	newest = tick + peek_ahead;
-	for (t = tick; t <= newest; t++)
+	/*
+	 * max_lookback==0: send-lead / ahead only (hold-last soft onset). Starting at tick would accept the
+	 * unresolved current row or re-hit a just-confirmed near-neutral; lookback is disabled entirely.
+	 */
+	ahead_start = (max_lookback == 0U) ? (tick + 1U) : tick;
+	for (t = ahead_start; t <= newest; t++)
 	{
 		if (syNetInputTryPeekRemoteAnalogStickAtTick(player, t, out_frame) != FALSE)
 		{
 			return TRUE;
 		}
+	}
+	if (max_lookback == 0U)
+	{
+		return FALSE;
 	}
 	oldest = tick;
 	if (tick > max_lookback)
@@ -2831,6 +3027,55 @@ static sb32 syNetInputTryPeekRemoteAnalogForOnset(s32 player, u32 tick, u32 max_
 	}
 	return FALSE;
 }
+
+#if defined(SSB64_NETMENU)
+static void syNetInputFillHoldLastSoftOnsetIfNeeded(s32 player, u32 tick, SYNetInputFrame *out_frame)
+{
+	SYNetInputFrame peek;
+	s32 floor_mag;
+
+	if ((out_frame == NULL) || (syNetInputCheckPlayer(player) == FALSE) || (tick == 0U))
+	{
+		return;
+	}
+	if (syNetInputFrameIsQuasiDigitalKeyboard(out_frame) != FALSE)
+	{
+		return;
+	}
+	/* Only replace hard-zero / near-neutral hold-last; keep non-neutral hold-last as-is. */
+	if (syNetInputFrameSticksNearNeutral(out_frame) == FALSE)
+	{
+		return;
+	}
+	/*
+	 * Send-lead / ahead only (max_lookback=0). Backward peek re-inflates the pre-release stick after a
+	 * near-neutral wire confirm (soak1 seed 1645329949 @2316: last_confirmed -1,0 → peek -64,-4 →
+	 * ApplyAnalogOnsetStick floors |sy| 4→20 → phantom -64,-20 vs local auth 0,0 → AttackDash/Turn/Dash
+	 * tap fork → PEER_SNAPSHOT_DIVERGE). See docs/bugs/netplay_hold_last_soft_onset_lookback_release_fc_2026-07-18.md.
+	 */
+	if (syNetInputTryPeekRemoteAnalogForOnset(player, tick, 0U, &peek) == FALSE)
+	{
+		return;
+	}
+	floor_mag = (s32)syNetInputAnalogOnsetStickMag();
+	syNetInputApplyAnalogOnsetStick(&out_frame->stick_x, &out_frame->stick_y, &peek, floor_mag,
+	                                SYNETINPUT_ANALOG_ONSET_STICK_MAG_MAX);
+	out_frame->is_predicted = TRUE;
+	out_frame->source = nSYNetInputSourceRemotePredicted;
+	if (sSYNetInputAnalogOnsetLogBudget > 0U)
+	{
+		port_log(
+		    "SSB64 NetInput: hold_last_soft_onset player=%d tick=%u sx=%d sy=%d (peek sx=%d sy=%d)\n",
+		    (int)player,
+		    (unsigned int)tick,
+		    (int)out_frame->stick_x,
+		    (int)out_frame->stick_y,
+		    (int)peek.stick_x,
+		    (int)peek.stick_y);
+		sSYNetInputAnalogOnsetLogBudget--;
+	}
+}
+#endif
 
 static void syNetInputNoteRemoteNonNeutralStick(s32 player, const SYNetInputFrame *frame)
 {
@@ -3360,11 +3605,79 @@ sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInpu
 		return FALSE;
 	}
 	/*
-	 * Already-simulated tick: any gameplay delta must rewind.
-	 * See docs/bugs/netplay_feel0_release_deadband_skips_ggpo_2026-07-12.md.
+	 * Jibaku/bound: launch velocity is locked at entry; stick REPLACE cannot change the
+	 * trajectory but still queues GGPO under ness_pk_defer until the status exits — soak
+	 * 11903082 @661 (sy 4→15) grew target to 679 (span 18) then PEER_SNAPSHOT figh @691.
+	 * Buttons/release still rewind. Hold/Start keep stick rewind (aim). Promote writes wire.
+	 * See docs/bugs/netplay_ness_jibaku_stick_ggpo_storm_eff_load_2026-07-17.md.
+	 */
+	if ((old_frame->buttons == wire->buttons) &&
+	    (syNetInputStickReplaceIsRelease(old_frame, wire) == FALSE) &&
+	    (syNetplayNessPlayerInJibakuStickAbsorbScope(player) != FALSE))
+	{
+		if (sSYNetInputGgpoSkipMicroLogsRemaining > 0U)
+		{
+			port_log(
+			    "SSB64 NetInput: GGPO stick replace skipped class=jibaku_stick player=%d sim_tick=%u "
+			    "old sx=%d sy=%d | wire sx=%d sy=%d\n",
+			    (int)player,
+			    (unsigned int)sim_tick,
+			    (int)old_frame->stick_x,
+			    (int)old_frame->stick_y,
+			    (int)wire->stick_x,
+			    (int)wire->stick_y);
+			sSYNetInputGgpoSkipMicroLogsRemaining--;
+		}
+		return FALSE;
+	}
+	/*
+	 * Already-simulated tick: release / buttons / onset / non-micro stick still rewind.
+	 * Same-intent ±micro deadband (default 3) Promote without episode — soak 1490370675
+	 * paid span-2 GGPO for 70/60→71/59 class noise. Feel-0 release (13,4→0,0) stays covered
+	 * by StickReplaceIsRelease. See docs/bugs/netplay_feel0_release_deadband_skips_ggpo_2026-07-12.md
+	 * and docs/bugs/netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md.
 	 */
 	if (syNetInputGetTick() > sim_tick)
 	{
+		u32 micro_db;
+		s32 dx;
+		s32 dy;
+
+		if (old_frame->buttons != wire->buttons)
+		{
+			return TRUE;
+		}
+		if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
+		{
+			return TRUE;
+		}
+		micro_db = syNetInputGgpoStickCompletedSimMicroDeadband();
+		dx = syNetInputAbsS8Diff(old_frame->stick_x, wire->stick_x);
+		dy = syNetInputAbsS8Diff(old_frame->stick_y, wire->stick_y);
+		if ((micro_db > 0U) && (dx <= (s32)micro_db) && (dy <= (s32)micro_db) &&
+		    (syNetInputStickLooksAnalog(old_frame->stick_x, old_frame->stick_y) != FALSE) &&
+		    (syNetInputStickLooksAnalog(wire->stick_x, wire->stick_y) != FALSE) &&
+		    (syNetInputStickSameAnalogIntent(old_frame->stick_x, old_frame->stick_y, wire->stick_x,
+		                                     wire->stick_y) != FALSE))
+		{
+			sSYNetInputGgpoClassSkippedMicro++;
+			if (sSYNetInputGgpoSkipMicroLogsRemaining > 0U)
+			{
+				port_log(
+				    "SSB64 NetInput: GGPO stick replace skipped class=micro_stick player=%d sim_tick=%u "
+				    "old sx=%d sy=%d | wire sx=%d sy=%d micro_db=%u\n",
+				    (int)player,
+				    (unsigned int)sim_tick,
+				    (int)old_frame->stick_x,
+				    (int)old_frame->stick_y,
+				    (int)wire->stick_x,
+				    (int)wire->stick_y,
+				    (unsigned int)micro_db);
+				sSYNetInputGgpoSkipMicroLogsRemaining--;
+			}
+			return FALSE;
+		}
+		/* Any remaining stick/button gameplay delta on completed sim still rewinds. */
 		return TRUE;
 	}
 	/*
@@ -3381,11 +3694,88 @@ sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInpu
 		return FALSE;
 	}
 	/*
-	 * Runway / feel-0 REPLACE: use confirmed deadband (default 4), not predict (14).
+	 * Runway / feel-0 REPLACE: use confirmed deadband (default 12), not predict (14).
 	 * Continuous stick ramps (Δ≈5–12) were "insignificant" under predict and Promote'd
 	 * without GGPO → p1 topn phase lag → FC inputs+figh diverge.
 	 */
 	return syNetInputGameplayCorrectionIsSignificantEx(old_frame, wire, FALSE);
+}
+
+const char *syNetInputClassifyGgpoCorrection(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
+{
+	u32 micro_db;
+	s32 dx;
+	s32 dy;
+
+	if ((old_frame == NULL) || (wire == NULL))
+	{
+		return "unknown";
+	}
+	if (old_frame->buttons != wire->buttons)
+	{
+		return "button";
+	}
+	if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
+	{
+		return "release";
+	}
+	if ((syNetInputFrameSticksNearNeutral(old_frame) != FALSE) &&
+	    (syNetInputFrameSticksNearNeutral(wire) == FALSE))
+	{
+		return "onset_from_zero";
+	}
+	micro_db = syNetInputGgpoStickCompletedSimMicroDeadband();
+	dx = syNetInputAbsS8Diff(old_frame->stick_x, wire->stick_x);
+	dy = syNetInputAbsS8Diff(old_frame->stick_y, wire->stick_y);
+	if ((micro_db > 0U) && (dx <= (s32)micro_db) && (dy <= (s32)micro_db) &&
+	    (syNetInputStickLooksAnalog(old_frame->stick_x, old_frame->stick_y) != FALSE) &&
+	    (syNetInputStickLooksAnalog(wire->stick_x, wire->stick_y) != FALSE) &&
+	    (syNetInputStickSameAnalogIntent(old_frame->stick_x, old_frame->stick_y, wire->stick_x, wire->stick_y) !=
+	     FALSE))
+	{
+		return "micro_stick";
+	}
+	return "real_stick";
+}
+
+void syNetInputNoteGgpoCorrectionQueued(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
+{
+	const char *cls;
+
+	cls = syNetInputClassifyGgpoCorrection(old_frame, wire);
+	if (strcmp(cls, "button") == 0)
+	{
+		sSYNetInputGgpoClassQueuedButton++;
+	}
+	else if (strcmp(cls, "onset_from_zero") == 0)
+	{
+		sSYNetInputGgpoClassQueuedOnset++;
+	}
+	else if (strcmp(cls, "release") == 0)
+	{
+		sSYNetInputGgpoClassQueuedRelease++;
+	}
+	else if (strcmp(cls, "micro_stick") == 0)
+	{
+		sSYNetInputGgpoClassQueuedMicro++;
+	}
+	else
+	{
+		sSYNetInputGgpoClassQueuedRealStick++;
+	}
+}
+
+void syNetInputLogGgpoCorrectionClassSummary(void)
+{
+	port_log(
+	    "SSB64 NetInput: GGPO_CLASS_SUMMARY queued button=%u onset_from_zero=%u release=%u real_stick=%u "
+	    "micro_stick=%u | skipped_micro=%u\n",
+	    (unsigned int)sSYNetInputGgpoClassQueuedButton,
+	    (unsigned int)sSYNetInputGgpoClassQueuedOnset,
+	    (unsigned int)sSYNetInputGgpoClassQueuedRelease,
+	    (unsigned int)sSYNetInputGgpoClassQueuedRealStick,
+	    (unsigned int)sSYNetInputGgpoClassQueuedMicro,
+	    (unsigned int)sSYNetInputGgpoClassSkippedMicro);
 }
 
 static void syNetInputMarkPublishedPredictedForStickReplace(s32 player, SYNetInputFrame *published)
@@ -3836,9 +4226,10 @@ static void syNetInputCommitRemoteConfirmedWire(s32 player, u32 wire_tick, u32 p
 		/*
 		 * Stick REPLACE policy (syNetInputStickReplaceNeedsRewind + QueueOrWiden):
 		 * Feel-0 provisional / gap-fill priors stamped RemoteConfirmed need mark-predicted + GGPO
-		 * before Promote. Completed-sim any delta; release never deferred; runway uses confirmed
-		 * deadband (not predict-14) so stick ramps queue GGPO. Open episodes absorb via widen.
-		 * See docs/bugs/netplay_stick_ramp_predict_deadband_silent_promote_2026-07-12.md.
+		 * before Promote. Completed-sim: buttons/release/non-micro stick; same-intent ±micro
+		 * Promote-only; release never deferred; runway uses confirmed deadband (not predict-14).
+		 * See docs/bugs/netplay_stick_ramp_predict_deadband_silent_promote_2026-07-12.md
+		 * and docs/bugs/netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md.
 		 */
 		if ((sim_tick != 0U) && (had_published != FALSE) && (had_prior_ring != FALSE) && (prior_ring != NULL) &&
 		    (syNetInputIsRemoteHumanSlot(player) != FALSE) &&
@@ -4436,9 +4827,23 @@ static void syNetInputMakePredictedFrameRemoteHuman(s32 player, u32 tick, SYNetI
 		}
 		else
 		{
-			stick_x = 0;
-			stick_y = 0;
-			had_stick_seed = FALSE;
+#if defined(SSB64_NETMENU)
+			SYNetInputFrame soft;
+
+			syNetInputMakeFrame(&soft, tick, buttons, 0, 0, nSYNetInputSourceRemotePredicted, TRUE);
+			syNetInputFillHoldLastSoftOnsetIfNeeded(player, tick, &soft);
+			if (syNetInputFrameSticksNearNeutral(&soft) == FALSE)
+			{
+				stick_x = soft.stick_x;
+				stick_y = soft.stick_y;
+			}
+			else
+#endif
+			{
+				stick_x = 0;
+				stick_y = 0;
+				had_stick_seed = FALSE;
+			}
 		}
 	}
 	if (last_confirmed->is_valid != FALSE)
@@ -4685,6 +5090,8 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 	if ((had_published != FALSE) && (syNetInputFrameGameplayEquals(&published, &ledger) != FALSE) &&
 	    (published.is_predicted == FALSE) && (published.source == nSYNetInputSourceRemoteConfirmed))
 	{
+		sSYNetInputSlots[player].last_confirmed = ledger;
+		syNetInputNoteRemoteNonNeutralStick(player, &ledger);
 		return TRUE;
 	}
 	/*
@@ -4701,6 +5108,14 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 	SYNETINPUT_STRICT_TAG("ledger_publish_refresh");
 	syNetInputStoreFrame(sSYNetInputHistory, player, &ledger);
 	syNetInputStrictReadyCacheInvalidate();
+	/*
+	 * Hold-last seeds from last_confirmed. Ledger wire/seal is authority — advance the seed so a
+	 * release confirm (-1,0) is not followed by hold_last of the pre-release stick (-64,-4) while
+	 * soft onset is suppressed. Soak1 1645329949: post-GGPO REMOTE_PUBLISH@2315 still hold_last
+	 * -64,-4 after ledger_wire@2313 -1,0.
+	 */
+	sSYNetInputSlots[player].last_confirmed = ledger;
+	syNetInputNoteRemoteNonNeutralStick(player, &ledger);
 	if ((syNetInputAuthorityPublishLogEnabled() != FALSE) &&
 	    ((ledger.stick_x != 0) || (ledger.stick_y != 0) || (ledger.buttons != 0)))
 	{
@@ -5258,8 +5673,16 @@ void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 	/*
 	 * Phase 2: remote publish prefers authority ledger over inventing sticks. Thin write-once
 	 * remains if ledger is empty and published is already confirmed.
+	 *
+	 * Sealed-episode resim: ResolveFrame already filled `frame` from the episode seal table.
+	 * Do not replace it with ledger — initiator remote ledger can disagree with the sealed
+	 * local-authority row the follower applies (soak1 1043859099 @979: Android ledger 7,83 vs
+	 * Linux sealed 32,72 → JumpAerial ja_vel fork @980 → PEER_SNAPSHOT). Seal is the resim
+	 * contract; ledger refresh runs after CommitPromoteSealed.
+	 * See docs/bugs/netplay_seal_ledger_resim_stick_fork_2026-07-19.md.
 	 */
-	if ((frame != NULL) && (syNetInputIsRemoteHumanSlot(player) != FALSE) && (frame->tick != 0U))
+	if ((frame != NULL) && (syNetInputIsRemoteHumanSlot(player) != FALSE) && (frame->tick != 0U) &&
+	    ((syNetRollbackIsResimulating() == FALSE) || (syNetRollbackEpisodeInputsSealed() == FALSE)))
 	{
 		SYNetInputFrame ledger;
 
@@ -5272,6 +5695,23 @@ void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 		          FALSE))
 		{
 			*frame = confirmed_keep;
+		}
+	}
+	else if ((frame != NULL) && (syNetInputIsRemoteHumanSlot(player) != FALSE) && (frame->tick != 0U) &&
+	         (syNetRollbackIsResimulating() != FALSE) && (syNetRollbackEpisodeInputsSealed() != FALSE) &&
+	         (syNetInputAuthorityPublishLogEnabled() != FALSE))
+	{
+		SYNetInputFrame ledger;
+
+		if ((syNetInputAuthorityLedgerTryGet(player, frame->tick, &ledger, NULL) != FALSE) &&
+		    (syNetInputFrameGameplayEquals(frame, &ledger) == FALSE))
+		{
+			port_log(
+			    "SSB64 NetInput: SEALED_RESIM_LEDGER_SKIP player=%d sim_tick=%u "
+			    "sealed btn=0x%04X sx=%d sy=%d | ledger btn=0x%04X sx=%d sy=%d\n",
+			    (int)player, (unsigned int)frame->tick, (unsigned int)frame->buttons,
+			    (int)frame->stick_x, (int)frame->stick_y, (unsigned int)ledger.buttons,
+			    (int)ledger.stick_x, (int)ledger.stick_y);
 		}
 	}
 #endif
@@ -8054,9 +8494,14 @@ static void syNetInputRollbackReconcileRemoteSlotFromSealed(s32 slot, u32 t)
 }
 
 /*
- * Post-resim: gSYControllerDevices may be rewritten by publish helpers while fp->input.pl still
- * reflects the resim replay path. Re-anchor pl latch from controllers + prior published stick so
- * the first live ftMainProcessInput tick does not emit spurious button/stick edges (tick 523 squat fork).
+ * Post-resim: gSYControllerDevices may already hold the exclusive-target tick (wire-lock republish
+ * for local slots runs just before this). ftMainProcessInput always does
+ *   pl->stick_prev = pl->stick_range;  then  pl->stick_range = controller;
+ * so pl->stick_range on entry MUST be the previous tick's stick — not the current device.
+ * Setting stick_range from the already-republished target device made local-auth peers skip the
+ * |stick|>=20 deadzone reset (soak 699967527: Linux tap_x stayed 254 at exclusive 631 while
+ * Android remote reset to 1 → fhash_light FC@640). Mirror button_hold from prev history so
+ * tap/release edges on the exclusive tick are not suppressed.
  */
 static void syNetInputRollbackResyncFighterPlLatchFromControllers(u32 sim_tick)
 {
@@ -8079,6 +8524,8 @@ static void syNetInputRollbackResyncFighterPlLatchFromControllers(u32 sim_tick)
 		SYController *controller;
 		SYNetInputFrame prev_frame;
 		s32 player;
+		s32 stick_x;
+		s32 stick_y;
 		u16 button_hold;
 
 		fp = ftGetStruct(fighter_gobj);
@@ -8093,19 +8540,39 @@ static void syNetInputRollbackResyncFighterPlLatchFromControllers(u32 sim_tick)
 		}
 		controller = &gSYControllerDevices[player];
 		pl = &fp->input.pl;
-		button_hold = syNetInputExpandControllerButtonHold(controller->button_hold);
 		if ((prev_tick < sim_tick) && (syNetInputGetHistoryFrame(player, prev_tick, &prev_frame) != FALSE))
 		{
-			pl->stick_prev.x = prev_frame.stick_x;
-			pl->stick_prev.y = prev_frame.stick_y;
+			stick_x = (s32)prev_frame.stick_x;
+			stick_y = (s32)prev_frame.stick_y;
+			button_hold = syNetInputExpandControllerButtonHold(prev_frame.buttons);
 		}
 		else
 		{
-			pl->stick_prev.x = controller->stick_range.x;
-			pl->stick_prev.y = controller->stick_range.y;
+			stick_x = (s32)controller->stick_range.x;
+			stick_y = (s32)controller->stick_range.y;
+			button_hold = syNetInputExpandControllerButtonHold(controller->button_hold);
 		}
-		pl->stick_range.x = controller->stick_range.x;
-		pl->stick_range.y = controller->stick_range.y;
+		if (stick_x > I_CONTROLLER_RANGE_MAX)
+		{
+			stick_x = I_CONTROLLER_RANGE_MAX;
+		}
+		if (stick_x < -I_CONTROLLER_RANGE_MAX)
+		{
+			stick_x = -I_CONTROLLER_RANGE_MAX;
+		}
+		if (stick_y > I_CONTROLLER_RANGE_MAX)
+		{
+			stick_y = I_CONTROLLER_RANGE_MAX;
+		}
+		if (stick_y < -I_CONTROLLER_RANGE_MAX)
+		{
+			stick_y = -I_CONTROLLER_RANGE_MAX;
+		}
+		pl->stick_prev.x = (s8)stick_x;
+		pl->stick_prev.y = (s8)stick_y;
+		/* ProcessInput copies stick_range → stick_prev before reading the device. */
+		pl->stick_range.x = (s8)stick_x;
+		pl->stick_range.y = (s8)stick_y;
 		pl->button_hold = button_hold;
 		pl->button_tap = 0;
 		pl->button_release = 0;
@@ -8416,6 +8883,23 @@ sb32 syNetInputCopyEpisodeLocalAuthoritySealFrame(s32 player, u32 tick, SYNetInp
 	{
 		return FALSE;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Prefer wire-locked published / transmitted over ResolveLocalAuthority (gameplay-first).
+	 * Gameplay can hold a later HID restage for the same sim tick while History still has the
+	 * LOCAL_PUBLISH / wire sample peers already consumed (soak1 1043859099: seal P0@979 got
+	 * gameplay 32,72 while History/wire was 7,83). Seal must match what the remote ledger has.
+	 */
+	if (syNetInputTryGetLocalWireLockedSample(player, tick, &row) != FALSE)
+	{
+		*out_frame = row;
+		out_frame->tick = tick;
+		out_frame->source = nSYNetInputSourceLocal;
+		out_frame->is_predicted = FALSE;
+		out_frame->is_valid = TRUE;
+		return TRUE;
+	}
+#endif
 	if (syNetInputResolveLocalAuthorityFrame(player, tick, &row) != FALSE)
 	{
 		*out_frame = row;

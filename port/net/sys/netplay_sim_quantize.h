@@ -156,11 +156,29 @@ extern void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *pha
                                             sb32 did_dash);
 
 /*
+ * `SSB64_JA_VEL_WITNESS=1`: log Ness JumpAerial ProcPhysics ja_vel pipeline
+ * (ja_in → DecMax/stick+friction → ja_out + drift → composed vel_air.x) under CLIFF sticky.
+ * Grep `JA_VEL_WITNESS`. Offline / non-NETMENU: no-op stub.
+ * See docs/bugs/netplay_jumpaerial_ja_vel_witness_2026-07-19.md.
+ */
+extern void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32 used_decmax,
+                                                    f32 ja_out, f32 drift, f32 vel_composed);
+
+/*
  * NETMENU + rollback live/resim: repair turn.lr_turn when union +16 was stomped to 0
  * (aliases attack4.lr / fallspecial.is_allow_interrupt). Soak 1378616925: flag1/allow OK but
  * lr_turn==0 blocked stick*lr_turn dash-out. See docs/bugs/netplay_turn_lr_turn_stomp_2026-07-12.md.
  */
 extern void syNetplayHardenTurnLrTurn(FTStruct *fp);
+
+/*
+ * Pin InvertLR/Center entry lr_dash (and DashCheckTurn smash refresh) so union stomps of
+ * turn.lr_dash (+0xC / attack4.unk_0xC) cannot clear the Turn→Dash gate. Soak 1646535146:
+ * Android lr_dash -1→0 at allow frame while Linux kept -1 → Turn vs Dash → FC figh.
+ * See docs/bugs/netplay_turn_lr_dash_stomp_fc_2026-07-19.md.
+ */
+extern void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash);
+extern void syNetplayHardenTurnLrDash(FTStruct *fp);
 
 /*
  * Grounded Captain Falcon Kick / landing slide: re-anchor MPColl pos_prev to TopN before gcRunAll so
@@ -223,7 +241,29 @@ extern void syNetplayNessHardenPKJibakuAirVelFromAngle(struct GObj *fighter_gobj
 
 extern void syNetplayCanonicalizeNessPKJibakuLaunchState(struct GObj *fighter_gobj);
 
+/**
+ * Coarse-snap pkthunder_pos onto the jibaku launch 1.0u grid before dist is
+ * computed (Hold head Δy can still straddle dist-only harden). See
+ * docs/bugs/netplay_ness_jibaku_launch_dist_hold_head_fc_2026-07-19.md.
+ */
+extern void syNetplayNessHardenPKJibakuLaunchAnchor(Vec3f *pkthunder_pos);
+
+/**
+ * Snap jibaku launch dist (fighter→pkthunder_pos) onto a 1.0u grid so cross-ISA
+ * Hold head ULP cannot fork atan2 → vel_air (0.25 straddled soak FC@2404). See
+ * docs/bugs/netplay_ness_jibaku_launch_dist_hold_head_fc_2026-07-18.md.
+ */
+extern void syNetplayNessHardenPKJibakuLaunchDist(f32 *dist_x, f32 *dist_y);
+
 extern void syNetplayCanonicalizeNessPKThunderWeaponSimState(struct GObj *weapon_gobj);
+
+/**
+ * After weapon map (wpMapTestAllCheckCollEnd): coarse-snap PK Thunder head
+ * translate onto the jibaku launch 1.0u grid while owner is in Hold. CLIFF
+ * soft-lip map drift accumulates past fine QuantizeDObjTranslate and poisons
+ * Hold→jibaku launch (soak 128512323). Offline / non-rollback no-op.
+ */
+extern void syNetplayNessHardenPKThunderHeadAfterMap(struct GObj *weapon_gobj);
 
 extern void syNetplayCanonicalizeNessPKThunderHoldSimState(struct GObj *fighter_gobj);
 

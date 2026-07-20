@@ -43,3 +43,9 @@ Unrelated to PSI Magnet / Psychic Magnet (hidden cosmetic, `effect_count=0`).
 ## Re-soak pass criteria
 
 Session `38366538` class: no `FRAME_COMMIT_STATE_DIVERGE` with `fc_div_fields=[eff]` during PK Thunder air hold; `netplay-scan-drift.py` RESULT PASS.
+
+## Follow-up
+
+The Start/Hold-only classifier scope dropped out at the hold→jibaku transition while the wave
+shell survived 2 more ticks, re-exposing the drifted `anim_frame` fold (soak `489290440` @3179):
+[`netplay_ness_pkwave_jibaku_eff_fold_dropout_2026-07-16.md`](netplay_ness_pkwave_jibaku_eff_fold_dropout_2026-07-16.md).

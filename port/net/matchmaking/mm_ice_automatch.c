@@ -24,6 +24,12 @@ extern int atoi(const char *str);
 #define ICE_LAN_RELAY_SETTLE_TICKS 60U
 /* Guest may match before host; allow time for host match + role-ready poll (60 Hz). */
 #define ICE_ROLE_READY_WAIT_MAX_TICKS 480U
+/*
+ * CONNECTING trickle cadence (non-LAN). Was 2 (~30 Hz) and starved Android poll-mode
+ * ICE via juice_pause_io on every HTTPS GET — soak connectivity lag + offer timeout.
+ */
+#define ICE_CONNECT_TRICKLE_INTERVAL_TICKS 30U
+#define ICE_CONNECT_TRICKLE_MIN_MS_DEFAULT 300U
 
 static char sIceTicket[64];
 static char sIceBind[144];
@@ -41,6 +47,8 @@ static u32 sPreTicketCandCount;
 static MmMatchResult sIceValidateMatch;
 static sb32 sIceValidateMatchActive;
 static sb32 sIceLikelyLanDirect;
+/** TRUE when this matched session shares a LAN subnet with the peer (trickle HTTPS off). */
+static sb32 sIceSharedLanSession;
 static u32 sIceCompletedSettleTicks;
 static u32 sIceLanRelaySettleTicks;
 static char sIceCompletedRemote[128];
@@ -53,6 +61,9 @@ static u32 sIceRoleReadyWaitTicks;
 static char sIceDeferredPeerSdp[4096];
 /** Set from BeginConnect until connect tick success/fail or Reset — blocks worker match polls. */
 static sb32 sIceConnectPhaseActive;
+/** ConnectTick already returned success once — block nested bootstrap during offer-exchange yield. */
+static sb32 sIceBootstrapHandoff;
+static u64 sIceConnectTrickleLastEnqueueMs;
 
 static char sIceQueueSdp[4096];
 static char sIceSavedStunHost[128];
@@ -833,6 +844,7 @@ void mnVSNetAutomatchAMIceReset(void)
 	sPreTicketCandCount = 0U;
 	sIceValidateMatchActive = FALSE;
 	sIceLikelyLanDirect = FALSE;
+	sIceSharedLanSession = FALSE;
 	sIceCompletedSettleTicks = 0U;
 	sIceLanRelaySettleTicks = 0U;
 	sIceCompletedRemote[0] = '\0';
@@ -841,6 +853,8 @@ void mnVSNetAutomatchAMIceReset(void)
 	sIceAwaitPeerControllingReady = FALSE;
 	sIceAwaitPeerRoleReadyLogged = FALSE;
 	sIceConnectPhaseActive = FALSE;
+	sIceBootstrapHandoff = FALSE;
+	sIceConnectTrickleLastEnqueueMs = 0ULL;
 	sIceDeferredPeerSdp[0] = '\0';
 	sIceQueueSdp[0] = '\0';
 	sIceSavedStunHost[0] = '\0';
@@ -1295,6 +1309,8 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 	sIceAwaitPeerControllingReady = FALSE;
 	sIceAwaitPeerRoleReadyLogged = FALSE;
 	sIceRoleReadyWaitTicks = 0U;
+	sIceBootstrapHandoff = FALSE;
+	sIceConnectTrickleLastEnqueueMs = 0ULL;
 	sIceDeferredPeerSdp[0] = '\0';
 	sIceHostRole = (mr != NULL && mr->you_are_host != FALSE) ? TRUE : FALSE;
 #if defined(__ANDROID__)
@@ -1302,6 +1318,11 @@ sb32 mnVSNetAutomatchAMIceBeginConnect(const MmMatchResult *mr)
 #endif
 	mnVSNetAutomatchAMIceRefreshLocalLanForPeer(mr);
 	mnVSNetAutomatchAMIceApplyCandidatePolicy(mr);
+	sIceSharedLanSession = mnVSNetAutomatchAMIceDeriveAllowPeerHost(mr);
+	if (sIceSharedLanSession != FALSE)
+	{
+		port_log("SSB64 ICE: shared-LAN session - CONNECTING trickle HTTPS disabled\n");
+	}
 	if (mr != NULL)
 	{
 		memcpy(&sIceValidateMatch, mr, sizeof(sIceValidateMatch));
@@ -1472,6 +1493,11 @@ static sb32 mnVSNetAutomatchAMIceConnectingTrickleAsyncActive(void)
 	{
 		return FALSE;
 	}
+	/* Shared-LAN match: queue SDP already carries host candidates; trickle HTTPS only hurts. */
+	if (sIceSharedLanSession != FALSE)
+	{
+		return FALSE;
+	}
 	if ((sIceAwaitPeerControllingReady != FALSE) && (sIceRemoteDescApplied == FALSE))
 	{
 		return TRUE;
@@ -1482,6 +1508,52 @@ static sb32 mnVSNetAutomatchAMIceConnectingTrickleAsyncActive(void)
 		return TRUE;
 	}
 	return FALSE;
+}
+
+static u32 mnVSNetAutomatchAMIceConnectTrickleMinMs(void)
+{
+	const char *e;
+	s32 ms;
+
+	e = getenv("SSB64_MATCHMAKING_ICE_CONNECT_TRICKLE_MIN_MS");
+	ms = (e != NULL && e[0] != '\0') ? atoi(e) : (s32)ICE_CONNECT_TRICKLE_MIN_MS_DEFAULT;
+	if (ms < 50)
+	{
+		ms = 50;
+	}
+	if (ms > 2000)
+	{
+		ms = 2000;
+	}
+	return (u32)ms;
+}
+
+sb32 mnVSNetAutomatchAMIceConnectTrickleMayEnqueue(void)
+{
+	u64 now;
+	u32 min_ms;
+
+	if (sIceSharedLanSession != FALSE)
+	{
+		return FALSE;
+	}
+	if ((mmIceIsConnected() != FALSE) || (mmIceIsCompleted() != FALSE))
+	{
+		return FALSE;
+	}
+	now = syNetPeerOsMonotonicMs();
+	min_ms = mnVSNetAutomatchAMIceConnectTrickleMinMs();
+	if ((sIceConnectTrickleLastEnqueueMs != 0ULL) &&
+	    ((now - sIceConnectTrickleLastEnqueueMs) < (u64)min_ms))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+void mnVSNetAutomatchAMIceConnectTrickleNoteEnqueued(void)
+{
+	sIceConnectTrickleLastEnqueueMs = syNetPeerOsMonotonicMs();
 }
 
 sb32 mnVSNetAutomatchAMIceWorkerMatchPollBlocked(sb32 trickle_only)
@@ -1604,6 +1676,12 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 	{
 		return -1;
 	}
+	/* Offer-exchange yields the game thread; do not re-enter bootstrap. */
+	if (sIceBootstrapHandoff != FALSE)
+	{
+		(void)mmIcePoll();
+		return 0;
+	}
 	if (mnVSNetAutomatchAMIceConnectTickEnter() == FALSE)
 	{
 		mnVSNetAutomatchAMIceConnectTickLeave();
@@ -1719,13 +1797,20 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 	st = mmIcePoll();
 	mnVSNetAutomatchAMIceDrainRemoteCandidates();
 	mnVSNetAutomatchAMIceMaybePostRemoteGatheringDone();
-	if (st == MM_ICE_STATE_COMPLETED)
+	/*
+	 * CONNECTED is enough for bootstrap datagrams. Waiting only for COMPLETED
+	 * lets Android (poll + HTTPS pause) lag the host's offer window after the
+	 * pair is already nominated — soak offer-exchange timeouts.
+	 */
+	if ((st == MM_ICE_STATE_COMPLETED) || (st == MM_ICE_STATE_CONNECTED))
 	{
 		char remote[128];
 		sb32 skip_path_validate;
+		const char *ready_word;
 
 		remote[0] = '\0';
 		skip_path_validate = FALSE;
+		ready_word = (st == MM_ICE_STATE_COMPLETED) ? "completed" : "connected";
 		if (mmIceGetSelectedPath(NULL, 0U, remote, sizeof(remote)) == FALSE || remote[0] == '\0')
 		{
 			if (sIceCompletedRemote[0] != '\0')
@@ -1740,12 +1825,17 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 				{
 					snprintf(sIceCompletedRemote, sizeof(sIceCompletedRemote), "%s", remote);
 				}
+				if ((st == MM_ICE_STATE_CONNECTED) && (mnVSNetAutomatchAMIceEnvVerbose() != FALSE) &&
+				    ((sIceCompletedSettleTicks % 120U) == 1U))
+				{
+					port_log("SSB64 ICE: waiting for selected path (state=connected)\n");
+				}
 				ret = 0;
 				goto ice_connect_done;
 			}
 			else if (mmIceIsConnected() != FALSE)
 			{
-				port_log("SSB64 ICE: completed but selected path unavailable after settle (continuing)\n");
+				port_log("SSB64 ICE: %s but selected path unavailable after settle (continuing)\n", ready_word);
 				skip_path_validate = TRUE;
 			}
 			else
@@ -1761,7 +1851,7 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 		{
 			snprintf(sIceCompletedRemote, sizeof(sIceCompletedRemote), "%s", remote);
 			sIceCompletedSettleTicks = 0U;
-			port_log("SSB64 ICE: completed remote=%s\n", remote);
+			port_log("SSB64 ICE: %s remote=%s\n", ready_word, remote);
 		}
 		mmIceLogSelectedCandidates();
 		if (sIceValidateMatchActive != FALSE)
@@ -1804,25 +1894,18 @@ s32 mnVSNetAutomatchAMIceConnectTick(void)
 			}
 			sIceValidateMatchActive = FALSE;
 		}
+		if (sIceTicket[0] != '\0')
+		{
+			mmMatchmakingDropPendingPollMatchJobs(sIceTicket);
+		}
+		mmIceEnsureIoResumed();
 		syNetPeerSetIceTransport(TRUE);
+		sIceBootstrapHandoff = TRUE;
 		ret = 1;
 		goto ice_connect_done;
 	}
 	sIceCompletedSettleTicks = 0U;
 	sIceLanRelaySettleTicks = 0U;
-	if (st == MM_ICE_STATE_CONNECTED)
-	{
-		if (mnVSNetAutomatchAMIceEnvVerbose() != FALSE)
-		{
-			static u32 sIceConnectedLogTicks;
-
-			sIceConnectedLogTicks++;
-			if ((sIceConnectedLogTicks % 120U) == 1U)
-			{
-				port_log("SSB64 ICE: waiting for completed (state=connected)\n");
-			}
-		}
-	}
 	if (st == MM_ICE_STATE_FAILED)
 	{
 		sIceConnectFailReason = "ICE connection failed";
@@ -1958,6 +2041,11 @@ sb32 mnVSNetAutomatchAMIceBootstrapPeer(const MmMatchResult *mr, const char *bin
 	{
 		return FALSE;
 	}
+	if ((mr->ticket_id[0] != '\0'))
+	{
+		mmMatchmakingDropPendingPollMatchJobs(mr->ticket_id);
+	}
+	mmIceEnsureIoResumed();
 	syNetPeerSetAutomatchBootstrapContextEx(mr->match_id, mr->ticket_id, mr->peer_player_id);
 	if ((mmIceGetSelectedPath(NULL, 0U, remote, sizeof(remote)) == FALSE) || (remote[0] == '\0'))
 	{
@@ -2017,7 +2105,12 @@ u32 mnVSNetAutomatchAMIceConnectTricklePollInterval(void)
 	{
 		return 0U;
 	}
-	return 2U;
+	/* Shared-LAN match: host/srflx already in peer SDP; 30 Hz trickle was the connectivity lag. */
+	if (sIceSharedLanSession != FALSE)
+	{
+		return 0U;
+	}
+	return ICE_CONNECT_TRICKLE_INTERVAL_TICKS;
 }
 
 #endif /* PORT && SSB64_NETMENU && SSB64_NETPLAY_ICE */

@@ -54,7 +54,7 @@ extern sb32 mmIceParseBindPortFromSpec(const char *bind_hostport, u16 *out_port)
 extern sb32 mmIceGetLocalHostHostport(char *out, u32 out_cap);
 /** Peer-directed local typ=host host:port (multi-NIC route/subnet aware). */
 extern sb32 mmIceGetLocalHostHostportForPeer(const char *peer_hostport, char *out, u32 out_cap);
-/** Post-ICE bootstrap bind: selected local path, else peer-directed host, else reflexive. */
+/** Post-ICE bootstrap bind: RFC1918 selected local, else peer-directed/local host (never srflx/WAN). */
 extern sb32 mmIceGetBootstrapBindHostport(const char *peer_hostport, char *out, u32 out_cap);
 extern void mmIceSetCallbacks(MmIceOnLocalCandidateFn on_candidate, MmIceOnGatheringDoneFn on_gathering_done,
                               void *user_ptr);

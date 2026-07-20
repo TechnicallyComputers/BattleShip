@@ -60,6 +60,7 @@ Re-soak Android↔Linux Dream Land with soft-platform air travel that crosses pl
 
 ## Related
 
+- [`netplay_airborne_cliff_lip_direct_wall_fc_drift_2026-07-17.md`](netplay_airborne_cliff_lip_direct_wall_fc_drift_2026-07-17.md) — unattached lip (`fline=-1`): direct/ceil-edge AdjNew walls still fork after this gate
 - [`netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md`](netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md) — PASS air `pos_prev` harden
 - [`netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md`](netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md) — broaden harden scope (necessary but insufficient for CLIFF lip wall path)
 - [`netplay_cliff_floor_pass_harden_fc_drift_2026-07-11.md`](netplay_cliff_floor_pass_harden_fc_drift_2026-07-11.md) — grounded CLIFF walk

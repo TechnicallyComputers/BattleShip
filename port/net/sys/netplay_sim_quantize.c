@@ -15,6 +15,7 @@
 #include <gr/ground.h>
 #include <mp/map.h>
 #include <mp/mpdef.h>
+#include <mp/mpprocess.h>
 #include <sc/scene.h>
 
 #include <lb/lbcommon.h>
@@ -958,10 +959,30 @@ sb32 syNetplayFighterInNessPKWaveSimScope(const FTStruct *fp)
 	{
 		return FALSE;
 	}
-	if ((fp->status_id == nFTNessStatusSpecialHiStart) || (fp->status_id == nFTNessStatusSpecialHiHold) ||
-	    (fp->status_id == nFTNessStatusSpecialAirHiStart) || (fp->status_id == nFTNessStatusSpecialAirHiHold))
+	/*
+	 * Full PK Thunder Hi status family, not just Start/Hold. The wave shell survives 1-2 ticks
+	 * past hold exit (jibaku/end/bound); anim_frame is allowed to drift cross-ISA during hold
+	 * (fold uses status_total_tics), so if the classifier drops out at the status transition the
+	 * eff fold falls back to the drifted anim_frame and frame-commit forks with matching inputs
+	 * (soak1 489290440 @3179-3180: jibaku @3179, eff-only FC diverge validation=3181 -> hang).
+	 * Matches the snapshot layer, which already stamps respawn=NESS_PK_WAVE through jibaku scope.
+	 * See docs/bugs/netplay_ness_pkwave_jibaku_eff_fold_dropout_2026-07-16.md.
+	 */
+	switch (fp->status_id)
 	{
+	case nFTNessStatusSpecialHiStart:
+	case nFTNessStatusSpecialHiHold:
+	case nFTNessStatusSpecialHiEnd:
+	case nFTNessStatusSpecialHiJibaku:
+	case nFTNessStatusSpecialAirHiStart:
+	case nFTNessStatusSpecialAirHiHold:
+	case nFTNessStatusSpecialAirHiEnd:
+	case nFTNessStatusSpecialAirHiBound:
+	case nFTNessStatusSpecialAirHiJibaku:
 		return TRUE;
+
+	default:
+		break;
 	}
 	return FALSE;
 }
@@ -1250,6 +1271,109 @@ void syNetplayCanonicalizeNessSpecialLwSimState(GObj *fighter_gobj)
 	}
 }
 
+/*
+ * Coarse launch-dist grid (world units). 1/65536 quantize cannot absorb Hold head ULP
+ * (~0.04–0.11 at soak1 FC@2534); 0.25 collapses that class while keeping aim feel.
+ */
+/*
+ * 0.25 straddled soak 1540234570 FC@2404 (raw dy -13.85 vs -13.90 → -13.75/-14.00).
+ * 1.0 reunifies that case and soak 1416106492 FC@2534; still tiny vs collide box.
+ */
+#define SYNETPLAY_JIBAKU_LAUNCH_DIST_GRID 1.0F
+
+static f32 syNetplayQuantizeF32JibakuLaunchDistGrid(f32 value)
+{
+	f64 scaled;
+	f32 result;
+
+	if (SYNETPLAY_JIBAKU_LAUNCH_DIST_GRID <= 0.0F)
+	{
+		return value;
+	}
+	scaled = (f64)value / (f64)SYNETPLAY_JIBAKU_LAUNCH_DIST_GRID;
+	if (scaled >= 0.0)
+	{
+		scaled = floor(scaled + 0.5);
+	}
+	else
+	{
+		scaled = ceil(scaled - 0.5);
+	}
+	result = (f32)(scaled * (f64)SYNETPLAY_JIBAKU_LAUNCH_DIST_GRID);
+	return (result == 0.0F) ? 0.0F : result;
+}
+
+void syNetplayNessHardenPKJibakuLaunchAnchor(Vec3f *pkthunder_pos)
+{
+	if ((pkthunder_pos == NULL) || (syNetplaySimQuantizeActive() == FALSE))
+	{
+		return;
+	}
+	/*
+	 * Coarse-snap the self-hit anchor before dist = fighter − pkthunder_pos.
+	 * Dist-only 1.0u harden still straddles when Hold head Δy ≈ 0.34u puts raw
+	 * dist_y on opposite sides of a half-unit midpoint (soak C FC@3732:
+	 * −7.17 → −7 vs −7.51 → −8). Same grid as launch dist.
+	 * See docs/bugs/netplay_ness_jibaku_launch_dist_hold_head_fc_2026-07-19.md.
+	 */
+	pkthunder_pos->x = syNetplayQuantizeF32JibakuLaunchDistGrid(pkthunder_pos->x);
+	pkthunder_pos->y = syNetplayQuantizeF32JibakuLaunchDistGrid(pkthunder_pos->y);
+	pkthunder_pos->z = syNetplayQuantizeF32JibakuLaunchDistGrid(pkthunder_pos->z);
+}
+
+void syNetplayNessHardenPKThunderHeadAfterMap(GObj *weapon_gobj)
+{
+	WPStruct *wp;
+	FTStruct *fp;
+	DObj *dobj;
+
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	if (weapon_gobj == NULL)
+	{
+		return;
+	}
+	wp = wpGetStruct(weapon_gobj);
+	if ((wp == NULL) || (wp->kind != nWPKindPKThunderHead) || (wp->owner_gobj == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(wp->owner_gobj);
+	if ((fp == NULL) || (syNetplayFighterInNessPKThunderHoldSimScope(fp) == FALSE))
+	{
+		return;
+	}
+	/*
+	 * Fine QuantizeDObjTranslate after ProcUpdate is not enough: wpMap floor/wall
+	 * AdjNew on CLIFF can still accumulate cross-ISA ULP until Hold→jibaku
+	 * Refresh copies a forked head into pkthunder_pos (soak 128512323 @2043–2064).
+	 * Same 1.0u grid as syNetplayNessHardenPKJibakuLaunchAnchor.
+	 * See docs/bugs/netplay_pkthunder_hold_head_cliff_mplanding_jibaku_2026-07-19.md.
+	 */
+	dobj = DObjGetStruct(weapon_gobj);
+	if (dobj == NULL)
+	{
+		return;
+	}
+	syNetplayNessHardenPKJibakuLaunchAnchor(&dobj->translate.vec.f);
+}
+
+void syNetplayNessHardenPKJibakuLaunchDist(f32 *dist_x, f32 *dist_y)
+{
+	if ((dist_x == NULL) || (dist_y == NULL))
+	{
+		return;
+	}
+	if (syNetplaySimQuantizeActive() == FALSE)
+	{
+		return;
+	}
+	*dist_x = syNetplayQuantizeF32JibakuLaunchDistGrid(*dist_x);
+	*dist_y = syNetplayQuantizeF32JibakuLaunchDistGrid(*dist_y);
+}
+
 void syNetplayCanonicalizeNessPKJibakuLaunchState(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -1472,8 +1596,9 @@ static sb32 syNetplayFighterInAirborneDamageKnockbackScope(const FTStruct *fp)
  * exactly that tick's physics displacement (same class as grounded pass harden).
  * Note: ftMainProcPhysicsMap already snapshots pos_prev=TopN each tick; this harden mainly
  * covers snapshot capture/load + quantize. Live Cross-ISA TopN.x forks on CLIFF-only lips are
- * AdjNew wall-from-floor (PASS skips that path) — see
- * docs/bugs/netplay_airborne_cliff_lip_wall_from_floor_fc_drift_2026-07-13.md.
+ * AdjNew wall-from-floor / FloorEdge / landing-edge (PASS skips wall-from-floor) — see
+ * docs/bugs/netplay_airborne_cliff_lip_wall_from_floor_fc_drift_2026-07-13.md and
+ * docs/bugs/netplay_airborne_cliff_lip_jumpaerial_fc_drift_2026-07-18.md.
  * See also docs/bugs/netplay_jumpaerial_pass_floor_fc_drift_2026-07-12.md and
  * docs/bugs/netplay_airborne_pass_cliff_coll_harden_fc_drift_2026-07-13.md.
  */
@@ -1812,6 +1937,7 @@ static void syNetplayHardenJumpAerialPassCollForFighter(GObj *fighter_gobj)
 {
 	FTStruct *fp;
 	Vec3f *topn;
+	ftCommonJumpAerialStatusVars *jumpaerial;
 
 	if (fighter_gobj == NULL)
 	{
@@ -1830,6 +1956,19 @@ static void syNetplayHardenJumpAerialPassCollForFighter(GObj *fighter_gobj)
 	if (syNetplaySimQuantizeActive() != FALSE)
 	{
 		syNetplayQuantizeDObjTranslate(fp->joints[nFTPartsJointTopN]);
+		/*
+		 * soak1 1828471508: Ness JumpAerialF over Dream Land CLIFF lip forked TopN.x
+		 * while Y matched. Ness/Yoshi double-jump feeds vel from TransN + status_vars
+		 * vel_x/drift — quantize those with vel_air so BeforeSim/post-tick cannot keep
+		 * raw cross-ISA drift into the next CliffFloorCeil segment.
+		 */
+		syNetplayQuantizeFighterPhysics(&fp->physics);
+		if ((fp->status_id == nFTCommonStatusJumpAerialF) || (fp->status_id == nFTCommonStatusJumpAerialB))
+		{
+			jumpaerial = ftStatusVarsJumpAerial(fp);
+			jumpaerial->drift = syNetplayQuantizeF32(jumpaerial->drift);
+			jumpaerial->vel_x = syNetplayQuantizeF32(jumpaerial->vel_x);
+		}
 	}
 	fp->coll_data.p_translate = topn;
 	fp->coll_data.p_lr = &fp->lr;
@@ -2255,21 +2394,97 @@ void syNetplayHardenAnimEndWaitThresholdBeforeSim(void)
 	}
 }
 
-void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32 flag1_before,
-                                      sb32 did_dash)
+/*
+ * InvertLR Turn entry pins ±1 here; Center pins 0. Restored by HardenTurnLrDash when the
+ * live union slot is stomped (soak 1646535146 Android lr_dash -1→0 at allow frame).
+ */
+static s32 sSYNetplayTurnEntryLrDash[GMCOMMON_PLAYERS_MAX];
+static sb32 sTurnDashWitnessCached = -999;
+
+static sb32 syNetplayTurnDashWitnessEnabled(void)
 {
-	static sb32 sTurnDashWitnessCached = -999;
-	FTStruct *fp;
-	ftCommonTurnStatusVars *turn;
 	const char *e;
-	u32 tick;
 
 	if (sTurnDashWitnessCached == -999)
 	{
 		e = getenv("SSB64_TURN_DASH_WITNESS");
 		sTurnDashWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 	}
-	if (sTurnDashWitnessCached == 0)
+	return sTurnDashWitnessCached;
+}
+
+void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
+{
+	s32 pi;
+
+	if (fp == NULL)
+	{
+		return;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+	sSYNetplayTurnEntryLrDash[pi] = lr_dash;
+}
+
+void syNetplayHardenTurnLrDash(FTStruct *fp)
+{
+	ftCommonTurnStatusVars *turn;
+	s32 pi;
+	s32 entry;
+	s32 was;
+
+	if (syNetplayRollbackSemanticsActive() == FALSE)
+	{
+		return;
+	}
+	if ((fp == NULL) || (fp->status_id != nFTCommonStatusTurn))
+	{
+		return;
+	}
+	turn = ftStatusVarsTurn(fp);
+	if (turn == NULL)
+	{
+		return;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+	entry = sSYNetplayTurnEntryLrDash[pi];
+	/*
+	 * Center turns intentionally keep lr_dash==0 (entry sticky 0). InvertLR / DashCheckTurn
+	 * smash refresh pin ±1 — restore when union +0xC (attack4.unk_0xC) clears it.
+	 */
+	if ((entry == 0) || (turn->lr_dash == entry))
+	{
+		return;
+	}
+	was = turn->lr_dash;
+	turn->lr_dash = entry;
+	if (syNetplayTurnDashWitnessEnabled() != FALSE)
+	{
+		port_log(
+		    "SSB64 TURN_DASH_WITNESS phase=harden_lr_dash tick=%u player=%d was=%d now=%d "
+		    "entry=%d lr_turn=%d attacks4_buf=%d\n",
+		    (unsigned)syNetInputGetTick(), (int)pi, was, turn->lr_dash, entry,
+		    (int)turn->lr_turn, (int)turn->attacks4_buffer);
+	}
+}
+
+void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32 flag1_before,
+                                      sb32 did_dash)
+{
+	FTStruct *fp;
+	ftCommonTurnStatusVars *turn;
+	u32 tick;
+	s32 entry;
+	s32 pi;
+
+	if (syNetplayTurnDashWitnessEnabled() == FALSE)
 	{
 		return;
 	}
@@ -2284,21 +2499,27 @@ void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32
 	}
 	turn = ftStatusVarsTurn(fp);
 	tick = syNetInputGetTick();
+	pi = fp->player;
+	entry = ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX)) ? sSYNetplayTurnEntryLrDash[pi] : 0;
 	port_log(
 	    "SSB64 TURN_DASH_WITNESS phase=%s tick=%u player=%d flag1=%d allow=%d disable_sa=%d "
-	    "lr_dash=%d lr_turn=%d lr=%d sx=%d tap_x=%u anim_frame=%.6f did_dash=%d\n",
+	    "lr_dash=%d entry_lr_dash=%d lr_turn=%d lr=%d sx=%d tap_x=%u attacks4_buf=%d "
+	    "anim_frame=%.6f did_dash=%d\n",
 	    phase, (unsigned)tick, (int)fp->player, (int)flag1_before,
 	    (int)((turn != NULL) ? turn->is_allow_turn_direction : 0),
 	    (int)((turn != NULL) ? turn->is_disable_sa_interrupts : 0),
-	    (int)((turn != NULL) ? turn->lr_dash : 0), (int)((turn != NULL) ? turn->lr_turn : 0),
-	    (int)fp->lr, (int)fp->input.pl.stick_range.x, (unsigned)fp->tap_stick_x,
-	    (double)fighter_gobj->anim_frame, (int)did_dash);
+	    (int)((turn != NULL) ? turn->lr_dash : 0), entry,
+	    (int)((turn != NULL) ? turn->lr_turn : 0), (int)fp->lr,
+	    (int)fp->input.pl.stick_range.x, (unsigned)fp->tap_stick_x,
+	    (int)((turn != NULL) ? turn->attacks4_buffer : -1), (double)fighter_gobj->anim_frame,
+	    (int)did_dash);
 }
 
 void syNetplayHardenTurnLrTurn(FTStruct *fp)
 {
 	ftCommonTurnStatusVars *turn;
 	s32 repaired;
+	s32 pi;
 
 	if (syNetplayRollbackSemanticsActive() == FALSE)
 	{
@@ -2316,10 +2537,16 @@ void syNetplayHardenTurnLrTurn(FTStruct *fp)
 	/*
 	 * InvertLR entry stores the same ±1 in lr_dash. Center turn has lr_dash==0; recover from
 	 * facing (pre-flip: opposite; post-allow: facing is already the turn direction).
+	 * Prefer entry sticky when live lr_dash was stomped (soak 1646535146).
 	 */
+	pi = fp->player;
 	if (turn->lr_dash != 0)
 	{
 		repaired = turn->lr_dash;
+	}
+	else if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayTurnEntryLrDash[pi] != 0))
+	{
+		repaired = sSYNetplayTurnEntryLrDash[pi];
 	}
 	else if (turn->is_allow_turn_direction != FALSE)
 	{
@@ -2335,6 +2562,69 @@ void syNetplayHardenTurnLrTurn(FTStruct *fp)
 	}
 	turn->lr_turn = repaired;
 }
+
+static sb32 sJaVelWitnessCached = -999;
+
+static sb32 syNetplayJaVelWitnessEnabled(void)
+{
+	const char *e;
+
+	if (sJaVelWitnessCached == -999)
+	{
+		e = getenv("SSB64_JA_VEL_WITNESS");
+		sJaVelWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	return sJaVelWitnessCached;
+}
+
+/*
+ * Soak 2120480047 @514: SoftLipPhase ja matched @513 then Android stick+friction from
+ * 10.68 → 9.04 while Linux math behaved as ja_in=0 → −0.84. Name the ProcPhysics
+ * pipeline before any ja_vel harden.
+ */
+void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32 used_decmax,
+                                             f32 ja_out, f32 drift, f32 vel_composed)
+{
+	FTStruct *fp;
+	u32 ja_in_bits;
+	u32 ja_out_bits;
+	u32 drift_bits;
+	u32 vel_bits;
+	u32 sticky;
+	u32 fflags;
+	s32 pi;
+
+	if (syNetplayJaVelWitnessEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((syNetplayRollbackSemanticsActive() == FALSE) || (fighter_gobj == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || ((fp->status_id != nFTCommonStatusJumpAerialF) &&
+	                     (fp->status_id != nFTCommonStatusJumpAerialB)))
+	{
+		return;
+	}
+	pi = fp->player;
+	sticky = ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX)) ? mpProcessNetplaySoftLipStickyGet(pi) : 0U;
+	fflags = fp->coll_data.floor_flags;
+	memcpy(&ja_in_bits, &ja_in, sizeof(ja_in_bits));
+	memcpy(&ja_out_bits, &ja_out, sizeof(ja_out_bits));
+	memcpy(&drift_bits, &drift, sizeof(drift_bits));
+	memcpy(&vel_bits, &vel_composed, sizeof(vel_bits));
+	port_log(
+	    "SSB64 JA_VEL_WITNESS phase=exit tick=%u player=%d status=%d stick_x=%d stick_y=%d "
+	    "ja_in=0x%08X decmax=%d ja_out=0x%08X drift=0x%08X vel=0x%08X sticky=0x%08X "
+	    "fflags=0x%08X resim=%d\n",
+	    (unsigned)syNetInputGetTick(), (int)pi, (int)fp->status_id,
+	    (int)fp->input.pl.stick_range.x, (int)fp->input.pl.stick_range.y,
+	    (unsigned)ja_in_bits, (int)(used_decmax != FALSE), (unsigned)ja_out_bits,
+	    (unsigned)drift_bits, (unsigned)vel_bits, (unsigned)sticky, (unsigned)fflags,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
 #else
 void syNetplayHardenAnimEndWaitThresholdBeforeSim(void)
 {
@@ -2349,7 +2639,29 @@ void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32
 	(void)did_dash;
 }
 
+void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32 used_decmax,
+                                             f32 ja_out, f32 drift, f32 vel_composed)
+{
+	(void)fighter_gobj;
+	(void)ja_in;
+	(void)used_decmax;
+	(void)ja_out;
+	(void)drift;
+	(void)vel_composed;
+}
+
 void syNetplayHardenTurnLrTurn(FTStruct *fp)
+{
+	(void)fp;
+}
+
+void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
+{
+	(void)fp;
+	(void)lr_dash;
+}
+
+void syNetplayHardenTurnLrDash(FTStruct *fp)
 {
 	(void)fp;
 }

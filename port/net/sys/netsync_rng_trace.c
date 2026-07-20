@@ -167,17 +167,6 @@ static sb32 syNetSyncRngTraceShouldRecord(u32 tick)
 	return (syNetSyncRngHashTraceEnabled() != FALSE) || (syNetSyncRngStepTraceEnabled() != FALSE);
 }
 
-static u32 syNetSyncRngTraceCallerSite(void)
-{
-#if defined(__GNUC__)
-	uintptr_t site = (uintptr_t)__builtin_extract_return_addr(__builtin_return_address(0));
-
-	return (u32)site;
-#else
-	return 0U;
-#endif
-}
-
 static void syNetSyncRngTraceResetRing(void)
 {
 	sSYNetSyncRngTraceStepCount = 0U;
@@ -271,7 +260,7 @@ void syNetSyncRngTraceBeforeGameSeedStep(void)
 	}
 }
 
-void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after)
+void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 {
 	u32 tick;
 	u32 step_idx;
@@ -294,7 +283,7 @@ void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after)
 	site = 0U;
 	if (syNetSyncRngStepSiteEnabled() != FALSE)
 	{
-		site = syNetSyncRngTraceCallerSite();
+		site = caller_site;
 	}
 	if (step_idx < SYNET_SYNC_RNG_STEP_RING_MAX)
 	{
@@ -425,9 +414,10 @@ void syNetSyncRngTraceBeforeGameSeedStep(void)
 {
 }
 
-void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after)
+void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 {
 	(void)seed_after;
+	(void)caller_site;
 }
 
 void syNetSyncLogRngHashWalkTrace(u32 sim_tick)

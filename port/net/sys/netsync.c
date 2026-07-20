@@ -281,6 +281,16 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 #endif
 	}
 #if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Soak 2120480047 @514: SoftLipPhase ja_vel forked while fhash_light still matched
+	 * @512 (vel_air.x includes drift; jumpaerial.vel_x did not fold). Catch ja_in=0
+	 * writers one tick earlier via FIGHTER_LIGHT_ONSET.
+	 */
+	if ((fp->status_id == nFTCommonStatusJumpAerialF) || (fp->status_id == nFTCommonStatusJumpAerialB))
+	{
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsJumpAerial(fp)->vel_x));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsJumpAerial(fp)->drift));
+	}
 	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{
@@ -985,11 +995,13 @@ static void syNetSyncReconcileBattleTimePassedCore(u32 sim_tick)
 
 void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
 {
-	/* Live forward step only — not rollback load/resim replay of historical ticks. */
-	if (syNetRollbackIsResimulating() != FALSE)
-	{
-		return;
-	}
+	/*
+	 * Must run on both live and resim battle steps. Netplay disables wall-clock
+	 * time_passed advances; without this, deepen/resim leaves the load-tick clock
+	 * frozen while fighters advance → world-only baseline diverge (soak1 post-Go).
+	 * Refuse mismatched GetTick so load-time callers cannot stamp the frontier
+	 * clock onto a historical slot (LOAD_HASH_DRIFT, 2026-05-17).
+	 */
 	if (sim_tick != syNetInputGetTick())
 	{
 		return;
@@ -999,11 +1011,7 @@ void syNetSyncReconcileBattleTimePassedForSimTick(u32 sim_tick)
 
 void syNetSyncReconcileBattleTimePassedForSnapshotSave(u32 completed_sim_tick)
 {
-	/* Persist clock fields for the tick being snapshotted; still skip during active resim. */
-	if (syNetRollbackIsResimulating() != FALSE)
-	{
-		return;
-	}
+	/* Persist clock for the tick being snapshotted — including resim rewrite slots. */
 	syNetSyncReconcileBattleTimePassedCore(completed_sim_tick);
 }
 
@@ -1679,6 +1687,7 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		    "SSB64 NetSync: fighter_detail tag=%s tick=%u slot=%d gobj=%u fkind=%d status=%d motion=%d dmg=%d shield=%d stock=%d lr=%d ga=%d jumps=%u hitlag=%u status_tics=%u "
 		    "top=(0x%08X,0x%08X,0x%08X) pos_prev=(0x%08X,0x%08X,0x%08X) pos_diff=(0x%08X,0x%08X,0x%08X) "
 		    "vel_air=(0x%08X,0x%08X,0x%08X) vel_dmg_air=(0x%08X,0x%08X,0x%08X) vel_ground=(0x%08X,0x%08X) vel_dmg_ground=0x%08X vel_jostle=(0x%08X,0x%08X) "
+		    "anim_vel=(0x%08X,0x%08X,0x%08X) tap_stick=(%u,%u) hold_stick=(%u,%u) "
 		    "coll_masks=%04X/%04X/%04X/%04X coll_tic=%u floor=%d ceil=%d lwall=%d rwall=%d cliff=%d ignore=%d floor_flags=0x%08X ceil_flags=0x%08X lwall_flags=0x%08X rwall_flags=0x%08X "
 		    "flags atk=%u hitstun=%u fastfall=%u shield=%u cliff=%u catch=%u capture=%u hitstatus=%d inv=%d intan=%d dmgq=%d dmg_angle=%d dmg_lr=%d dmg_player=%d knock=0x%08X fhash=0x%08X\n",
 		    tag,
@@ -1716,6 +1725,13 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		    syNetSyncHashF32(fp->physics.vel_damage_ground),
 		    syNetSyncHashF32(fp->physics.vel_jostle_x),
 		    syNetSyncHashF32(fp->physics.vel_jostle_z),
+		    syNetSyncHashF32(fp->anim_vel.x),
+		    syNetSyncHashF32(fp->anim_vel.y),
+		    syNetSyncHashF32(fp->anim_vel.z),
+		    (unsigned int)fp->tap_stick_x,
+		    (unsigned int)fp->tap_stick_y,
+		    (unsigned int)fp->hold_stick_x,
+		    (unsigned int)fp->hold_stick_y,
 		    (unsigned int)fp->coll_data.mask_prev,
 		    (unsigned int)fp->coll_data.mask_curr,
 		    (unsigned int)fp->coll_data.mask_unk,
@@ -3685,9 +3701,15 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 			}
 			else if (syNetplayLiveEffectIsNessPKWave(gobj, ep) != FALSE)
 			{
+				/*
+				 * Do not fold is_effect_attach: it is absent from fighter hash but load/prune
+				 * mutates it around jibaku while the wave shell still lives — soak 11903082
+				 * LOAD_HASH_DRIFT eff-only @660 (slot 0xE8A3695A vs live 0x08194CA5) with
+				 * figh full_ok. status_id + status_total_tics carry the presentation identity.
+				 * See docs/bugs/netplay_ness_jibaku_stick_ggpo_storm_eff_load_2026-07-17.md.
+				 */
 				ness_pkwave_effect = TRUE;
 				fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_halo->status_id);
-				fold = syNetSyncFnvAccumulateU32(fold, (fp_halo->is_effect_attach != FALSE) ? 1U : 0U);
 			}
 			else if (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE)
 			{

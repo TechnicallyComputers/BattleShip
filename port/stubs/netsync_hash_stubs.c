@@ -120,9 +120,10 @@ void syNetSyncRngTraceBeforeGameSeedStep(void)
 {
 }
 
-void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after)
+void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 {
 	(void)seed_after;
+	(void)caller_site;
 }
 
 void syNetSyncLogRngHashWalkTrace(u32 sim_tick)

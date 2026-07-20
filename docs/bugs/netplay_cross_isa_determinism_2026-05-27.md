@@ -54,7 +54,7 @@ Session banner: `SSB64 NetPeer: cross_isa_session …` at VS start (OS, compiler
 | `-ffp-contract=off` on sim-critical TUs | Reduce FMA contraction drift (Clang/GCC, all OSes) |
 | **(2026-05-29)** matcher also covers `/decomp/src/netplay/` | `SSB64_NETMENU` swaps stock `decomp/src/lb/lbcommon.c` → `decomp/src/netplay/lb/lbcommon.c`; the old `"/decomp/src/lb/"` pattern missed it, so the linked `lbCommonMag2D`/`NormDist2D` (`sqrtf(x*x + y*y)`) fused on aarch64 only → Link bomb cross-ISA desync. See `netplay_link_bomb_rollback_2026-05-29.md`. |
 | **(2026-05-30)** matcher covers whole `/decomp/src/gm/` (was `gmcamera.c` only) | `gmcollision.c` matrix/world-pose dot-products (`gmCollisionGetWorldPosition`/`TransformMatrixAll`) compiled WITH contraction → 1-ULP world-position drift that `itMainSetFighterRelease` seeds into a thrown item's persistent synced position (the 1/65536 grid is finer than the f32 ULP at \|x\|>256, so it can't merge). Sector Z Link/DK bomb-spam item-only desync. See `netplay_thrown_item_world_pose_fma_2026-05-30.md`. |
-| Intro `Wait` pacing in `syNetInputRollbackSimAdvanceAllowed` | Block `hr==0` host-ahead; cap sim to `remote_sim_frontier` |
+| Intro `Wait` pacing in `syNetInputRollbackSimAdvanceAllowed` | Block `hr==0` only; same live `runway_cap` as post-Go (see `netplay_intro_wait_advance_frontier_deadlock_2026-07-18`) |
 | `gmCameraPlayerZoomFuncCamera` intro gate | Avoid host-only pzoom during wait without peer wire |
 
 ## Soak results

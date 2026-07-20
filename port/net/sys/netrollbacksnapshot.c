@@ -341,6 +341,15 @@ typedef struct SYNetRbSnapFighterBlob
 	SYNetRbSnapMPCollBlob coll;
 	u8 coll_p_translate_valid;
 	u8 coll_pad[3];
+#if defined(SSB64_NETMENU)
+	/*
+	 * Soft-lip PASS|CLIFF sticky latch (mpprocess.c). Walls run before floor; residual
+	 * floor_flags alone can miss suppress after load. Process-local latch must round-trip
+	 * with the fighter blob (soak 1328818035 JumpAerial CLIFF TopN.x@994). See
+	 * docs/bugs/netplay_airborne_cliff_lip_jumpaerial_softlip_snapshot_2026-07-19.md.
+	 */
+	u32 soft_lip_sticky_flags;
+#endif
 
 	u32 motion_vars_flags[4];
 	s32 attack1_status_id;
@@ -600,6 +609,16 @@ typedef struct SYNetRbSnapWorldBlob
 {
 	SCBattleState battle;
 	s32 rng_seed;
+#if defined(SSB64_NETMENU)
+	/*
+	 * Weapon group-id mint counter (sWPManagerGroupID). Folded into the wpn hash via each
+	 * weapon's group_id; synctest/rollback respawns advance it off-schedule, so it must
+	 * round-trip with the slot exactly like rng_seed or peers mint divergent group_ids for
+	 * the same deterministic spawn (soak1 1068427999 @1190: PK Thunder trail 0 wpn-only
+	 * PEER_SNAPSHOT_DIVERGE). See docs/bugs/netplay_weapon_group_id_counter_drift_2026-07-16.md.
+	 */
+	u32 wp_group_id_counter;
+#endif
 	u32 item_spawn_wait;
 	u16 item_weights_sum;
 	u8 item_weights_valids_num;
@@ -8677,6 +8696,7 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	syNetRbSnapCaptureMPColl(&blob->coll, &fp->coll_data);
 	blob->coll_p_translate_valid = (fp->coll_data.p_translate != NULL) ? TRUE : FALSE;
 #if defined(SSB64_NETMENU)
+	blob->soft_lip_sticky_flags = mpProcessNetplaySoftLipStickyGet(fp->player);
 	/*
 	 * Mirror the load-side collision re-anchor into the captured blob so the slot round-trips.
 	 * syNetRbSnapRefreshAirborneDamageKnockbackCollAfterLoad / ...GroundedDownTechCollAfterLoad
@@ -10748,6 +10768,21 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 #endif
 
 	syNetRbSnapApplyMPColl(&fp->coll_data, &blob->coll, syNetRbSnapFighterMPCollTranslatePtrTopN(fp), &fp->lr);
+#if defined(SSB64_NETMENU)
+	{
+		u32 soft_lip_sticky;
+
+		/*
+		 * Restore soft-lip sticky before any forward-sim wall CheckTest (UpdateMain:
+		 * walls before floor). OR snapshotted residual floor_flags so a zero latch
+		 * still arms suppress when the blob end-state was CLIFF/PASS.
+		 */
+		soft_lip_sticky = blob->soft_lip_sticky_flags;
+		soft_lip_sticky |=
+		    blob->coll.floor_flags & (MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF);
+		mpProcessNetplaySoftLipStickySet(fp->player, soft_lip_sticky);
+	}
+#endif
 
 	fp->motion_vars.flags.flag0 = blob->motion_vars_flags[0];
 	fp->motion_vars.flags.flag1 = blob->motion_vars_flags[1];
@@ -13480,6 +13515,9 @@ static void syNetRbSnapCaptureWorld(SYNetRbSnapWorldBlob *world)
 		memset(&world->battle, 0, sizeof(world->battle));
 	}
 	world->rng_seed = syUtilsRandSeed();
+#if defined(SSB64_NETMENU)
+	world->wp_group_id_counter = wpManagerGetGroupIdCounter();
+#endif
 	world->item_spawn_wait = gITManagerAppearActor.spawn_wait;
 	world->item_weights_sum = gITManagerAppearActor.weights.weights_sum;
 	world->item_weights_valids_num = gITManagerAppearActor.weights.valids_num;
@@ -13546,6 +13584,9 @@ static void syNetRbSnapApplyWorld(const SYNetRbSnapWorldBlob *world, u32 tick)
 	}
 	syUtilsSetRandomSeed(world->rng_seed);
 	syUtilsResetCosmeticRandomSeed(world->rng_seed);
+#if defined(SSB64_NETMENU)
+	wpManagerSetGroupIdCounter(world->wp_group_id_counter);
+#endif
 	gITManagerAppearActor.spawn_wait = world->item_spawn_wait;
 	gITManagerAppearActor.weights.weights_sum = world->item_weights_sum;
 	gITManagerAppearActor.weights.valids_num = world->item_weights_valids_num;
@@ -16601,7 +16642,15 @@ static GObj *syNetRbSnapRespawnNessPKFireFromBlob(Vec3f *pos, Vec3f *vel)
 	GObj *item_gobj;
 	ITStruct *ip;
 
-	item_gobj = itManagerMakeItem(NULL, &dITNessPKFireItemDesc, pos, vel, (ITEM_FLAG_COLLPROJECT | ITEM_FLAG_PARENT_WEAPON));
+	/*
+	 * Vanilla spawn uses (COLLPROJECT | PARENT_WEAPON) with the live PK Fire *weapon*
+	 * as parent. Rollback respawn has no weapon parent — passing NULL with
+	 * PARENT_WEAPON makes itManagerMakeItem call wpGetStruct(NULL) and SIGSEGV at
+	 * GObj.user_data (fault_addr=0xe0). Blob translate is already authoritative;
+	 * use DEFAULT (no parent project). Soak 383687403 @2794 synctest restore.
+	 * See docs/bugs/netplay_ness_pkfire_respawn_null_parent_segv_2026-07-19.md.
+	 */
+	item_gobj = itManagerMakeItem(NULL, &dITNessPKFireItemDesc, pos, vel, ITEM_FLAG_PARENT_DEFAULT);
 	if (item_gobj == NULL)
 	{
 		return NULL;
@@ -41671,6 +41720,10 @@ static sb32 syNetRbSnapFillSlotFromLive(SYNetRbSnapshotSlot *slot, u32 completed
 #endif
 	/* Fold rng_seed at the same instant as hash_rng (CaptureWorld is earlier in fill). */
 	slot->world.rng_seed = syUtilsRandSeed();
+#if defined(SSB64_NETMENU)
+	/* Same instant as hash_weapon above: repairs between CaptureWorld and here can mint ids. */
+	slot->world.wp_group_id_counter = wpManagerGetGroupIdCounter();
+#endif
 	slot->hash_rng = syNetSyncHashRNGSeed();
 	slot->hash_camera = syNetSyncHashGMCamera();
 #ifdef PORT
@@ -45316,6 +45369,14 @@ static void syNetRbSnapshotFinalizeLoadFromSlot(const SYNetRbSnapshotSlot *slot,
 #endif
 	syUtilsSetRandomSeed(slot->world.rng_seed);
 	syUtilsResetCosmeticRandomSeed(slot->world.rng_seed);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Load-finalize respawns (SpawnWeaponFromBlob) mint group ids; the blob apply overwrites the
+	 * weapon's group_id but the counter stays advanced. Re-pin it with the slot like rng_seed so
+	 * probe/rollback load traffic cannot skew the next forward-sim mint cross-peer.
+	 */
+	wpManagerSetGroupIdCounter(slot->world.wp_group_id_counter);
+#endif
 }
 
 void syNetRbSnapshotFinalizeLoadCoupling(u32 completed_sim_tick)
@@ -48313,6 +48374,10 @@ void syNetRbSnapshotCollectFrameCommitFighterDiagAtTick(u32 tick, SYNetFrameComm
 		diag->vel_damage_air_x = syNetRbSnapHashF32ForFold(blob->physics.vel_damage_air.x);
 		diag->vel_damage_air_y = syNetRbSnapHashF32ForFold(blob->physics.vel_damage_air.y);
 		diag->fox_anim_frames = (blob->fkind == nFTKindFox) ? (u32)syNetRbSnapFoxFirefoxBlobAnimFrames(blob) : 0U;
+		diag->tap_stick_x = (u32)blob->tap_stick_x;
+		diag->tap_stick_y = (u32)blob->tap_stick_y;
+		diag->hold_stick_x = (u32)blob->hold_stick_x;
+		diag->hold_stick_y = (u32)blob->hold_stick_y;
 	}
 	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
 	{

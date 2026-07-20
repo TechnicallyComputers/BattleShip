@@ -422,13 +422,18 @@ extern sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_t
 #if defined(SSB64_NETMENU)
 /*
  * Stick REPLACE → GGPO policy (feel-0 / late wire / pre-promote):
- * completed sim (`GetTick() > sim_tick`): any gameplay delta → rewind;
+ * completed sim (`GetTick() > sim_tick`): buttons / release / non-micro stick → rewind;
+ *   same-intent stick within COMPLETED_SIM_MICRO_DEADBAND (default 3) → Promote only;
  * release (analog → nearer/at neutral): always rewind (never onset-ahead defer);
  * else: confirmed-deadband significance (not predict-14), unless true onset-ahead defer.
  * `defer_published` may be NULL (falls back to `old_frame` for the defer check).
  */
 extern sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
                                               const SYNetInputFrame *wire, const SYNetInputFrame *defer_published);
+/* Classify a published→wire delta for soak telemetry (static string). */
+extern const char *syNetInputClassifyGgpoCorrection(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire);
+extern void syNetInputNoteGgpoCorrectionQueued(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire);
+extern void syNetInputLogGgpoCorrectionClassSummary(void);
 #endif
 /* TRUE when published vs remote sticks disagree with neutral vs analog (GGPO stick-mismatch recovery). */
 extern sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote);

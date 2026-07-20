@@ -62,3 +62,10 @@ running under its own lift and completes the episode, which releases our cap nor
 - Expect `lift_livecap … (ness_pk_defer)` then continued sim / later `GGPO deferred input correction resim`, not multi-second `epoch_hold` at `cap=mismatch-1` with only `try_begin_fail stage=ness_pk_defer`.
 - FC should stay clean for the stick correction path (Hold finishes, then resim).
 - 2026-07-16: GGPO queued mid-jibaku-flight (stick mismatch as Ness hits the enemy) must not stop sim at `rollback_epoch_cap=target+slack source=2`; jibaku completes, then the deferred correction resims (or abandons cleanly if the snapshot ring aged out).
+
+## Follow-up
+
+Soak `489290440` @3181 hit the same deadlock through the *peer-target* path (peer epoch +
+episode-FSM peer convergence armed for a deferred FC state resim, `source=2`) which this fix did
+not cover. The lift is now whole-scope:
+[`netplay_ness_pkwave_jibaku_eff_fold_dropout_2026-07-16.md`](netplay_ness_pkwave_jibaku_eff_fold_dropout_2026-07-16.md).

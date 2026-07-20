@@ -7,7 +7,8 @@
 
 /* Game LCG hooks (syUtilsRandUShort and syUtilsRandFloat paths). Offline / netmenu-off: empty stubs in netsync_hash_stubs.c */
 extern void syNetSyncRngTraceBeforeGameSeedStep(void);
-extern void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after);
+/* `caller_site` = return address of syUtilsRandFloat/UShort (consumer PC). */
+extern void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site);
 
 /*
  * Ordered per-tick RNG step log for cross-ISA bisect (`SSB64_NETPLAY_RNG_HASH_TRACE=1` and/or

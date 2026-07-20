@@ -28,6 +28,11 @@ typedef struct SYNetFrameCommitFighterDiag
 	u32 vel_damage_air_x;
 	u32 vel_damage_air_y;
 	u32 fox_anim_frames;
+	/* Folded into fhash_light; omitted from early diag → silent FC slot diverge (soak 699967527). */
+	u32 tap_stick_x;
+	u32 tap_stick_y;
+	u32 hold_stick_x;
+	u32 hold_stick_y;
 
 } SYNetFrameCommitFighterDiag;
 
