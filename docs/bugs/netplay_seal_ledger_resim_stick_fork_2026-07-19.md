@@ -69,6 +69,7 @@ Offline / non-rollback unchanged.
 
 ## Related
 
+- [`netplay_sealed_resim_load_tick_neutral_invent_2026-07-19.md`](netplay_sealed_resim_load_tick_neutral_invent_2026-07-19.md) — load_tick outside seal span invents (0,0)
 - [`netplay_jumpaerial_cliff_softlip_phase_probe_2026-07-19.md`](netplay_jumpaerial_cliff_softlip_phase_probe_2026-07-19.md) — named SoftLipPhase; this soak is the seal/ledger follow-up
 - [`netplay_stick_replace_policy_consolidate_2026-07-12.md`](netplay_stick_replace_policy_consolidate_2026-07-12.md)
 - [`netplay_post_resim_pl_latch_stick_range_poison_fc_2026-07-17.md`](netplay_post_resim_pl_latch_stick_range_poison_fc_2026-07-17.md)

@@ -278,7 +278,20 @@ cp "$TORCH_BIN"  "$APP/Contents/MacOS/torch"
 cp "$F3D_O2R"    "$APP/Contents/Resources/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APP/Contents/Resources/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APP/Contents/Resources/config.yml"
-cp "$ROOT/yamls/$VER/"*.yml "$APP/Contents/Resources/yamls/$VER/"
+# Prefer build-dir yamls (same rationale as package-linux.sh / package-mingw).
+YAMLS_SRC=""
+if [[ -d "$BUILD_DIR/yamls/$VER" ]]; then
+	YAMLS_SRC="$BUILD_DIR/yamls/$VER"
+elif [[ -d "$ROOT/yamls/$VER" ]]; then
+	YAMLS_SRC="$ROOT/yamls/$VER"
+else
+	fail "missing yamls/$VER (not in build dir or repo root)"
+fi
+cp "$YAMLS_SRC/"*.yml "$APP/Contents/Resources/yamls/$VER/"
+RELOC_YAML_COUNT=$(find "$APP/Contents/Resources/yamls/$VER" -maxdepth 1 -name 'reloc_*.yml' | wc -l)
+if [[ "$RELOC_YAML_COUNT" -lt 15 ]]; then
+	fail "yamls/$VER only has $RELOC_YAML_COUNT reloc_*.yml (need >=15); refusing incomplete .app assets from $YAMLS_SRC"
+fi
 # Region-aware app icon: US uses assets/icon.icns, JP uses
 # assets/icon-jp.icns (added with the JP bifurcation so a user with
 # both .app bundles sees distinct icons in Finder / Dock). The bundle

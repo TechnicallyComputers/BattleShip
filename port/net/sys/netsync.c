@@ -188,6 +188,18 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 
 	h = syNetSyncFnvAccumulateU32(h, (u32)fp->hitlag_tics);
 	h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_total_tics);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Soak 1952491642 @647: DamageE2 multi-hit ColAnim vs GotoDamageStatus forked after
+	 * live-ahead apply restored hitlag but left is_knockback_paused / damage_knockback_stack
+	 * from the frontier. Fold resist inputs so FIGHTER_LIGHT_ONSET / load_drift catch them.
+	 * See docs/bugs/netplay_damage_knockback_resist_snapshot_2026-07-20.md.
+	 */
+	h = syNetSyncFnvAccumulateU32(h, (u32)(fp->is_knockback_paused != FALSE));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->damage_knockback_stack));
+	h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->damage_knockback));
+	h = syNetSyncFnvAccumulateU32(h, (u32)fp->damage_lag);
+#endif
 	if (fp->joints[nFTPartsJointTopN] != NULL)
 	{
 		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(fp->joints[nFTPartsJointTopN]->translate.vec.f.x));
@@ -282,6 +294,17 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	}
 #if defined(PORT) && defined(SSB64_NETMENU)
 	/*
+	 * Soak 343630197 @396: KneeBend vs JumpF with matched stick/btn; fold kb anim_frame /
+	 * shorthop / input_source so FIGHTER_LIGHT_ONSET can precede STATUS_FORK.
+	 */
+	if ((fp->status_id == nFTCommonStatusKneeBend) || (fp->status_id == nFTCommonStatusGuardKneeBend))
+	{
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsKneeBend(fp)->anim_frame));
+		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsKneeBend(fp)->jump_force));
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsKneeBend(fp)->input_source);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsKneeBend(fp)->is_shorthop != FALSE));
+	}
+	/*
 	 * Soak 2120480047 @514: SoftLipPhase ja_vel forked while fhash_light still matched
 	 * @512 (vel_air.x includes drift; jumpaerial.vel_x did not fold). Catch ja_in=0
 	 * writers one tick earlier via FIGHTER_LIGHT_ONSET.
@@ -290,6 +313,19 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	{
 		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsJumpAerial(fp)->vel_x));
 		h = syNetSyncFnvAccumulateU32(h, syNetSyncHashF32(ftStatusVarsJumpAerial(fp)->drift));
+	}
+	/*
+	 * Soak 1519592712 @1113: DamageFlyN→DamageFall 3-tick exit skew with matched TopN /
+	 * frozen slot anim_hash (anim already ended ~1077). Gate is anim_frame<=0 &&
+	 * hitstun_tics==0; only is_hitstun bool was folded (full hash), so counter skew stayed
+	 * hash-blind until status change → PEER figh@1126. SoftLip/PHYSICS 1-ULP Y@1127 were
+	 * cascade. Inactive status_vars scrub also zeroed damage.* on ring save (attackair/
+	 * dead/rebirth alias). See docs/bugs/netplay_damage_hitstun_statusvars_scrub_2026-07-20.md.
+	 */
+	if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsDamage(fp)->hitstun_tics);
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE));
 	}
 	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
@@ -1672,6 +1708,8 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		FTStruct *fp = ftGetStruct(fighter_gobj);
 		DObj *topn;
 		Vec3f top_pos;
+		s32 hitstun_tics_log;
+		u32 knockback_over_log;
 
 		if (fp == NULL)
 		{
@@ -1683,13 +1721,24 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		{
 			top_pos = topn->translate.vec.f;
 		}
+		hitstun_tics_log = 0;
+		knockback_over_log = 0U;
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/* Damage overlay only — avoid reading aliased union bytes in other statuses. */
+		if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
+		{
+			hitstun_tics_log = ftStatusVarsDamage(fp)->hitstun_tics;
+			knockback_over_log = (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE);
+		}
+#endif
 		port_log(
 		    "SSB64 NetSync: fighter_detail tag=%s tick=%u slot=%d gobj=%u fkind=%d status=%d motion=%d dmg=%d shield=%d stock=%d lr=%d ga=%d jumps=%u hitlag=%u status_tics=%u "
+		    "hitstun_tics=%d kb_over=%u "
 		    "top=(0x%08X,0x%08X,0x%08X) pos_prev=(0x%08X,0x%08X,0x%08X) pos_diff=(0x%08X,0x%08X,0x%08X) "
 		    "vel_air=(0x%08X,0x%08X,0x%08X) vel_dmg_air=(0x%08X,0x%08X,0x%08X) vel_ground=(0x%08X,0x%08X) vel_dmg_ground=0x%08X vel_jostle=(0x%08X,0x%08X) "
 		    "anim_vel=(0x%08X,0x%08X,0x%08X) tap_stick=(%u,%u) hold_stick=(%u,%u) "
 		    "coll_masks=%04X/%04X/%04X/%04X coll_tic=%u floor=%d ceil=%d lwall=%d rwall=%d cliff=%d ignore=%d floor_flags=0x%08X ceil_flags=0x%08X lwall_flags=0x%08X rwall_flags=0x%08X "
-		    "flags atk=%u hitstun=%u fastfall=%u shield=%u cliff=%u catch=%u capture=%u hitstatus=%d inv=%d intan=%d dmgq=%d dmg_angle=%d dmg_lr=%d dmg_player=%d knock=0x%08X fhash=0x%08X\n",
+		    "flags atk=%u hitstun=%u fastfall=%u shield=%u cliff=%u catch=%u capture=%u hitstatus=%d inv=%d intan=%d dmgq=%d dmg_angle=%d dmg_lr=%d dmg_player=%d knock=0x%08X kb_paused=%u kb_stack=0x%08X fhash=0x%08X\n",
 		    tag,
 		    tick,
 		    (int)fp->player,
@@ -1705,6 +1754,8 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		    (unsigned int)fp->jumps_used,
 		    (unsigned int)fp->hitlag_tics,
 		    (unsigned int)fp->status_total_tics,
+		    (int)hitstun_tics_log,
+		    (unsigned int)knockback_over_log,
 		    syNetSyncHashF32(top_pos.x),
 		    syNetSyncHashF32(top_pos.y),
 		    syNetSyncHashF32(top_pos.z),
@@ -1762,6 +1813,8 @@ void syNetSyncLogFighterDetail(const char *tag, u32 tick)
 		    (int)fp->damage_lr,
 		    (int)fp->damage_player,
 		    syNetSyncHashF32(fp->damage_knockback),
+		    (unsigned int)(fp->is_knockback_paused != FALSE),
+		    syNetSyncHashF32(fp->damage_knockback_stack),
 		    syNetSyncHashFighterStructLight(fp));
 	}
 }

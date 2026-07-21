@@ -155,9 +155,30 @@ def main():
     os.chdir(Path(__file__).resolve().parent.parent)
     entries = parse_yaml_entries(YAML_DIR)
 
+    if len(entries) == 0:
+        print(
+            f"ERROR: {YAML_DIR}/reloc_*.yml produced 0 file_id entries.\n"
+            "  Refusing to overwrite RelocFileTable with an all-NULL table "
+            "(boot would SIGSEGV in portFixupSprite on llN64LogoSprite).\n"
+            "  Restore yamls/<version>/reloc_*.yml (git checkout -- yamls/) "
+            "or run tools/generate_yamls.py first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     if len(entries) != FILE_COUNT:
         print(f"WARNING: expected {FILE_COUNT} entries, got {len(entries)}",
               file=sys.stderr)
+
+    # Hard-fail on a near-empty table so a dirty tree (reloc yamls deleted)
+    # cannot silently ship a binary that resolves every reloc load to NULL.
+    if len(entries) < (FILE_COUNT * 9) // 10:
+        print(
+            f"ERROR: only {len(entries)}/{FILE_COUNT} reloc paths found under "
+            f"{YAML_DIR} — refusing to write RelocFileTable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     missing = set(range(FILE_COUNT)) - set(entries.keys())
     if missing:

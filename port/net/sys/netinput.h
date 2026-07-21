@@ -77,6 +77,23 @@ typedef struct SYNetInputFrame
 #define SYNETINPUT_AUTH_LEDGER_ORIGIN_NONE 0U
 #define SYNETINPUT_AUTH_LEDGER_ORIGIN_WIRE 1U
 #define SYNETINPUT_AUTH_LEDGER_ORIGIN_SEAL 2U
+
+/*
+ * Provenance of a published History row (parallel ring — not part of SYNetInputFrame /
+ * replay wire sizeof). Seal and freeze require gameplay-authoritative origins, not merely
+ * Local && !predicted. See docs/bugs/netplay_history_provenance_2026-07-20.md.
+ */
+typedef enum SYNetInputHistoryProvenance
+{
+	nSYNetInputHistoryProvNone = 0,
+	nSYNetInputHistoryProvPrediction = 1,
+	nSYNetInputHistoryProvGameplay = 2,
+	nSYNetInputHistoryProvLocalPublish = 3,
+	nSYNetInputHistoryProvRemoteConfirmed = 4,
+	nSYNetInputHistoryProvGapHold = 5,
+	nSYNetInputHistoryProvLatch = 6
+
+} SYNetInputHistoryProvenance;
 #endif
 
 typedef struct SYNetInputReplayMetadata /* Header written alongside recorded frame payloads (magic/version + rules). */
@@ -363,6 +380,13 @@ extern void syNetInputAuthorityLedgerCommitWire(s32 player, u32 sim_tick, const 
 extern void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const SYNetInputFrame *frame);
 extern sb32 syNetInputAuthorityLedgerTryGet(s32 player, u32 sim_tick, SYNetInputFrame *out_frame, u8 *out_origin);
 /*
+ * TRUE when predicting `sim_tick` would invent remote-human (0,0) after near-neutral
+ * last_confirmed (no wire / soft-onset / last_nn). Shared-commit should cap the predict
+ * window to ~D+1. Off during intro Wait / post-Go soft pacing.
+ * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+ */
+extern sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick);
+/*
  * SSB64_NETPLAY_STRICT_INPUT=1 — log-only input-authority witness. Enumerates confirmed-row
  * overwrites / fabricated confirms on the wire and published rings (migration to write-once
  * confirmed store). Summary flush + counter reset; called on VS session start.
@@ -393,6 +417,8 @@ extern void syNetInputPromoteAllLocalAuthoritySlots(u32 tick);
 extern void syNetInputMaybeLogFrameCommitLocalAuthorityDiag(u32 validation_tick, u32 win_begin);
 extern void syNetInputMaybeLogFrameCommitSealLocalMismatch(u32 validation_tick, u32 win_begin, u32 win_end);
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
+/* Read-only transmitted (wire-locked) row — egress append-only guard (never re-send changed gameplay). */
+extern sb32 syNetInputTryGetTransmittedSimFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 #if defined(SSB64_NETMENU)
 /*
  * Feel-0: highest sim tick with a local gameplay sample. INPUT auth_wire_frontier must be derived

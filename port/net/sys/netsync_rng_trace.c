@@ -280,11 +280,12 @@ void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 		}
 	}
 	step_idx = sSYNetSyncRngTraceStepCount;
-	site = 0U;
-	if (syNetSyncRngStepSiteEnabled() != FALSE)
-	{
-		site = caller_site;
-	}
+	/*
+	 * Always capture caller PC into the ring (cheap). Verbose per-step logs stay behind
+	 * SSB64_NETPLAY_RNG_STEP_TRACE / _SITE. Resim LCG burns dump sites via rng_hash_walk
+	 * without requiring env (soak 1790844706 initiator vs follower post-rng).
+	 */
+	site = caller_site;
 	if (step_idx < SYNET_SYNC_RNG_STEP_RING_MAX)
 	{
 		sSYNetSyncRngTraceRing[step_idx].seed_after = (u32)seed_after;
@@ -328,19 +329,11 @@ static void syNetSyncLogRngHashWalkDumpSteps(const SYNetSyncRngStep *steps, u32 
 	}
 	for (idx = 0U; idx < dump_count; idx++)
 	{
-		if (syNetSyncRngStepSiteEnabled() != FALSE)
-		{
-			port_log("SSB64 NetSync: rng_hash_walk step=%u seed_after=0x%08X site=0x%08X\n",
-			         idx,
-			         steps[idx].seed_after,
-			         steps[idx].site);
-		}
-		else
-		{
-			port_log("SSB64 NetSync: rng_hash_walk step=%u seed_after=0x%08X\n",
-			         idx,
-			         steps[idx].seed_after);
-		}
+		/* Sites are always recorded in the ring; emit them on every walk dump. */
+		port_log("SSB64 NetSync: rng_hash_walk step=%u seed_after=0x%08X site=0x%08X\n",
+		         idx,
+		         steps[idx].seed_after,
+		         steps[idx].site);
 	}
 	if (truncated != FALSE)
 	{

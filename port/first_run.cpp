@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -77,6 +78,38 @@ void WriteRecipeSidecar(const fs::path& o2rPath) {
     } else {
         port_log("first_run: WARNING could not write %s.recipe\n", o2rPath.string().c_str());
     }
+}
+
+/* True when the zip looks like a full game archive (reloc blobs present).
+ * An incomplete extraction — e.g. AppImage packaged with only audio.yml +
+ * particles.yml — still produces a valid zip and a matching .recipe sidecar,
+ * then boots into portFixupSprite(0x73c0) when llN64LogoSprite's file base
+ * is NULL. Entry names are stored plaintext in the zip, so a byte scan for
+ * "reloc_" is enough without linking libzip here. */
+bool O2rContainsRelocPayload(const fs::path& o2rPath) {
+    std::ifstream f(o2rPath, std::ios::binary);
+    if (!f) {
+        return false;
+    }
+    constexpr char kNeedle[] = "reloc_";
+    constexpr size_t kNeedleLen = sizeof(kNeedle) - 1;
+    char buf[1 << 16];
+    size_t keep = 0;
+    while (f) {
+        f.read(buf + keep, static_cast<std::streamsize>(sizeof(buf) - keep));
+        const size_t n = keep + static_cast<size_t>(f.gcount());
+        if (n < kNeedleLen) {
+            break;
+        }
+        for (size_t i = 0; i + kNeedleLen <= n; ++i) {
+            if (std::memcmp(buf + i, kNeedle, kNeedleLen) == 0) {
+                return true;
+            }
+        }
+        keep = kNeedleLen - 1;
+        std::memmove(buf, buf + n - keep, keep);
+    }
+    return false;
 }
 
 // Search candidates in order; return the first that exists.
@@ -375,13 +408,23 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
 #else
         const std::string have = ReadRecipeSidecar(targetPath);
         if (have == SSB64_ASSET_RECIPE_HASH) {
-            return { true, targetPath.string(), {}, {} };
+            if (O2rContainsRelocPayload(targetPath)) {
+                return { true, targetPath.string(), {}, {} };
+            }
+            /* Recipe sidecar matches but the archive is audio/particles-only
+             * (or otherwise missing every reloc_* entry). Force re-extract
+             * rather than booting into a NULL-base sprite fixup crash. */
+            staleRecipe = true;
+            port_log("first_run: %s recipe matches but archive has no reloc_* "
+                     "entries — re-extracting\n",
+                     targetPath.string().c_str());
+        } else {
+            staleRecipe = true;
+            port_log("first_run: %s was extracted by a different asset pipeline "
+                     "(recipe '%s', this build wants '%s') — re-extracting\n",
+                     targetPath.string().c_str(),
+                     have.empty() ? "<none>" : have.c_str(), SSB64_ASSET_RECIPE_HASH);
         }
-        staleRecipe = true;
-        port_log("first_run: %s was extracted by a different asset pipeline "
-                 "(recipe '%s', this build wants '%s') — re-extracting\n",
-                 targetPath.string().c_str(),
-                 have.empty() ? "<none>" : have.c_str(), SSB64_ASSET_RECIPE_HASH);
 #endif
     }
 
@@ -512,6 +555,29 @@ ExtractionResult ExtractAssetsIfNeeded(const std::string& target_o2r_path, bool 
             return { true, targetPath.string(), {}, logPath };
         }
         return { false, {}, "Torch reported success but " SSB64_O2R_NAME " is missing", logPath };
+    }
+
+    if (!O2rContainsRelocPayload(emitted)) {
+        port_log("first_run: ERROR extractor produced %s with no reloc_* entries "
+                 "(yamls/%s/ likely missing reloc_*.yml — refuse to install)\n",
+                 emitted.c_str(), kRegion);
+        fs::remove(emitted, ec);
+        if (staleRecipe && fs::exists(targetPath) && O2rContainsRelocPayload(targetPath)) {
+            port_log("first_run: keeping previous complete %s\n", SSB64_O2R_NAME);
+            return { true, targetPath.string(), {}, logPath };
+        }
+        const std::string msg =
+            "Asset extraction produced an incomplete BattleShip.o2r "
+            "(no reloc game data).\n\n"
+            "This usually means the AppImage/.app was packaged without "
+            "yamls/<region>/reloc_*.yml. Rebuild/repackage from a tree that "
+            "still has those recipes, or copy them next to torch and re-launch.";
+        if (!silent) {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                                     "Incomplete asset extraction", msg.c_str(),
+                                     nullptr);
+        }
+        return BuildFailure("incomplete o2r (no reloc_* entries)", logPath);
     }
 
     fs::rename(emitted, targetPath, ec);

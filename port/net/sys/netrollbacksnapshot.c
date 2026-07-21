@@ -427,6 +427,19 @@ typedef struct SYNetRbSnapFighterBlob
 	s32 damage_lr;
 	s32 damage_player;
 	s32 damage_kind;
+	/*
+	 * Multi-hit knockback resist inputs (ftCommonDamageUpdateMain / CheckCatchResist).
+	 * hitlag_tics alone is not enough: during hitlag, ColAnim vs GotoDamageStatus is
+	 * gated by is_knockback_paused && (kb < stack+30). Live-ahead after ness_pk_defer /
+	 * BASELINE_PREEMPTIVE_LIVE_CAP left paused/stack from the frontier while restore
+	 * put hitlag back to the ring value — soak 1952491642 ep4@647 DamageE2: initiator
+	 * re-entered (status_tics=4, fresh vel_dmg) vs follower ColAnim-only (tics=21, stale
+	 * vel_dmg). See docs/bugs/netplay_damage_knockback_resist_snapshot_2026-07-20.md.
+	 */
+	ub32 is_knockback_paused;
+	f32 damage_knockback_stack;
+	f32 damage_knockback;
+	s32 damage_lag;
 
 	u32 throw_gobj_id;
 	u32 catch_gobj_id;
@@ -4536,6 +4549,31 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 	 * dead/rebirth scrubs still alias the full overlay and poison the hash-folded waits.
 	 */
 	if (status_id == nFTCommonStatusTaruCann)
+	{
+		return;
+	}
+	/*
+	 * JumpAerialF/B owns status_vars.common.jumpaerial (drift, vel_x, turn_tics).
+	 * attackair/dead/rebirth memsets alias those bytes and zero ja_* in every ring blob
+	 * while slot.hash_fighter still folds live ja from fhash_light — synctest load then
+	 * SYNCTEST_FAIL SNAPSHOT_FIDELITY (soak1 1977761953 @631 JumpAerialB CLIFF).
+	 * KneeBend / GuardKneeBend own kneebend (anim_frame, jump_force, …) at the same
+	 * union offset — same poison class for the KneeBend fhash_light folds.
+	 * See docs/bugs/netplay_jumpaerial_statusvars_scrub_synctest_2026-07-19.md.
+	 */
+	if ((status_id == nFTCommonStatusJumpAerialF) || (status_id == nFTCommonStatusJumpAerialB) ||
+	    (status_id == nFTCommonStatusKneeBend) || (status_id == nFTCommonStatusGuardKneeBend))
+	{
+		return;
+	}
+	/*
+	 * DamageHi1…WallDamage owns status_vars.common.damage (hitstun_tics, is_knockback_over, …).
+	 * attackair/dead/rebirth memsets alias those bytes and zero hitstun on every ring save while
+	 * live fhash_light (after soak 1519592712 fold) still carries the real counter — synctest /
+	 * rollback load then exits DamageFly early → DamageFall status_tics skew → PEER figh.
+	 * See docs/bugs/netplay_damage_hitstun_statusvars_scrub_2026-07-20.md.
+	 */
+	if ((status_id >= nFTCommonStatusDamageStart) && (status_id <= nFTCommonStatusDamageEnd))
 	{
 		return;
 	}
@@ -8818,6 +8856,10 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	blob->damage_lr = fp->damage_lr;
 	blob->damage_player = fp->damage_player;
 	blob->damage_kind = fp->damage_kind;
+	blob->is_knockback_paused = fp->is_knockback_paused;
+	blob->damage_knockback_stack = fp->damage_knockback_stack;
+	blob->damage_knockback = fp->damage_knockback;
+	blob->damage_lag = fp->damage_lag;
 
 	blob->throw_gobj_id = syNetRbSnapGobjId(fp->throw_gobj);
 	blob->catch_gobj_id = syNetRbSnapGobjId(fp->catch_gobj);
@@ -10868,6 +10910,10 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	fp->damage_lr = blob->damage_lr;
 	fp->damage_player = blob->damage_player;
 	fp->damage_kind = blob->damage_kind;
+	fp->is_knockback_paused = (blob->is_knockback_paused != 0U) ? TRUE : FALSE;
+	fp->damage_knockback_stack = blob->damage_knockback_stack;
+	fp->damage_knockback = blob->damage_knockback;
+	fp->damage_lag = blob->damage_lag;
 
 	/*
 	 * Resolve the fighter coupling by sim player slot, not by gobj->id. All fighters carry the same
@@ -11974,6 +12020,13 @@ static u32 syNetRbSnapHashFighterBlobLight(const SYNetRbSnapFighterBlob *blob)
 
 	h = syNetRbSnapFnvAccumulateU32(h, blob->hitlag_tics);
 	h = syNetRbSnapFnvAccumulateU32(h, blob->status_total_tics);
+#if defined(SSB64_NETMENU)
+	/* Mirror syNetSyncHashFighterStructLight multi-hit resist folds (soak 1952491642). */
+	h = syNetRbSnapFnvAccumulateU32(h, (u32)(blob->is_knockback_paused != FALSE));
+	h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(blob->damage_knockback_stack));
+	h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(blob->damage_knockback));
+	h = syNetRbSnapFnvAccumulateU32(h, (u32)blob->damage_lag);
+#endif
 	top = &blob->joint_translate[nFTPartsJointTopN];
 	if (blob->joint_is_valid[nFTPartsJointTopN] != FALSE)
 	{
@@ -12051,6 +12104,39 @@ static u32 syNetRbSnapHashFighterBlobLight(const SYNetRbSnapFighterBlob *blob)
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)tarucann_vars->release_wait);
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)tarucann_vars->shoot_wait);
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Mirror syNetSyncHashFighterStructLight NETMENU folds so load_drift light_ok compares
+	 * the same oracle (soak1 1977761953 @631: live folded ja_* while blob light omitted them).
+	 */
+	if ((blob->status_id == nFTCommonStatusKneeBend) || (blob->status_id == nFTCommonStatusGuardKneeBend))
+	{
+		const ftCommonKneeBendStatusVars *kneebend =
+		    &((const union FTStatusVars *)blob->status_vars)->common.kneebend;
+
+		h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(kneebend->anim_frame));
+		h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(kneebend->jump_force));
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)kneebend->input_source);
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)(kneebend->is_shorthop != FALSE));
+	}
+	if ((blob->status_id == nFTCommonStatusJumpAerialF) || (blob->status_id == nFTCommonStatusJumpAerialB))
+	{
+		const ftCommonJumpAerialStatusVars *jumpaerial =
+		    &((const union FTStatusVars *)blob->status_vars)->common.jumpaerial;
+
+		h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(jumpaerial->vel_x));
+		h = syNetRbSnapFnvAccumulateU32(h, syNetRbSnapHashF32ForFold(jumpaerial->drift));
+	}
+	/* Mirror syNetSyncHashFighterStructLight damage hitstun folds (soak 1519592712). */
+	if ((blob->status_id >= nFTCommonStatusDamageStart) && (blob->status_id <= nFTCommonStatusDamageEnd))
+	{
+		const ftCommonDamageStatusVars *damage =
+		    &((const union FTStatusVars *)blob->status_vars)->common.damage;
+
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)damage->hitstun_tics);
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)(damage->is_knockback_over != FALSE));
+	}
+#endif
 	if ((blob->fkind == nFTKindKirby) && (blob->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (blob->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{
@@ -12473,6 +12559,8 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_ga", (u32)(fp->ga != FALSE), (u32)(blob->ga != FALSE));
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_vel_air_x", fp->physics.vel_air.x,
 	                               blob->physics.vel_air.x);
+	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_vel_air_y", fp->physics.vel_air.y,
+	                               blob->physics.vel_air.y);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_vel_air_z", fp->physics.vel_air.z,
 	                               blob->physics.vel_air.z);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_vel_ground_x", fp->physics.vel_ground.x,
@@ -12484,6 +12572,17 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_hitlag_tics", fp->hitlag_tics, blob->hitlag_tics);
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_status_total_tics", fp->status_total_tics,
 	                              blob->status_total_tics);
+#if defined(SSB64_NETMENU)
+	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_is_knockback_paused",
+	                              (u32)(fp->is_knockback_paused != FALSE),
+	                              (u32)(blob->is_knockback_paused != FALSE));
+	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_damage_knockback_stack", fp->damage_knockback_stack,
+	                               blob->damage_knockback_stack);
+	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_damage_knockback", fp->damage_knockback,
+	                               blob->damage_knockback);
+	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_damage_lag", (u32)fp->damage_lag,
+	                              (u32)blob->damage_lag);
+#endif
 	if ((fp->joints[nFTPartsJointTopN] != NULL) || (blob->joint_is_valid[nFTPartsJointTopN] != FALSE))
 	{
 		f32 topn_tx_live;
@@ -12514,6 +12613,8 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 	                               blob->physics.vel_damage_air.z);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_coll_pos_prev_x", fp->coll_data.pos_prev.x,
 	                               blob->coll.pos_prev.x);
+	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_coll_pos_prev_y", fp->coll_data.pos_prev.y,
+	                               blob->coll.pos_prev.y);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_coll_pos_prev_z", fp->coll_data.pos_prev.z,
 	                               blob->coll.pos_prev.z);
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_tap_stick_x", (u32)fp->tap_stick_x, (u32)blob->tap_stick_x);
@@ -12554,6 +12655,73 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_anim_vel_x", fp->anim_vel.x, blob->anim_vel.x);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_anim_vel_y", fp->anim_vel.y, blob->anim_vel.y);
 	syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_anim_vel_z", fp->anim_vel.z, blob->anim_vel.z);
+#if defined(SSB64_NETMENU)
+	/*
+	 * JumpAerial / KneeBend overlays are folded into fhash_light but were missing from this
+	 * bisect — soak1 1977761953 @631 logged light_ok=0 with zero field= lines while scrub
+	 * zeroed ja_* in the blob.
+	 */
+	if ((fp->status_id == nFTCommonStatusKneeBend) || (fp->status_id == nFTCommonStatusGuardKneeBend) ||
+	    (blob->status_id == nFTCommonStatusKneeBend) || (blob->status_id == nFTCommonStatusGuardKneeBend))
+	{
+		const ftCommonKneeBendStatusVars *blob_kb =
+		    &((const union FTStatusVars *)blob->status_vars)->common.kneebend;
+		f32 live_kb_anim = 0.0F;
+		f32 live_kb_force = 0.0F;
+		u32 live_kb_source = 0U;
+		u32 live_kb_short = 0U;
+
+		if ((fp->status_id == nFTCommonStatusKneeBend) || (fp->status_id == nFTCommonStatusGuardKneeBend))
+		{
+			live_kb_anim = ftStatusVarsKneeBend(fp)->anim_frame;
+			live_kb_force = ftStatusVarsKneeBend(fp)->jump_force;
+			live_kb_source = (u32)ftStatusVarsKneeBend(fp)->input_source;
+			live_kb_short = (u32)(ftStatusVarsKneeBend(fp)->is_shorthop != FALSE);
+		}
+		syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_kb_anim_frame", live_kb_anim,
+		                               blob_kb->anim_frame);
+		syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_kb_jump_force", live_kb_force,
+		                               blob_kb->jump_force);
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_kb_input_source", live_kb_source,
+		                              (u32)blob_kb->input_source);
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_kb_is_shorthop", live_kb_short,
+		                              (u32)(blob_kb->is_shorthop != FALSE));
+	}
+	if ((fp->status_id == nFTCommonStatusJumpAerialF) || (fp->status_id == nFTCommonStatusJumpAerialB) ||
+	    (blob->status_id == nFTCommonStatusJumpAerialF) || (blob->status_id == nFTCommonStatusJumpAerialB))
+	{
+		const ftCommonJumpAerialStatusVars *blob_ja =
+		    &((const union FTStatusVars *)blob->status_vars)->common.jumpaerial;
+		f32 live_ja_vel = 0.0F;
+		f32 live_ja_drift = 0.0F;
+
+		if ((fp->status_id == nFTCommonStatusJumpAerialF) || (fp->status_id == nFTCommonStatusJumpAerialB))
+		{
+			live_ja_vel = ftStatusVarsJumpAerial(fp)->vel_x;
+			live_ja_drift = ftStatusVarsJumpAerial(fp)->drift;
+		}
+		syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_ja_vel_x", live_ja_vel, blob_ja->vel_x);
+		syNetRbSnapLogFieldDiffFoldF32(tag, tick, player, "fold_ja_drift", live_ja_drift, blob_ja->drift);
+	}
+	if (((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd)) ||
+	    ((blob->status_id >= nFTCommonStatusDamageStart) && (blob->status_id <= nFTCommonStatusDamageEnd)))
+	{
+		const ftCommonDamageStatusVars *blob_dmg =
+		    &((const union FTStatusVars *)blob->status_vars)->common.damage;
+		u32 live_hitstun = 0U;
+		u32 live_kb_over = 0U;
+
+		if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
+		{
+			live_hitstun = (u32)ftStatusVarsDamage(fp)->hitstun_tics;
+			live_kb_over = (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE);
+		}
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_hitstun_tics", live_hitstun,
+		                              (u32)blob_dmg->hitstun_tics);
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_kb_over", live_kb_over,
+		                              (u32)(blob_dmg->is_knockback_over != FALSE));
+	}
+#endif
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_invincible_tics", (u32)fp->invincible_tics,
 	                              (u32)blob->invincible_tics);
 	for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
@@ -12754,6 +12922,11 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 		                              (u32)(blob->is_hitstun != FALSE));
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "is_shield", (u32)(fp->is_shield != FALSE),
 		                              (u32)(blob->is_shield != FALSE));
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "is_knockback_paused",
+		                              (u32)(fp->is_knockback_paused != FALSE),
+		                              (u32)(blob->is_knockback_paused != FALSE));
+		syNetRbSnapLogFieldDiffFoldF32(reason, tick, slot_index, "damage_knockback_stack",
+		                               fp->damage_knockback_stack, blob->damage_knockback_stack);
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "is_damage_resist",
 		                              (u32)(fp->is_damage_resist != FALSE), (u32)(blob->is_damage_resist != FALSE));
 		if (((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
@@ -42629,6 +42802,11 @@ static void syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(GObj *fighter_go
 	fp->invincible_tics = blob->invincible_tics;
 	fp->is_hitstun = blob->is_hitstun;
 	fp->is_shield = blob->is_shield;
+	fp->hitlag_tics = blob->hitlag_tics;
+	fp->is_knockback_paused = (blob->is_knockback_paused != 0U) ? TRUE : FALSE;
+	fp->damage_knockback_stack = blob->damage_knockback_stack;
+	fp->damage_knockback = blob->damage_knockback;
+	fp->damage_lag = blob->damage_lag;
 	fp->tap_stick_x = blob->tap_stick_x;
 	fp->tap_stick_y = blob->tap_stick_y;
 	fp->hold_stick_x = blob->hold_stick_x;

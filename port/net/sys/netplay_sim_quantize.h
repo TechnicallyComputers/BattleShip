@@ -156,13 +156,22 @@ extern void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *pha
                                             sb32 did_dash);
 
 /*
- * `SSB64_JA_VEL_WITNESS=1`: log Ness JumpAerial ProcPhysics ja_vel pipeline
- * (ja_in → DecMax/stick+friction → ja_out + drift → composed vel_air.x) under CLIFF sticky.
+ * `SSB64_JA_VEL_WITNESS=1`: always log JumpAerial ProcPhysics ja_vel pipeline
+ * (ja_in → DecMax/stick+friction → ja_out + drift → composed vel_air.x).
+ * Without env: rate-limited auto-log when CLIFF sticky/fflags + stick or !decmax.
  * Grep `JA_VEL_WITNESS`. Offline / non-NETMENU: no-op stub.
  * See docs/bugs/netplay_jumpaerial_ja_vel_witness_2026-07-19.md.
  */
 extern void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32 used_decmax,
                                                     f32 ja_out, f32 drift, f32 vel_composed);
+
+/*
+ * `SSB64_KNEEBEND_WITNESS=1`: log KneeBend ProcUpdate / Jump exit gate
+ * (kb anim_frame, dobj anim_speed, attr length, will_exit, shorthop, button_release).
+ * Grep `KNEEBEND_WITNESS`. Offline / non-NETMENU: no-op stub.
+ * See docs/bugs/netplay_kneebend_jump_exit_witness_2026-07-19.md.
+ */
+extern void syNetplayMaybeLogKneeBendWitness(GObj *fighter_gobj, const char *phase, sb32 will_exit);
 
 /*
  * NETMENU + rollback live/resim: repair turn.lr_turn when union +16 was stomped to 0
@@ -178,6 +187,7 @@ extern void syNetplayHardenTurnLrTurn(FTStruct *fp);
  * See docs/bugs/netplay_turn_lr_dash_stomp_fc_2026-07-19.md.
  */
 extern void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash);
+extern s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp);
 extern void syNetplayHardenTurnLrDash(FTStruct *fp);
 
 /*

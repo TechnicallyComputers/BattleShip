@@ -5666,6 +5666,28 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
 			out->shared_confirmed_sim = remote_sim_frontier;
 			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
+#if defined(SSB64_NETMENU)
+			/*
+			 * Dual-stick Go onset (soak1 871504438): inventing remote (0,0) for a full
+			 * phase_lock window while the peer already applied local stick seeds PEER.
+			 * Cap predict admit to D+1 when zero-onset restrict is active.
+			 * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+			 */
+			if (syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE)
+			{
+				u32 onset_win;
+
+				onset_win = syNetPeerGetCommittedInputDelay() + 1U;
+				if (onset_win < 2U)
+				{
+					onset_win = 2U;
+				}
+				if (effective_window > onset_win)
+				{
+					effective_window = onset_win;
+				}
+			}
+#endif
 			if ((u64)sim_tick <= ((u64)remote_sim_frontier + (u64)effective_window))
 			{
 				out->uses_prediction = TRUE;
@@ -7852,11 +7874,38 @@ static void syNetPeerAppendInputFrameToBundleEx(s32 slot, SYNetPeerPacketFrame *
                                               SYNetInputFrame *input_frame, sb32 note_transmitted)
 {
 	u32 wire_tick;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	SYNetInputFrame locked;
+#endif
 
 	if (*frame_count >= SYNETPEER_MAX_PACKET_FRAMES)
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Append-only wire: a sim tick already NoteTransmit-locked must never re-send different
+	 * gameplay — post-resim gap-tick restage can rewrite gameplay/delay rings and the next
+	 * bundle would revise the peer's confirmed row (soak1 369009235: wire=456 sim 454
+	 * pkt_seq 478 (-5,-22) then 479 (77,31) → REPLACE_NEWER → PEER@457). Substitute the
+	 * locked row so the wire stays consistent with what the peer already confirmed.
+	 */
+	if ((input_frame->tick != 0U) &&
+	    (syNetInputTryGetTransmittedSimFrame(slot, input_frame->tick, &locked) != FALSE) &&
+	    ((locked.buttons != input_frame->buttons) || (locked.stick_x != input_frame->stick_x) ||
+	     (locked.stick_y != input_frame->stick_y)))
+	{
+		port_log(
+		    "SSB64 NetPeer: WIRE_RESEND_MISMATCH slot=%d sim_tick=%u keep_locked btn=0x%04X sx=%d sy=%d "
+		    "| staged btn=0x%04X sx=%d sy=%d\n",
+		    (int)slot, (unsigned int)input_frame->tick, (unsigned int)locked.buttons, (int)locked.stick_x,
+		    (int)locked.stick_y, (unsigned int)input_frame->buttons, (int)input_frame->stick_x,
+		    (int)input_frame->stick_y);
+		input_frame->buttons = locked.buttons;
+		input_frame->stick_x = locked.stick_x;
+		input_frame->stick_y = locked.stick_y;
+	}
+#endif
 	wire_tick = syNetPeerDelayWireTickFromSim(input_frame->tick);
 	if (syNetPeerBundleHasWireTick(frames, *frame_count, wire_tick) != FALSE)
 	{

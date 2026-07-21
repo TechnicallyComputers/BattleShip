@@ -2429,6 +2429,22 @@ void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
 	sSYNetplayTurnEntryLrDash[pi] = lr_dash;
 }
 
+s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp)
+{
+	s32 pi;
+
+	if (fp == NULL)
+	{
+		return 0;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return 0;
+	}
+	return sSYNetplayTurnEntryLrDash[pi];
+}
+
 void syNetplayHardenTurnLrDash(FTStruct *fp)
 {
 	ftCommonTurnStatusVars *turn;
@@ -2564,8 +2580,9 @@ void syNetplayHardenTurnLrTurn(FTStruct *fp)
 }
 
 static sb32 sJaVelWitnessCached = -999;
+static u32 sJaVelWitnessAutoBudget = 64U;
 
-static sb32 syNetplayJaVelWitnessEnabled(void)
+static sb32 syNetplayJaVelWitnessEnvEnabled(void)
 {
 	const char *e;
 
@@ -2581,6 +2598,8 @@ static sb32 syNetplayJaVelWitnessEnabled(void)
  * Soak 2120480047 @514: SoftLipPhase ja matched @513 then Android stick+friction from
  * 10.68 → 9.04 while Linux math behaved as ja_in=0 → −0.84. Name the ProcPhysics
  * pipeline before any ja_vel harden.
+ * Soak 1156067044 @5196: auto-log (rate-limited) when JumpAerial + CLIFF sticky so SoftLip
+ * forks are named without requiring SSB64_JA_VEL_WITNESS=1 on soak hosts.
  */
 void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32 used_decmax,
                                              f32 ja_out, f32 drift, f32 vel_composed)
@@ -2593,11 +2612,9 @@ void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32
 	u32 sticky;
 	u32 fflags;
 	s32 pi;
+	sb32 env_on;
+	sb32 cliff_interest;
 
-	if (syNetplayJaVelWitnessEnabled() == FALSE)
-	{
-		return;
-	}
 	if ((syNetplayRollbackSemanticsActive() == FALSE) || (fighter_gobj == NULL))
 	{
 		return;
@@ -2611,6 +2628,22 @@ void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32
 	pi = fp->player;
 	sticky = ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX)) ? mpProcessNetplaySoftLipStickyGet(pi) : 0U;
 	fflags = fp->coll_data.floor_flags;
+	cliff_interest =
+	    (((sticky | fflags) & MAP_VERTEX_COLL_CLIFF) != 0U) &&
+	    ((fp->input.pl.stick_range.x != 0) || (fp->input.pl.stick_range.y != 0) || (used_decmax == FALSE));
+	env_on = syNetplayJaVelWitnessEnvEnabled();
+	if (env_on == FALSE)
+	{
+		if (cliff_interest == FALSE)
+		{
+			return;
+		}
+		if (sJaVelWitnessAutoBudget == 0U)
+		{
+			return;
+		}
+		sJaVelWitnessAutoBudget--;
+	}
 	memcpy(&ja_in_bits, &ja_in, sizeof(ja_in_bits));
 	memcpy(&ja_out_bits, &ja_out, sizeof(ja_out_bits));
 	memcpy(&drift_bits, &drift, sizeof(drift_bits));
@@ -2623,6 +2656,76 @@ void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32
 	    (int)fp->input.pl.stick_range.x, (int)fp->input.pl.stick_range.y,
 	    (unsigned)ja_in_bits, (int)(used_decmax != FALSE), (unsigned)ja_out_bits,
 	    (unsigned)drift_bits, (unsigned)vel_bits, (unsigned)sticky, (unsigned)fflags,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
+static sb32 sKneeBendWitnessCached = -999;
+
+static sb32 syNetplayKneeBendWitnessEnabled(void)
+{
+	const char *e;
+
+	if (sKneeBendWitnessCached == -999)
+	{
+		e = getenv("SSB64_KNEEBEND_WITNESS");
+		sKneeBendWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
+	}
+	return sKneeBendWitnessCached;
+}
+
+/*
+ * Soak 343630197 @396: KneeBend vs JumpF with matched stick/btn through 395.
+ * Name kb anim_frame / dobj anim_speed / length / shorthop / button_release before harden.
+ */
+void syNetplayMaybeLogKneeBendWitness(GObj *fighter_gobj, const char *phase, sb32 will_exit)
+{
+	FTStruct *fp;
+	ftCommonKneeBendStatusVars *kb;
+	DObj *dobj;
+	u32 kb_anim_bits;
+	u32 dobj_spd_bits;
+	u32 length_bits;
+	f32 kb_anim;
+	f32 dobj_spd;
+	f32 length;
+
+	if (syNetplayKneeBendWitnessEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((syNetplayRollbackSemanticsActive() == FALSE) || (fighter_gobj == NULL) || (phase == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || ((fp->status_id != nFTCommonStatusKneeBend) &&
+	                     (fp->status_id != nFTCommonStatusGuardKneeBend)))
+	{
+		return;
+	}
+	kb = ftStatusVarsKneeBend(fp);
+	if (kb == NULL)
+	{
+		return;
+	}
+	dobj = DObjGetStruct(fighter_gobj);
+	kb_anim = kb->anim_frame;
+	dobj_spd = (dobj != NULL) ? dobj->anim_speed : 0.0F;
+	length = (fp->attr != NULL) ? fp->attr->kneebend_anim_length : 0.0F;
+	memcpy(&kb_anim_bits, &kb_anim, sizeof(kb_anim_bits));
+	memcpy(&dobj_spd_bits, &dobj_spd, sizeof(dobj_spd_bits));
+	memcpy(&length_bits, &length, sizeof(length_bits));
+	port_log(
+	    "SSB64 KNEEBEND_WITNESS phase=%s tick=%u player=%d status=%d "
+	    "kb_anim=0x%08X dobj_spd=0x%08X length=0x%08X will_exit=%d shorthop=%d "
+	    "input_src=%d jump_force=%.6f stick_y=%d tap_y=%u "
+	    "btn_hold=0x%04X btn_tap=0x%04X btn_rel=0x%04X status_tics=%d resim=%d\n",
+	    phase, (unsigned)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
+	    (unsigned)kb_anim_bits, (unsigned)dobj_spd_bits, (unsigned)length_bits,
+	    (int)(will_exit != FALSE), (int)(kb->is_shorthop != FALSE), (int)kb->input_source,
+	    (double)kb->jump_force, (int)fp->input.pl.stick_range.y, (unsigned)fp->tap_stick_y,
+	    (unsigned)fp->input.pl.button_hold, (unsigned)fp->input.pl.button_tap,
+	    (unsigned)fp->input.pl.button_release, (int)fp->status_total_tics,
 	    (int)(syNetRollbackIsResimulating() != FALSE));
 }
 #else
@@ -2650,6 +2753,13 @@ void syNetplayMaybeLogJumpAerialJaVelWitness(GObj *fighter_gobj, f32 ja_in, sb32
 	(void)vel_composed;
 }
 
+void syNetplayMaybeLogKneeBendWitness(GObj *fighter_gobj, const char *phase, sb32 will_exit)
+{
+	(void)fighter_gobj;
+	(void)phase;
+	(void)will_exit;
+}
+
 void syNetplayHardenTurnLrTurn(FTStruct *fp)
 {
 	(void)fp;
@@ -2659,6 +2769,12 @@ void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
 {
 	(void)fp;
 	(void)lr_dash;
+}
+
+s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp)
+{
+	(void)fp;
+	return 0;
 }
 
 void syNetplayHardenTurnLrDash(FTStruct *fp)

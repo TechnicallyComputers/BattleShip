@@ -314,7 +314,46 @@ static std::shared_ptr<RelocFile> portLoadRelocResource(u32 file_id)
 {
 	if (file_id >= RELOC_FILE_COUNT || gRelocFileTable[file_id] == NULL)
 	{
-		spdlog::error("lbReloc bridge: invalid file_id {} (0x{:08X})", file_id, file_id);
+		/* A wiped RelocFileTable (every slot NULL after a bad
+		 * generate_reloc_table.py run) used to return nullptr here and let
+		 * callers compute sprite = NULL + llN64LogoSprite (0x73c0), then
+		 * SIGSEGV in portFixupSprite. Treat the first NULL table hit like a
+		 * stale-archive failure — actionable message + clean exit. */
+		spdlog::error("lbReloc bridge: invalid file_id {} (0x{:08X}) — "
+		              "gRelocFileTable entry is NULL",
+		              file_id, file_id);
+		static bool sExitedOnNullTable = false;
+		if (!sExitedOnNullTable)
+		{
+			sExitedOnNullTable = true;
+			fprintf(stderr,
+			    "\n"
+			    "============================================================\n"
+			    "SSB64 PC port: RelocFileTable has no path for file_id %u\n"
+			    "============================================================\n"
+			    "\n"
+			    "This usually means port/resource/RelocFileTable.us.cpp was\n"
+			    "regenerated without relocFileDescriptions / symbols (every\n"
+			    "slot NULL) and then linked into the binary. Restore the\n"
+			    "committed table or re-run:\n"
+			    "\n"
+			    "    python tools/generate_reloc_table.py --version us\n"
+			    "\n"
+			    "with tools/relocFileDescriptions.us.txt present, then rebuild.\n"
+			    "============================================================\n"
+			    "\n",
+			    file_id);
+			port_log("SSB64: RelocFileTable NULL entry for file_id=%u — refusing "
+			         "to continue (would crash in portFixupSprite on unresolved "
+			         "sprite offsets).\n",
+			         file_id);
+			std::fflush(stderr);
+#if defined(__unix__) || defined(__APPLE__)
+			_exit(0);
+#else
+			std::_Exit(0);
+#endif
+		}
 		return nullptr;
 	}
 

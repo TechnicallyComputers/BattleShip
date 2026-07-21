@@ -32,17 +32,68 @@ Focuses on the failure classes that indicate a resim capture/reload hole:
                                Hold; demoted to noise when both peers match (symmetric
                                Start sanitize). Asymmetric only → FAIL risk.
   * TURN_DASH_LR_DASH_FORK     - TURN_DASH_WITNESS lr_dash / did_dash disagree (InvertLR
-                               stomp → Turn vs Dash; soak 1646535146).
+                               stomp → Turn vs Dash; soak 1646535146). Also dual
+                               dash-dance stale hold-last smash sign (soak 1876984747;
+                               prefer hold_last_smash_flip / RESIM_STICK_FORK).
+  * hold_last_smash_*          - NetInput logs: smash_flip / smash_release /
+                               smash_release_ahead / smash_flip_ahead /
+                               smash_dash_clamp (send-lead Turn did_dash; soak 179193526;
+                               provisional same-intent must still clamp — soak 1272919275).
+  * REPLACE_REJECT_NEUTRAL_DOWNGRADE - wire REPLACE_NEWER refused smash→hard-zero
+                               (soak 857278917 dual-stick Go poison mid-GGPO).
+                               Binaries >= 2026-07-20 log keep_mag/reject_mag/
+                               hard_zero/soft_nz/deadband. soft_nz=1 on older
+                               binaries = false positive (NearNeutral); fixed to
+                               hard-zero-only (soak 1981389058 / 582675261).
+  * SEAL_PACK / SEAL_PACK_PREFER_HISTORY / SEAL_PACK_SKIP_LATCH / SEAL_LEDGER_INTENT_OVERRIDE
+                               - always-on seal pack source (wire/history/gameplay);
+                               history-over-tx on intent disagree; latch refuse;
+                               sealed→ledger/local-truth override (soak 582675261
+                               seal@435; soak 1857971875 local-only PHYSICS_FORK@420).
+  * LEDGER_REJECT_NEUTRAL_DOWNGRADE / zero-onset runway - ledger smash→0 refuse;
+                               predict cap D+1 when inventing remote (0,0) onset
+                               (soak 871504438 PEER@412; 8-tick zero runway).
+  * SEAL_ROW / SKIP_SPAN       - per-tick sealed stick dump after gameplay-mismatch
+                               SEALED_RESIM_LEDGER_SKIP (off-by-one packing audit).
+  * hold_last_smash_* / keep_strict_same_gate - onset clamp path (auto on with
+                               TURN_DASH_WITNESS; or SSB64_NETPLAY_ANALOG_ONSET_LOG).
   * STATUS_FORK_ONSET          - first fighter_slot_hash status_id cross-peer diverge
                                (demoted when statuses re-agree within lookforward —
                                jump-button GGPO noise; soak 2120480047 @391).
+                               KneeBend(20/21) vs Jump(22/23) never demoted (soak 343630197).
+                               RebirthWait(9) vs Fall(26) never demoted (soak 1174892281).
+  * REBIRTH_LEAVE_FORK         - REBIRTH_LEAVE_STICK / status 9 vs 26 with stick-Y asym.
+  * KNEEBEND_EXIT_FORK         - KNEEBEND_WITNESS will_exit / kb_anim disagree (Jump squat exit).
   * EARLIEST_FORK              - min(PHYSICS_FORK, STATUS_FORK, FC, PEER_SNAPSHOT).
   * SOFTLIP_PHASE_FORK         - first SoftLipPhase gut+phase topn_x/vel_x/ja_* mismatch.
   * SoftLipPhase parity WARN   - one peer has SoftLipPhase rows and the other has 0
                                (stale desktop binary vs Android).
   * RESIM_STICK_FORK           - cross-peer STICK_SAMPLE disagree near GGPO/PHYSICS_FORK
                                (first-pass sample only; last-write PEER resim is noise).
-  * SEAL_LEDGER_STOMP          - REMOTE_PUBLISH_SEAL_OVERRIDE / SEALED_RESIM_LEDGER_SKIP.
+                               Prefer history/pl samples (Android device-only zeros were
+                               false FAIL — soak 857278917); judge with sync-report.
+                               pred=1 rows (prediction window, binaries >= 2026-07-20) are
+                               skipped: send-lead prediction disagree is normal rollback,
+                               not a fork (soak 1511856153 storm was ~95% pred noise).
+  * SEAL_LEDGER_STOMP          - REMOTE_PUBLISH_SEAL_OVERRIDE (bad) /
+                               SEAL_OVERRIDE_REFUSE_INTENT (good keep confirmed).
+  * WIRE_RESEND_MISMATCH / GAP_RESTAGE_HOLD_LAST / GAP_RESTAGE_LATCH_FALLBACK /
+    SEAL_PACK_HISTORY_SUSPECT - owner self-revision guards (soak 369009235).
+  * HISTORY_AUTH_FREEZE / LOCAL_PUBLISH_LATCH_REFUSE(_PAST) / SEAL_PACK_GAP_HOLD /
+    SEAL_PACK_SKIP_NO_AUTH - authoritative History immutable (soak 1023513151).
+  * HISTORY_AUTH_FIRST_WRITE / HISTORY_AUTH_MINT_DOWNGRADE /
+    LOCAL_PUBLISH_LATCH_REFUSE - provenance mint gate (soak 67923985: gap 436
+                               sealed as auth_history without LOCAL_PUBLISH).
+                               FIRST_WRITE names the writer; seal requires
+                               gameplay/local_publish provenance, not Local&&!pred.
+  * RESIM_INPUT_SOURCE / RESIM_INPUT_SOURCE_ASSERT - remote resim tier selection
+                               (soak 256718957: hold_last@442 promoted to confirmed
+                               while owner wire arrived post-resim). ASSERT when
+                               hold_last wins in sealed span or over unconfirmed hist.
+  * SEALED_RESIM_LOAD_NEUTRAL  - sealed (0,0) vs nonzero ledger (load_tick invent outside span).
+  * STATUSVARS_SCRUB           - SYNCTEST_FAIL + load_drift fold_ja_* / fold_kb_* /
+                               fold_hitstun_tics / JumpAerial|KneeBend|Damage light_ok=0
+                               (inactive status_vars scrub poisoned overlay).
   * FIGHTER_LIGHT_ONSET        - first fighter_slot_hash fhash_light DIFF (anim OK).
   * SoftLipX asym              - writer paths only; floor_edge_skip-only demoted to noise.
   * sim_state cadence parity   - WARN when one peer has << sim_state_tick / fighter_slot_hash
@@ -218,18 +269,74 @@ TURN_DASH_HARDEN_RE = re.compile(
     r"TURN_DASH_WITNESS phase=harden_lr_dash tick=(\d+) player=(\d+) "
     r"was=(-?\d+) now=(-?\d+) entry=(-?\d+)"
 )
+KNEEBEND_WITNESS_RE = re.compile(
+    r"KNEEBEND_WITNESS phase=(\S+) tick=(\d+) player=(\d+) status=(\d+) "
+    r"kb_anim=(0x[0-9A-Fa-f]+) dobj_spd=(0x[0-9A-Fa-f]+) length=(0x[0-9A-Fa-f]+) "
+    r"will_exit=(\d+) shorthop=(\d+) input_src=(\d+)"
+)
+# KneeBend / GuardKneeBend vs JumpF / JumpB (ftdef ControlStart Wait=10).
+STATUS_KNEEBEND = frozenset({20, 21})
+STATUS_GROUND_JUMP = frozenset({22, 23})
 STICK_SAMPLE_RE = re.compile(
     r"SSB64 STICK_SAMPLE mode=\S+ tick=(\d+) player=(\d+) sx=(-?\d+) sy=(-?\d+)"
 )
+# Optional trailing pred flag (binaries >= 2026-07-20). pred=1 = prediction-window row for a
+# remote slot; cross-peer disagree there is normal rollback operation, not a seal/ledger fork.
+STICK_SAMPLE_PRED_RE = re.compile(r"\bpred=(\d)")
 SEAL_OVERRIDE_RE = re.compile(
     r"REMOTE_PUBLISH_SEAL_OVERRIDE player=(\d+) sim_tick=(\d+) .* "
     r"old btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+) \| "
+    r"sealed btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+)"
+)
+# Keep confirmed when sealed opposite-intent (soak 1857971875); must be matched before STOMP.
+SEAL_OVERRIDE_REFUSE_RE = re.compile(
+    r"REMOTE_PUBLISH_SEAL_OVERRIDE_REFUSE_INTENT player=(\d+) sim_tick=(\d+) .* "
+    r"keep btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+) \| "
     r"sealed btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+)"
 )
 SEALED_RESIM_LEDGER_SKIP_RE = re.compile(
     r"SEALED_RESIM_LEDGER_SKIP player=(\d+) sim_tick=(\d+) "
     r"sealed btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+) \| "
     r"ledger btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+)"
+)
+SEALED_RESIM_LEDGER_SKIP_SPAN_RE = re.compile(
+    r"SEALED_RESIM_LEDGER_SKIP_SPAN player=(\d+) mismatch=(\d+) target=(\d+) skip_tick=(\d+)"
+)
+SEAL_ROW_RE = re.compile(
+    r"SEAL_ROW player=(\d+) tick=(\d+) "
+    r"(?:btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+) )?valid=(\d)"
+)
+# Wire smash→near-neutral reject. soft_nz= from enriched lines (>= 2026-07-20).
+REPLACE_REJECT_NEUTRAL_RE = re.compile(
+    r"REMOTE_CONFIRMED_REPLACE_REJECT_NEUTRAL_DOWNGRADE player=(\d+) wire=(\d+) .* "
+    r"keep btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+).*\| "
+    r"reject btn=0x[0-9A-Fa-f]+ sx=(-?\d+) sy=(-?\d+)"
+)
+REPLACE_REJECT_SOFT_NZ_RE = re.compile(r"\bsoft_nz=(\d)")
+HOLD_LAST_SMASH_RE = re.compile(
+    r"hold_last_(smash_dash_clamp|smash_release|smash_release_ahead|smash_flip|"
+    r"smash_flip_ahead|keep_strict_same_gate) player=(\d+) tick=(\d+) "
+    r"was=\((-?\d+),(-?\d+)\) now=\((-?\d+),(-?\d+)\)"
+)
+# load_drift second-layer / summary (JumpAerial scrub poison — soak 1977761953 @631).
+FIGHTER_FIELD_DIFF_SUMMARY_RE = re.compile(
+    r"fighter_field_diff tag=load_drift tick=(\d+) player=(\d+) .* "
+    r"light_ok=(\d+) full_ok=(\d+) anim_ok=(\d+) status=(\d+)"
+)
+FIGHTER_FIELD_DIFF_FIELD_RE = re.compile(
+    r"fighter_field_diff tag=load_drift tick=(\d+) player=(\d+) "
+    r"field=(fold_ja_vel_x|fold_ja_drift|fold_kb_anim_frame|fold_kb_jump_force|"
+    r"fold_hitstun_tics|fold_kb_over) "
+    r"live=(0x[0-9A-Fa-f]+) blob=(0x[0-9A-Fa-f]+)"
+)
+STATUS_JUMP_AERIAL = frozenset({24, 25})  # JumpAerialF / JumpAerialB
+# DamageHi1…WallDamage (hitstun_tics overlay); DamageFlyN=52 ⇒ Start=37 End=56.
+STATUS_DAMAGE_HITSTUN = frozenset(range(37, 57))
+STATUS_REBIRTH_WAIT = 9
+STATUS_FALL = 26
+REBIRTH_LEAVE_STICK_RE = re.compile(
+    r"REBIRTH_LEAVE_STICK tick=(\d+) player=(\d+) reason=(\S+) "
+    r"status_before=(\d+) status_now=(\d+) sx=(-?\d+) sy=(-?\d+)"
 )
 SIM_STATE_TICK_LINE_RE = re.compile(r"SSB64 NetSync: sim_state_tick tick=(\d+)\b")
 FIGHTER_SLOT_HASH_LINE_RE = re.compile(r"SSB64 NetSync: fighter_slot_hash tick=(\d+)\b")
@@ -380,18 +487,50 @@ class FileScan:
         default_factory=list
     )
     turn_dash_harden: list[tuple[int, int, int, int, int]] = field(default_factory=list)
+    # KNEEBEND_WITNESS: (tick, phase, player, status, kb_anim, dobj_spd, length, will_exit, shorthop, input_src)
+    kneebend_rows: list[
+        tuple[int, str, int, int, str, str, str, int, int, int]
+    ] = field(default_factory=list)
     # fighter_slot_hash status trail: tick -> player -> status_id
     fighter_status_by_tick: dict[int, dict[int, int]] = field(default_factory=dict)
     # STICK_SAMPLE: tick -> player -> (sx, sy) first write only (live pass before PEER resim).
     stick_sample_by_tick: dict[int, dict[int, tuple[int, int]]] = field(
         default_factory=dict
     )
+    # STICK_SAMPLE pred flag: tick -> player -> 0/1 (missing flag on old binaries = 0).
+    stick_sample_pred_by_tick: dict[int, dict[int, int]] = field(
+        default_factory=dict
+    )
     # REMOTE_PUBLISH_SEAL_OVERRIDE: (sim_tick, player, old_sx, old_sy, sealed_sx, sealed_sy)
     seal_overrides: list[tuple[int, int, int, int, int, int]] = field(
         default_factory=list
     )
+    # SEAL_OVERRIDE_REFUSE_INTENT: (sim_tick, player, keep_sx, keep_sy, sealed_sx, sealed_sy)
+    seal_override_refuses: list[tuple[int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
     # SEALED_RESIM_LEDGER_SKIP: (sim_tick, player, sealed_sx, sealed_sy, ledger_sx, ledger_sy)
     sealed_resim_ledger_skips: list[tuple[int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
+    # SEALED_RESIM_LEDGER_SKIP_SPAN: (player, mismatch, target, skip_tick)
+    sealed_skip_spans: list[tuple[int, int, int, int]] = field(default_factory=list)
+    # SEAL_ROW: (player, tick, sx|None, sy|None, valid)
+    seal_rows: list[tuple[int, int, int | None, int | None, int]] = field(
+        default_factory=list
+    )
+    # REPLACE_REJECT: (wire, player, keep_sx, keep_sy, rej_sx, rej_sy, soft_nz)
+    replace_reject_neutral: list[tuple[int, int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
+    # hold_last smash path: (reason, player, tick, was_x, was_y, now_x, now_y)
+    hold_last_smash: list[tuple[str, int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
+    # load_drift summary: (tick, player, light_ok, anim_ok, status)
+    load_drift_fighter: list[tuple[int, int, int, int, int]] = field(default_factory=list)
+    # load_drift overlay fields: (tick, player, field, live, blob)
+    load_drift_overlay_fields: list[tuple[int, int, str, str, str]] = field(
         default_factory=list
     )
 
@@ -694,15 +833,53 @@ def scan_file(label: str, path: str) -> FileScan:
                 )
                 continue
 
+            kb = KNEEBEND_WITNESS_RE.search(line)
+            if kb:
+                scan.kneebend_rows.append(
+                    (
+                        int(kb.group(2)),
+                        kb.group(1),
+                        int(kb.group(3)),
+                        int(kb.group(4)),
+                        kb.group(5),
+                        kb.group(6),
+                        kb.group(7),
+                        int(kb.group(8)),
+                        int(kb.group(9)),
+                        int(kb.group(10)),
+                    )
+                )
+                continue
+
             ss = STICK_SAMPLE_RE.search(line)
             if ss:
                 tick = int(ss.group(1))
                 player = int(ss.group(2))
+                pm = STICK_SAMPLE_PRED_RE.search(line)
+                pred = int(pm.group(1)) if pm else 0
                 # First-pass only: post-kill PEER resim last-write (0,0) was a
                 # RESIM_STICK_FORK false positive (soak 2120480047 @517).
+                # Exception: a later pred=0 (confirmed) row upgrades an earlier pred=1
+                # prediction so cross-peer compares use post-wire truth (soak 1511856153).
                 by_player = scan.stick_sample_by_tick.setdefault(tick, {})
-                if player not in by_player:
+                by_pred = scan.stick_sample_pred_by_tick.setdefault(tick, {})
+                if player not in by_player or (by_pred.get(player, 0) == 1 and pred == 0):
                     by_player[player] = (int(ss.group(3)), int(ss.group(4)))
+                    by_pred[player] = pred
+                continue
+
+            sor = SEAL_OVERRIDE_REFUSE_RE.search(line)
+            if sor:
+                scan.seal_override_refuses.append(
+                    (
+                        int(sor.group(2)),
+                        int(sor.group(1)),
+                        int(sor.group(3)),
+                        int(sor.group(4)),
+                        int(sor.group(5)),
+                        int(sor.group(6)),
+                    )
+                )
                 continue
 
             so = SEAL_OVERRIDE_RE.search(line)
@@ -729,6 +906,90 @@ def scan_file(label: str, path: str) -> FileScan:
                         int(sls.group(4)),
                         int(sls.group(5)),
                         int(sls.group(6)),
+                    )
+                )
+                continue
+
+            slss = SEALED_RESIM_LEDGER_SKIP_SPAN_RE.search(line)
+            if slss:
+                scan.sealed_skip_spans.append(
+                    (
+                        int(slss.group(1)),
+                        int(slss.group(2)),
+                        int(slss.group(3)),
+                        int(slss.group(4)),
+                    )
+                )
+                continue
+
+            srow = SEAL_ROW_RE.search(line)
+            if srow:
+                valid = int(srow.group(5))
+                sx = int(srow.group(3)) if srow.group(3) is not None else None
+                sy = int(srow.group(4)) if srow.group(4) is not None else None
+                scan.seal_rows.append(
+                    (int(srow.group(1)), int(srow.group(2)), sx, sy, valid)
+                )
+                continue
+
+            rr = REPLACE_REJECT_NEUTRAL_RE.search(line)
+            if rr:
+                soft_m = REPLACE_REJECT_SOFT_NZ_RE.search(line)
+                rej_sx, rej_sy = int(rr.group(5)), int(rr.group(6))
+                if soft_m is not None:
+                    soft_nz = int(soft_m.group(1))
+                else:
+                    soft_nz = 1 if (rej_sx != 0 or rej_sy != 0) else 0
+                scan.replace_reject_neutral.append(
+                    (
+                        int(rr.group(2)),
+                        int(rr.group(1)),
+                        int(rr.group(3)),
+                        int(rr.group(4)),
+                        rej_sx,
+                        rej_sy,
+                        soft_nz,
+                    )
+                )
+                continue
+
+            hl = HOLD_LAST_SMASH_RE.search(line)
+            if hl:
+                scan.hold_last_smash.append(
+                    (
+                        hl.group(1),
+                        int(hl.group(2)),
+                        int(hl.group(3)),
+                        int(hl.group(4)),
+                        int(hl.group(5)),
+                        int(hl.group(6)),
+                        int(hl.group(7)),
+                    )
+                )
+                continue
+
+            ffs = FIGHTER_FIELD_DIFF_SUMMARY_RE.search(line)
+            if ffs:
+                scan.load_drift_fighter.append(
+                    (
+                        int(ffs.group(1)),
+                        int(ffs.group(2)),
+                        int(ffs.group(3)),
+                        int(ffs.group(5)),
+                        int(ffs.group(6)),
+                    )
+                )
+                continue
+
+            fff = FIGHTER_FIELD_DIFF_FIELD_RE.search(line)
+            if fff:
+                scan.load_drift_overlay_fields.append(
+                    (
+                        int(fff.group(1)),
+                        int(fff.group(2)),
+                        fff.group(3),
+                        fff.group(4),
+                        fff.group(5),
                     )
                 )
                 continue
@@ -901,8 +1162,10 @@ def physics_fork_compound_note(scans: list[FileScan], gut: int) -> str | None:
             if abs(tick - gut) > 4:
                 continue
             sa, sb = a.stick_sample_by_tick[tick], b.stick_sample_by_tick[tick]
+            pa = a.stick_sample_pred_by_tick.get(tick, {})
+            pb = b.stick_sample_pred_by_tick.get(tick, {})
             for player in set(sa) & set(sb):
-                if sa[player] != sb[player]:
+                if sa[player] != sb[player] and pa.get(player, 0) == 0 and pb.get(player, 0) == 0:
                     stick_disagree = True
                     break
             if stick_disagree:
@@ -910,18 +1173,46 @@ def physics_fork_compound_note(scans: list[FileScan], gut: int) -> str | None:
     near_ggpo = sorted(t for t in ggpo_ticks if abs(t - gut) <= 1)
     near_peer = sorted(t for t in peer_loads if abs(t - gut) <= 2)
     ja_vel_fork = _softlip_ja_vel_fork_at_gut(existing, gut)
-    if not near_ggpo and not near_peer and not stick_disagree and not ja_vel_fork:
+    # KneeBend vs Jump STATUS_FORK near gut outranks late stick disagree (soak 343630197).
+    kb_jump_status = False
+    if len(existing) >= 2:
+        sa, sb = existing[0], existing[1]
+        for tick in range(max(0, gut - 4), gut + 1):
+            a_st = sa.fighter_status_by_tick.get(tick, {})
+            b_st = sb.fighter_status_by_tick.get(tick, {})
+            for player in set(a_st) & set(b_st):
+                if _is_kneebend_jump_status_fork(a_st[player], b_st[player]):
+                    kb_jump_status = True
+                    break
+            if kb_jump_status:
+                break
+    if (
+        not near_ggpo
+        and not near_peer
+        and not stick_disagree
+        and not ja_vel_fork
+        and not kb_jump_status
+    ):
         return None
     bits: list[str] = []
     if near_ggpo:
         bits.append(f"ggpo_mismatch={','.join(str(t) for t in near_ggpo)}")
     if near_peer:
         bits.append(f"peer_snapshot_load={','.join(str(t) for t in near_peer)}")
+    if kb_jump_status:
+        bits.append("kneebend_jump_status_fork")
+        if stick_disagree:
+            bits.append("resim_stick_fork")
+        return (
+            f"    compound={'+'.join(bits)} — prefer STATUS_FORK KneeBend vs Jump / "
+            f"KNEEBEND_WITNESS (stick SoftLip are consequence)"
+        )
     if stick_disagree:
         bits.append("resim_stick_fork")
         return (
-            f"    compound={'+'.join(bits)} — prefer RESIM_STICK_FORK / seal-ledger "
-            f"over SoftLipX CLIFF (ja_vel is consequence of asymmetric stick apply)"
+            f"    compound={'+'.join(bits)} — prefer RESIM_STICK_FORK / "
+            f"SEALED_RESIM_LOAD_NEUTRAL (sealed miss invents 0,0 on load_tick) / "
+            f"seal-ledger over SoftLipX CLIFF"
         )
     if ja_vel_fork:
         bits.append("softlip_ja_vel_fork")
@@ -1181,6 +1472,19 @@ def _status_fork_recovered(
     return False
 
 
+def _is_kneebend_jump_status_fork(status_a: int, status_b: int) -> bool:
+    """KneeBend/GuardKneeBend vs JumpF/JumpB — locomotion seed (soak 343630197)."""
+    return (status_a in STATUS_KNEEBEND and status_b in STATUS_GROUND_JUMP) or (
+        status_b in STATUS_KNEEBEND and status_a in STATUS_GROUND_JUMP
+    )
+
+
+def _is_rebirth_leave_status_fork(status_a: int, status_b: int) -> bool:
+    """RebirthWait vs Fall — halo stick/timer leave (soak 1174892281)."""
+    pair = {status_a, status_b}
+    return pair == {STATUS_REBIRTH_WAIT, STATUS_FALL}
+
+
 def detect_status_fork_onset(
     a: FileScan, b: FileScan, fc_tick: int | None = None
 ) -> tuple[str, int] | None:
@@ -1192,12 +1496,26 @@ def detect_status_fork_onset(
         sa, sb = a.fighter_status_by_tick[tick], b.fighter_status_by_tick[tick]
         for player in sorted(set(sa) & set(sb)):
             if sa[player] != sb[player]:
+                kb_jump = _is_kneebend_jump_status_fork(sa[player], sb[player])
+                rebirth_leave = _is_rebirth_leave_status_fork(sa[player], sb[player])
+                if kb_jump:
+                    hint = "— KneeBend vs JumpF/B squat-exit seed (not SoftLipX / stick GGPO)"
+                elif rebirth_leave:
+                    hint = (
+                        "— REBIRTH_LEAVE_FORK RebirthWait vs Fall "
+                        "(stick GGPO / dead_ghost absorb; not SoftLipX)"
+                    )
+                else:
+                    hint = "— prefer over FRAME_COMMIT when locomotion/grab cascade follows"
                 detail = (
                     f"STATUS_FORK_ONSET tick={tick} player={player} "
                     f"({a.label} status={sa[player]} | {b.label} status={sb[player]}) "
-                    f"— prefer over FRAME_COMMIT when locomotion/grab cascade follows"
+                    f"{hint}"
                 )
-                if _status_fork_recovered(a, b, tick, player):
+                # Never demote KneeBend↔Jump or RebirthWait↔Fall: later re-agree hides seed.
+                if (not kb_jump) and (not rebirth_leave) and _status_fork_recovered(
+                    a, b, tick, player
+                ):
                     recovered.append(
                         (
                             f"STATUS_FORK_RECOVERED tick={tick} player={player} "
@@ -1219,6 +1537,69 @@ def detect_status_fork_onset(
         if near:
             return near[-1]
     return forks[0]
+
+
+def detect_kneebend_exit_fork(a: FileScan, b: FileScan) -> tuple[str, int] | None:
+    """First KNEEBEND_WITNESS will_exit / kb_anim disagree (Jump squat exit)."""
+
+    def index(
+        rows: list[tuple[int, str, int, int, str, str, str, int, int, int]],
+    ) -> dict[tuple[int, int], tuple[str, str, str, int, int, int]]:
+        out: dict[tuple[int, int], tuple[str, str, str, int, int, int]] = {}
+        for tick, phase, player, _st, kb_anim, dobj_spd, _length, will_exit, sh, src in rows:
+            key = (tick, player)
+            prev = out.get(key)
+            if prev is None or phase == "jump_exit":
+                out[key] = (phase, kb_anim, dobj_spd, will_exit, sh, src)
+        return out
+
+    ka, kb = index(a.kneebend_rows), index(b.kneebend_rows)
+    for key in sorted(set(ka) & set(kb)):
+        pa, anim_a, spd_a, exit_a, sh_a, src_a = ka[key]
+        pb, anim_b, spd_b, exit_b, sh_b, src_b = kb[key]
+        fields: list[str] = []
+        if exit_a != exit_b:
+            fields.append("will_exit")
+        if anim_a != anim_b:
+            fields.append("kb_anim")
+        if spd_a != spd_b:
+            fields.append("dobj_spd")
+        if sh_a != sh_b:
+            fields.append("shorthop")
+        if src_a != src_b:
+            fields.append("input_src")
+        if not fields:
+            continue
+        tick, player = key
+        return (
+            f"KNEEBEND_EXIT_FORK tick={tick} player={player} fields={','.join(fields)} "
+            f"({a.label} phase={pa} will_exit={exit_a} kb_anim={anim_a} dobj_spd={spd_a} | "
+            f"{b.label} phase={pb} will_exit={exit_b} kb_anim={anim_b} dobj_spd={spd_b}) "
+            f"— Jump squat exit gate (not SoftLipX / seal-ledger)",
+            tick,
+        )
+    # One peer exited and the other has no row / never will_exit=1 near that tick.
+    exits_a = {(t, p) for t, phase, p, *_ in a.kneebend_rows if phase == "jump_exit"}
+    exits_b = {(t, p) for t, phase, p, *_ in b.kneebend_rows if phase == "jump_exit"}
+    only_a = sorted(exits_a - exits_b)
+    only_b = sorted(exits_b - exits_a)
+    if only_a:
+        tick, player = only_a[0]
+        return (
+            f"KNEEBEND_EXIT_FORK tick={tick} player={player} fields=jump_exit_asym "
+            f"({a.label} jump_exit | {b.label} no jump_exit) "
+            f"— Jump squat exit gate (not SoftLipX / seal-ledger)",
+            tick,
+        )
+    if only_b:
+        tick, player = only_b[0]
+        return (
+            f"KNEEBEND_EXIT_FORK tick={tick} player={player} fields=jump_exit_asym "
+            f"({b.label} jump_exit | {a.label} no jump_exit) "
+            f"— Jump squat exit gate (not SoftLipX / seal-ledger)",
+            tick,
+        )
+    return None
 
 
 def _softlip_ja_vel_fork_at_gut(scans: list[FileScan], gut: int) -> bool:
@@ -1248,6 +1629,7 @@ def detect_earliest_fork_vs_fc(
     phys_gut: int | None,
     status_tick: int | None = None,
     turn_dash_tick: int | None = None,
+    kneebend_tick: int | None = None,
 ) -> str | None:
     """Surface earliest physics/status/FC/PEER seed so late FC recovery does not hide it."""
     existing = [s for s in scans if s.exists]
@@ -1266,6 +1648,8 @@ def detect_earliest_fork_vs_fc(
         candidates.append((status_tick, "STATUS_FORK"))
     if turn_dash_tick is not None:
         candidates.append((turn_dash_tick, "TURN_DASH_FORK"))
+    if kneebend_tick is not None:
+        candidates.append((kneebend_tick, "KNEEBEND_EXIT_FORK"))
     if fc_ticks:
         candidates.append((fc_ticks[0], "FRAME_COMMIT"))
     if peer_ticks:
@@ -1278,8 +1662,11 @@ def detect_earliest_fork_vs_fc(
     note = (
         f"EARLIEST_FORK {earliest_kind}@{earliest_tick} before {', '.join(later)}"
     )
-    if earliest_kind in ("STATUS_FORK", "TURN_DASH_FORK"):
-        note += " — locomotion/Turn-Dash seed (not SoftLipX / Hold gravity)"
+    if earliest_kind in ("STATUS_FORK", "TURN_DASH_FORK", "KNEEBEND_EXIT_FORK"):
+        note += (
+            " — locomotion/KneeBend-Jump/Turn-Dash/RebirthLeave seed "
+            "(not SoftLipX / Hold gravity)"
+        )
     elif earliest_kind == "PHYSICS_FORK" and fc_ticks and phys_gut is not None:
         if phys_gut + 2 < fc_ticks[0]:
             note += f" (physics precedes FC by {fc_ticks[0] - phys_gut} tick(s))"
@@ -1303,13 +1690,92 @@ def detect_resim_stick_fork(
         if not any(abs(tick - anc) <= 4 for anc in anchors):
             continue
         sa, sb = a.stick_sample_by_tick[tick], b.stick_sample_by_tick[tick]
+        pa = a.stick_sample_pred_by_tick.get(tick, {})
+        pb = b.stick_sample_pred_by_tick.get(tick, {})
         for player in sorted(set(sa) & set(sb)):
             if sa[player] != sb[player]:
+                if pa.get(player, 0) == 1 or pb.get(player, 0) == 1:
+                    # Prediction-window row on at least one side: expected divergence
+                    # during send-lead, resolved by GGPO correction. Not a fork.
+                    continue
                 out.append(
                     f"  !! RESIM_STICK_FORK tick={tick} player={player} "
                     f"({a.label} sx={sa[player][0]} sy={sa[player][1]} | "
                     f"{b.label} sx={sb[player][0]} sy={sb[player][1]}) "
                     f"— seal/ledger stick apply disagree (not SoftLipX ja_vel)"
+                )
+    return out
+
+
+def detect_rebirth_leave_fork(a: FileScan, b: FileScan) -> list[str]:
+    """RebirthWait vs Fall with optional stick-Y asym (soak 1174892281)."""
+    out: list[str] = []
+    common = sorted(set(a.fighter_status_by_tick) & set(b.fighter_status_by_tick))
+    for tick in common:
+        sa = a.fighter_status_by_tick[tick]
+        sb = b.fighter_status_by_tick[tick]
+        for player in sorted(set(sa) & set(sb)):
+            if not _is_rebirth_leave_status_fork(sa[player], sb[player]):
+                continue
+            sta = a.stick_sample_by_tick.get(tick, {}).get(player)
+            stb = b.stick_sample_by_tick.get(tick, {}).get(player)
+            stick_note = ""
+            if sta is not None and stb is not None and sta != stb:
+                stick_note = (
+                    f" stick {a.label}=({sta[0]},{sta[1]}) "
+                    f"{b.label}=({stb[0]},{stb[1]})"
+                )
+            out.append(
+                f"  !! REBIRTH_LEAVE_FORK tick={tick} player={player} "
+                f"({a.label} status={sa[player]} | {b.label} status={sb[player]})"
+                f"{stick_note} — halo leave (stick GGPO; not SoftLipX)"
+            )
+            if len(out) >= 6:
+                return out
+    return out
+
+
+def detect_statusvars_scrub_synctest(scans: list[FileScan]) -> list[str]:
+    """Tag SYNCTEST_FAIL when load_drift shows JumpAerial/KneeBend/Damage overlay poison."""
+    scrub_statuses = STATUS_JUMP_AERIAL | STATUS_KNEEBEND | STATUS_DAMAGE_HITSTUN
+    out: list[str] = []
+    for s in scans:
+        if not s.exists or not s.synctest_fail:
+            continue
+        fail_ticks = set(t for t in s.synctest_fail if t >= 0)
+        overlay_by_tick: dict[int, list[tuple[int, str, str, str]]] = {}
+        for tick, player, field, live, blob in s.load_drift_overlay_fields:
+            if tick in fail_ticks and live != blob:
+                overlay_by_tick.setdefault(tick, []).append((player, field, live, blob))
+        light_fail_ja: dict[int, list[tuple[int, int]]] = {}
+        for tick, player, light_ok, anim_ok, status in s.load_drift_fighter:
+            if (
+                tick in fail_ticks
+                and light_ok == 0
+                and anim_ok == 1
+                and status in scrub_statuses
+            ):
+                light_fail_ja.setdefault(tick, []).append((player, status))
+        for tick in sorted(fail_ticks):
+            fields = overlay_by_tick.get(tick, [])
+            lights = light_fail_ja.get(tick, [])
+            if not fields and not lights:
+                continue
+            if fields:
+                bits = ", ".join(
+                    f"p{p}:{f} live={lv} blob={bl}" for p, f, lv, bl in fields[:4]
+                )
+                out.append(
+                    f"  !! [{s.label}] STATUSVARS_SCRUB tick={tick} {bits} — "
+                    f"inactive status_vars scrub poisoned overlay "
+                    f"(jumpaerial/kneebend/damage hitstun; see scrub docs)"
+                )
+            else:
+                bits = ", ".join(f"p{p} status={st}" for p, st in lights[:4])
+                out.append(
+                    f"  !! [{s.label}] STATUSVARS_SCRUB tick={tick} {bits} "
+                    f"light_ok=0 anim_ok=1 — JumpAerial/KneeBend/Damage load_drift "
+                    f"(prefer fold_ja_* / fold_kb_* / fold_hitstun_tics; scrub exemption)"
                 )
     return out
 
@@ -1320,6 +1786,12 @@ def detect_seal_ledger_stomp(scans: list[FileScan]) -> list[str]:
     for s in scans:
         if not s.exists:
             continue
+        for tick, player, kx, ky, sx, sy in s.seal_override_refuses[:6]:
+            out.append(
+                f"  ~~ [{s.label}] SEAL_OVERRIDE_REFUSE_INTENT tick={tick} player={player} "
+                f"keep=({kx},{ky}) sealed=({sx},{sy}) "
+                f"(kept confirmed over opposite-intent seal; good)"
+            )
         for tick, player, ox, oy, sx, sy in s.seal_overrides[:6]:
             out.append(
                 f"  !! [{s.label}] SEAL_LEDGER_STOMP tick={tick} player={player} "
@@ -1327,10 +1799,90 @@ def detect_seal_ledger_stomp(scans: list[FileScan]) -> list[str]:
                 f"(REMOTE_PUBLISH_SEAL_OVERRIDE; reseal after resim)"
             )
         for tick, player, sx, sy, lx, ly in s.sealed_resim_ledger_skips[:6]:
+            # Neutral sealed vs nonzero ledger = load-tick invent outside seal span
+            # (soak1 2104045952 @607) — not a healthy "kept seal" skip.
+            if (sx, sy) == (0, 0) and (lx, ly) != (0, 0):
+                out.append(
+                    f"  !! [{s.label}] SEALED_RESIM_LOAD_NEUTRAL tick={tick} player={player} "
+                    f"sealed=({sx},{sy}) ledger=({lx},{ly}) — sealed miss invented "
+                    f"neutral on load tick; prefer ledger/History "
+                    f"(see netplay_sealed_resim_load_tick_neutral_invent)"
+                )
+            else:
+                out.append(
+                    f"  ~~ [{s.label}] SEALED_RESIM_LEDGER_SKIP tick={tick} player={player} "
+                    f"sealed=({sx},{sy}) ledger=({lx},{ly}) "
+                    f"(publish kept seal during resim; good if peers agree)"
+                )
+        for player, mismatch, target, skip_tick in s.sealed_skip_spans[:4]:
+            rows = [
+                r
+                for r in s.seal_rows
+                if r[0] == player and mismatch <= r[1] < target
+            ]
+            row_bits = []
+            for _p, t, rsx, rsy, valid in rows[:8]:
+                if valid and rsx is not None and rsy is not None:
+                    row_bits.append(f"{t}:({rsx},{rsy})")
+                else:
+                    row_bits.append(f"{t}:invalid")
+            detail = " ".join(row_bits) if row_bits else "(no SEAL_ROW lines)"
             out.append(
-                f"  ~~ [{s.label}] SEALED_RESIM_LEDGER_SKIP tick={tick} player={player} "
-                f"sealed=({sx},{sy}) ledger=({lx},{ly}) "
-                f"(publish kept seal during resim; good if peers agree)"
+                f"  ~~ [{s.label}] SEAL_SPAN_DUMP player={player} "
+                f"mismatch={mismatch} target={target} skip_tick={skip_tick} "
+                f"rows=[{detail}]"
+            )
+    return out
+
+
+def detect_replace_reject_soft_nz(scans: list[FileScan]) -> list[str]:
+    """Flag REPLACE_REJECT that blocked a nonzero soft stick (guard false-positive class)."""
+    out: list[str] = []
+    for s in scans:
+        if not s.exists:
+            continue
+        soft = [r for r in s.replace_reject_neutral if r[6] == 1]
+        if not soft:
+            continue
+        # Dedup by wire tick — storm reprints same reject.
+        seen: set[int] = set()
+        shown = 0
+        for wire, player, kx, ky, rx, ry, _soft in soft:
+            if wire in seen:
+                continue
+            seen.add(wire)
+            out.append(
+                f"  !! [{s.label}] REPLACE_REJECT_SOFT_NZ wire={wire} player={player} "
+                f"keep=({kx},{ky}) reject=({rx},{ry}) — NearNeutral guard blocked "
+                f"nonzero soft stick (stale binary? hard-zero-only since "
+                f"netplay_seal_pack_latch_turn_dash_soft_nz; soak 1981389058)"
+            )
+            shown += 1
+            if shown >= 4:
+                break
+        if len(seen) > shown:
+            out.append(
+                f"  !! [{s.label}] REPLACE_REJECT_SOFT_NZ … +{len(seen) - shown} more "
+                f"distinct wire tick(s) ({len(soft)} total reject lines)"
+            )
+    return out
+
+
+def detect_hold_last_smash_diag(scans: list[FileScan]) -> list[str]:
+    """Summarize hold_last smash clamp / keep_strict path (onset diag)."""
+    out: list[str] = []
+    for s in scans:
+        if not s.exists or not s.hold_last_smash:
+            continue
+        by_reason: dict[str, int] = {}
+        for reason, *_rest in s.hold_last_smash:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+        bits = " ".join(f"{k}={v}" for k, v in sorted(by_reason.items()))
+        out.append(f"  ~~ [{s.label}] hold_last_smash diag: {bits}")
+        for reason, player, tick, wx, wy, nx, ny in s.hold_last_smash[:3]:
+            out.append(
+                f"  ~~ [{s.label}] hold_last_{reason} player={player} tick={tick} "
+                f"was=({wx},{wy}) now=({nx},{ny})"
             )
     return out
 
@@ -1725,11 +2277,18 @@ def report(scans: list[FileScan], strict: bool, show_lines: bool, quiet: bool) -
                 m = re.search(r"tick=(\d+)", turn_dash)
                 if m is not None:
                     turn_dash_tick = int(m.group(1))
+            kneebend = detect_kneebend_exit_fork(existing[0], existing[1])
+            kneebend_tick: int | None = None
+            if kneebend is not None:
+                kb_detail, kneebend_tick = kneebend
+                overall = max(overall, SEV_FAIL)
+                body.append(f"  !! {kb_detail}")
             earliest = detect_earliest_fork_vs_fc(
                 existing,
                 phys_gut,
                 status_tick=status_tick,
                 turn_dash_tick=turn_dash_tick,
+                kneebend_tick=kneebend_tick,
             )
             if earliest is not None:
                 body.append(f"  !! {earliest}")
@@ -1765,6 +2324,17 @@ def report(scans: list[FileScan], strict: bool, show_lines: bool, quiet: bool) -
                 if seal_line.startswith("  !!"):
                     overall = max(overall, SEV_FAIL)
                 body.append(seal_line)
+            for rr_line in detect_replace_reject_soft_nz(existing):
+                overall = max(overall, SEV_FAIL)
+                body.append(rr_line)
+            for hl_line in detect_hold_last_smash_diag(existing):
+                body.append(hl_line)
+            for scrub_line in detect_statusvars_scrub_synctest(existing):
+                # SYNCTEST_FAIL already sets FAIL; this names the scrub class.
+                body.append(scrub_line)
+            for rebirth_line in detect_rebirth_leave_fork(existing[0], existing[1]):
+                overall = max(overall, SEV_FAIL)
+                body.append(rebirth_line)
             parity = detect_softlip_phase_parity(existing[0], existing[1])
             if parity is not None:
                 overall = max(overall, SEV_WARN)

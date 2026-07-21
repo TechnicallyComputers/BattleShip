@@ -4,6 +4,7 @@
 
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netplay_sim_quantize.h>
 #include <sys/netrollbacksnapshot.h>
 #include <sys/netsync.h>
 #include <sys/objman.h>
@@ -29,6 +30,8 @@ static sb32 sSYNetplayRebirthGateDiagCache = -999;
 static sb32 sSYNetplayRebirthSimDiagCache = -999;
 static s32 sSYNetplayRebirthSimDiagTickMin = -999999;
 static s32 sSYNetplayRebirthSimDiagTickMax = -999999;
+
+static u32 syNetplayRebirthGateSimTick(void);
 
 static u32 syNetplayRebirthSimDiagF32Bits(f32 value)
 {
@@ -58,6 +61,74 @@ sb32 syNetplayRebirthGateDiagEnabled(void)
 static sb32 syNetplayRebirthFighterIsDeadStatus(s32 status_id)
 {
 	return ((status_id >= nFTCommonStatusDeadDown) && (status_id <= nFTCommonStatusDeadUpFall)) ? TRUE : FALSE;
+}
+
+sb32 syNetplayPlayerInDeadGhostStickAbsorbScope(s32 player)
+{
+	GObj *fighter_gobj;
+
+	if ((syNetplayRollbackSemanticsActive() == FALSE) || (player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return FALSE;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if ((fp == NULL) || (fp->player != player))
+		{
+			continue;
+		}
+		/*
+		 * Dead* only — do NOT key on is_ghost. RebirthWait sets is_ghost=TRUE but stick
+		 * leave (GroundCheckInterrupt → Fall) is load-bearing; absorbing that REPLACE left
+		 * the predictor at (0,0) while authority dropped (soak 1174892281 @4178–4180).
+		 * See docs/bugs/netplay_rebirth_ghost_stick_absorb_leave_peer_2026-07-20.md.
+		 */
+		if (syNetplayRebirthFighterIsDeadStatus(fp->status_id) != FALSE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+void syNetplayRebirthGateLogLeaveStick(GObj *fighter_gobj, FTStruct *fp, const char *reason, s32 status_before)
+{
+	s32 sx;
+	s32 sy;
+	s32 halo_despawn;
+
+	if ((fighter_gobj == NULL) || (fp == NULL) || (reason == NULL))
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	sx = (s32)fp->input.pl.stick_range.x;
+	sy = (s32)fp->input.pl.stick_range.y;
+	/* Only read rebirth overlay while it is live — after interrupt status may already be Fall. */
+	halo_despawn = -1;
+	if ((fp->status_id >= nFTCommonStatusRebirthDown) && (fp->status_id <= nFTCommonStatusRebirthWait))
+	{
+		halo_despawn = (s32)ftStatusVarsRebirth(fp)->halo_despawn_wait;
+	}
+	port_log(
+	    "SSB64 Netplay: REBIRTH_LEAVE_STICK tick=%u player=%d reason=%s status_before=%d status_now=%d "
+	    "sx=%d sy=%d halo_despawn=%d is_ghost=%u is_rebirth=%u\n",
+	    syNetplayRebirthGateSimTick(),
+	    (int)fp->player,
+	    reason,
+	    (int)status_before,
+	    (int)fp->status_id,
+	    (int)sx,
+	    (int)sy,
+	    (int)halo_despawn,
+	    (unsigned int)(fp->is_ghost != FALSE),
+	    (unsigned int)(fp->is_rebirth != FALSE));
 }
 
 static sb32 syNetplayRebirthFighterIsRebirthStatus(s32 status_id)
@@ -504,6 +575,7 @@ void syNetplayRebirthCatchUpLifecycleIfDue(GObj *fighter_gobj, FTStruct *fp)
 		if (ftStatusVarsRebirth(fp)->halo_despawn_wait == 0)
 		{
 			syNetplayRebirthGateLogLifecycleCatchUp(fighter_gobj, fp, "rebirth_fall_catchup");
+			syNetplayRebirthGateLogLeaveStick(fighter_gobj, fp, "halo_timer_catchup", fp->status_id);
 			ftParamSetTimedHitStatusInvincible(fp, FTCOMMON_REBIRTH_INVINCIBLE_FRAMES);
 			ftCommonFallSetStatus(fighter_gobj);
 		}

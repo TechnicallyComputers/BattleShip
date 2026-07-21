@@ -258,7 +258,23 @@ cp "$TORCH_BIN"  "$APPDIR/usr/bin/torch"
 cp "$F3D_O2R"    "$APPDIR/usr/share/$APP_NAME/f3d.o2r"
 cp "$ROOT/gamecontrollerdb.txt" "$APPDIR/usr/share/$APP_NAME/gamecontrollerdb.txt"
 cp "$ROOT/config.yml" "$APPDIR/usr/share/$APP_NAME/config.yml"
-cp "$ROOT/yamls/$VER/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/$VER/"
+# Prefer build-dir yamls (POST_BUILD / GenerateRelocYamls staging). Source
+# yamls/ can be accidentally incomplete in a dirty tree — packaging only
+# audio.yml+particles.yml produces an o2r with no reloc blobs, and boot
+# SIGSEGVs in portFixupSprite(llN64LogoSprite=0x73c0) on a NULL file base.
+YAMLS_SRC=""
+if [[ -d "$BUILD_DIR/yamls/$VER" ]]; then
+	YAMLS_SRC="$BUILD_DIR/yamls/$VER"
+elif [[ -d "$ROOT/yamls/$VER" ]]; then
+	YAMLS_SRC="$ROOT/yamls/$VER"
+else
+	fail "missing yamls/$VER (not in build dir or repo root)"
+fi
+cp "$YAMLS_SRC/"*.yml "$APPDIR/usr/share/$APP_NAME/yamls/$VER/"
+RELOC_YAML_COUNT=$(find "$APPDIR/usr/share/$APP_NAME/yamls/$VER" -maxdepth 1 -name 'reloc_*.yml' | wc -l)
+if [[ "$RELOC_YAML_COUNT" -lt 15 ]]; then
+	fail "yamls/$VER only has $RELOC_YAML_COUNT reloc_*.yml (need >=15); refusing incomplete AppImage assets from $YAMLS_SRC"
+fi
 
 # VS net-menu PNGs (mn_vs_submenu_png.c); must sit next to the binary like CMake
 # POST_BUILD ($<TARGET_FILE_DIR>/port/net/assets). RealAppBundlePath() is the

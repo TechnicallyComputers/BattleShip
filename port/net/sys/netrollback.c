@@ -2622,11 +2622,19 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 		 * Stick L/R storms open ep2/ep3 the tick after complete. Hold an absorb window so
 		 * REPLACE coalesces into deferred instead of dual-initiator baseline races.
 		 * See docs/bugs/netplay_stick_lr_baseline_stash_hang_2026-07-12.md.
+		 * Soak 1156067044: DamageFall DI produced three stick episodes (5154/5165/5169) when
+		 * absorb ≈ phase_lock (~8). Widen to max(2×phase_lock, 16) capped at 32 so same-player
+		 * REPLACE storms coalesce before JumpAerial.
 		 */
 		absorb_window = syNetPeerGetPhaseLockPredictionWindowTicks();
-		if (absorb_window == 0U)
+		if (absorb_window < 8U)
 		{
-			absorb_window = 4U;
+			absorb_window = 8U;
+		}
+		absorb_window *= 2U;
+		if (absorb_window > 32U)
+		{
+			absorb_window = 32U;
 		}
 		sSYNetRollbackStickAbsorbUntilSim = completed_target + absorb_window;
 		sSYNetRollbackStickAbsorbPlayer = sSYNetRollbackResimCorrectionPlayer;
@@ -13021,6 +13029,34 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 		    (local != NULL) ? local->fighter : 0U);
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Stick-onset GGPO / EPISODE_SEAL_ROWS_WAIT (soak1 871504438): peer baseline can land
+	 * while seal rows / stick absorb are still open — fail-closed mid-heal. Defer kill until
+	 * defer-interface wait clears; deeper exhaust still fail-closes after. See
+	 * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+	 */
+	if (syNetRollbackShouldDeferInterfaceDuringResimWait() != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (resim_seal_wait) load_tick=%u peer figh=0x%08X local figh=0x%08X\n",
+		    load_tick,
+		    (peer != NULL) ? peer->fighter : 0U,
+		    (local != NULL) ? local->fighter : 0U);
+		return;
+	}
+	if ((sSYNetRollbackStickAbsorbUntilSim != 0U) &&
+	    (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim))
+	{
+		port_log(
+		    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (stick_absorb) load_tick=%u until=%u peer figh=0x%08X local figh=0x%08X\n",
+		    load_tick,
+		    sSYNetRollbackStickAbsorbUntilSim,
+		    (peer != NULL) ? peer->fighter : 0U,
+		    (local != NULL) ? local->fighter : 0U);
+		return;
+	}
+#endif
 	if ((peer != NULL) && (local != NULL) &&
 	    (syNetRollbackPeerBaselineDriftIsCameraOnlyCosmetic(peer, local) != FALSE))
 	{
@@ -13761,6 +13797,15 @@ static void syNetRollbackLogResimComplete(void)
 		    sSYNetRollbackResimLoadTick,
 		    sSYNetRollbackResimMismatchTick,
 		    sSYNetRollbackResimTargetTick);
+	}
+	/*
+	 * Name gameplay LCG draws when resim advances hashed rng with matched figh/map possible
+	 * (soak 1790844706: initiator D993→D993 vs follower D993→6FE7). Sites always in ring.
+	 */
+	if (sSYNetRollbackResimPreHashes.rng != post.rng)
+	{
+		syNetSyncLogRngHashDriftDiag(sSYNetRollbackResimMismatchTick, post.rng,
+		                             sSYNetRollbackResimPreHashes.rng, "resim_rng_burn");
 	}
 	{
 		u32 live_sim;
