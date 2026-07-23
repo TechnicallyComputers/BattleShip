@@ -1,48 +1,71 @@
-# Zero-onset predict runway → PEER at dual-stick Go (2026-07-20)
+# Zero-onset predict runway → PEER (2026-07-20)
 
-**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)  
-**Soak:** soak1 session `871504438` seed `4075570583` — Android client ↔ Linux host  
+**Status:** FIX v3 (`PORT && SSB64_NETMENU`, re-soak)  
+**Soaks:**
+
+| Session | Detail |
+|---------|--------|
+| `871504438` | Original Go onset: Linux invented remote P1 `(0,0)` ×8 while Android Walk'd @402 → PEER@412 |
+| `979771282` | Mid post-Go grace: Android invented remote P0 `(0,0)` @415–422 while Linux `LOCAL_PUBLISH` onset `(19,4)`@419 / `(77,-1)`@420 → soft Wait vs Turn@420 → PEER@480 |
+| `250667155` | After v2: scan PASS but sync UNSTABLE — soft `STATUS_FORK@406` (owner stick vs invent `(0,0)`); ~50 resims; dual-spam `wire_need` hang |
+
 **Logs:** `soak1-android.log` / `soak1-linux.log`  
-**Bucket:** `REPLAY_DETERMINISM` / `PEER_SNAPSHOT_DIVERGE`
+**Bucket:** input contract / `PEER_SNAPSHOT_DIVERGE` (not KneeBend gameplay)
 
-## Symptom
+## Symptom (979771282)
 
 | Signal | Detail |
 |--------|--------|
-| First mismatch | sim_state tick **402** `figh`/`anim` |
-| Status | Android P1 **12** (Walk) + stick `(30,29)` vs Linux P1 **10** + `(0,0)` |
-| GGPO | Linux queues correction for P1@402 only at frontier **410** (`pred=1` → wire `30,29`) |
-| Kill | `PEER_SNAPSHOT_DIVERGE load_tick=412` after seal wait / dual onset storm |
-| Scan | `RESIM_STICK_FORK` @402–409 host smash vs guest zero (first-pass truth) |
+| Grace | `post_go_wire_pacing_grace until=423` (covers entire onset window) |
+| Owner (Linux P0) | `LOCAL_PUBLISH (19,4)`@419 → `(77,-1)`@420 → Turn |
+| Remote (Android P0) | `HISTORY prediction (0,0)` + `REMOTE_PUBLISH_SKIP wire_neutral` @415–422 → stayed Wait |
+| GGPO | Correction for @419 only at frontier 423 — after status fork |
+| Scan | Soft `STATUS_FORK_RECOVERED@420`; durable `PEER@480` (cascade) |
 
-Prior `REPLACE_REJECT_NEUTRAL_DOWNGRADE` did not apply — zeros came **first**, smash **late**.
+Lockstep never forked: same pads ⇒ same Wait→Turn. Rollback invent of predicted zeros was the contract break.
 
 ## Root cause
 
-1. Linux `REMOTE_PUBLISH_SKIP wire_neutral` for P1@402–409 while inventing predicted `(0,0)` past remote `hr` under a full phase_lock predict window.
-2. Android applied local stick immediately → Wait→Walk at 402 → hard figh fork before any GGPO.
-3. Mid-heal: `LEDGER_REFRESH_COMPLETED_SIM_CORRECT` wrote `(62,9)→(0,0)` @413; `EPISODE_SEAL_ROWS_WAIT` raced peer baseline compare.
+**v1→v2:** Restrict early-out during post-Go grace + soft pacing skipped runway cap → invent through owner onset.
 
-## Fix
+**v2→v3 (250667155):** D+1 still admitted invent inside grace for dual-stick onset; `wire_need` subtracted full `pred_window` while inventing zeros → leader ran ahead then hung; Promote still minted History `(0,0)` under Restrict.
+
+## Fix v3
 
 | Layer | Change |
 |-------|--------|
-| Predict admit | `syNetInputRemoteHumanZeroOnsetPredictRestrict` — when inventing remote `(0,0)` onset, cap shared-commit `effective_window` and Advance `runway_cap` to **D+1** (off during Wait / post-Go soft pacing). |
-| Ledger | `LEDGER_REJECT_NEUTRAL_DOWNGRADE` / `LEDGER_REFRESH_REJECT_NEUTRAL_DOWNGRADE` — mirror wire REPLACE reject. |
-| PEER kill | Suppress `PEER_SNAPSHOT_DIVERGE` stop while `resim_seal_wait` or stick-absorb window is active (bounded; deeper exhaust still fail-closes). |
+| Restrict | Unchanged predicate (would invent hard zero); still active in grace |
+| Dual-hot | `syNetInputDualStickHotPredictTighten`: local stick hot + (Restrict or remote hot) |
+| Shared-commit | Post-grace Restrict **or** dual-hot Restrict in grace → hard R-stall + ingress pump (`phase=stall`). Grace-only Restrict keeps D+1. Dual-hot alone shrinks window to D+1 |
+| AdvanceAllowed | Matching hard-stall / D+1 / dual-hot runway; `wire_need` pred credit = 0 under Restrict, D+1 under dual-hot |
+| Promote | Skip hold-last hard-zero History mint when Restrict (`reason=zero_onset_stall`) |
+| Grace | `wire_need` remains soft (ICE hr cover); invent path no longer credits full phase_lock |
+
+## Diagnostics
+
+```text
+SSB64 NetInput: ZERO_ONSET_PREDICT phase=invent …
+SSB64 NetInput: ZERO_ONSET_PREDICT phase=restrict …
+SSB64 NetInput: ZERO_ONSET_PREDICT phase=stall tick=… grace=… dual_hot=…
+SSB64 NetInput: sim advance blocked (zero_onset_stall|zero_onset_dual_hot_grace|runway_cap_zero_onset_grace) …
+SSB64 NetInput: REMOTE_PUBLISH_SKIP … reason=zero_onset_stall
+```
 
 ## Acceptance (re-soak)
 
-Dual sticks at Go, `D=2`, onset + strict-input logs on:
+Dual sticks, `D=2`, onset after Go + stick spam:
 
-- No 8-tick zero-predict runway: Linux should R-stall / pump until wire onset (or ≤D+1 invent)
-- No first-pass status 10 vs 12 at stick onset for the same tick
-- No `LEDGER_REFRESH` smash→`(0,0)` on completed sim
-- Soft recovery may still GGPO once; PEER kill must not fire mid-`EPISODE_SEAL_ROWS_WAIT`
-- Do **not** SoftLip-harden
+- Both peers log `phase=restrict` / `phase=stall` for the **remote** of the onset player (binary parity)
+- No multi-tick `phase=invent` runway while owner `LOCAL_PUBLISH` is non-zero
+- Soft Wait vs Turn / Walk at onset should not be first-pass status fork
+- Dual-spam: no multi-second `wire_need` hang; resim count ≪ 50
+- Soft recovery / single GGPO OK; PEER must not be seeded by zero-onset invent
+- Do **not** SoftLip-harden; do **not** special-case KneeBend for this class
 
 ## Related
 
-- [`netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md`](netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md) — smash→neutral REPLACE poison
-- [`netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md`](netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md) — soft onset peek
-- [`netplay_post_go_wire_need_hang_2026-07-18.md`](netplay_post_go_wire_need_hang_2026-07-18.md) — why onset stall stays off during post-Go grace
+- [`netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md`](netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md) — post-onset hold_last mag freeze (not zero invent)
+- [`netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md`](netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md)
+- [`netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md`](netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md)
+- [`netplay_post_go_wire_need_hang_2026-07-18.md`](netplay_post_go_wire_need_hang_2026-07-18.md) — why wire_need stays soft during grace
+- [`netplay_branch_sensitive_predict_2026-07-20.md`](netplay_branch_sensitive_predict_2026-07-20.md) — branch-eval backstop (orthogonal; input contract is primary)

@@ -381,11 +381,28 @@ extern void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const 
 extern sb32 syNetInputAuthorityLedgerTryGet(s32 player, u32 sim_tick, SYNetInputFrame *out_frame, u8 *out_origin);
 /*
  * TRUE when predicting `sim_tick` would invent remote-human (0,0) after near-neutral
- * last_confirmed (no wire / soft-onset / last_nn). Shared-commit should cap the predict
- * window to ~D+1. Off during intro Wait / post-Go soft pacing.
- * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+ * last_confirmed (no wire / soft-onset / last_nn). Post-grace (or dual-hot inside grace):
+ * shared-commit / Advance hard-stall instead of inventing. Grace-only Restrict still
+ * caps to ~D+1. Off during intro Wait / Appear force-neutral only.
+ * Logs ZERO_ONSET_PREDICT phase=restrict|stall. See
+ * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
  */
 extern sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick);
+/* TRUE while post-Go wire_need soft-pacing grace covers `sim_tick` (hr freeze cover). */
+extern sb32 syNetInputPostGoWirePacingGraceActive(u32 sim_tick);
+/*
+ * TRUE when local stick is recently hot AND (Restrict or remote stick recently hot).
+ * Shrinks predict credit / forces zero-onset stall during dual-stick onset.
+ */
+extern sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick);
+/*
+ * TRUE when peek-ahead shows a true analog ramp vs last_confirmed (intent/mag disagree)
+ * while wire for `sim_tick` is still missing. Peek miss / same-mag hold → FALSE
+ * (allow hold_last; accept rare GGPO). Consumers shrink predict to D+1 — not a
+ * hard R-lock on every hold with D lag (soak 1809694209 hang).
+ * Logs ANALOG_RAMP_PREDICT phase=tighten.
+ */
+extern sb32 syNetInputRemoteHumanAnalogRampPredictTighten(u32 sim_tick);
 /*
  * SSB64_NETPLAY_STRICT_INPUT=1 — log-only input-authority witness. Enumerates confirmed-row
  * overwrites / fabricated confirms on the wire and published rings (migration to write-once

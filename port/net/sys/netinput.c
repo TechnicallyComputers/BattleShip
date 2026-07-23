@@ -469,10 +469,13 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 #endif
 		/*
 		 * Intro Wait (force-neutral Appear) and a short post-Go grace: do not apply
-		 * wire_need / runway_cap. Those gates stall sim when hr pauses (Android ICE recv
-		 * blackholes). SYNCTEST_SKIP intro_wait only skips hash compare.
-		 * See docs/bugs/netplay_intro_wait_advance_frontier_deadlock_2026-07-18.md and
-		 * docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md.
+		 * wire_need / full phase_lock runway_cap. Those gates stall sim when hr pauses
+		 * (Android ICE recv blackholes). SYNCTEST_SKIP intro_wait only skips hash compare.
+		 * Soak 979771282: post-Go grace still must apply zero-onset D+1 cap — inventing
+		 * remote (0,0) through grace (until=423) while owner onset@419 seeded Wait vs Turn.
+		 * See docs/bugs/netplay_intro_wait_advance_frontier_deadlock_2026-07-18.md,
+		 * docs/bugs/netplay_post_go_wire_need_hang_2026-07-18.md, and
+		 * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
 		 */
 		soft_wire_pacing = ((intro_wait != FALSE) || (post_go_grace != FALSE)) ? TRUE : FALSE;
 		if (soft_wire_pacing != FALSE)
@@ -493,6 +496,42 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 				}
 				return FALSE;
 			}
+#if defined(SSB64_NETMENU)
+			/*
+			 * Post-Go soft pacing: keep wire_need off. Zero-onset / analog-ramp / dual-hot
+			 * only apply D+1 runway when hr is live — do not hard-lock every hold tick
+			 * (soak 1809694209 dual-stick hang). Soft onset invent (0,0) still capped.
+			 */
+			if ((post_go_grace != FALSE) && (intro_wait == FALSE) &&
+			    ((syNetInputRemoteHumanZeroOnsetPredictRestrict(next_sim_tick) != FALSE) ||
+			     (syNetInputRemoteHumanAnalogRampPredictTighten(next_sim_tick) != FALSE) ||
+			     (syNetInputDualStickHotPredictTighten(next_sim_tick) != FALSE)))
+			{
+				u32 onset_cap;
+
+				onset_cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() +
+				            1U;
+				if (next_sim_tick > onset_cap)
+				{
+					static u32 sLastZeroOnsetGraceHoldLogTick = ~(u32)0;
+
+					if (next_sim_tick != sLastZeroOnsetGraceHoldLogTick)
+					{
+						port_log(
+						    "SSB64 NetInput: sim advance blocked "
+						    "(runway_cap_zero_onset_grace) next_sim=%u hr=%u "
+						    "cap=%u frontier_sim=%u D=%u grace_until=%u\n",
+						    (unsigned int)next_sim_tick, (unsigned int)hr,
+						    (unsigned int)onset_cap,
+						    (unsigned int)syNetPeerDelaySimTickFromWire(hr),
+						    (unsigned int)syNetPeerGetCommittedInputDelay(),
+						    (unsigned int)sSYNetInputPostGoWirePacingGraceUntil);
+						sLastZeroOnsetGraceHoldLogTick = next_sim_tick;
+					}
+					return FALSE;
+				}
+			}
+#endif
 			return TRUE;
 		}
 	}
@@ -501,6 +540,7 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	/*
 	 * Live (post-Go) wire-contract pacing. Subtract phase_lock so this is not stricter than
 	 * FuncRead prediction (D==lead otherwise collapses to hr>=next_sim).
+	 * Zero-onset invent: no pred credit. Analog-ramp / dual-hot: shrink credit to D+1.
 	 */
 	if (syNetInputAuthoritativeWireContractEnabled() != FALSE)
 	{
@@ -519,12 +559,33 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 		}
 		if ((syNetSessionParamsRollbackEnabled() != FALSE) && (syNetInputGetUseInputPrediction() != FALSE))
 		{
-			u32 pred_window;
+			u32 pred_credit;
 
-			pred_window = syNetPeerGetPhaseLockPredictionWindowTicks();
-			if (wire_need > pred_window)
+			pred_credit = syNetPeerGetPhaseLockPredictionWindowTicks();
+#if defined(SSB64_NETMENU)
+			if (syNetInputRemoteHumanZeroOnsetPredictRestrict(next_sim_tick) != FALSE)
 			{
-				wire_need -= pred_window;
+				pred_credit = 0U;
+			}
+			else if ((syNetInputRemoteHumanAnalogRampPredictTighten(next_sim_tick) != FALSE) ||
+			         (syNetInputDualStickHotPredictTighten(next_sim_tick) != FALSE))
+			{
+				u32 tight;
+
+				tight = syNetPeerGetCommittedInputDelay() + 1U;
+				if (tight < 2U)
+				{
+					tight = 2U;
+				}
+				if (pred_credit > tight)
+				{
+					pred_credit = tight;
+				}
+			}
+#endif
+			if (wire_need > pred_credit)
+			{
+				wire_need -= pred_credit;
 			}
 			else
 			{
@@ -559,17 +620,48 @@ sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick)
 	      syNetPeerGetPhaseLockPredictionWindowTicks();
 #if defined(PORT) && defined(SSB64_NETMENU)
 	/*
-	 * Dual-stick Go onset (soak1 871504438): do not allow a full phase_lock of invented
-	 * remote (0,0) past DelaySim(hr). Cap predict runway to D+1 when zero-onset restrict.
+	 * Post-grace zero-onset invent: hard-stall. Grace / dual-hot / analog-ramp: D+1 only
+	 * (do not hard-lock stick holds with normal D lag — soak 1809694209).
 	 */
 	if (syNetInputRemoteHumanZeroOnsetPredictRestrict(next_sim_tick) != FALSE)
 	{
-		u32 onset_cap;
-
-		onset_cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() + 1U;
-		if (onset_cap < cap)
+		if (syNetInputPostGoWirePacingGraceActive(next_sim_tick) == FALSE)
 		{
-			cap = onset_cap;
+			static u32 sLastZeroOnsetStallHoldLogTick = ~(u32)0;
+
+			if (next_sim_tick != sLastZeroOnsetStallHoldLogTick)
+			{
+				port_log(
+				    "SSB64 NetInput: sim advance blocked (zero_onset_stall) next_sim=%u hr=%u "
+				    "frontier_sim=%u D=%u dual_hot=%d grace=%d\n",
+				    (unsigned int)next_sim_tick, (unsigned int)hr,
+				    (unsigned int)syNetPeerDelaySimTickFromWire(hr),
+				    (unsigned int)syNetPeerGetCommittedInputDelay(),
+				    (int)syNetInputDualStickHotPredictTighten(next_sim_tick),
+				    (int)syNetInputPostGoWirePacingGraceActive(next_sim_tick));
+				sLastZeroOnsetStallHoldLogTick = next_sim_tick;
+			}
+			return FALSE;
+		}
+		{
+			u32 onset_cap;
+
+			onset_cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() + 1U;
+			if (onset_cap < cap)
+			{
+				cap = onset_cap;
+			}
+		}
+	}
+	else if ((syNetInputRemoteHumanAnalogRampPredictTighten(next_sim_tick) != FALSE) ||
+	         (syNetInputDualStickHotPredictTighten(next_sim_tick) != FALSE))
+	{
+		u32 tight_cap;
+
+		tight_cap = syNetPeerDelaySimTickFromWire(hr) + syNetPeerGetCommittedInputDelay() + 1U;
+		if (tight_cap < cap)
+		{
+			cap = tight_cap;
 		}
 	}
 #endif
@@ -1995,6 +2087,42 @@ static sb32 syNetInputResolveRemoteHumanAuthorityFrameEx(s32 player, u32 tick, S
 		                                     tick - last_confirmed->tick);
 	}
 	syNetInputFillHoldLastSoftOnsetIfNeeded(player, tick, out_frame);
+	/*
+	 * Hard (0,0) invent after soft-onset failed: input-contract witness for dual-stick
+	 * onset / Wait→Turn forks (soak 979771282). See ZERO_ONSET_PREDICT + restrict.
+	 */
+	if (syNetInputFrameStickGameplayNeutral(out_frame) != FALSE)
+	{
+		static u32 sZeroOnsetInventLogTick = ~(u32)0;
+		static s32 sZeroOnsetInventLogPlayer = -1;
+		u32 hr;
+		u32 frontier;
+		sb32 restrict_on;
+		sb32 in_grace;
+
+		restrict_on = syNetInputRemoteHumanZeroOnsetPredictRestrict(tick);
+		hr = syNetPeerGetHighestRemoteTick();
+		frontier = (hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U;
+		in_grace = ((sSYNetInputPostGoWirePacingGraceUntil != ~(u32)0) &&
+		            (tick <= sSYNetInputPostGoWirePacingGraceUntil))
+		               ? TRUE
+		               : FALSE;
+		if ((tick != sZeroOnsetInventLogTick) || (player != sZeroOnsetInventLogPlayer))
+		{
+			port_log(
+			    "SSB64 NetInput: ZERO_ONSET_PREDICT phase=invent player=%d tick=%u sx=%d sy=%d "
+			    "pred=1 restrict=%d grace=%d grace_until=%u hr=%u frontier_sim=%u "
+			    "last_conf_tick=%u last_conf_sx=%d last_conf_sy=%d\n",
+			    (int)player, (unsigned int)tick, (int)out_frame->stick_x, (int)out_frame->stick_y,
+			    (int)restrict_on, (int)in_grace, (unsigned int)sSYNetInputPostGoWirePacingGraceUntil,
+			    (unsigned int)hr, (unsigned int)frontier,
+			    (unsigned int)((last_confirmed->is_valid != FALSE) ? last_confirmed->tick : 0U),
+			    (int)((last_confirmed->is_valid != FALSE) ? last_confirmed->stick_x : 0),
+			    (int)((last_confirmed->is_valid != FALSE) ? last_confirmed->stick_y : 0));
+			sZeroOnsetInventLogTick = tick;
+			sZeroOnsetInventLogPlayer = player;
+		}
+	}
 #endif
 	if (out_source_rank != NULL)
 	{
@@ -2085,6 +2213,39 @@ void syNetInputPromoteRemoteHumanAuthorityPublished(s32 player, u32 tick)
 				    "SSB64 NetInput: REMOTE_PUBLISH_SKIP player=%d sim_tick=%u reason=%s\n",
 				    (int)player, (unsigned int)tick,
 				    (tick < now_sim) ? "hold_last_completed_sim" : "hold_last_ness_pk_scope");
+			}
+			return;
+		}
+		/*
+		 * Zero-onset hard invent: do not mint History (0,0) while Restrict is armed.
+		 * Prefer stall / leave gap over Wait vs Walk/Turn (soak 250667155 STATUS_FORK@406).
+		 */
+		if ((syNetInputFrameStickGameplayNeutral(&resolved) != FALSE) &&
+		    (syNetInputRemoteHumanZeroOnsetPredictRestrict(tick) != FALSE))
+		{
+			if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetInput: REMOTE_PUBLISH_SKIP player=%d sim_tick=%u "
+				    "reason=zero_onset_stall\n",
+				    (int)player, (unsigned int)tick);
+			}
+			return;
+		}
+		/*
+		 * True analog-ramp (peek differs from last_confirmed): do not mint hold_last
+		 * of the stale mag — soft-onset / wire should supply the peek instead.
+		 */
+		if ((syNetInputFrameStickGameplayNeutral(&resolved) == FALSE) &&
+		    (syNetInputRemoteHumanAnalogRampPredictTighten(tick) != FALSE))
+		{
+			if (syNetInputAuthorityPublishLogEnabled() != FALSE)
+			{
+				port_log(
+				    "SSB64 NetInput: REMOTE_PUBLISH_SKIP player=%d sim_tick=%u "
+				    "reason=analog_ramp_tighten sx=%d sy=%d\n",
+				    (int)player, (unsigned int)tick, (int)resolved.stick_x,
+				    (int)resolved.stick_y);
 			}
 			return;
 		}
@@ -3740,19 +3901,71 @@ static void syNetInputFillHoldLastSoftOnsetIfNeeded(s32 player, u32 tick, SYNetI
 	}
 }
 
-/*
- * Soak1 871504438: Linux invented remote P1 (0,0) for 8 ticks (402–409) while Android already
- * Walk'd on local stick → PEER@412. Cap predict runway when any remote-human slot would invent
- * hard zero onset (no strict wire, no soft-onset peek, no usable last_nn).
- */
-sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
+sb32 syNetInputPostGoWirePacingGraceActive(u32 sim_tick)
 {
+	if ((sim_tick == 0U) || (sSYNetInputPostGoWirePacingGraceUntil == ~(u32)0))
+	{
+		return FALSE;
+	}
+	return (sim_tick <= sSYNetInputPostGoWirePacingGraceUntil) ? TRUE : FALSE;
+}
+
+static sb32 syNetInputSlotStickHotRecent(s32 player, u32 sim_tick, u32 lookback)
+{
+	const SYNetInputFrame *frame;
+	u32 age;
+
+	if ((syNetInputCheckPlayer(player) == FALSE) || (sim_tick == 0U))
+	{
+		return FALSE;
+	}
+	frame = &sSYNetInputSlots[player].last_published;
+	if ((frame->is_valid != FALSE) && (frame->tick <= sim_tick) &&
+	    (syNetInputFrameSticksNearNeutral(frame) == FALSE) &&
+	    (syNetInputStickLooksAnalog(frame->stick_x, frame->stick_y) != FALSE))
+	{
+		age = sim_tick - frame->tick;
+		if (age <= lookback)
+		{
+			return TRUE;
+		}
+	}
+	frame = &sSYNetInputSlots[player].last_non_neutral;
+	if ((frame->is_valid != FALSE) && (frame->tick <= sim_tick) &&
+	    (syNetInputFrameSticksNearNeutral(frame) == FALSE) &&
+	    (syNetInputStickLooksAnalog(frame->stick_x, frame->stick_y) != FALSE))
+	{
+		age = sim_tick - frame->tick;
+		if (age <= lookback)
+		{
+			return TRUE;
+		}
+	}
+	frame = &sSYNetInputSlots[player].last_confirmed;
+	if ((frame->is_valid != FALSE) && (frame->tick <= sim_tick) &&
+	    (syNetInputFrameSticksNearNeutral(frame) == FALSE) &&
+	    (syNetInputStickLooksAnalog(frame->stick_x, frame->stick_y) != FALSE))
+	{
+		age = sim_tick - frame->tick;
+		if (age <= lookback)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/*
+ * Local stick hot + (Restrict or remote stick hot): dual-stick onset / spam class.
+ * Used to harden zero-onset stall inside grace and shrink wire_need predict credit.
+ */
+sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick)
+{
+	s32 local_slot;
 	s32 i;
 	s32 n;
 	s32 slot;
-	SYNetInputFrame peek;
-	const SYNetInputFrame *last_confirmed;
-	const SYNetInputFrame *last_nn;
+	sb32 remote_hot;
 
 	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
 	    (syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
@@ -3767,12 +3980,187 @@ sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 	{
 		return FALSE;
 	}
-	if ((sSYNetInputPostGoWirePacingGraceUntil != ~(u32)0) &&
-	    (sim_tick <= sSYNetInputPostGoWirePacingGraceUntil))
+	local_slot = syNetPeerGetLocalSimSlot();
+	if (syNetInputSlotStickHotRecent(local_slot, sim_tick, 8U) == FALSE)
+	{
+		return FALSE;
+	}
+	if (syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE)
+	{
+		return TRUE;
+	}
+	remote_hot = FALSE;
+	n = syNetPeerGetRemoteHumanSlotCount();
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputSlotStickHotRecent(slot, sim_tick, 8U) != FALSE)
+		{
+			remote_hot = TRUE;
+			break;
+		}
+	}
+	return remote_hot;
+}
+
+/*
+ * Soak 1040202646 / 1809694209: v1 stalled on every predict past analog last_confirmed
+ * (peek miss) → dual-stick hold + D lag felt like a hang. Narrow to a *true* ramp:
+ * peek-ahead stick disagrees with last_confirmed. Peek miss / same-mag → FALSE so
+ * hold_last may predict (rare GGPO on unseen ramps is OK).
+ */
+static sb32 syNetInputStickAnalogRampDisagree(s8 conf_x, s8 conf_y, s8 peek_x, s8 peek_y)
+{
+	if (syNetInputStickSealIntentDisagree(conf_x, conf_y, peek_x, peek_y) != FALSE)
+	{
+		return TRUE;
+	}
+	/* Same intent but large mag ramp (−45→−65). */
+	if ((syNetInputAbsS8Diff(conf_x, peek_x) > (s32)SYNETINPUT_ANALOG_SAME_INTENT_TOLERANCE) ||
+	    (syNetInputAbsS8Diff(conf_y, peek_y) > (s32)SYNETINPUT_ANALOG_SAME_INTENT_TOLERANCE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+sb32 syNetInputRemoteHumanAnalogRampPredictTighten(u32 sim_tick)
+{
+	s32 i;
+	s32 n;
+	s32 slot;
+	SYNetInputFrame peek;
+	const SYNetInputFrame *last_confirmed;
+	sb32 hit;
+
+	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		return FALSE;
+	}
+	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
 	{
 		return FALSE;
 	}
 	n = syNetPeerGetRemoteHumanSlotCount();
+	hit = FALSE;
+	slot = -1;
+	last_confirmed = NULL;
+	for (i = 0; i < n; i++)
+	{
+		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(slot, sim_tick, NULL) != FALSE)
+		{
+			continue;
+		}
+		last_confirmed = &sSYNetInputSlots[slot].last_confirmed;
+		if ((last_confirmed->is_valid == FALSE) || (last_confirmed->tick >= sim_tick) ||
+		    (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) ||
+		    (syNetInputStickLooksAnalog(last_confirmed->stick_x, last_confirmed->stick_y) == FALSE))
+		{
+			continue;
+		}
+		/*
+		 * True ramp only: peek-ahead differs from last_confirmed. Peek miss or
+		 * same-mag hold → allow hold_last (do not R-lock every D-lag hold tick).
+		 */
+		/* Ahead-only peek (max_lookback=0); env peek_ahead still covers send-lead. */
+		if (syNetInputTryPeekRemoteAnalogForOnset(slot, sim_tick, 0U, &peek) == FALSE)
+		{
+			continue;
+		}
+		if (syNetInputStickAnalogRampDisagree(last_confirmed->stick_x, last_confirmed->stick_y,
+		                                      peek.stick_x, peek.stick_y) == FALSE)
+		{
+			continue;
+		}
+		hit = TRUE;
+		break;
+	}
+	if (hit != FALSE)
+	{
+		static u32 sAnalogRampTightenLogTick = ~(u32)0;
+		u32 hr;
+		sb32 in_grace;
+
+		hr = syNetPeerGetHighestRemoteTick();
+		in_grace = syNetInputPostGoWirePacingGraceActive(sim_tick);
+		if (sim_tick != sAnalogRampTightenLogTick)
+		{
+			port_log(
+			    "SSB64 NetInput: ANALOG_RAMP_PREDICT phase=tighten player=%d tick=%u grace=%d "
+			    "grace_until=%u hr=%u frontier_sim=%u D=%u last_conf_tick=%u "
+			    "last_conf_sx=%d last_conf_sy=%d peek_sx=%d peek_sy=%d\n",
+			    (int)slot, (unsigned int)sim_tick, (int)in_grace,
+			    (unsigned int)sSYNetInputPostGoWirePacingGraceUntil, (unsigned int)hr,
+			    (unsigned int)((hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U),
+			    (unsigned int)syNetPeerGetCommittedInputDelay(),
+			    (unsigned int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			                       ? last_confirmed->tick
+			                       : 0U),
+			    (int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			              ? last_confirmed->stick_x
+			              : 0),
+			    (int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			              ? last_confirmed->stick_y
+			              : 0),
+			    (int)peek.stick_x, (int)peek.stick_y);
+			sAnalogRampTightenLogTick = sim_tick;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/*
+ * Soak1 871504438 / 979771282 / 250667155: inventing remote (0,0) for a full phase_lock
+ * window while the owner already applied local stick seeds Wait vs Walk/Turn → PEER.
+ * TRUE when any remote-human slot would invent hard zero onset (no strict wire, no
+ * soft-onset peek, no usable last_nn). Active during post-Go grace. Off only during
+ * intro Wait / Appear force-neutral. Consumers hard-stall (post-grace or dual-hot) or
+ * cap to D+1 (grace-only).
+ */
+sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
+{
+	s32 i;
+	s32 n;
+	s32 slot;
+	SYNetInputFrame peek;
+	const SYNetInputFrame *last_confirmed;
+	const SYNetInputFrame *last_nn;
+	sb32 hit;
+
+	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
+	{
+		return FALSE;
+	}
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		return FALSE;
+	}
+	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+	{
+		return FALSE;
+	}
+	/*
+	 * Do NOT early-out on post-Go grace. grace until=423 covered soak 979771282 onset@419;
+	 * wire_need stays soft, but zero-onset D+1 must still bind admit/advance.
+	 */
+	n = syNetPeerGetRemoteHumanSlotCount();
+	hit = FALSE;
+	slot = -1;
+	last_confirmed = NULL;
 	for (i = 0; i < n; i++)
 	{
 		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
@@ -3800,6 +4188,42 @@ sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 		    ((last_confirmed->is_valid == FALSE) || (last_nn->tick > last_confirmed->tick)))
 		{
 			continue;
+		}
+		hit = TRUE;
+		break;
+	}
+	if (hit != FALSE)
+	{
+		static u32 sZeroOnsetRestrictLogTick = ~(u32)0;
+		u32 hr;
+		sb32 in_grace;
+
+		hr = syNetPeerGetHighestRemoteTick();
+		in_grace = ((sSYNetInputPostGoWirePacingGraceUntil != ~(u32)0) &&
+		            (sim_tick <= sSYNetInputPostGoWirePacingGraceUntil))
+		               ? TRUE
+		               : FALSE;
+		if (sim_tick != sZeroOnsetRestrictLogTick)
+		{
+			port_log(
+			    "SSB64 NetInput: ZERO_ONSET_PREDICT phase=restrict player=%d tick=%u restrict=1 "
+			    "grace=%d grace_until=%u hr=%u frontier_sim=%u D=%u pred_win=%u "
+			    "last_conf_tick=%u last_conf_sx=%d last_conf_sy=%d\n",
+			    (int)slot, (unsigned int)sim_tick, (int)in_grace,
+			    (unsigned int)sSYNetInputPostGoWirePacingGraceUntil, (unsigned int)hr,
+			    (unsigned int)((hr != 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U),
+			    (unsigned int)syNetPeerGetCommittedInputDelay(),
+			    (unsigned int)syNetPeerGetPhaseLockPredictionWindowTicks(),
+			    (unsigned int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			                       ? last_confirmed->tick
+			                       : 0U),
+			    (int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			              ? last_confirmed->stick_x
+			              : 0),
+			    (int)((last_confirmed != NULL && last_confirmed->is_valid != FALSE)
+			              ? last_confirmed->stick_y
+			              : 0));
+			sZeroOnsetRestrictLogTick = sim_tick;
 		}
 		return TRUE;
 	}

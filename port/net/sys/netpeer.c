@@ -5668,23 +5668,50 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
 #if defined(SSB64_NETMENU)
 			/*
-			 * Dual-stick Go onset (soak1 871504438): inventing remote (0,0) for a full
-			 * phase_lock window while the peer already applied local stick seeds PEER.
-			 * Cap predict admit to D+1 when zero-onset restrict is active.
-			 * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+			 * Zero-onset invent post-grace: hard R-stall. Grace / dual-hot / true
+			 * analog-ramp (peek-diff): shrink window to D+1 only — do not hard-lock
+			 * stick holds with normal D lag (soak 1809694209 hang).
+			 * See docs/bugs/netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md.
 			 */
-			if (syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE)
+			if ((syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE) &&
+			    (syNetInputPostGoWirePacingGraceActive(sim_tick) == FALSE))
 			{
-				u32 onset_win;
+				static u32 sLastZeroOnsetStallLogTick = ~(u32)0;
 
-				onset_win = syNetPeerGetCommittedInputDelay() + 1U;
-				if (onset_win < 2U)
+				syNetPeerPumpIngressTransport("zero_onset_stall");
+				out->advance = FALSE;
+				out->hold_reason = 'R';
+				if (sim_tick != sLastZeroOnsetStallLogTick)
 				{
-					onset_win = 2U;
+					port_log(
+					    "SSB64 NetInput: ZERO_ONSET_PREDICT phase=stall tick=%u "
+					    "grace=%d dual_hot=%d hr=%u frontier_sim=%u D=%u "
+					    "pred_win=%u\n",
+					    (unsigned int)sim_tick,
+					    (int)syNetInputPostGoWirePacingGraceActive(sim_tick),
+					    (int)syNetInputDualStickHotPredictTighten(sim_tick),
+					    (unsigned int)sSYNetPeerHighestRemoteTick,
+					    (unsigned int)remote_sim_frontier,
+					    (unsigned int)syNetPeerGetCommittedInputDelay(),
+					    (unsigned int)prediction_window);
+					sLastZeroOnsetStallLogTick = sim_tick;
 				}
-				if (effective_window > onset_win)
+				return;
+			}
+			if ((syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE) ||
+			    (syNetInputRemoteHumanAnalogRampPredictTighten(sim_tick) != FALSE) ||
+			    (syNetInputDualStickHotPredictTighten(sim_tick) != FALSE))
+			{
+				u32 tight_win;
+
+				tight_win = syNetPeerGetCommittedInputDelay() + 1U;
+				if (tight_win < 2U)
 				{
-					effective_window = onset_win;
+					tight_win = 2U;
+				}
+				if (effective_window > tight_win)
+				{
+					effective_window = tight_win;
 				}
 			}
 #endif
