@@ -1,6 +1,6 @@
 # Ness jibaku stick GGPO storm + PK-wave eff LOAD_HASH_DRIFT
 
-**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)  
+**Status:** PARTIAL — PK-wave eff fold still stands; **jibaku stick absorb SUPERSEDED** by [`netplay_jibaku_stick_absorb_retire_portable_ggpo_2026-07-26.md`](netplay_jibaku_stick_absorb_retire_portable_ggpo_2026-07-26.md) (storm root was `ness_pk_defer`, also retired)  
 **Date:** 2026-07-17  
 **Session:** `11903082` seed `705580761` (Android client ↔ Linux host, Dream Land, Ness ditto)
 

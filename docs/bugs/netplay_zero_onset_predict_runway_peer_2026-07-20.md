@@ -1,71 +1,79 @@
 # Zero-onset predict runway → PEER (2026-07-20)
 
-**Status:** FIX v3 (`PORT && SSB64_NETMENU`, re-soak)  
+**Status:** FIX v10 (`PORT && SSB64_NETMENU`) — Go invent acceptance met on soak `647084351`  
 **Soaks:**
 
 | Session | Detail |
 |---------|--------|
-| `871504438` | Original Go onset: Linux invented remote P1 `(0,0)` ×8 while Android Walk'd @402 → PEER@412 |
-| `979771282` | Mid post-Go grace: Android invented remote P0 `(0,0)` @415–422 while Linux `LOCAL_PUBLISH` onset `(19,4)`@419 / `(77,-1)`@420 → soft Wait vs Turn@420 → PEER@480 |
-| `250667155` | After v2: scan PASS but sync UNSTABLE — soft `STATUS_FORK@406` (owner stick vs invent `(0,0)`); ~50 resims; dual-spam `wire_need` hang |
+| `871504438` / `979771282` / `250667155` | Invent `(0,0)` through owner onset → Wait vs Walk/Turn → PEER |
+| `1239287245` | Grace D+1 invented `(0,0)` → Wait vs Walk@391 |
+| `1100933387` | v4: hard-stall all Restrict froze Go — AdvanceAllowed stalled **without ingress pump** |
+| `2117016934` | v5: hang fixed; frontier cover skipped stall → Linux invent `(0,0)` @391 while Android `sx=57`@392 → PEER cascade |
+| `999657306` | v6: HardStall≡Restrict + pump; still froze Go — feel-0 send-lead past auth frontier stayed **provisional** |
+| `815558360` | v7: Go unblocked; hitch every 2 ticks when `frontier==sim` → asymmetric admit → Turn@413 vs Dash → PEER |
+| `656287266` | v8: hitch gone; PEER `replay_determinism` @479 — Go HardStall left GetTick stuck → **double-sim tick 390** |
+| `1685388441` | v9: ADVANCE_FORCE fixed double-sim; then D+1 under Restrict cover simmed 391 with invent `(0,0)` vs owner smash → Wait vs Turn |
+| `647084351` | v10: Go invent PASS (P0/P1 match ~409); PEER@426 from non-smash hold_last — see [nonsmash release/flip](netplay_hold_last_nonsmash_release_flip_peer_2026-07-25.md) |
+| `1907878962` | Hold-last nonsmash fix + v10: soft-stable through `VS_SESSION_END` @516; 0× PEER |
 
 **Logs:** `soak1-android.log` / `soak1-linux.log`  
-**Bucket:** input contract / `PEER_SNAPSHOT_DIVERGE` (not KneeBend gameplay)
+**Bucket:** input contract / `PEER_SNAPSHOT_DIVERGE`
 
-## Symptom (979771282)
+## Root cause (evolution)
 
-| Signal | Detail |
-|--------|--------|
-| Grace | `post_go_wire_pacing_grace until=423` (covers entire onset window) |
-| Owner (Linux P0) | `LOCAL_PUBLISH (19,4)`@419 → `(77,-1)`@420 → Turn |
-| Remote (Android P0) | `HISTORY prediction (0,0)` + `REMOTE_PUBLISH_SKIP wire_neutral` @415–422 → stayed Wait |
-| GGPO | Correction for @419 only at frontier 423 — after status fork |
-| Scan | Soft `STATUS_FORK_RECOVERED@420`; durable `PEER@480` (cascade) |
+| Version | Failure |
+|---------|---------|
+| v1–v3 | Grace/D+1 admitted invent through owner onset |
+| v4 | Hard-stall Restrict forever — no pump on AdvanceAllowed path |
+| v5 | HardStall = Restrict∧(frontier&lt;sim∨dual-hot) → invent when frontier covers |
+| v6 | HardStall = Restrict + pump; PublishFrame refuses Restrict invent — **idle Go hang** |
+| v7 | v6 + `auth_stage` Strict LocalGameplayAuth — hang fixed; **2-tick hitch** |
+| v8 | HardStall = Restrict∧(frontier&lt;sim); Restrict-with-cover = D+1; auth runway = sim+D |
+| v9 | v8 + `AdvanceAfterLiveBattle` — fixed double-sim; cover admit still invented |
+| v10 | HardStall≡Restrict again + keep ADVANCE_FORCE |
 
-Lockstep never forked: same pads ⇒ same Wait→Turn. Rollback invent of predicted zeros was the contract break.
+### v8 → v9 double-sim (`656287266`)
 
-## Root cause
+Go: live `gcRunAll` @390 then Advance HardStalled → GetTick stuck → second `gcRunAll` @390 → `linux[t]==android[t+1]`.
 
-**v1→v2:** Restrict early-out during post-Go grace + soft pacing skipped runway cap → invent through owner onset.
+### v9 → v10 invent under cover (`1685388441`)
 
-**v2→v3 (250667155):** D+1 still admitted invent inside grace for dual-stick onset; `wire_need` subtracted full `pred_window` while inventing zeros → leader ran ahead then hung; Promote still minted History `(0,0)` under Restrict.
+`ADVANCE_FORCE` advanced 390→391 correctly (P0 matched). Next live step admitted under Restrict + frontier cover (D+1): Linux FuncRead invent `(0,0) pred=1` while Android already had P1 `(-66,-12)` → **Wait vs Turn @391**, then 1-tick P1 phase skew → PEER `replay_determinism` ~437. Invent refuse only blocks History mint.
 
-## Fix v3
+## Fix v9
 
 | Layer | Change |
 |-------|--------|
-| Restrict | Unchanged predicate (would invent hard zero); still active in grace |
-| Dual-hot | `syNetInputDualStickHotPredictTighten`: local stick hot + (Restrict or remote hot) |
-| Shared-commit | Post-grace Restrict **or** dual-hot Restrict in grace → hard R-stall + ingress pump (`phase=stall`). Grace-only Restrict keeps D+1. Dual-hot alone shrinks window to D+1 |
-| AdvanceAllowed | Matching hard-stall / D+1 / dual-hot runway; `wire_need` pred credit = 0 under Restrict, D+1 under dual-hot |
-| Promote | Skip hold-last hard-zero History mint when Restrict (`reason=zero_onset_stall`) |
-| Grace | `wire_need` remains soft (ICE hr cover); invent path no longer credits full phase_lock |
+| Live Advance | `syNetInputAdvanceAuthoritativeSimTickAfterLiveBattle` — always advance after live `gcRunAll`; log `ADVANCE_FORCE` if hold would block |
+| Contract | Holds gate **FuncUpdate entry only** |
 
-## Diagnostics
+## Fix v10
 
-```text
-SSB64 NetInput: ZERO_ONSET_PREDICT phase=invent …
-SSB64 NetInput: ZERO_ONSET_PREDICT phase=restrict …
-SSB64 NetInput: ZERO_ONSET_PREDICT phase=stall tick=… grace=… dual_hot=…
-SSB64 NetInput: sim advance blocked (zero_onset_stall|zero_onset_dual_hot_grace|runway_cap_zero_onset_grace) …
-SSB64 NetInput: REMOTE_PUBLISH_SKIP … reason=zero_onset_stall
-```
+| Layer | Change |
+|-------|--------|
+| HardStall | **≡ Restrict** (no D+1 invent under frontier cover) |
+| AnalogRamp / dual-hot | D+1 only (unchanged) |
+| ADVANCE_FORCE | Kept (v9) — mid-pass Go HardStall must not double-sim |
+| Auth runway / pump / invent refuse | Kept |
 
 ## Acceptance (re-soak)
 
-Dual sticks, `D=2`, onset after Go + stick spam:
+- Past Go without permanent freeze / double-sim (`ADVANCE_FORCE` OK; no second evolved hash for same GetTick)
+- No Wait/Turn vs Walk/Dash from invent `(0,0)` under Restrict (esp. @391 after Go)
+- Dual-spam holds: no multi-second hang
+- Soft GGPO OK; brief `zero_onset_stall` while waiting for confirmed is expected — PEER must not be seeded by invent or Go double-sim
 
-- Both peers log `phase=restrict` / `phase=stall` for the **remote** of the onset player (binary parity)
-- No multi-tick `phase=invent` runway while owner `LOCAL_PUBLISH` is non-zero
-- Soft Wait vs Turn / Walk at onset should not be first-pass status fork
-- Dual-spam: no multi-second `wire_need` hang; resim count ≪ 50
-- Soft recovery / single GGPO OK; PEER must not be seeded by zero-onset invent
-- Do **not** SoftLip-harden; do **not** special-case KneeBend for this class
+**v10 Go invent:** PASS on `647084351`. Hold-last nonsmash residual: PASS on `1907878962`.
+
+**Follow-up (`2141547652`):** auth_stage ahead used pre-sample latch → false Strict `(0,0)` mid-hold → REPLACE/REJECT PEER. Ahead auth now holds last gameplay — [`netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md`](netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md).
+
+**Follow-up (`1454017460`):** v10 HardStall≡Restrict froze host predict on fresh remote idle `(0,0)` → `pct_R≈22.6%` / both-character lag. v11 hold-neutral invent when last_conf age ≤ pred_win — [`netplay_zero_onset_hold_neutral_r_stall_2026-07-27.md`](netplay_zero_onset_hold_neutral_r_stall_2026-07-27.md).
 
 ## Related
 
-- [`netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md`](netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md) — post-onset hold_last mag freeze (not zero invent)
-- [`netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md`](netplay_wire_neutral_downgrade_dual_stick_onset_2026-07-20.md)
-- [`netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md`](netplay_hold_last_zero_predict_stick_onset_fc_2026-07-20.md)
-- [`netplay_post_go_wire_need_hang_2026-07-18.md`](netplay_post_go_wire_need_hang_2026-07-18.md) — why wire_need stays soft during grace
-- [`netplay_branch_sensitive_predict_2026-07-20.md`](netplay_branch_sensitive_predict_2026-07-20.md) — branch-eval backstop (orthogonal; input contract is primary)
+- [`netplay_hold_last_nonsmash_release_flip_peer_2026-07-25.md`](netplay_hold_last_nonsmash_release_flip_peer_2026-07-25.md) — residual after v10; accepted PASS
+- [`netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md`](netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md) — auth_stage latch false zero
+- [`netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md`](netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md)
+- [`netplay_post_go_wire_need_hang_2026-07-18.md`](netplay_post_go_wire_need_hang_2026-07-18.md)
+- [`netplay_feel0_send_before_sample_release_skew_2026-07-13.md`](netplay_feel0_send_before_sample_release_skew_2026-07-13.md)
+- [`netplay_turn_lr_dash_stomp_fc_2026-07-19.md`](netplay_turn_lr_dash_stomp_fc_2026-07-19.md)

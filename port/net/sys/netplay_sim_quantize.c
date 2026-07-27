@@ -2397,8 +2397,15 @@ void syNetplayHardenAnimEndWaitThresholdBeforeSim(void)
 /*
  * InvertLR Turn entry pins ±1 here; Center pins 0. Restored by HardenTurnLrDash when the
  * live union slot is stomped (soak 1646535146 Android lr_dash -1→0 at allow frame).
+ *
+ * note_tick gates Harden: DashCheckTurn may Note(±1) on a live-ahead tick; after GGPO load to
+ * an earlier tick that pin must not invent lr_dash (soak 1929938261 Linux harden@1957 used
+ * entry from live@1958 → false did_dash while Android entry stayed 0). SyncAfterLoad re-Notes
+ * from the restored union so InvertLR pins still survive load when blob lr_dash is nonzero.
+ * See docs/bugs/netplay_turn_entry_lr_dash_future_sticky_resim_2026-07-26.md.
  */
 static s32 sSYNetplayTurnEntryLrDash[GMCOMMON_PLAYERS_MAX];
+static u32 sSYNetplayTurnEntryLrDashTick[GMCOMMON_PLAYERS_MAX];
 static sb32 sTurnDashWitnessCached = -999;
 
 static sb32 syNetplayTurnDashWitnessEnabled(void)
@@ -2411,6 +2418,24 @@ static sb32 syNetplayTurnDashWitnessEnabled(void)
 		sTurnDashWitnessCached = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 	}
 	return sTurnDashWitnessCached;
+}
+
+static sb32 syNetplayTurnEntryLrDashUsableAtTick(s32 player, u32 tick)
+{
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return FALSE;
+	}
+	if (sSYNetplayTurnEntryLrDash[player] == 0)
+	{
+		return FALSE;
+	}
+	/* Future-tick pin from live-ahead of a resim load — ignore until that tick replays. */
+	if (sSYNetplayTurnEntryLrDashTick[player] > tick)
+	{
+		return FALSE;
+	}
+	return TRUE;
 }
 
 void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
@@ -2427,11 +2452,46 @@ void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
 		return;
 	}
 	sSYNetplayTurnEntryLrDash[pi] = lr_dash;
+	sSYNetplayTurnEntryLrDashTick[pi] = syNetInputGetTick();
+}
+
+void syNetplayTurnSyncEntryLrDashAfterLoad(FTStruct *fp)
+{
+	ftCommonTurnStatusVars *turn;
+	s32 pi;
+	s32 lr_dash;
+
+	if (fp == NULL)
+	{
+		return;
+	}
+	pi = fp->player;
+	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+	lr_dash = 0;
+	if (fp->status_id == nFTCommonStatusTurn)
+	{
+		turn = ftStatusVarsTurn(fp);
+		if (turn != NULL)
+		{
+			lr_dash = turn->lr_dash;
+		}
+	}
+	/*
+	 * Re-pin from restored union (or clear). Note stamps note_tick = load/sim tick so a
+	 * stale live-ahead DashCheckTurn pin cannot Harden on the first resim frame.
+	 * Blob must keep turn.lr_dash intact across scrub (Turn/TurnRun scrub skip) — otherwise
+	 * Note(0) clears InvertLR sticky after synctest while tap buffer is already expired.
+	 */
+	syNetplayTurnNoteEntryLrDash(fp, lr_dash);
 }
 
 s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp)
 {
 	s32 pi;
+	u32 tick;
 
 	if (fp == NULL)
 	{
@@ -2439,6 +2499,11 @@ s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp)
 	}
 	pi = fp->player;
 	if ((pi < 0) || (pi >= GMCOMMON_PLAYERS_MAX))
+	{
+		return 0;
+	}
+	tick = syNetInputGetTick();
+	if (syNetplayTurnEntryLrDashUsableAtTick(pi, tick) == FALSE)
 	{
 		return 0;
 	}
@@ -2451,6 +2516,7 @@ void syNetplayHardenTurnLrDash(FTStruct *fp)
 	s32 pi;
 	s32 entry;
 	s32 was;
+	u32 tick;
 
 	if (syNetplayRollbackSemanticsActive() == FALSE)
 	{
@@ -2470,12 +2536,28 @@ void syNetplayHardenTurnLrDash(FTStruct *fp)
 	{
 		return;
 	}
-	entry = sSYNetplayTurnEntryLrDash[pi];
+	tick = syNetInputGetTick();
 	/*
 	 * Center turns intentionally keep lr_dash==0 (entry sticky 0). InvertLR / DashCheckTurn
 	 * smash refresh pin ±1 — restore when union +0xC (attack4.unk_0xC) clears it.
+	 * Reject note_tick > sim tick (live-ahead pollution after rollback load).
 	 */
-	if ((entry == 0) || (turn->lr_dash == entry))
+	if (syNetplayTurnEntryLrDashUsableAtTick(pi, tick) == FALSE)
+	{
+		if ((sSYNetplayTurnEntryLrDash[pi] != 0) &&
+		    (sSYNetplayTurnEntryLrDashTick[pi] > tick) &&
+		    (syNetplayTurnDashWitnessEnabled() != FALSE))
+		{
+			port_log(
+			    "SSB64 TURN_DASH_WITNESS phase=harden_lr_dash_skip_future tick=%u player=%d "
+			    "entry=%d entry_tick=%u live_lr_dash=%d\n",
+			    (unsigned)tick, (int)pi, (int)sSYNetplayTurnEntryLrDash[pi],
+			    (unsigned)sSYNetplayTurnEntryLrDashTick[pi], (int)turn->lr_dash);
+		}
+		return;
+	}
+	entry = sSYNetplayTurnEntryLrDash[pi];
+	if (turn->lr_dash == entry)
 	{
 		return;
 	}
@@ -2485,9 +2567,10 @@ void syNetplayHardenTurnLrDash(FTStruct *fp)
 	{
 		port_log(
 		    "SSB64 TURN_DASH_WITNESS phase=harden_lr_dash tick=%u player=%d was=%d now=%d "
-		    "entry=%d lr_turn=%d attacks4_buf=%d\n",
-		    (unsigned)syNetInputGetTick(), (int)pi, was, turn->lr_dash, entry,
-		    (int)turn->lr_turn, (int)turn->attacks4_buffer);
+		    "entry=%d entry_tick=%u lr_turn=%d attacks4_buf=%d\n",
+		    (unsigned)tick, (int)pi, was, turn->lr_dash, entry,
+		    (unsigned)sSYNetplayTurnEntryLrDashTick[pi], (int)turn->lr_turn,
+		    (int)turn->attacks4_buffer);
 	}
 }
 
@@ -2498,7 +2581,6 @@ void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32
 	ftCommonTurnStatusVars *turn;
 	u32 tick;
 	s32 entry;
-	s32 pi;
 
 	if (syNetplayTurnDashWitnessEnabled() == FALSE)
 	{
@@ -2515,8 +2597,8 @@ void syNetplayMaybeLogTurnDashWitness(GObj *fighter_gobj, const char *phase, s32
 	}
 	turn = ftStatusVarsTurn(fp);
 	tick = syNetInputGetTick();
-	pi = fp->player;
-	entry = ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX)) ? sSYNetplayTurnEntryLrDash[pi] : 0;
+	/* Usable entry only — future sticky logs as 0 so scans match Harden gating. */
+	entry = syNetplayTurnGetEntryLrDash(fp);
 	port_log(
 	    "SSB64 TURN_DASH_WITNESS phase=%s tick=%u player=%d flag1=%d allow=%d disable_sa=%d "
 	    "lr_dash=%d entry_lr_dash=%d lr_turn=%d lr=%d sx=%d tap_x=%u attacks4_buf=%d "
@@ -2553,14 +2635,15 @@ void syNetplayHardenTurnLrTurn(FTStruct *fp)
 	/*
 	 * InvertLR entry stores the same ±1 in lr_dash. Center turn has lr_dash==0; recover from
 	 * facing (pre-flip: opposite; post-allow: facing is already the turn direction).
-	 * Prefer entry sticky when live lr_dash was stomped (soak 1646535146).
+	 * Prefer entry sticky when live lr_dash was stomped (soak 1646535146) — same tick-usable
+	 * gate as HardenTurnLrDash (soak 1929938261 future sticky).
 	 */
 	pi = fp->player;
 	if (turn->lr_dash != 0)
 	{
 		repaired = turn->lr_dash;
 	}
-	else if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayTurnEntryLrDash[pi] != 0))
+	else if (syNetplayTurnEntryLrDashUsableAtTick(pi, syNetInputGetTick()) != FALSE)
 	{
 		repaired = sSYNetplayTurnEntryLrDash[pi];
 	}
@@ -2769,6 +2852,11 @@ void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash)
 {
 	(void)fp;
 	(void)lr_dash;
+}
+
+void syNetplayTurnSyncEntryLrDashAfterLoad(FTStruct *fp)
+{
+	(void)fp;
 }
 
 s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp)

@@ -22,11 +22,42 @@ extern sb32 syNetplayNessFighterInPkHoldAimScope(s32 status_id);
 extern sb32 syNetplayNessAnyLiveFighterInJibakuBurstScope(void);
 
 /*
- * Stick-only GGPO absorb: jibaku/bound trajectory is locked at entry; stick REPLACE during
- * those statuses must not open ness_pk_defer storms (soak 11903082 @661 sy Δ→ span-18).
- * Hold/Start still rewind — aim lives there.
+ * Retired stub (always FALSE). Move-context jibaku stick absorb removed for portable
+ * frame-delta GGPO stick. See docs/bugs/netplay_jibaku_stick_absorb_retire_portable_ggpo_2026-07-26.md.
  */
 extern sb32 syNetplayNessPlayerInJibakuStickAbsorbScope(s32 player);
+
+/*
+ * TRUE when committed snap@tick already baked Hold→jibaku/bound for player.
+ * Used only for completed-sim predicted micro StickReplace Promote-only (not live
+ * status absorb). See docs/bugs/netplay_jibaku_post_launch_micro_ggpo_relaunch_2026-07-26.md.
+ */
+extern sb32 syNetplayNessSnapTickIsPostJibakuLaunch(s32 player, u32 tick);
+
+/* TRUE when committed snap@tick is Ness PK Thunder Start/Hold/End (ground or air). */
+extern sb32 syNetplayNessSnapTickIsPKThunderHold(s32 player, u32 tick);
+
+/*
+ * TRUE when stick GGPO at tick would chew PK Thunder: snap@tick is jibaku/bound, or
+ * Start/Hold/End (ground or air). Used to block hash_confirm FORCE. StickReplace /
+ * LEDGER Promote-only uses StickReplaceProtectAllowsPromote (Hold mag-capped).
+ * See docs/bugs/netplay_pkthunder_hold_same_intent_ggpo_2026-07-27.md,
+ * docs/bugs/netplay_pkthunder_hold_aim_protect_universe_spike_2026-07-27.md.
+ */
+extern sb32 syNetplayNessSnapTickBlocksStickGgpoForJibaku(s32 player, u32 tick);
+
+/*
+ * StickReplace / LEDGER: Promote-only when same-intent (caller-checked) and either
+ * post-jibaku/bound (uncapped, predicted OK) or PK Start/Hold/End with dx,dy ≤
+ * hold_aim_db (pass micro_db — default 3) on a *confirmed* published row.
+ * Predicted Hold invent must not Promote: soak 213935103 @3527 hold_last→wire
+ * Δ(3,1) protect+micro → SoftLip PHYSICS_FORK. continuity_db is too wide for
+ * Hold (soak 250129717). See
+ * docs/bugs/netplay_pkthunder_hold_aim_protect_universe_spike_2026-07-27.md,
+ * docs/bugs/netplay_pkthunder_hold_predicted_micro_protect_softlip_2026-07-27.md.
+ */
+extern sb32 syNetplayNessStickReplaceProtectAllowsPromote(s32 player, u32 tick, s32 dx, s32 dy,
+                                                         u32 hold_aim_db, sb32 old_was_predicted);
 
 extern sb32 syNetplayNessAnyLiveFighterInFcResimDeferScope(void);
 
@@ -129,6 +160,11 @@ extern void syNetplayNessProbeFighterNaN(struct GObj *fighter_gobj, struct FTStr
 #define syNetplayNessFighterInPkHoldAimScope(status_id) (FALSE)
 #define syNetplayNessAnyLiveFighterInJibakuBurstScope() (FALSE)
 #define syNetplayNessPlayerInJibakuStickAbsorbScope(player) (FALSE)
+#define syNetplayNessSnapTickIsPostJibakuLaunch(player, tick) (FALSE)
+#define syNetplayNessSnapTickIsPKThunderHold(player, tick) (FALSE)
+#define syNetplayNessSnapTickBlocksStickGgpoForJibaku(player, tick) (FALSE)
+#define syNetplayNessStickReplaceProtectAllowsPromote(player, tick, dx, dy, hold_aim_db, old_was_predicted) \
+	(FALSE)
 #define syNetplayNessAnyLiveFighterInFcResimDeferScope() (FALSE)
 #define syNetplayNessAnyLiveFighterInPkHoldAimScope() (FALSE)
 #define syNetplayNessBeginSamePassDeferHoldAimPreserve() ((void)0)

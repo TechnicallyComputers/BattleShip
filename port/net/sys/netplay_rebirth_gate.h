@@ -24,12 +24,15 @@ extern void syNetplayRebirthApplyEliminationPresentation(struct GObj *fighter_go
 /*
  * Stick-only GGPO absorb: Dead* stick REPLACE cannot change hashed sim but still
  * opened resim that burned gameplay LCG asymmetrically (soak 1790844706 tick 3820,
- * Whispy wind_dur fork). Buttons/release still rewind.
+ * Whispy wind_dur fork). Prefer snap@sim_tick Dead* (portable history admission);
+ * live Dead* is fallback. Buttons still rewind; mag-shed "release" is absorbed
+ * (soak 1945843913 @5178 classified release and bypassed the old hole).
  * Scope is Dead* only — not bare is_ghost (RebirthWait leave needs stick GGPO;
- * soak 1174892281). See docs/bugs/netplay_dead_stick_ggpo_resim_rng_whispy_blow_2026-07-20.md
- * and docs/bugs/netplay_rebirth_ghost_stick_absorb_leave_peer_2026-07-20.md.
+ * soak 1174892281). See docs/bugs/netplay_dead_stick_ggpo_resim_rng_whispy_blow_2026-07-20.md,
+ * docs/bugs/netplay_rebirth_ghost_stick_absorb_leave_peer_2026-07-20.md, and
+ * docs/bugs/netplay_dead_statusvars_scrub_ko_resim_2026-07-27.md.
  */
-extern sb32 syNetplayPlayerInDeadGhostStickAbsorbScope(s32 player);
+extern sb32 syNetplayPlayerInDeadGhostStickAbsorbScope(s32 player, u32 sim_tick);
 
 /* Always-on VS: RebirthWait → Fall/ground leave with stick + halo_despawn snapshot. */
 extern void syNetplayRebirthGateLogLeaveStick(struct GObj *fighter_gobj, struct FTStruct *fp, const char *reason,
@@ -58,7 +61,7 @@ extern void syNetplayRebirthSimDiagLogTick(u32 tick);
 #define syNetplayRebirthSanitizeIsRebirthFlag(fp) ((void)0)
 #define syNetplayRebirthShouldForceSleepSetStatus(fp) FALSE
 #define syNetplayRebirthApplyEliminationPresentation(fighter_gobj, fp) ((void)0)
-#define syNetplayPlayerInDeadGhostStickAbsorbScope(player) (FALSE)
+#define syNetplayPlayerInDeadGhostStickAbsorbScope(player, sim_tick) (FALSE)
 #define syNetplayRebirthGateLogLeaveStick(fighter_gobj, fp, reason, status_before) ((void)0)
 #define syNetplayRebirthCatchUpDeadGateIfDue(fighter_gobj, fp) ((void)0)
 #define syNetplayRebirthCatchUpFightersTick() ((void)0)

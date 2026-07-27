@@ -96,6 +96,17 @@ extern sb32 syNetplayBranchTurnDashEvalBegin(struct GObj *fighter_gobj);
 /* Resolve Turn/Dash transaction; restore prepare fields when speculative. */
 extern sb32 syNetplayBranchTurnDashEvalResolve(struct GObj *fighter_gobj, sb32 wants_branch);
 
+/*
+ * When a predicted remote branch is deferred (status not committed), note the
+ * (player, tick) so a later same-stick wire confirm still forces GGPO. Without
+ * this, ledger refresh / StickReplace see GameplayEquals and skip rewind while
+ * owner already took Dash (soak 743554090 @928 Turn vs Dash).
+ * See docs/bugs/netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md.
+ */
+extern void syNetplayBranchNoteDeferred(s32 player, u32 tick);
+extern sb32 syNetplayBranchDeferredNeedsRewind(s32 player, u32 tick);
+extern void syNetplayBranchClearDeferred(s32 player, u32 tick);
+
 #else
 
 #define syNetplayBranchClassifyDrivingInput(player) ((SYNetplayBranchInputClass)nSYNetplayBranchInputLocal)
@@ -107,6 +118,9 @@ extern sb32 syNetplayBranchTurnDashEvalResolve(struct GObj *fighter_gobj, sb32 w
 #define syNetplayBranchTurnDashRestoreFn(fighter_gobj, preimage, size) ((void)0)
 #define syNetplayBranchTurnDashEvalBegin(fighter_gobj) ((sb32)FALSE)
 #define syNetplayBranchTurnDashEvalResolve(fighter_gobj, wants_branch) ((sb32)(wants_branch))
+#define syNetplayBranchNoteDeferred(player, tick) ((void)0)
+#define syNetplayBranchDeferredNeedsRewind(player, tick) ((sb32)FALSE)
+#define syNetplayBranchClearDeferred(player, tick) ((void)0)
 
 #endif /* PORT && SSB64_NETMENU */
 

@@ -1,7 +1,7 @@
 # Netplay: Ness PK Thunder Hold stick-aim GGPO deferred → non-jibaku hang
 
 **Date:** 2026-07-15
-**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)
+**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`) — volatile TryBegin defer **retired** 2026-07-26 ([retire doc](netplay_ness_pk_defer_retire_input_resim_2026-07-26.md)); Hold-aim immediate rewind intent kept.
 **Soak:** session `887986884` seed `385025777` — STABLE / PASS (no drift), hang on 2nd PK Thunder→jibaku
 
 ## Symptom

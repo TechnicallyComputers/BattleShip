@@ -30,6 +30,7 @@ Same family as [`netplay_ggpo_behind_resolved_through_seal_stall_2026-07-12.md`]
 |--------|----------|
 | **Always clamp** | Local GGPO + peer SYNC soft-clamp any `mismatch < resolved_through` (remove phase_lock shallow cap). |
 | **TryCommit gate** | Behind-resolved episode reset only for FC / state-hash deepen (`commit_behind_frontier` otherwise). |
+| **FC deepen refine (2026-07-26)** | Netmenu: keep Pending through Commit; allow deepen when `sim >= resolved` (not only `>`). See [`netplay_fc_commit_behind_frontier_deepen_2026-07-26.md`](netplay_fc_commit_behind_frontier_deepen_2026-07-26.md). |
 | **Wire advertise** | `ROLLBACK_SYNC` +4B `resolved_through` (accept legacy/V1 sizes). |
 | **Peer frontier** | `syNetRollbackNotePeerResolvedThrough` (monotonic). |
 | **Seal cancel** | `FRONTIER_SEAL_CANCEL` when baseline matched, awaiting seals, and `mismatch < shared_frontier` — abandon episode, return Live (no session kill). |

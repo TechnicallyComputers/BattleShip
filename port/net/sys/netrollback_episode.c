@@ -240,11 +240,23 @@ static void syNetRollbackEpisodeClearPendingPeerSealRowsExcept(u32 epoch_id, u32
 
 static sb32 syNetRollbackEpisodeEpisodeTupleMatches(u32 epoch_id, u32 mismatch_tick, u32 target_tick)
 {
-	return ((epoch_id == sSYNetRollbackEpisodeFsm.epoch_id) &&
-		(mismatch_tick == sSYNetRollbackEpisodeFsm.mismatch_tick) &&
-		(target_tick == sSYNetRollbackEpisodeFsm.target_tick))
-	           ? TRUE
-	           : FALSE;
+	if ((mismatch_tick != sSYNetRollbackEpisodeFsm.mismatch_tick) ||
+	    (target_tick != sSYNetRollbackEpisodeFsm.target_tick))
+	{
+		return FALSE;
+	}
+	if (epoch_id == sSYNetRollbackEpisodeFsm.epoch_id)
+	{
+		return TRUE;
+	}
+	/*
+	 * Epoch skew, identical correction span: peers can Begin independent epochs for the
+	 * same (mismatch, target) after deepen/timeout churn (soak 503281020 @722: Linux
+	 * epoch=51 vs Android epoch=50, load=722). Accept seals into the active table so
+	 * SEAL_ROWS_WAIT clears instead of stale_episode_tuple → RESIM_SEAL_ROWS_EXHAUSTED.
+	 * See docs/bugs/netplay_seal_epoch_skew_identical_span_2026-07-26.md.
+	 */
+	return (syNetRollbackEpisodeFsmIsActive() != FALSE) ? TRUE : FALSE;
 }
 
 static sb32 syNetRollbackEpisodeTryShrinkTargetToPeerPrefix(u32 peer_target);
@@ -1498,8 +1510,11 @@ sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick,
 			 row_count);
 		return FALSE;
 	}
-	if ((syNetRollbackEpisodeFsmIsActive() != FALSE) && (epoch_id == sSYNetRollbackEpisodeFsm.epoch_id))
+	if ((syNetRollbackEpisodeFsmIsActive() != FALSE) &&
+	    (mismatch_tick == sSYNetRollbackEpisodeFsm.mismatch_tick) &&
+	    (target_tick == sSYNetRollbackEpisodeFsm.target_tick))
 	{
+		/* Same span counts even when pkt epoch skews vs local (see EpisodeTupleMatches). */
 		sSYNetRollbackEpisodePeerSealChunkSeen = TRUE;
 	}
 	if (syNetRollbackEpisodeEpisodeTupleMatches(epoch_id, mismatch_tick, target_tick) == FALSE)
@@ -1578,6 +1593,18 @@ sb32 syNetRollbackEpisodeApplyPeerSealRowsChunk(u32 epoch_id, u32 mismatch_tick,
 		    sSYNetRollbackEpisodeFsm.target_tick,
 		    sSYNetRollbackEpisodeFsm.load_tick);
 		return FALSE;
+	}
+	if (epoch_id != sSYNetRollbackEpisodeFsm.epoch_id)
+	{
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SEAL_ROWS_EPOCH_SKEW_APPLY pkt_epoch=%u active_epoch=%u mismatch=%u target=%u slot=%d begin=%u count=%u\n",
+		    epoch_id,
+		    sSYNetRollbackEpisodeFsm.epoch_id,
+		    mismatch_tick,
+		    target_tick,
+		    (int)slot,
+		    row_begin,
+		    row_count);
 	}
 	if (syNetRollbackEpisodeInputsSealed() == FALSE)
 	{

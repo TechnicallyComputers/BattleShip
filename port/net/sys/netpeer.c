@@ -378,6 +378,15 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_PACKET_RECONNECT_READY 29
 #define SYNETPEER_PACKET_RECONNECT_ACK 30
 #define SYNETPEER_PACKET_FORFEIT 31
+/*
+ * Compact per-tick snap agree (hash_confirm watermark). Not a diverge detector — full FC
+ * keeps the 120-tick grid. Wire: hdr(12)+snap(4)+figh/world/item/rng/wpn(20)+chk(4)=40.
+ * wpn required: Ness PK Hold stick invent can fork the thunder head while figh still matches
+ * (soak 3042743425 @1319→jibaku BASELINE). See docs/bugs/netplay_snap_agree_wpn_hold_aim_2026-07-26.md.
+ */
+#define SYNETPEER_PACKET_SNAP_AGREE 32
+#define SYNETPEER_SNAP_AGREE_BYTES (4 + 2 + 2 + 4 + 4 + 20 + 4)
+#define SYNETPEER_SNAP_AGREE_RING 64
 #define SYNETPEER_RECONNECT_HOLD_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 1 + 1 + 2 + 4)
 #define SYNETPEER_RECONNECT_READY_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 #define SYNETPEER_RECONNECT_ACK_BYTES SYNETPEER_RECONNECT_READY_BYTES
@@ -5668,13 +5677,15 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
 #if defined(SSB64_NETMENU)
 			/*
-			 * Zero-onset invent post-grace: hard R-stall. Grace / dual-hot / true
-			 * analog-ramp (peek-diff): shrink window to D+1 only — do not hard-lock
-			 * stick holds with normal D lag (soak 1809694209 hang).
-			 * See docs/bugs/netplay_analog_ramp_hold_last_jump_drift_2026-07-21.md.
+			 * Zero-onset: HardStall≡Restrict (no invent under frontier cover;
+			 * soak 1685388441). v11: Restrict skips fresh hold-neutral invent
+			 * (soak 1454017460 host pct_R). AnalogRamp / dual-hot → D+1.
+			 * Auth runway + pump while stalled. ADVANCE_FORCE covers mid-pass Go.
+			 * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md,
+			 * docs/bugs/netplay_zero_onset_hold_neutral_r_stall_2026-07-27.md.
 			 */
-			if ((syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE) &&
-			    (syNetInputPostGoWirePacingGraceActive(sim_tick) == FALSE))
+			syNetInputZeroOnsetMaybeStageAuthRunway(sim_tick);
+			if (syNetInputRemoteHumanZeroOnsetHardStall(sim_tick) != FALSE)
 			{
 				static u32 sLastZeroOnsetStallLogTick = ~(u32)0;
 
@@ -5698,8 +5709,7 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 				}
 				return;
 			}
-			if ((syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE) ||
-			    (syNetInputRemoteHumanAnalogRampPredictTighten(sim_tick) != FALSE) ||
+			if ((syNetInputRemoteHumanAnalogRampPredictTighten(sim_tick) != FALSE) ||
 			    (syNetInputDualStickHotPredictTighten(sim_tick) != FALSE))
 			{
 				u32 tight_win;
@@ -5735,7 +5745,8 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			u32 effective_cap;
 
 			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
-			rollback_sim_cap = remote_sim_frontier + syNetPeerGetCommittedInputDelay() + prediction_window;
+			/* remote_sim+PL — not +D+PL (D already folded into DelaySim). */
+			rollback_sim_cap = remote_sim_frontier + prediction_window;
 			effective_cap = rollback_sim_cap;
 			if ((syNetRollbackIsResimulating() == FALSE) &&
 			    (syNetRollbackGetLiveSimCap(&epoch_cap, NULL) != FALSE) && (epoch_cap != ~(u32)0) &&
@@ -8018,13 +8029,15 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 	s32 back;
 
 	frame_count = 0;
-#ifdef PORT
-	syNetPeerAppendDelayedLocalRowsToBundle(slot, frames, &frame_count);
-#endif
 	sim_tick = syNetInputGetTick();
 	if (syNetInputGetPublishedFrame(slot, &published_frame) == FALSE)
 	{
 #ifdef PORT
+		/*
+		 * No published row yet: still emit send-lead delayed rows so intro hr can advance.
+		 * Durable history wins when present (below) — do not let provisional delay clobber it.
+		 */
+		syNetPeerAppendDelayedLocalRowsToBundle(slot, frames, &frame_count);
 		if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (frame_count > 0))
 		{
 			*out_frame_count = frame_count;
@@ -8044,7 +8057,11 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 	 * frames. The old early-return (MakeLocalFrame(sim)+return) dropped history retransmission of
 	 * the just-sampled release — Android kept hold_last (-8,-10) after Linux released to (0,0).
 	 * Walk from max(published,sim) and fill holes from gameplay/transmitted.
-	 * See docs/bugs/netplay_feel0_send_before_sample_release_skew_2026-07-13.md.
+	 * History/gameplay first, then AppendDelayed for missing wire ticks only — provisional
+	 * send-lead must not win BundleHasWireTick over durable (0,0) / hold auth (soak 2141547652:
+	 * delay (45) masked history (0) → REPLACE_NEWER revive).
+	 * See docs/bugs/netplay_feel0_send_before_sample_release_skew_2026-07-13.md and
+	 * docs/bugs/netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md.
 	 */
 	for (back = 0; back < (s32)SYNETPEER_MAX_PACKET_FRAMES; back++)
 	{
@@ -8073,6 +8090,7 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 			syNetPeerAppendInputFrameToBundleEx(slot, frames, &frame_count, &history_frame, FALSE);
 		}
 	}
+	syNetPeerAppendDelayedLocalRowsToBundle(slot, frames, &frame_count);
 	*out_frame_count = frame_count;
 	return TRUE;
 #else
@@ -8100,6 +8118,9 @@ static sb32 syNetPeerGatherHistoryBundle(s32 slot, SYNetPeerPacketFrame *frames,
 			syNetPeerAppendInputFrameToBundle(slot, frames, &frame_count, &history_frame);
 		}
 	}
+#ifdef PORT
+	syNetPeerAppendDelayedLocalRowsToBundle(slot, frames, &frame_count);
+#endif
 	*out_frame_count = frame_count;
 	return TRUE;
 #endif
@@ -8915,6 +8936,8 @@ static sb32 syNetPeerFrameCommitRecvDropLogEnabled(void);
 static void syNetPeerLogFrameCommitRecvDrop(const char *reason, s32 size, u32 magic, u16 wire_version, u16 packet_type,
                                             u32 session_id, u32 checksum, u32 expected);
 static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size);
+static void syNetPeerHandleSnapAgreePacket(const u8 *buffer, s32 size);
+static void syNetPeerSnapAgreeAfterCompletedSimStep(void);
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size);
 static void syNetPeerHandleResimPostPacket(const u8 *buffer, s32 size);
@@ -9061,6 +9084,15 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 				}
 				syNetPeerLogFrameCommitRecvDrop("ingress_size", size, ctrl_magic, ctrl_wire, ctrl_type,
 				                                ctrl_session, 0U, 0U);
+				sSYNetPeerPacketsDropped++;
+				return;
+
+			case SYNETPEER_PACKET_SNAP_AGREE:
+				if (size == (s32)SYNETPEER_SNAP_AGREE_BYTES)
+				{
+					syNetPeerHandleSnapAgreePacket(buffer, size);
+					return;
+				}
 				sSYNetPeerPacketsDropped++;
 				return;
 
@@ -9707,9 +9739,35 @@ typedef struct SYNetPeerFrameCommitDiag
 	u32 fc_recv_drop_size;
 	u32 fc_recv_drop_header;
 	u32 fc_recv_drop_checksum;
+	u32 snap_agree_sent;
+	u32 snap_agree_recv;
+	u32 snap_agree_matched;
+	u32 snap_agree_mismatch;
 } SYNetPeerFrameCommitDiag;
 
 static SYNetPeerFrameCommitDiag sSYNetPeerFrameCommitDiag;
+
+static struct SYNetPeerSnapAgreeSlot
+{
+	u32 snap_tick;
+	sb32 valid;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 wpn;
+} sSYNetPeerSnapAgreeLocals[SYNETPEER_SNAP_AGREE_RING];
+
+static struct SYNetPeerSnapAgreeSlot sSYNetPeerSnapAgreePeerPending[SYNETPEER_SNAP_AGREE_RING];
+/* Non-consuming peer snap hashes — pending is consumed on local complete; REPLACE needs peek. */
+static struct SYNetPeerSnapAgreeSlot sSYNetPeerSnapAgreePeerLast[SYNETPEER_SNAP_AGREE_RING];
+static struct
+{
+	u32 snap_tick;
+	sb32 valid;
+	sb32 matched;
+} sSYNetPeerSnapAgreeOutcome[SYNETPEER_SNAP_AGREE_RING];
+static int sSYNetPeerSnapAgreeEnvCache = -999;
 static u32 sSYNetPeerFrameCommitPairingStarvationCount;
 #define SYNETPEER_POST_RECOVERY_CONVERGENCE_EPOCHS 2U
 static sb32 sSYNetPeerPostRecoveryConvergenceWatch;
@@ -10081,7 +10139,8 @@ void syNetPeerEmitFrameCommitDiagReport(void)
 	port_log(
 	    "SSB64 NetPeer: FRAME_COMMIT_DIAG sent=%u recv=%u compared=%u pairing_fail=%u state_diverge=%u "
 	    "live_hash_guard=%u deferred_armed=%u recovery_started=%u recovery_skipped_no_snap=%u pairing_starvation=%u "
-	    "recv_drop_size=%u recv_drop_header=%u recv_drop_checksum=%u\n",
+	    "recv_drop_size=%u recv_drop_header=%u recv_drop_checksum=%u | snap_agree sent=%u recv=%u matched=%u "
+	    "mismatch=%u\n",
 	    sSYNetPeerFrameCommitDiag.fc_sent,
 	    sSYNetPeerFrameCommitDiag.fc_recv,
 	    sSYNetPeerFrameCommitDiag.fc_compared,
@@ -10094,7 +10153,11 @@ void syNetPeerEmitFrameCommitDiagReport(void)
 	    sSYNetPeerFrameCommitDiag.fc_pairing_starvation,
 	    sSYNetPeerFrameCommitDiag.fc_recv_drop_size,
 	    sSYNetPeerFrameCommitDiag.fc_recv_drop_header,
-	    sSYNetPeerFrameCommitDiag.fc_recv_drop_checksum);
+	    sSYNetPeerFrameCommitDiag.fc_recv_drop_checksum,
+	    sSYNetPeerFrameCommitDiag.snap_agree_sent,
+	    sSYNetPeerFrameCommitDiag.snap_agree_recv,
+	    sSYNetPeerFrameCommitDiag.snap_agree_matched,
+	    sSYNetPeerFrameCommitDiag.snap_agree_mismatch);
 }
 
 sb32 syNetPeerStrictTeardownFastPathActive(void)
@@ -10169,6 +10232,15 @@ static void syNetPeerFrameCommitReset(void)
 		sSYNetPeerFrameCommitLocals[i].valid = FALSE;
 		sSYNetPeerFrameCommitPeerPending[i].valid = FALSE;
 	}
+	for (i = 0U; i < (u32)SYNETPEER_SNAP_AGREE_RING; i++)
+	{
+		sSYNetPeerSnapAgreeLocals[i].valid = FALSE;
+		sSYNetPeerSnapAgreePeerPending[i].valid = FALSE;
+		sSYNetPeerSnapAgreePeerLast[i].valid = FALSE;
+		sSYNetPeerSnapAgreeOutcome[i].valid = FALSE;
+		sSYNetPeerSnapAgreeOutcome[i].matched = FALSE;
+		sSYNetPeerSnapAgreeOutcome[i].snap_tick = 0U;
+	}
 	sSYNetPeerFrameCommitValidationsSincePeer = 0U;
 	sSYNetPeerFrameCommitPeerEver = FALSE;
 	sSYNetPeerFrameCommitPairingStarvationCount = 0U;
@@ -10180,6 +10252,7 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
 	sSYNetPeerFrameCommitCadenceLogged = FALSE;
+	sSYNetPeerSnapAgreeEnvCache = -999;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
 
@@ -10636,6 +10709,466 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 		syNetPeerFrameCommitStorePeerPending(validation_tick, &peer);
 	}
 }
+
+static sb32 syNetPeerSnapAgreeEnabled(void)
+{
+	const char *e;
+
+	if (syNetPeerFrameCommitGetEnv() == 0)
+	{
+		return FALSE;
+	}
+	if (sSYNetPeerSnapAgreeEnvCache != -999)
+	{
+		return (sSYNetPeerSnapAgreeEnvCache != 0) ? TRUE : FALSE;
+	}
+	/* Default ON with FC — kill with SSB64_NETPLAY_SNAP_AGREE=0. */
+	sSYNetPeerSnapAgreeEnvCache = 1;
+	e = getenv("SSB64_NETPLAY_SNAP_AGREE");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		sSYNetPeerSnapAgreeEnvCache = atoi(e);
+	}
+	return (sSYNetPeerSnapAgreeEnvCache != 0) ? TRUE : FALSE;
+}
+
+static void syNetPeerSnapAgreeStoreLocal(u32 snap_tick, u32 figh, u32 world, u32 item, u32 rng, u32 wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	sSYNetPeerSnapAgreeLocals[i].snap_tick = snap_tick;
+	sSYNetPeerSnapAgreeLocals[i].figh = figh;
+	sSYNetPeerSnapAgreeLocals[i].world = world;
+	sSYNetPeerSnapAgreeLocals[i].item = item;
+	sSYNetPeerSnapAgreeLocals[i].rng = rng;
+	sSYNetPeerSnapAgreeLocals[i].wpn = wpn;
+	sSYNetPeerSnapAgreeLocals[i].valid = TRUE;
+}
+
+static sb32 syNetPeerSnapAgreeLoadLocal(u32 snap_tick, u32 *figh, u32 *world, u32 *item, u32 *rng, u32 *wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreeLocals[i].valid == FALSE) ||
+	    (sSYNetPeerSnapAgreeLocals[i].snap_tick != snap_tick))
+	{
+		return FALSE;
+	}
+	if (figh != NULL)
+	{
+		*figh = sSYNetPeerSnapAgreeLocals[i].figh;
+	}
+	if (world != NULL)
+	{
+		*world = sSYNetPeerSnapAgreeLocals[i].world;
+	}
+	if (item != NULL)
+	{
+		*item = sSYNetPeerSnapAgreeLocals[i].item;
+	}
+	if (rng != NULL)
+	{
+		*rng = sSYNetPeerSnapAgreeLocals[i].rng;
+	}
+	if (wpn != NULL)
+	{
+		*wpn = sSYNetPeerSnapAgreeLocals[i].wpn;
+	}
+	return TRUE;
+}
+
+static void syNetPeerSnapAgreeStorePeerPending(u32 snap_tick, u32 figh, u32 world, u32 item, u32 rng, u32 wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	sSYNetPeerSnapAgreePeerPending[i].snap_tick = snap_tick;
+	sSYNetPeerSnapAgreePeerPending[i].figh = figh;
+	sSYNetPeerSnapAgreePeerPending[i].world = world;
+	sSYNetPeerSnapAgreePeerPending[i].item = item;
+	sSYNetPeerSnapAgreePeerPending[i].rng = rng;
+	sSYNetPeerSnapAgreePeerPending[i].wpn = wpn;
+	sSYNetPeerSnapAgreePeerPending[i].valid = TRUE;
+}
+
+static void syNetPeerSnapAgreeStorePeerLast(u32 snap_tick, u32 figh, u32 world, u32 item, u32 rng, u32 wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	sSYNetPeerSnapAgreePeerLast[i].snap_tick = snap_tick;
+	sSYNetPeerSnapAgreePeerLast[i].figh = figh;
+	sSYNetPeerSnapAgreePeerLast[i].world = world;
+	sSYNetPeerSnapAgreePeerLast[i].item = item;
+	sSYNetPeerSnapAgreePeerLast[i].rng = rng;
+	sSYNetPeerSnapAgreePeerLast[i].wpn = wpn;
+	sSYNetPeerSnapAgreePeerLast[i].valid = TRUE;
+}
+
+static sb32 syNetPeerSnapAgreeLoadPeerLast(u32 snap_tick, u32 *figh, u32 *world, u32 *item, u32 *rng, u32 *wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreePeerLast[i].valid == FALSE) ||
+	    (sSYNetPeerSnapAgreePeerLast[i].snap_tick != snap_tick))
+	{
+		return FALSE;
+	}
+	if (figh != NULL)
+	{
+		*figh = sSYNetPeerSnapAgreePeerLast[i].figh;
+	}
+	if (world != NULL)
+	{
+		*world = sSYNetPeerSnapAgreePeerLast[i].world;
+	}
+	if (item != NULL)
+	{
+		*item = sSYNetPeerSnapAgreePeerLast[i].item;
+	}
+	if (rng != NULL)
+	{
+		*rng = sSYNetPeerSnapAgreePeerLast[i].rng;
+	}
+	if (wpn != NULL)
+	{
+		*wpn = sSYNetPeerSnapAgreePeerLast[i].wpn;
+	}
+	return TRUE;
+}
+
+static void syNetPeerSnapAgreeNoteOutcome(u32 snap_tick, sb32 matched)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	sSYNetPeerSnapAgreeOutcome[i].snap_tick = snap_tick;
+	sSYNetPeerSnapAgreeOutcome[i].matched = (matched != FALSE) ? TRUE : FALSE;
+	sSYNetPeerSnapAgreeOutcome[i].valid = TRUE;
+}
+
+static sb32 syNetPeerSnapAgreeLoadPeerPending(u32 snap_tick, u32 *figh, u32 *world, u32 *item, u32 *rng, u32 *wpn)
+{
+	u32 i;
+
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreePeerPending[i].valid == FALSE) ||
+	    (sSYNetPeerSnapAgreePeerPending[i].snap_tick != snap_tick))
+	{
+		return FALSE;
+	}
+	if (figh != NULL)
+	{
+		*figh = sSYNetPeerSnapAgreePeerPending[i].figh;
+	}
+	if (world != NULL)
+	{
+		*world = sSYNetPeerSnapAgreePeerPending[i].world;
+	}
+	if (item != NULL)
+	{
+		*item = sSYNetPeerSnapAgreePeerPending[i].item;
+	}
+	if (rng != NULL)
+	{
+		*rng = sSYNetPeerSnapAgreePeerPending[i].rng;
+	}
+	if (wpn != NULL)
+	{
+		*wpn = sSYNetPeerSnapAgreePeerPending[i].wpn;
+	}
+	sSYNetPeerSnapAgreePeerPending[i].valid = FALSE;
+	return TRUE;
+}
+
+static void syNetPeerSnapAgreeTryMatch(u32 snap_tick, u32 local_figh, u32 local_world, u32 local_item, u32 local_rng,
+                                       u32 local_wpn, u32 peer_figh, u32 peer_world, u32 peer_item, u32 peer_rng,
+                                       u32 peer_wpn)
+{
+	u32 i;
+
+	/*
+	 * Match → advance FC agreed watermark (validation = snap+1), same units as full FC.
+	 * Mismatch → count only; diverge recovery stays on the 120-tick FC grid.
+	 * Idempotent per snap_tick: recv+complete can both TryMatch; count/log once.
+	 * wpn is load-bearing for Ness PK Hold: stick invent forks thunder head while figh matches.
+	 */
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreeOutcome[i].valid != FALSE) &&
+	    (sSYNetPeerSnapAgreeOutcome[i].snap_tick == snap_tick))
+	{
+		if (sSYNetPeerSnapAgreeOutcome[i].matched != FALSE)
+		{
+			syNetRollbackNoteFrameCommitStateAgreed(snap_tick + 1U);
+		}
+		return;
+	}
+	if ((local_figh == peer_figh) && (local_world == peer_world) && (local_item == peer_item) &&
+	    (local_rng == peer_rng) && (local_wpn == peer_wpn))
+	{
+		sSYNetPeerFrameCommitDiag.snap_agree_matched++;
+		syNetPeerSnapAgreeNoteOutcome(snap_tick, TRUE);
+		syNetRollbackNoteFrameCommitStateAgreed(snap_tick + 1U);
+		return;
+	}
+	sSYNetPeerFrameCommitDiag.snap_agree_mismatch++;
+	syNetPeerSnapAgreeNoteOutcome(snap_tick, FALSE);
+	if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+	{
+		sSYNetPeerFrameCommitMismatchLogCount++;
+		port_log(
+		    "SSB64 NetPeer: SNAP_AGREE_MISMATCH snap=%u local figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X "
+		    "wpn=0x%08X | peer figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X wpn=0x%08X — no state resim "
+		    "(FC grid owns diverge)\n",
+		    snap_tick, local_figh, local_world, local_item, local_rng, local_wpn, peer_figh, peer_world,
+		    peer_item, peer_rng, peer_wpn);
+	}
+}
+
+static void syNetPeerSendSnapAgreePacket(u32 snap_tick, u32 figh, u32 world, u32 item, u32 rng, u32 wpn)
+{
+	u8 buf[SYNETPEER_SNAP_AGREE_BYTES];
+	u8 *cursor;
+	u32 chk;
+
+	if ((syNetPeerDatagramSocketIsUsable() == FALSE) || (syNetPeerSnapAgreeEnabled() == FALSE))
+	{
+		return;
+	}
+	cursor = buf;
+	syNetPeerWriteU32(&cursor, SYNETPEER_MAGIC);
+	syNetPeerWriteU16(&cursor, SYNETPEER_VERSION);
+	syNetPeerWriteU16(&cursor, SYNETPEER_PACKET_SNAP_AGREE);
+	syNetPeerWriteU32(&cursor, sSYNetPeerSessionID);
+	syNetPeerWriteU32(&cursor, snap_tick);
+	syNetPeerWriteU32(&cursor, figh);
+	syNetPeerWriteU32(&cursor, world);
+	syNetPeerWriteU32(&cursor, item);
+	syNetPeerWriteU32(&cursor, rng);
+	syNetPeerWriteU32(&cursor, wpn);
+	chk = syNetPeerChecksumBytes(buf, (u32)(cursor - buf));
+	syNetPeerWriteU32(&cursor, chk);
+	if (syNetPeerSendControlDatagram(buf, (u32)sizeof(buf)) != (int)sizeof(buf))
+	{
+		return;
+	}
+	sSYNetPeerPacketsSent++;
+	sSYNetPeerFrameCommitDiag.snap_agree_sent++;
+}
+
+static void syNetPeerHandleSnapAgreePacket(const u8 *buffer, s32 size)
+{
+	const u8 *c;
+	u32 magic;
+	u16 wire_version;
+	u16 packet_type;
+	u32 session_id;
+	u32 snap_tick;
+	u32 peer_figh;
+	u32 peer_world;
+	u32 peer_item;
+	u32 peer_rng;
+	u32 peer_wpn;
+	u32 checksum;
+	u32 expected;
+	u32 local_figh;
+	u32 local_world;
+	u32 local_item;
+	u32 local_rng;
+	u32 local_wpn;
+
+	if ((buffer == NULL) || (size != (s32)SYNETPEER_SNAP_AGREE_BYTES) || (syNetPeerSnapAgreeEnabled() == FALSE))
+	{
+		return;
+	}
+	expected = syNetPeerChecksumBytes(buffer, (u32)size - 4U);
+	c = buffer;
+	magic = syNetPeerReadU32(&c);
+	wire_version = syNetPeerReadU16(&c);
+	packet_type = syNetPeerReadU16(&c);
+	session_id = syNetPeerReadU32(&c);
+	snap_tick = syNetPeerReadU32(&c);
+	peer_figh = syNetPeerReadU32(&c);
+	peer_world = syNetPeerReadU32(&c);
+	peer_item = syNetPeerReadU32(&c);
+	peer_rng = syNetPeerReadU32(&c);
+	peer_wpn = syNetPeerReadU32(&c);
+	checksum = syNetPeerReadU32(&c);
+	if ((magic != SYNETPEER_MAGIC) || (wire_version != SYNETPEER_VERSION) ||
+	    (packet_type != (u16)SYNETPEER_PACKET_SNAP_AGREE) || (session_id != sSYNetPeerSessionID) ||
+	    (checksum != expected))
+	{
+		sSYNetPeerPacketsDropped++;
+		return;
+	}
+	sSYNetPeerPacketsReceived++;
+	sSYNetPeerFrameCommitDiag.snap_agree_recv++;
+	/* Always retain peer hashes for REPLACE-time TryConfirm (pending is consumed on complete). */
+	syNetPeerSnapAgreeStorePeerLast(snap_tick, peer_figh, peer_world, peer_item, peer_rng, peer_wpn);
+	if (syNetPeerSnapAgreeLoadLocal(snap_tick, &local_figh, &local_world, &local_item, &local_rng,
+	                                &local_wpn) != FALSE)
+	{
+		syNetPeerSnapAgreeTryMatch(snap_tick, local_figh, local_world, local_item, local_rng, local_wpn,
+		                           peer_figh, peer_world, peer_item, peer_rng, peer_wpn);
+	}
+	else if (syNetRbSnapshotGetStoredSubsystemHashes(snap_tick, &local_figh, &local_world, &local_item,
+	                                                 &local_rng) != FALSE)
+	{
+		local_wpn = syNetRbSnapshotGetSlotHashWeapon(snap_tick);
+		syNetPeerSnapAgreeStoreLocal(snap_tick, local_figh, local_world, local_item, local_rng, local_wpn);
+		syNetPeerSnapAgreeTryMatch(snap_tick, local_figh, local_world, local_item, local_rng, local_wpn,
+		                           peer_figh, peer_world, peer_item, peer_rng, peer_wpn);
+	}
+	else
+	{
+		syNetPeerSnapAgreeStorePeerPending(snap_tick, peer_figh, peer_world, peer_item, peer_rng, peer_wpn);
+	}
+#if defined(SSB64_NETMENU)
+	/* Late peer snap may resolve a soft-deferred invent REPLACE (hash_confirm). */
+	syNetInputHashConfirmStickDeferPump();
+#endif
+}
+
+static void syNetPeerSnapAgreeAfterCompletedSimStep(void)
+{
+	u32 completed_tick;
+	u32 figh;
+	u32 world;
+	u32 item;
+	u32 rng;
+	u32 wpn;
+	u32 peer_figh;
+	u32 peer_world;
+	u32 peer_item;
+	u32 peer_rng;
+	u32 peer_wpn;
+
+	if (syNetPeerSnapAgreeEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((sSYNetPeerIsActive == FALSE) || (syNetPeerCheckBattleExecutionReady() == FALSE))
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return;
+	}
+	completed_tick = syNetInputGetTick();
+	if (completed_tick == 0U)
+	{
+		return;
+	}
+	if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
+	    ((completed_tick > 0U) &&
+	     (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)))
+	{
+		return;
+	}
+	if (syNetRbSnapshotGetStoredSubsystemHashes(completed_tick, &figh, &world, &item, &rng) == FALSE)
+	{
+		return;
+	}
+	wpn = syNetRbSnapshotGetSlotHashWeapon(completed_tick);
+	syNetPeerSnapAgreeStoreLocal(completed_tick, figh, world, item, rng, wpn);
+	syNetPeerSendSnapAgreePacket(completed_tick, figh, world, item, rng, wpn);
+	if (syNetPeerSnapAgreeLoadPeerPending(completed_tick, &peer_figh, &peer_world, &peer_item, &peer_rng,
+	                                      &peer_wpn) != FALSE)
+	{
+		syNetPeerSnapAgreeTryMatch(completed_tick, figh, world, item, rng, wpn, peer_figh, peer_world,
+		                           peer_item, peer_rng, peer_wpn);
+	}
+	else if (syNetPeerSnapAgreeLoadPeerLast(completed_tick, &peer_figh, &peer_world, &peer_item, &peer_rng,
+	                                        &peer_wpn) != FALSE)
+	{
+		/* Pending already consumed / never stored — peer_last still allows match. */
+		syNetPeerSnapAgreeTryMatch(completed_tick, figh, world, item, rng, wpn, peer_figh, peer_world,
+		                           peer_item, peer_rng, peer_wpn);
+	}
+#if defined(SSB64_NETMENU)
+	syNetInputHashConfirmStickDeferPump();
+#endif
+}
+
+#if defined(SSB64_NETMENU)
+sb32 syNetPeerSnapAgreeTryConfirmTick(u32 snap_tick)
+{
+	u32 agreed;
+	u32 local_figh;
+	u32 local_world;
+	u32 local_item;
+	u32 local_rng;
+	u32 local_wpn;
+	u32 peer_figh;
+	u32 peer_world;
+	u32 peer_item;
+	u32 peer_rng;
+	u32 peer_wpn;
+	u32 i;
+
+	if ((snap_tick == 0U) || (syNetPeerSnapAgreeEnabled() == FALSE))
+	{
+		return FALSE;
+	}
+	agreed = syNetRollbackGetLastFrameCommitStateAgreedTick();
+	if (agreed > snap_tick)
+	{
+		return TRUE;
+	}
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreeOutcome[i].valid != FALSE) &&
+	    (sSYNetPeerSnapAgreeOutcome[i].snap_tick == snap_tick))
+	{
+		if (sSYNetPeerSnapAgreeOutcome[i].matched != FALSE)
+		{
+			syNetRollbackNoteFrameCommitStateAgreed(snap_tick + 1U);
+			return TRUE;
+		}
+		return FALSE;
+	}
+	if (syNetPeerSnapAgreeLoadLocal(snap_tick, &local_figh, &local_world, &local_item, &local_rng,
+	                                &local_wpn) == FALSE)
+	{
+		if (syNetRbSnapshotGetStoredSubsystemHashes(snap_tick, &local_figh, &local_world, &local_item,
+		                                           &local_rng) == FALSE)
+		{
+			return FALSE;
+		}
+		local_wpn = syNetRbSnapshotGetSlotHashWeapon(snap_tick);
+		syNetPeerSnapAgreeStoreLocal(snap_tick, local_figh, local_world, local_item, local_rng, local_wpn);
+	}
+	if (syNetPeerSnapAgreeLoadPeerLast(snap_tick, &peer_figh, &peer_world, &peer_item, &peer_rng, &peer_wpn) ==
+	    FALSE)
+	{
+		return FALSE;
+	}
+	syNetPeerSnapAgreeTryMatch(snap_tick, local_figh, local_world, local_item, local_rng, local_wpn, peer_figh,
+	                           peer_world, peer_item, peer_rng, peer_wpn);
+	agreed = syNetRollbackGetLastFrameCommitStateAgreedTick();
+	return (agreed > snap_tick) ? TRUE : FALSE;
+}
+
+sb32 syNetPeerSnapAgreeTickKnownMismatch(u32 snap_tick)
+{
+	u32 i;
+
+	if (snap_tick == 0U)
+	{
+		return FALSE;
+	}
+	i = snap_tick % (u32)SYNETPEER_SNAP_AGREE_RING;
+	if ((sSYNetPeerSnapAgreeOutcome[i].valid == FALSE) ||
+	    (sSYNetPeerSnapAgreeOutcome[i].snap_tick != snap_tick))
+	{
+		return FALSE;
+	}
+	return (sSYNetPeerSnapAgreeOutcome[i].matched == FALSE) ? TRUE : FALSE;
+}
+#endif /* SSB64_NETMENU */
 
 sb32 syNetPeerSendRollbackBaselineDigestDirect(u32 load_tick, u32 figh, u32 world, u32 item, u32 rng, u32 anim,
 					       u32 weapon, u32 map, u32 camera, u32 effect, const u32 *fighter_slot)
@@ -11616,15 +12149,13 @@ static void syNetPeerLogCrossOsPacingDiag(u32 tick)
 	}
 	hr = syNetPeerGetHighestRemoteTick();
 	remote_sim = (hr > 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U;
-	remote_cap = (hr > 0U)
-	                 ? (remote_sim + syNetPeerGetCommittedInputDelay() +
-	                    syNetPeerGetPhaseLockPredictionWindowTicks())
-	                 : 0U;
+	remote_cap = (hr > 0U) ? syNetPeerGetRemoteSimRunwayCap() : 0U;
 	ahead = (hr > 0U) ? (s32)((s32)tick - (s32)remote_cap) : 0;
 	port_get_netplay_push_frame_diag(&push_wall, &sim_adv, &decouple_skips);
 	port_log(
-	    "SSB64 NetPeer: cross_os_pacing tick=%u push_wall=%llu sim_adv=%llu decouple_skips=%llu hr=%u remote_sim=%u ahead=%d contract_hz=%u commit_gen=%u exec=%d\n",
-	    tick, push_wall, sim_adv, decouple_skips, hr, remote_sim, (int)ahead,
+	    "SSB64 NetPeer: cross_os_pacing tick=%u push_wall=%llu sim_adv=%llu decouple_skips=%llu hr=%u remote_sim=%u remote_cap=%u ahead=%d predict_depth=%d contract_hz=%u commit_gen=%u exec=%d\n",
+	    tick, push_wall, sim_adv, decouple_skips, hr, remote_sim, remote_cap, (int)ahead,
+	    (hr > 0U) ? (int)((s32)tick - (s32)remote_sim) : 0,
 	    (unsigned int)syNetPeerGetVsContractViHz(), (unsigned int)sSYNetPeerGlobalCommitGen,
 	    (syNetPeerCheckBattleExecutionReady() != FALSE) ? 1 : 0);
 }
@@ -11693,6 +12224,11 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		}
 		return;
 	}
+	/*
+	 * Per-tick compact snap agree (hash_confirm watermark) before the sparse FC grid.
+	 * Wire lateness≈2 needs agreed > sim_tick at REPLACE time — FC@120 never arms that.
+	 */
+	syNetPeerSnapAgreeAfterCompletedSimStep();
 #endif
 	{
 		u32 completed_tick;
@@ -11700,23 +12236,39 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		u32 fc_interval;
 
 		completed_tick = syNetInputGetTick();
+		/*
+		 * Shared FC validation grid (session fc_validation_ticks, default 120).
+		 * Former cadence minted at whatever completed+1 first satisfied
+		 * (validation - Last) >= interval — peers left Wait with different Last and
+		 * forever chose distinct validation_tick ids → sent=N recv=N compared=0
+		 * (soak seed 2908879106). Both peers mint only when completed hits the grid
+		 * so validation_tick (= completed+1) matches. Item/Ness stress interval cap
+		 * must not choose the id (asymmetric cap → same pairing miss). See
+		 * docs/bugs/netplay_frame_commit_pairing_grid_2026-07-26.md.
+		 */
+		fc_interval = syNetPeerNetSyncLogInterval();
+		if (fc_interval < 1U)
+		{
+			fc_interval = 1U;
+		}
+		if ((completed_tick == 0U) || ((completed_tick % fc_interval) != 0U))
+		{
+			return;
+		}
 		validation_tick = completed_tick + 1U;
+		if (validation_tick <= sSYNetPeerLastFrameCommitValidationTick)
+		{
+			return;
+		}
 		/*
 		 * Hold FC sampling while an input GGPO covers the just-completed tick — otherwise
 		 * we mint diverge tokens for a prediction miss that is already queued to rewind
 		 * (RebirthWait stick drop class). Do not bump LastFrameCommitValidationTick so the
-		 * interval retries after the episode completes.
+		 * next grid point retries after the episode completes.
 		 */
 		if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
 		    ((completed_tick > 0U) &&
 		     (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)))
-		{
-			return;
-		}
-		fc_interval = syNetPeerNetSyncLogInterval();
-		fc_interval = syNetRbSnapshotFrameCommitIntervalCap(fc_interval);
-		if ((validation_tick == 0U) ||
-		    ((validation_tick - sSYNetPeerLastFrameCommitValidationTick) < fc_interval))
 		{
 			return;
 		}
@@ -12459,15 +13011,21 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 			u32 hr;
 			u32 remote_sim;
 			u32 remote_cap;
+			s32 ahead;
+			s32 predict_depth;
 
 			hr = syNetPeerGetHighestRemoteTick();
 			remote_sim = (hr > 0U) ? syNetPeerDelaySimTickFromWire(hr) : 0U;
-			remote_cap = (hr > 0U)
-			                 ? (remote_sim + syNetPeerGetCommittedInputDelay() +
-			                    syNetPeerGetPhaseLockPredictionWindowTicks())
-			                 : 0U;
+			remote_cap = (hr > 0U) ? syNetPeerGetRemoteSimRunwayCap() : 0U;
+			ahead = (hr > 0U) ? (s32)((s32)tick - (s32)remote_cap) : 0;
+			/*
+			 * predict_depth = tick - remote_sim: 0 ≈ confirmed frontier, +PL ≈ full
+			 * predict window. ahead = tick - remote_cap (= remote_sim+PL): 0 at predict
+			 * ceiling. Former remote_cap=remote_sim+D+PL made matched look like ahead≈-7.
+			 */
+			predict_depth = (hr > 0U) ? (s32)((s32)tick - (s32)remote_sim) : 0;
 			port_log(
-			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X mph_kin=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X eff=0x%08X cseed=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d\n",
+			    "SSB64 NetSync: sim_state_tick tick=%u figh=0x%08X mph=0x%08X mph_kin=0x%08X world=0x%08X item=0x%08X wpn=0x%08X rng=0x%08X cam=0x%08X anim=0x%08X gch=0x%08X eff=0x%08X cseed=0x%08X rb_applied=%u rb_load_fail=%u push=%d hr=%u remote_sim=%u remote_cap=%u ahead=%d predict_depth=%d\n",
 			    tick,
 			    f,
 			    m,
@@ -12487,7 +13045,8 @@ void syNetPeerMaybeLogSimStateTickTrace(void)
 			    hr,
 			    remote_sim,
 			    remote_cap,
-			    (hr > 0U) ? (int)((s32)tick - (s32)remote_cap) : 0);
+			    (int)ahead,
+			    (int)predict_depth);
 			syNetSyncLogFighterSlotHashes(tick);
 			/*
 			 * syNetplayRebirthSimDiagLogTick / syNetSyncLogPKThunderHoldDiag were hoisted above the
@@ -12592,6 +13151,9 @@ void syNetPeerUpdate(void)
 	}
 #endif
 	syNetRollbackUpdate();
+#if defined(SSB64_NETMENU)
+	syNetInputHashConfirmStickDeferPump();
+#endif
 	/*
 	 * syNetPeerMaybeLogSimStateTickTrace() intentionally NOT called here anymore: this point in
 	 * syNetPeerUpdate() runs before syNetRollbackAfterBattleUpdate()'s
@@ -13481,6 +14043,27 @@ u32 syNetPeerDelaySimTickFromWire(u32 wire_tick)
 		return 0U;
 	}
 	return wire_tick - d;
+}
+
+u32 syNetPeerGetRemoteSimRunwayCap(void)
+{
+	u32 hr;
+	u32 remote_sim;
+
+	hr = syNetPeerGetHighestRemoteTick();
+	if (hr == 0U)
+	{
+		return 0U;
+	}
+	/*
+	 * Formerly remote_sim+D+PL (= hr+PL). That double-counted D already removed by
+	 * DelaySim and made matched cadence log ahead≈-(D+PL)≈-7 while sim sat on the
+	 * confirmed frontier. Cap = remote_sim+PL aligns AdvanceAllowed / resim / logs
+	 * with SharedCommit predict admit. See
+	 * docs/bugs/netplay_hash_confirm_runway_align_2026-07-26.md.
+	 */
+	remote_sim = syNetPeerDelaySimTickFromWire(hr);
+	return remote_sim + syNetPeerGetPhaseLockPredictionWindowTicks();
 }
 
 #ifdef PORT

@@ -29,7 +29,7 @@
 |-------|--------|
 | Wire / ledger reject | Smash→neutral refuse only on **hard zero** `(0,0)` (`syNetInputFrameSticksHardZero`). Soft NearNeutral sticks REPLACE/store. |
 | Seal pack | Prefer gameplay when wire-locked disagrees on dash-gate / analog intent (`SEAL_PACK_PREFER_GAMEPLAY`). Never seal from live HID latch (`SEAL_PACK_SKIP_LATCH`). |
-| Sealed resim | On dash-gate or opposite-intent sealed vs ledger: apply ledger (`SEAL_LEDGER_INTENT_OVERRIDE`) in Resolve + Publish. Soft same-intent mag noise still keeps seal + skip dump. |
+| Sealed resim | On *opposite* analog intent sealed vs ledger: apply ledger (`SEAL_LEDGER_INTENT_OVERRIDE`) in Resolve + Publish. Soft same-intent mag / same-sign dash-gate decay keeps seal (narrowed 2026-07-26 — [decay override PEER](netplay_seal_dash_gate_decay_intent_override_peer_2026-07-26.md)). |
 
 ## Acceptance (re-soak)
 

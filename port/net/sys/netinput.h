@@ -173,6 +173,15 @@ extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per co
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
 extern sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick); /* Pure rollback cap: next_tick <= remote_sim + D + phase_lock. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Live VS only: always advance after gcRunAll. AdvanceAllowed holds must gate FuncUpdate
+ * *entry*; refusing Advance after a completed live step re-sims the same GetTick when the
+ * hold clears (soak 656287266 Go→HardStall double-sim → 1-tick skew). See
+ * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+ */
+extern void syNetInputAdvanceAuthoritativeSimTickAfterLiveBattle(void);
+#endif
 #ifdef PORT
 /*
  * Strict extra slack frames for `wire_cap` / `syNetPeerGetStrictRequiredWireTick` (`SSB64_NETPLAY_STRICT_SLACK_FRAMES`,
@@ -364,6 +373,10 @@ extern void syNetInputRollbackReconcileAfterResimCompleted(u32 mismatch_tick, u3
                                                          s32 correction_player); /* Post-resim published tail reconcile. */
 extern void syNetInputRollbackResyncControllersAfterResim(u32 mismatch_tick,
                                                         u32 target_tick); /* Reseed last_published + republish remote after resim exit. */
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* After ResimDepth cleared: Promote span + exclusive-target gameplay pinned during Resync. */
+extern void syNetInputRollbackPromoteAfterResimExit(u32 mismatch_tick, u32 target_tick);
+#endif
 extern sb32 syNetInputIsRemoteHumanSlot(s32 player); /* TRUE for opponent human sim slots (GGPO remote prediction/correction). */
 extern void syNetInputRollbackReconcileResimSpan(u32 from_tick, u32 to_tick,
                                                   s32 correction_player); /* GGPO unified resim inputs: remote=wire, local=transmitted/per-tick published. */
@@ -380,14 +393,28 @@ extern void syNetInputAuthorityLedgerCommitWire(s32 player, u32 sim_tick, const 
 extern void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const SYNetInputFrame *frame);
 extern sb32 syNetInputAuthorityLedgerTryGet(s32 player, u32 sim_tick, SYNetInputFrame *out_frame, u8 *out_origin);
 /*
- * TRUE when predicting `sim_tick` would invent remote-human (0,0) after near-neutral
- * last_confirmed (no wire / soft-onset / last_nn). Post-grace (or dual-hot inside grace):
- * shared-commit / Advance hard-stall instead of inventing. Grace-only Restrict still
- * caps to ~D+1. Off during intro Wait / Appear force-neutral only.
- * Logs ZERO_ONSET_PREDICT phase=restrict|stall. See
- * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+ * TRUE when predicting `sim_tick` would invent remote-human (0,0) without a safe
+ * hold baseline (no wire / soft-onset / last_nn; last_conf missing or stale
+ * neutral age > pred_win). Fresh confirmed-neutral within pred_win is hold_last
+ * invent — not Restrict (v11 / soak 1454017460). HardStall≡Restrict. Off during
+ * intro Wait / Appear force-neutral. Logs ZERO_ONSET_PREDICT phase=restrict|stall.
+ * See docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md,
+ * docs/bugs/netplay_zero_onset_hold_neutral_r_stall_2026-07-27.md.
  */
 extern sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick);
+/*
+ * TRUE iff Restrict (hard R). Never admit invent-(0,0) without a safe baseline.
+ * Callers pump + auth runway while stalled. AnalogRamp / dual-hot remain D+1.
+ * See ZeroOnsetPredictRestrict docs.
+ */
+extern sb32 syNetInputRemoteHumanZeroOnsetHardStall(u32 sim_tick);
+/*
+ * While Restrict is live, extend feel-0 LocalGameplayAuth through `through_sim_tick`
+ * so auth_wire_frontier Strict-covers that sim's wire (soak 999657306).
+ */
+extern void syNetInputStageLocalGameplayAuthForZeroOnsetStall(u32 through_sim_tick);
+/* When Restrict(sim): stage Strict auth through sim+D (keep confirmed runway warm). */
+extern void syNetInputZeroOnsetMaybeStageAuthRunway(u32 sim_tick);
 /* TRUE while post-Go wire_need soft-pacing grace covers `sim_tick` (hr freeze cover). */
 extern sb32 syNetInputPostGoWirePacingGraceActive(u32 sim_tick);
 /*
@@ -431,6 +458,10 @@ extern u32 syNetInputFindEarliestLocalAuthorityMismatch(s32 authority_slot, u32 
 extern sb32 syNetInputResolveLocalAuthorityFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern void syNetInputPromoteLocalAuthorityPublished(s32 player, u32 tick);
 extern void syNetInputPromoteAllLocalAuthoritySlots(u32 tick);
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* After local BRANCH_COMMITTED: ensure feel-0 gameplay + LOCAL_PUBLISH for `tick` if missing. */
+extern void syNetInputEnsureLocalSimTickPublished(s32 player, u32 tick);
+#endif
 extern void syNetInputMaybeLogFrameCommitLocalAuthorityDiag(u32 validation_tick, u32 win_begin);
 extern void syNetInputMaybeLogFrameCommitSealLocalMismatch(u32 validation_tick, u32 win_begin, u32 win_end);
 extern void syNetInputNoteTransmittedSimFrame(s32 player, const SYNetInputFrame *frame);
@@ -465,18 +496,44 @@ extern sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_t
 #if defined(SSB64_NETMENU)
 /*
  * Stick REPLACE → GGPO policy (feel-0 / late wire / pre-promote):
- * completed sim (`GetTick() > sim_tick`): buttons / release / non-micro stick → rewind;
- *   same-intent stick within COMPLETED_SIM_MICRO_DEADBAND (default 3) → Promote only;
+ * completed sim (`GetTick() > sim_tick`): buttons / release / non-contract stick → rewind;
+ *   confirmed same-intent within COMPLETED_SIM_MICRO_DEADBAND (default 3) or
+ *   COMPLETED_SIM_CONTINUITY_DEADBAND (default 12) → Promote only;
+ *   predicted same-intent within continuity + snap-agree confirm@sim_tick → hash_confirm
+ *   Promote only (SSB64_NETPLAY_STICK_REPLACE_HASH_CONFIRM, default on); else rewind
+ *   (soak 740113729 bare predicted micro ban); missing peer snap may soft-defer
+ *   QueueOrWiden briefly (SSB64_NETPLAY_HASH_CONFIRM_DEFER_TICKS, default 2);
  * release (analog → nearer/at neutral): always rewind (never onset-ahead defer);
  * else: confirmed-deadband significance (not predict-14), unless true onset-ahead defer.
  * `defer_published` may be NULL (falls back to `old_frame` for the defer check).
  */
 extern sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
                                               const SYNetInputFrame *wire, const SYNetInputFrame *defer_published);
+/*
+ * Retired stub: always FALSE. Move-context jibaku stick absorb removed for a portable
+ * frame-delta GGPO stick contract. See
+ * docs/bugs/netplay_jibaku_stick_absorb_retire_portable_ggpo_2026-07-26.md.
+ */
+extern sb32 syNetInputJibakuStickAbsorbBlocksGgpo(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
+                                                  const SYNetInputFrame *wire);
 /* Classify a published→wire delta for soak telemetry (static string). */
 extern const char *syNetInputClassifyGgpoCorrection(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire);
 extern void syNetInputNoteGgpoCorrectionQueued(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire);
 extern void syNetInputLogGgpoCorrectionClassSummary(void);
+/*
+ * Resolve soft-deferred invent REPLACE waiting on snap-agree@tick (peer recv / sim step).
+ * See docs/bugs/netplay_hash_confirm_snap_tick_defer_2026-07-26.md.
+ */
+extern void syNetInputHashConfirmStickDeferPump(void);
+/*
+ * After StickReplaceNeedsRewind==TRUE: try hash_confirm Promote or soft-defer.
+ * TRUE → caller must NOT QueueOrWiden / RequestInputCorrection (handled).
+ * Also cancels a deferred GGPO already armed for this mismatch tick.
+ * See docs/bugs/netplay_hash_confirm_suppress_wire_ggpo_2026-07-26.md.
+ */
+extern sb32 syNetInputStickReplaceTryHashConfirmSchedule(s32 player, u32 sim_tick,
+                                                         const SYNetInputFrame *old_frame,
+                                                         const SYNetInputFrame *wire);
 #endif
 /* TRUE when published vs remote sticks disagree with neutral vs analog (GGPO stick-mismatch recovery). */
 extern sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, const SYNetInputFrame *remote);

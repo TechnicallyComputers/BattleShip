@@ -502,37 +502,118 @@ sb32 syNetplayNessAnyLiveFighterInJibakuBurstScope(void)
 
 sb32 syNetplayNessPlayerInJibakuStickAbsorbScope(s32 player)
 {
-	GObj *fighter_gobj;
+	(void)player;
+	/* Retired — portable GGPO stick is frame-delta only. */
+	return FALSE;
+}
 
-	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+sb32 syNetplayNessSnapTickIsPostJibakuLaunch(s32 player, u32 tick)
+{
+	s32 status_id;
+
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX) || (tick == 0U))
 	{
 		return FALSE;
 	}
-	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
-	     fighter_gobj = fighter_gobj->link_next)
+	if (syNetRbSnapshotGetFighterStatusIdAtTick(player, tick, &status_id) == FALSE)
 	{
-		FTStruct *fp = ftGetStruct(fighter_gobj);
+		return FALSE;
+	}
+	switch (status_id)
+	{
+	case nFTNessStatusSpecialHiJibaku:
+	case nFTNessStatusSpecialAirHiJibaku:
+	case nFTNessStatusSpecialAirHiBound:
+		return TRUE;
 
-		if ((fp == NULL) || (fp->player != player))
-		{
-			continue;
-		}
-		if ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess))
-		{
-			continue;
-		}
-		switch (fp->status_id)
-		{
-		case nFTNessStatusSpecialHiJibaku:
-		case nFTNessStatusSpecialAirHiJibaku:
-		case nFTNessStatusSpecialAirHiBound:
-			return TRUE;
-
-		default:
-			break;
-		}
+	default:
+		break;
 	}
 	return FALSE;
+}
+
+sb32 syNetplayNessSnapTickIsPKThunderHold(s32 player, u32 tick)
+{
+	s32 status_id;
+
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX) || (tick == 0U))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapshotGetFighterStatusIdAtTick(player, tick, &status_id) == FALSE)
+	{
+		return FALSE;
+	}
+	switch (status_id)
+	{
+	case nFTNessStatusSpecialHiStart:
+	case nFTNessStatusSpecialHiHold:
+	case nFTNessStatusSpecialHiEnd:
+	case nFTNessStatusSpecialAirHiStart:
+	case nFTNessStatusSpecialAirHiHold:
+	case nFTNessStatusSpecialAirHiEnd:
+		return TRUE;
+
+	default:
+		break;
+	}
+	return FALSE;
+}
+
+sb32 syNetplayNessSnapTickBlocksStickGgpoForJibaku(s32 player, u32 tick)
+{
+	if (syNetplayNessSnapTickIsPostJibakuLaunch(player, tick) != FALSE)
+	{
+		return TRUE;
+	}
+	/*
+	 * Entire PK Thunder Start/Hold/End (ground+air): block hash_confirm FORCE.
+	 * StickReplace / LEDGER Promote-only is mag-gated via
+	 * StickReplaceProtectAllowsPromote (confirmed Hold Δ≤micro; predicted Hold
+	 * and Hold Δ>micro still short-GGPO).
+	 * See docs/bugs/netplay_pkthunder_hold_same_intent_ggpo_2026-07-27.md,
+	 * docs/bugs/netplay_pkthunder_hold_aim_protect_universe_spike_2026-07-27.md,
+	 * docs/bugs/netplay_pkthunder_hold_predicted_micro_protect_softlip_2026-07-27.md.
+	 */
+	return syNetplayNessSnapTickIsPKThunderHold(player, tick);
+}
+
+sb32 syNetplayNessStickReplaceProtectAllowsPromote(s32 player, u32 tick, s32 dx, s32 dy,
+                                                   u32 hold_aim_db, sb32 old_was_predicted)
+{
+	if (syNetplayNessSnapTickIsPostJibakuLaunch(player, tick) != FALSE)
+	{
+		/* Uncapped: preserve first-pass jibaku / bound (soak 4173754130 Δ15 class). */
+		return TRUE;
+	}
+	if (syNetplayNessSnapTickIsPKThunderHold(player, tick) == FALSE)
+	{
+		return FALSE;
+	}
+	/*
+	 * Predicted invent already steered thunder head for that tick. Δ≤micro still
+	 * must short-GGPO — protect+LEDGER micro Promote left SoftLip forks
+	 * (soak 213935103 @3527 (−15,−81)→(−18,−80) → PHYSICS_FORK@3528).
+	 * Confirmed Hold rows: noise ≤micro stays Promote-only.
+	 */
+	if (old_was_predicted != FALSE)
+	{
+		return FALSE;
+	}
+	/*
+	 * Hold Start/Hold/End: micro_db only (caller passes micro). continuity_db=12
+	 * still let soak 250129717 Promote every Δ4–11 invent step → cumulative head
+	 * fork → BASELINE deepen.
+	 */
+	if (hold_aim_db == 0U)
+	{
+		return FALSE;
+	}
+	if ((dx > (s32)hold_aim_db) || (dy > (s32)hold_aim_db))
+	{
+		return FALSE;
+	}
+	return TRUE;
 }
 
 static sb32 syNetplayNessAnyLiveFighterInPkThunderVolatileResimDeferScope(void)
@@ -858,7 +939,10 @@ void syNetplayNessResimHardeningAfterSnapshotLoad(u32 load_tick)
 	/* First forward replay tick after load (mismatch). syNetInputGetTick() is still the live
 	 * cap (~FC detection tick) during initial load — using it for HoldEntryTick pins entry in
 	 * the future so hold_frames=0 for the whole resim span, resurrects pkthunder_gravity_delay,
-	 * and freezes Hold Y (soak1 122093103: resim 1378→1420 never replays jibaku@1407). */
+	 * and freezes Hold Y (soak1 122093103: resim 1378→1420 never replays jibaku@1407).
+	 * HoldFramesSinceEntry / EntryDelay rebuild must use this same anchor (or status_total_tics);
+	 * mixing anchor EntryTick with frontier GetTick inflated EntryDelay and resurrected
+	 * pkjibaku_delay (soak 936249480 @5120→ missed jibaku_trigger @5126). */
 	anchor_tick = (load_tick < ~(u32)0) ? (load_tick + 1U) : 0U;
 	sSYNetplayNessHoldTrackingAnchorTick = anchor_tick;
 	/* Rebuild ephemeral hold/throw tracking from the loaded blob *before* canonicalize so
@@ -1092,7 +1176,16 @@ static u32 syNetplayNessHoldFramesSinceEntry(const FTStruct *fp)
 	{
 		return 0U;
 	}
-	now_tick = syNetInputGetTick();
+	/*
+	 * Same clock as SyncHoldEntryTracking. During ResimHardeningAfterSnapshotLoad,
+	 * GetTick() is still the live FC frontier while HoldEntryTick is anchored to
+	 * load_tick+1 — mixing them inflated EntryDelay (soak 936249480: EntryDelay≈96
+	 * then expected=40 during replay → sanitize resurrected pkjibaku_delay 0→41 and
+	 * missed first-pass jibaku_trigger). See
+	 * docs/bugs/netplay_hold_tracking_clock_sanitize_delay_jibaku_miss_2026-07-27.md.
+	 */
+	now_tick = (sSYNetplayNessHoldTrackingAnchorTick != 0U) ? sSYNetplayNessHoldTrackingAnchorTick
+	                                                       : syNetInputGetTick();
 	if (now_tick >= sSYNetplayNessHoldEntryTick[pi])
 	{
 		return now_tick - sSYNetplayNessHoldEntryTick[pi];
@@ -1119,7 +1212,12 @@ static s32 syNetplayNessExpectedPkjibakuDelayFromTracking(const FTStruct *fp)
 			entry_delay = sSYNetplayNessHoldEntryDelay[pi];
 			if (entry_delay >= 0)
 			{
-				hold_frames = syNetplayNessHoldFramesSinceEntry(fp);
+				/*
+				 * Hold-local age (status_total_tics), not wall GetTick() — same contract as
+				 * ExpectedGravityDelayFromTracking (soak 128377995). Wall-clock hold_frames
+				 * after a frontier-skewed EntryDelay rebuild resurrected pkjibaku_delay.
+				 */
+				hold_frames = fp->status_total_tics;
 				expected = entry_delay - (s32)hold_frames;
 				return (expected > 0) ? expected : 0;
 			}
@@ -1241,8 +1339,13 @@ static void syNetplayNessSyncHoldEntryTracking(FTStruct *fp)
 	{
 		sSYNetplayNessHoldEntryTick[pi] = tick;
 	}
-	hold_frames = syNetplayNessHoldFramesSinceEntry(fp);
-	/* Reconstruct entry counters from live values so rollback blob-zero cannot poison tracking. */
+	/*
+	 * Reconstruct from Hold-local status_total_tics (blob age), not GetTick()-entry.
+	 * ForceRebuild anchors entry to load_tick+1 while GetTick may still be the FC
+	 * frontier — wall-clock hold_frames inflated EntryDelay and later sanitize
+	 * resurrected delay (soak 936249480 @5120 was=0 now=41).
+	 */
+	hold_frames = fp->status_total_tics;
 	sSYNetplayNessHoldEntryDelay[pi] = live_delay + (s32)hold_frames;
 	{
 		s32 reconstructed_gravity;
@@ -1517,11 +1620,13 @@ static void syNetplayNessSanitizePKThunderDelayIfZero(FTStruct *fp)
 	s32 expected;
 	s32 was;
 	sb32 resim;
+	sb32 in_hold;
 
 	if (fp->status_vars.ness.specialhi.pkjibaku_delay > 0)
 	{
 		return;
 	}
+	in_hold = syNetplayNessFighterInPKThunderHoldStatus(fp->status_id);
 	if (syNetplayNessHoldDelayZeroIsLegitimate(fp) != FALSE)
 	{
 		if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
@@ -1529,6 +1634,24 @@ static void syNetplayNessSanitizePKThunderDelayIfZero(FTStruct *fp)
 			resim = syNetRollbackIsResimulating();
 			port_log(
 			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_delay_skip player=%d status=%d reason=hold_grace_expired status_tics=%u resim=%d\n",
+			    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
+			    (unsigned int)fp->status_total_tics, (int)(resim != FALSE));
+		}
+		return;
+	}
+	/*
+	 * Mirror sanitize_gravity: never bump delay upward mid-Hold. Blob delay=0 after
+	 * grace (status_total_tics >= FTNESS_PKJIBAKU_DELAY) is authoritative — a skewed
+	 * EntryDelay must not re-arm collide block and miss self-hit on resim.
+	 */
+	if ((in_hold != FALSE) && (fp->status_total_tics >= (u32)FTNESS_PKJIBAKU_DELAY))
+	{
+		if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
+		{
+			resim = syNetRollbackIsResimulating();
+			port_log(
+			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_delay_skip player=%d "
+			    "status=%d reason=hold_delay_zero_authoritative status_tics=%u resim=%d\n",
 			    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
 			    (unsigned int)fp->status_total_tics, (int)(resim != FALSE));
 		}

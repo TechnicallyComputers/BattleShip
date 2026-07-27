@@ -19,6 +19,7 @@ Frame-commit state recovery sat **outside** the authoritative symmetric episode 
 
 1. **Unified FC tuple (episode authority on)** — input-agree FC anchors mismatch at `validation_tick`; target via `ComputeAuthoritativeFcTarget` (validation+1, authoritative min span). No predicted-onset reanchor on this path.
 2. **Peer episode priority** — flush deferred peer symmetric **before** local FC begin; defer FC while peer episode pending/deferred.
+   - **Superseded (netmenu, 2026-07-26):** forever-wait (`fc_waiting_peer_episode` / `fc_symmetric_defers`) retired. Peer priority is immediate flush + `TryBeginResimFromPendingPeerSymmetric`; if peer-sym cannot Begin, FC falls through (`fc_resim_busy` serializes). See [`netplay_fc_episode_begin_stall_retire_2026-07-26.md`](netplay_fc_episode_begin_stall_retire_2026-07-26.md).
 3. **`EPISODE_YIELD`** — abort conflicting local resim/FC when peer notify carries a different authoritative tuple; peer with earlier mismatch no longer suppressed by local FC guard.
 4. **Locked load** — block `LOAD_TICK_NEGOTIATE` / deeper baseline restart while `AuthoritativeEpisodeActive`; FC initiator marks authoritative episode and arms `ROLLBACK_SYNC` with remote slot + final load/epoch after load.
 5. **PendingEpisode preserve** — queue path no longer overwrites wire `(load_tick, epoch_id)` already stored on notify.

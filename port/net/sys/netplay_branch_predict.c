@@ -27,6 +27,82 @@ typedef struct SYNetplayBranchEvalState
 
 static SYNetplayBranchEvalState sSYNetplayBranchEval;
 
+#define SYNETPLAY_BRANCH_DEFERRED_RING 16
+
+typedef struct SYNetplayBranchDeferredTicket
+{
+	sb32 valid;
+	s32 player;
+	u32 tick;
+} SYNetplayBranchDeferredTicket;
+
+static SYNetplayBranchDeferredTicket sSYNetplayBranchDeferred[SYNETPLAY_BRANCH_DEFERRED_RING];
+static u32 sSYNetplayBranchDeferredWrite;
+
+void syNetplayBranchNoteDeferred(s32 player, u32 tick)
+{
+	SYNetplayBranchDeferredTicket *slot;
+	u32 i;
+
+	if ((player < 0) || (tick == 0U))
+	{
+		return;
+	}
+	for (i = 0U; i < SYNETPLAY_BRANCH_DEFERRED_RING; i++)
+	{
+		if ((sSYNetplayBranchDeferred[i].valid != FALSE) &&
+		    (sSYNetplayBranchDeferred[i].player == player) &&
+		    (sSYNetplayBranchDeferred[i].tick == tick))
+		{
+			return;
+		}
+	}
+	slot = &sSYNetplayBranchDeferred[sSYNetplayBranchDeferredWrite % SYNETPLAY_BRANCH_DEFERRED_RING];
+	sSYNetplayBranchDeferredWrite++;
+	slot->valid = TRUE;
+	slot->player = player;
+	slot->tick = tick;
+}
+
+sb32 syNetplayBranchDeferredNeedsRewind(s32 player, u32 tick)
+{
+	u32 i;
+
+	if ((player < 0) || (tick == 0U))
+	{
+		return FALSE;
+	}
+	for (i = 0U; i < SYNETPLAY_BRANCH_DEFERRED_RING; i++)
+	{
+		if ((sSYNetplayBranchDeferred[i].valid != FALSE) &&
+		    (sSYNetplayBranchDeferred[i].player == player) &&
+		    (sSYNetplayBranchDeferred[i].tick == tick))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+void syNetplayBranchClearDeferred(s32 player, u32 tick)
+{
+	u32 i;
+
+	if ((player < 0) || (tick == 0U))
+	{
+		return;
+	}
+	for (i = 0U; i < SYNETPLAY_BRANCH_DEFERRED_RING; i++)
+	{
+		if ((sSYNetplayBranchDeferred[i].valid != FALSE) &&
+		    (sSYNetplayBranchDeferred[i].player == player) &&
+		    (sSYNetplayBranchDeferred[i].tick == tick))
+		{
+			sSYNetplayBranchDeferred[i].valid = FALSE;
+		}
+	}
+}
+
 static const char *syNetplayBranchInputClassName(SYNetplayBranchInputClass cls)
 {
 	switch (cls)
@@ -221,6 +297,11 @@ sb32 syNetplayBranchEvalResolve(GObj *fighter_gobj, sb32 wants_branch, SYNetplay
 			    "input=%s hist_source=%s hist_pred=%d decision=defer\n",
 			    (unsigned)tick, (int)player, (int)status_id, name, syNetplayBranchInputClassName(cls),
 			    syNetplayBranchSourceName(hist_source), (int)hist_pred);
+			/*
+			 * Owner may commit this branch on confirmed input. Same-stick wire later
+			 * must still rewind — note ticket for ledger/StickReplace force GGPO.
+			 */
+			syNetplayBranchNoteDeferred(player, tick);
 		}
 
 		memset(&sSYNetplayBranchEval, 0, sizeof(sSYNetplayBranchEval));
@@ -235,6 +316,14 @@ sb32 syNetplayBranchEvalResolve(GObj *fighter_gobj, sb32 wants_branch, SYNetplay
 		    "input=%s hist_source=%s hist_pred=%d decision=commit\n",
 		    (unsigned)tick, (int)player, (int)status_id, name, syNetplayBranchInputClassName(cls),
 		    syNetplayBranchSourceName(hist_source), (int)hist_pred);
+		/*
+		 * Local commit must still reach the peer on the wire. Post-resim exclusive-target
+		 * gaps can BRANCH_COMMITTED without LOCAL_PUBLISH (soak 1334008206 @420).
+		 */
+		if (cls == nSYNetplayBranchInputLocal)
+		{
+			syNetInputEnsureLocalSimTickPublished(player, tick);
+		}
 	}
 	else if (cls == nSYNetplayBranchInputPredicted)
 	{

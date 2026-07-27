@@ -29,11 +29,11 @@ July 19 `lr_dash` stomp: N/A (both kept −1). July 20 tick-only smash-flip: wir
 | Hold-last decay | Resolve path applies `ApplyAnalogPredictionDecay` by lead before soft-onset/smash logic. |
 | Tick wire | Non-neutral hold-last yields on release, opposite intent, or dash-gate XOR (`|sx|` crosses 56 / smash sign flip). |
 | Send-lead ahead | Smash-class (`|sx|≥56`) peeks `tick+1…peek_ahead` for release → `(0,0)` or flip (no lookback). |
-| Dash clamp | Smash-class unless tick row is **strict**-confirmed same dash-gate: ahead release/flip, else clamp `|sx|` to 55. Provisional same-intent smash no longer skips clamp (soak `1272919275` / `857278917`). |
+| Dash clamp | **Retired (2026-07-26)** — invent `|sx|→55` poisoned JA DI ([jumpaerial SoftLip PEER](netplay_hold_last_dash_clamp_jumpaerial_softlip_peer_2026-07-26.md)). Hold-last keeps decay + wire/ahead release/flip; dash-gate XOR remains stick-vs-stick only. |
 | Micro skip | Never `micro_stick` skip when dash-gate disagrees. |
 | Seal | After Resolve near-neutral, prefer non-neutral provisional remote ring row. |
 
-Logs: `hold_last_smash_flip`, `hold_last_smash_release`, `hold_last_smash_release_ahead`, `hold_last_smash_flip_ahead`, `hold_last_smash_dash_clamp` (needs `SSB64_NETPLAY_ANALOG_ONSET_LOG=1`).
+Logs: `hold_last_smash_flip`, `hold_last_smash_release`, `hold_last_smash_release_ahead`, `hold_last_smash_flip_ahead`, `hold_last_keep_strict_same_gate` (needs `SSB64_NETPLAY_ANALOG_ONSET_LOG=1`).
 
 ## Acceptance (re-soak)
 

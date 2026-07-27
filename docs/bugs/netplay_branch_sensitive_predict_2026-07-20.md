@@ -109,8 +109,11 @@ Around former TURN_DASH / `hold_last_smash_flip` allow windows:
 - Authoritative resim may commit Dash when confirmed smash is real
 - No edits to History freeze, provenance, seal packing, or resim source selection
 
+**Residual soak `743554090` (2026-07-26):** defer worked, but same-stick wire confirm skipped GGPO → Turn vs Dash PEER — [`netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md`](netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md).
+
 ## Related
 
 - [`netplay_resim_input_source_2026-07-20.md`](netplay_resim_input_source_2026-07-20.md)
 - [`netplay_history_provenance_2026-07-20.md`](netplay_history_provenance_2026-07-20.md)
 - [`netplay_turn_lr_dash_stomp_fc_2026-07-19.md`](netplay_turn_lr_dash_stomp_fc_2026-07-19.md) — entry sticky (still valid; now also inside the transaction preimage)
+- [`netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md`](netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md) — same-stick confirm must rewind deferred branch

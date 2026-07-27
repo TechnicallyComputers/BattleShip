@@ -4498,6 +4498,17 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 		return;
 	}
 	/*
+	 * Dead* owns common.dead (wait + pos). The rebirth/captureyoshi/attackair memsets below alias
+	 * the same union bytes — rebirth alone is larger than dead and zeroed wait after capture had
+	 * already pinned it from dead_gate_wait. Resim then restored wait=0 while the bridge stayed
+	 * live → corrupt dead_gate / BASELINE deepen across KO (soak 1945843913 @5177). Mirror the
+	 * rebirth early-return. See docs/bugs/netplay_dead_statusvars_scrub_ko_resim_2026-07-27.md.
+	 */
+	if ((status_id >= nFTCommonStatusDeadDown) && (status_id <= nFTCommonStatusDeadUpFall))
+	{
+		return;
+	}
+	/*
 	 * Samus / Copy-Samus charge owns status_vars.samus.specialn (is_release, charge_int,
 	 * charge_gobj). Common attackair/dead/rebirth scrubs alias those bytes at union offset 0;
 	 * zeroing them on save poisons charge_int so Loop never increments charge_level after resim
@@ -4578,6 +4589,18 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 		return;
 	}
 	/*
+	 * Turn / TurnRun own status_vars.common.turn. dead sizeof=16 aliases through lr_dash at
+	 * overlay +12; rebirth/captureyoshi memsets wipe the rest. Poisoned ring blobs make
+	 * SyncAfterLoad Note(0) clear the InvertLR entry sticky after synctest/emergency restore
+	 * while tap_x already exceeds DASH_BUFFER — peer that skipped restore keeps lr_dash and
+	 * dashes at allow (soak 1579824759 @1960–1961). See
+	 * docs/bugs/netplay_turn_lr_dash_statusvars_scrub_synctest_2026-07-26.md.
+	 */
+	if ((status_id == nFTCommonStatusTurn) || (status_id == nFTCommonStatusTurnRun))
+	{
+		return;
+	}
+	/*
 	 * Pikachu / NPikachu Quick Attack owns status_vars.pikachu.specialhi at union offset 0.
 	 * Capture quantizes specialhi then scrub runs; without this skip, attackair/dead/rebirth
 	 * zero anim_frames and force Start→Zip catch-up after load. Defer-scope helper already
@@ -4614,7 +4637,8 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 	{
 		memset(&status_vars->common.attackair, 0, sizeof(status_vars->common.attackair));
 	}
-	if ((status_id < nFTCommonStatusDeadDown) || (status_id > nFTCommonStatusDeadUpStar))
+	/* DeadUpFall inclusive — prior DeadUpStar ceiling scrubbed fall-death wait (enum: Star then Fall). */
+	if ((status_id < nFTCommonStatusDeadDown) || (status_id > nFTCommonStatusDeadUpFall))
 	{
 		memset(&status_vars->common.dead, 0, sizeof(status_vars->common.dead));
 	}
@@ -8888,10 +8912,6 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 #if defined(SSB64_NETMENU)
 	syNetplayNessRefreshPKThunderPosInBlobFromHead(fighter_gobj, fp, (union FTStatusVars *)blob->status_vars);
 #endif
-	if ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall))
-	{
-		((union FTStatusVars *)blob->status_vars)->common.dead.wait = fp->dead_gate_wait;
-	}
 	memcpy(blob->passive_vars, &fp->passive_vars, sizeof(blob->passive_vars));
 #if defined(SSB64_NETMENU)
 	syNetRbSnapQuantizeFighterRebirthStatusVars(fp, (union FTStatusVars *)blob->status_vars);
@@ -8904,6 +8924,14 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 #endif
 #ifdef PORT
 	syNetRbSnapScrubInactiveStatusVarsInBlob(blob);
+	/*
+	 * Pin dead.wait from the netmenu bridge after scrub. Pre-scrub pin was stomped by the
+	 * rebirth memset alias (Dead* early-return above); keep this as the durable capture rule.
+	 */
+	if ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall))
+	{
+		((union FTStatusVars *)blob->status_vars)->common.dead.wait = fp->dead_gate_wait;
+	}
 	syNetRbSnapCaptureFighterCoupledIds(blob, fp);
 	syNetRbSnapScrubCoupledPointersInBlob(blob);
 	syNetRbSnapshotLogFighterBlobStatusTrail("capture_final", syNetInputGetTick(), fp->player, blob);
@@ -11006,14 +11034,15 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 	fp->input.pl.stick_prev.y = blob->pl_stick_prev_y;
 #endif
 #ifdef PORT
-	syNetRbSnapVerifyDeadWaitInvariant(blob, fp);
 	if ((blob->status_id >= nFTCommonStatusDeadDown) && (blob->status_id <= nFTCommonStatusDeadUpFall))
 	{
 		const union FTStatusVars *blob_sv = (const union FTStatusVars *)blob->status_vars;
 
 		*ftStatusVarsDead(fp) = blob_sv->common.dead;
+		/* Bridge is authoritative for the countdown; heal any scrub/alias skew before verify. */
 		ftCommonDeadSetWait(fp, fp->dead_gate_wait);
 	}
+	syNetRbSnapVerifyDeadWaitInvariant(blob, fp);
 #endif
 #if defined(SSB64_NETMENU)
 	syNetRbSnapApplyFighterNetplayPost(fighter_gobj, fp, blob);
@@ -11707,6 +11736,12 @@ static void syNetRbSnapApplyFighterNetplayPost(GObj *fighter_gobj, FTStruct *fp,
 	{
 		return;
 	}
+	/*
+	 * Turn entry_lr_dash sticky is process-local (not in the fighter blob). Re-pin from the
+	 * restored union (or clear) so a live-ahead DashCheckTurn Note cannot Harden on resim
+	 * before that tick. See docs/bugs/netplay_turn_entry_lr_dash_future_sticky_resim_2026-07-26.md.
+	 */
+	syNetplayTurnSyncEntryLrDashAfterLoad(fp);
 	syNetplayRebirthSnapSyncBattleStock(fp);
 	syNetplayRebirthSanitizeIsRebirthFlag(fp);
 	/*
@@ -12135,6 +12170,15 @@ static u32 syNetRbSnapHashFighterBlobLight(const SYNetRbSnapFighterBlob *blob)
 
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)damage->hitstun_tics);
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)(damage->is_knockback_over != FALSE));
+	}
+	/* Mirror Turn lr_dash / lr_turn folds (soak 1579824759). */
+	if ((blob->status_id == nFTCommonStatusTurn) || (blob->status_id == nFTCommonStatusTurnRun))
+	{
+		const ftCommonTurnStatusVars *turn =
+		    &((const union FTStatusVars *)blob->status_vars)->common.turn;
+
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)turn->lr_dash);
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)turn->lr_turn);
 	}
 #endif
 	if ((blob->fkind == nFTKindKirby) && (blob->status_id >= nFTKirbyStatusSpecialLwStart) &&
@@ -12720,6 +12764,24 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 		                              (u32)blob_dmg->hitstun_tics);
 		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_kb_over", live_kb_over,
 		                              (u32)(blob_dmg->is_knockback_over != FALSE));
+	}
+	if ((fp->status_id == nFTCommonStatusTurn) || (fp->status_id == nFTCommonStatusTurnRun) ||
+	    (blob->status_id == nFTCommonStatusTurn) || (blob->status_id == nFTCommonStatusTurnRun))
+	{
+		const ftCommonTurnStatusVars *blob_turn =
+		    &((const union FTStatusVars *)blob->status_vars)->common.turn;
+		u32 live_lr_dash = 0U;
+		u32 live_lr_turn = 0U;
+
+		if ((fp->status_id == nFTCommonStatusTurn) || (fp->status_id == nFTCommonStatusTurnRun))
+		{
+			live_lr_dash = (u32)ftStatusVarsTurn(fp)->lr_dash;
+			live_lr_turn = (u32)ftStatusVarsTurn(fp)->lr_turn;
+		}
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_turn_lr_dash", live_lr_dash,
+		                              (u32)blob_turn->lr_dash);
+		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_turn_lr_turn", live_lr_turn,
+		                              (u32)blob_turn->lr_turn);
 	}
 #endif
 	syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_invincible_tics", (u32)fp->invincible_tics,
@@ -25956,6 +26018,43 @@ static void syNetRbSnapResyncPupupuWhispyFlowerPresentation(GRCommonGroundVarsPu
 
 #if defined(PORT) && defined(SSB64_NETMENU)
 /*
+ * PlayAnim from RepairPresentationCosmetic restarts flower texture clips at full length.
+ * LoopStart→Loop gates on anim end — a fresh clip blocks the transition for many ticks
+ * (soak 802174271 @1398). Post-load only: pin ended when FSM is already at/after LoopStart.
+ * Do not call from live forward texture refresh (would collapse LoopStart duration).
+ * See docs/bugs/netplay_pupupu_flower_loopstart_repair_anim_map_diverge_2026-07-26.md.
+ */
+static void syNetRbSnapPinPupupuFlowerLoopStartAnimEnded(GRCommonGroundVarsPupupu *pu)
+{
+	DObj *root_dobj;
+
+	if (pu == NULL)
+	{
+		return;
+	}
+	if ((pu->flowers_back_status >= (u8)nGRPupupuFlowerStatusWindLoopStart) &&
+	    (pu->flowers_back_status <= (u8)nGRPupupuFlowerStatusWindStop) && (pu->map_gobj[2] != NULL))
+	{
+		pu->map_gobj[2]->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(pu->map_gobj[2]);
+		if (root_dobj != NULL)
+		{
+			root_dobj->anim_frame = 0.0F;
+		}
+	}
+	if ((pu->flowers_front_status >= (u8)nGRPupupuFlowerStatusWindLoopStart) &&
+	    (pu->flowers_front_status <= (u8)nGRPupupuFlowerStatusWindStop) && (pu->map_gobj[3] != NULL))
+	{
+		pu->map_gobj[3]->anim_frame = 0.0F;
+		root_dobj = DObjGetStruct(pu->map_gobj[3]);
+		if (root_dobj != NULL)
+		{
+			root_dobj->anim_frame = 0.0F;
+		}
+	}
+}
+
+/*
  * Pupupu ground blob restores FSM scalars only — map_gobj anim_frame is live leftover.
  * After GGPO load that leftover (often a mid-blink eyes anim from the pre-rewind timeline)
  * blocks blink decrement. Soak1 3628321978: resim @2372 kept blink=2 while forward had
@@ -25996,6 +26095,7 @@ static void syNetRbSnapRefreshPupupuWhispyMapAnimAfterLoad(GRCommonGroundVarsPup
 	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[0]);
 	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[2]);
 	syNetplaySnapMapGobjAnimFrameToEndIfNearZero(pu->map_gobj[3]);
+	syNetRbSnapPinPupupuFlowerLoopStartAnimEnded(pu);
 }
 #endif
 
@@ -32066,6 +32166,11 @@ void syNetRbSnapRepairPupupuWhispyPresentationAfterLoad(u32 tick, const char *re
 	}
 	syNetRbSnapEnsurePupupuWhispyParticlesLive(FALSE);
 	grPupupuWhispyRepairPresentationCosmetic();
+	/*
+	 * RepairPresentation PlayAnim restarts flower texture clips — pin LoopStart+ ended so
+	 * FlowersBack/FrontLoopStart can enter WindLoop on the next sim tick (soak 802174271).
+	 */
+	syNetRbSnapPinPupupuFlowerLoopStartAnimEnded(pu);
 	if ((reason != NULL) && (strcmp(reason, "synctest_restore") == 0))
 	{
 		grPupupuWhispyWarmupLiveEffectsEx(128);
@@ -48844,6 +48949,37 @@ sb32 syNetRbSnapshotIsTickCommitted(u32 tick)
 	}
 	return TRUE;
 }
+
+#if defined(SSB64_NETMENU)
+sb32 syNetRbSnapshotGetFighterStatusIdAtTick(s32 player, u32 tick, s32 *out_status_id)
+{
+	SYNetRbSnapshotSlot *slot;
+	s32 si;
+
+	if ((out_status_id == NULL) || (tick == 0U) || (player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapshotIsTickCommitted(tick) == FALSE)
+	{
+		return FALSE;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if ((slot->is_valid == FALSE) || (slot->tick != tick))
+	{
+		return FALSE;
+	}
+	for (si = 0; si < GMCOMMON_PLAYERS_MAX; si++)
+	{
+		if ((slot->fighters[si].is_valid != FALSE) && (slot->fighters[si].player == player))
+		{
+			*out_status_id = slot->fighters[si].status_id;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+#endif
 
 u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick)
 {

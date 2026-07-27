@@ -337,6 +337,10 @@ struct EFStruct;
 extern u8 syNetRbSnapEffectRespawnKindFromLive(const struct GObj *gobj, const struct EFStruct *ep);
 /* Ring slot published for tick (valid + tick match + save completed). */
 extern sb32 syNetRbSnapshotIsTickCommitted(u32 tick);
+#if defined(SSB64_NETMENU)
+/* Read-only: fighter status_id from committed ring blob at tick (FALSE if missing). */
+extern sb32 syNetRbSnapshotGetFighterStatusIdAtTick(s32 player, u32 tick, s32 *out_status_id);
+#endif
 /* Walk backward from tick down to min_tick inclusive; ~(u32)0 if none. */
 extern u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick);
 /* Same as above but only slots marked load-safe (no predicted-remote sim at that tick). */

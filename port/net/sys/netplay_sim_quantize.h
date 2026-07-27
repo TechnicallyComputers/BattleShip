@@ -184,9 +184,12 @@ extern void syNetplayHardenTurnLrTurn(FTStruct *fp);
  * Pin InvertLR/Center entry lr_dash (and DashCheckTurn smash refresh) so union stomps of
  * turn.lr_dash (+0xC / attack4.unk_0xC) cannot clear the Turn→Dash gate. Soak 1646535146:
  * Android lr_dash -1→0 at allow frame while Linux kept -1 → Turn vs Dash → FC figh.
- * See docs/bugs/netplay_turn_lr_dash_stomp_fc_2026-07-19.md.
+ * note_tick + SyncAfterLoad: reject live-ahead pins after rollback (soak 1929938261).
+ * See docs/bugs/netplay_turn_lr_dash_stomp_fc_2026-07-19.md and
+ * docs/bugs/netplay_turn_entry_lr_dash_future_sticky_resim_2026-07-26.md.
  */
 extern void syNetplayTurnNoteEntryLrDash(FTStruct *fp, s32 lr_dash);
+extern void syNetplayTurnSyncEntryLrDashAfterLoad(FTStruct *fp);
 extern s32 syNetplayTurnGetEntryLrDash(const FTStruct *fp);
 extern void syNetplayHardenTurnLrDash(FTStruct *fp);
 

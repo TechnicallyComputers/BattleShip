@@ -327,6 +327,17 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsDamage(fp)->hitstun_tics);
 		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE));
 	}
+	/*
+	 * Soak 1579824759 @1960: Turn→Dash fork with matched sticks after Linux-only synctest
+	 * restore; lr_dash was scrubbed from the ring blob and not folded, so fhash matched while
+	 * the InvertLR dash gate diverged. Fold turn.lr_dash / lr_turn for FIGHTER_LIGHT_ONSET.
+	 * See docs/bugs/netplay_turn_lr_dash_statusvars_scrub_synctest_2026-07-26.md.
+	 */
+	if ((fp->status_id == nFTCommonStatusTurn) || (fp->status_id == nFTCommonStatusTurnRun))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTurn(fp)->lr_dash);
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTurn(fp)->lr_turn);
+	}
 	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{

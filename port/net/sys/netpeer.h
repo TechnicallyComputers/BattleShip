@@ -172,6 +172,23 @@ extern u32 syNetPeerDelayWireTickFromSim(u32 sim_tick);
  */
 extern u32 syNetPeerDelayWireLookupTickFromSim(u32 sim_tick);
 extern u32 syNetPeerDelaySimTickFromWire(u32 wire_tick);
+/*
+ * Live / resim runway ceiling: DelaySim(hr) + phase_lock (not +D+PL).
+ * Matches SharedCommit predict admit bound; D is already removed in DelaySim.
+ * hr==0 → ~0. See docs/bugs/netplay_hash_confirm_runway_align_2026-07-26.md.
+ */
+extern u32 syNetPeerGetRemoteSimRunwayCap(void);
+#if defined(SSB64_NETMENU)
+/*
+ * Eager per-tick snap-agree confirm for hash_confirm StickReplace.
+ * TRUE when watermark already past snap_tick, or local+peer hashes for snap_tick
+ * match (advances watermark). FALSE on unknown peer / mismatch.
+ * See docs/bugs/netplay_hash_confirm_snap_tick_defer_2026-07-26.md.
+ */
+extern sb32 syNetPeerSnapAgreeTryConfirmTick(u32 snap_tick);
+/* TRUE when peer snap hashes for snap_tick were received and disagreed with local. */
+extern sb32 syNetPeerSnapAgreeTickKnownMismatch(u32 snap_tick);
+#endif
 /* `sim_tick + D` with saturating add (base strict frontier; no extra slack). */
 extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);
 /* `sim_tick + D + strict_extra_slack` with saturating add (strict-only frontier). */

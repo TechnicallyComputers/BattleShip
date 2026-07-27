@@ -144,6 +144,22 @@ extern void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick);
 extern void syNetRollbackQueueOrWidenStickCorrection(s32 player, u32 sim_tick);
 /* GGPO-style: confirmed input corrects speculative remote input already simulated at `sim_tick`. */
 extern void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick);
+#if defined(SSB64_NETMENU)
+/*
+ * Drop a pending deferred input GGPO whose mismatch_tick equals sim_tick (optional player match).
+ * Used when hash_confirm Promote/soft-defer owns that invent REPLACE so a prior wire
+ * RequestInputCorrection cannot still BeginResim. See
+ * docs/bugs/netplay_hash_confirm_suppress_wire_ggpo_2026-07-26.md.
+ */
+extern void syNetRollbackCancelDeferredInputCorrectionIfMismatchTick(s32 player, u32 sim_tick);
+/*
+ * Arm deferred input GGPO even when History already matches wire (ledger promoted before
+ * rewind decision). Bypasses StickReplace / is_predicted gates that otherwise no-op.
+ * hash_confirm defer→snap_mismatch/deadline and ledger KnownMismatch. See
+ * docs/bugs/netplay_hash_confirm_mismatch_force_rewind_2026-07-26.md.
+ */
+extern void syNetRollbackForceDeferredInputCorrection(s32 player, u32 sim_tick, const char *reason);
+#endif
 /* Host/local authority: retransmit revised gameplay for `sim_tick`; queue symmetric + local resim. */
 extern void syNetRollbackNotifyLocalAuthorityTransmitRevision(s32 player, u32 sim_tick);
 /* FALSE during post-resim debounce for ticks at/after last committed mismatch (quiet OOO patch only). */

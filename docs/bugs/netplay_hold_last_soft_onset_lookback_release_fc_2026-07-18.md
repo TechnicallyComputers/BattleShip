@@ -47,10 +47,13 @@ Re-soak Android↔Linux through a stick **release** GGPO (hold → near-neutral 
 
 - Post-resim exclusive target: remote `REMOTE_PUBLISH` / `STICK_SAMPLE` must not invent floored pre-release sticks (`hold_last_soft_onset` only when true send-lead ahead exists)
 - No AttackDash/Wait length skew → Turn vs Dash with matched wire `sx/sy` and forked `tap_x`
-- `SSB64_NETPLAY_ANALOG_ONSET_LOG=1` optional: soft_onset lines only with ahead peeks
+- `SSB64_NETPLAY_ANALOG_ONSET_LOG=1` optional: soft_onset lines only with current-tick peeks
+
+**Residual (2026-07-26):** ahead peek + floor amplify still invented later-tick sticks (`sy=13→20`) — [`netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md`](netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md).
 
 ## Related
 
 - [`netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md`](netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md)
 - [`netplay_post_resim_pl_latch_stick_range_poison_fc_2026-07-17.md`](netplay_post_resim_pl_latch_stick_range_poison_fc_2026-07-17.md)
 - [`netplay_feel0_send_before_sample_release_skew_2026-07-13.md`](netplay_feel0_send_before_sample_release_skew_2026-07-13.md)
+- [`netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md`](netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md) — ahead + floor residual

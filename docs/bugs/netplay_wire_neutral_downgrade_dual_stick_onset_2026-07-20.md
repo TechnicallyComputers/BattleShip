@@ -1,6 +1,6 @@
 # Wire REPLACE_NEWER smash→neutral downgrade at dual-stick Go (2026-07-20)
 
-**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)  
+**Status:** FIX NARROWED (`PORT && SSB64_NETMENU`, re-soak) — reject only while `cur_tick < DelaySim(wire)` (see [auth_stage false zero](netplay_zero_onset_auth_stage_false_zero_replace_peer_2026-07-26.md))  
 **Soak:** soak1 session `857278917` seed `1190441969` — Android client ↔ Linux host  
 **Logs:** `soak1-android.log` / `soak1-linux.log`  
 **Bucket:** soft-stable MATCH; scan FAIL was mostly diagnostic + wire poison mid-GGPO
@@ -28,7 +28,7 @@ Dual joystick at Go felt like an instant desync; peers never hard-diverged befor
 
 | Layer | Change |
 |-------|--------|
-| Wire commit | Reject `REPLACE_NEWER` when existing is strict analog, incoming near-neutral, buttons unchanged — log `REMOTE_CONFIRMED_REPLACE_REJECT_NEUTRAL_DOWNGRADE`; still ack `pkt_seq`. |
+| Wire commit | Reject `REPLACE_NEWER` hard-zero downgrade of strict analog only while `current_tick < DelaySim(wire)` (Go onset stall poison). When sim has reached that tick, allow true release. Log `REMOTE_CONFIRMED_REPLACE_REJECT_NEUTRAL_DOWNGRADE`; still ack `pkt_seq`. |
 | Hold-last smash | Clamp / ahead path unless tick row is **strict**-confirmed with same dash gate (provisional same-intent no longer skips clamp). |
 | STICK_SAMPLE | Prefer published history for the completed tick, then fighter `pl`, then device. |
 

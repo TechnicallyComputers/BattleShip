@@ -48,6 +48,10 @@ Offline / non-rollback unchanged.
 - Optional `harden_lr_dash` only when a stomp was repaired
 - No Turn vs Dash status fork → FC `figh` inputs MATCH from this path
 
+## Follow-up (2026-07-26)
+
+Soak `1929938261`: sticky survived past live `DashCheckTurn` and polluted earlier resim via Harden → false Dash. Tick-gate + load sync: [`netplay_turn_entry_lr_dash_future_sticky_resim_2026-07-26.md`](netplay_turn_entry_lr_dash_future_sticky_resim_2026-07-26.md).
+
 ## Related
 
 - [`netplay_turn_lr_turn_stomp_2026-07-12.md`](netplay_turn_lr_turn_stomp_2026-07-12.md) — `lr_turn` +0x10 harden

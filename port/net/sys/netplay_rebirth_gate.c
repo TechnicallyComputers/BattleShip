@@ -63,13 +63,24 @@ static sb32 syNetplayRebirthFighterIsDeadStatus(s32 status_id)
 	return ((status_id >= nFTCommonStatusDeadDown) && (status_id <= nFTCommonStatusDeadUpFall)) ? TRUE : FALSE;
 }
 
-sb32 syNetplayPlayerInDeadGhostStickAbsorbScope(s32 player)
+sb32 syNetplayPlayerInDeadGhostStickAbsorbScope(s32 player, u32 sim_tick)
 {
 	GObj *fighter_gobj;
+	s32 snap_status_id;
 
 	if ((syNetplayRollbackSemanticsActive() == FALSE) || (player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
 	{
 		return FALSE;
+	}
+	/*
+	 * Prefer committed snap@sim_tick — admission on history, not live frontier status.
+	 * Completes the portable "stick can't change this sealed tick" contract for Dead*.
+	 */
+	if ((sim_tick != 0U) &&
+	    (syNetRbSnapshotGetFighterStatusIdAtTick(player, sim_tick, &snap_status_id) != FALSE) &&
+	    (syNetplayRebirthFighterIsDeadStatus(snap_status_id) != FALSE))
+	{
+		return TRUE;
 	}
 	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
 	     fighter_gobj = fighter_gobj->link_next)
