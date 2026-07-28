@@ -38,6 +38,8 @@ Under `PORT && SSB64_NETMENU`, input-agree FC onset recovery:
 
 Does **not** prefer predicted over shared (preserves July 11). Does **not** fix the underlying TopN.x sim fork (see soft-lip X diag soak).
 
+**2026-07-27 caveat:** RING_CLAMP short recovery is doomed when it abandons the shared onset — either `onset_load < min_load` (soak validation=841 onset=519→830) or in-ring Resolve miss with `clamped_load > onset_load` (soak `4086048930` onset=454→480). Both now fail-close as `ONSET_UNRECOVERABLE` — see [onset hard fork](netplay_fc_onset_older_than_ring_hard_fork_2026-07-27.md).
+
 ## Verify
 
 Re-soak Android↔Linux with a deep shared onset + late input-agree FC:

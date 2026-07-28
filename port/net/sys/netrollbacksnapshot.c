@@ -4770,6 +4770,10 @@ static void syNetRbSnapRefreshYoshiSpecialNPreCatchExtendGameplayFromSlot(const 
 static void syNetRbSnapRefreshYoshiEggLayPresentationFromSlot(const SYNetRbSnapshotSlot *slot);
 static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj, FTStruct *fp,
 							      const SYNetRbSnapFighterBlob *blob);
+static void syNetRbSnapHardPinFighterFoldContributorsFromSlot(const SYNetRbSnapshotSlot *slot);
+#if defined(SSB64_NETMENU)
+static void syNetRbSnapRestoreSoftLipStickyFromSlot(const SYNetRbSnapshotSlot *slot);
+#endif
 static sb32 syNetRbSnapBlobInResidualShieldPresentationScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapshotSlotAnyFighterResidualShieldPresentationScope(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapshotSlotAnyFighterKirbyJumpAerialPresentationScope(const SYNetRbSnapshotSlot *slot);
@@ -40685,6 +40689,48 @@ static void syNetRbSnapLogCameraInterestDivergence(u32 tick, const CObj *cobj)
 		    dobj->translate.vec.f.y);
 	}
 }
+
+/*
+ * Synctest emergency restore already re-applies the live camera blob. Unconditionally running
+ * gmCameraRunFuncCamera afterward advances hashed GMCamera scalars by one integrate on the probing
+ * peer only (soak1 Android SYNCTEST@1713 → cam 0xC8F38248→0x95D46C4C while Linux stayed). Only
+ * integrate when CObj.at is wildly off fighter interests (cliffwait quake yank class).
+ */
+void syNetRbSnapSynctestRecoverCameraIfInterestYanked(void)
+{
+	CObj *cobj;
+	Vec3f interest;
+	f32 hz;
+	f32 vt;
+	f32 dx;
+	f32 dy;
+
+	if (gGMCameraGObj == NULL)
+	{
+		return;
+	}
+	cobj = CObjGetStruct(gGMCameraGObj);
+	if (cobj == NULL)
+	{
+		return;
+	}
+	gmCameraUpdateInterests(&interest, &hz, &vt);
+	dx = cobj->vec.at.x - interest.x;
+	dy = cobj->vec.at.y - interest.y;
+	if (((dx * dx) + (dy * dy)) < (500.0F * 500.0F))
+	{
+		syNetplayCanonicalizeGMCameraSimState();
+		return;
+	}
+	gmCameraRunFuncCamera(gGMCameraGObj);
+	syNetplayCanonicalizeGMCameraSimState();
+	port_log(
+	    "SSB64 NetRbSnapshot: synctest_camera_yank_recover at=(%.1f,%.1f) interest=(%.1f,%.1f)\n",
+	    cobj->vec.at.x,
+	    cobj->vec.at.y,
+	    interest.x,
+	    interest.y);
+}
 #endif
 
 static void syNetRbSnapCaptureCameraCObj(SYNetRbSnapCameraBlob *cam)
@@ -42360,6 +42406,17 @@ sb32 	syNetRbSnapshotRestoreLiveEmergency(void)
 	}
 #endif
 	syNetRbSnapshotSanitizeLiveQuakeEffectsAfterEmergencyRestore();
+#if defined(SSB64_NETMENU)
+	/*
+	 * FinalizeLoad / joint-fidelity reapply can rewrite hash-blind MPColl scalars (floor_dist)
+	 * while fhash_light still matches (pos_prev/pos_diff/TopN). Soft-lip sticky is process-local
+	 * and not in the fighter hash. Re-pin both from the emergency blob so the next forward
+	 * DamageFly tick matches peers that did not run synctest this cadence.
+	 * See docs/bugs/netplay_synctest_emergency_damagefly_mpcoll_2026-07-27.md.
+	 */
+	syNetRbSnapHardPinFighterFoldContributorsFromSlot(&sSYNetRbEmergencySlot);
+	syNetRbSnapRestoreSoftLipStickyFromSlot(&sSYNetRbEmergencySlot);
+#endif
 	syNetRbSnapshotLogFighterStatusTrail("emergency_restore", syNetInputGetTick());
 #if defined(SSB64_NETMENU)
 	sSYNetRbSnapDeferNetplayCatchUpDuringApply = FALSE;
@@ -42939,6 +42996,45 @@ static void syNetRbSnapHardPinFighterFoldContributorsFromBlob(GObj *fighter_gobj
 {
 	syNetRbSnapHardPinFighterFoldContributorsFromBlobEx(fighter_gobj, fp, blob, FALSE);
 }
+
+#if defined(SSB64_NETMENU)
+static void syNetRbSnapRestoreSoftLipStickyFromSlot(const SYNetRbSnapshotSlot *slot)
+{
+	GObj *fighter_gobj;
+
+	if (slot == NULL)
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp;
+		s32 slot_index;
+		const SYNetRbSnapFighterBlob *blob;
+		u32 soft_lip_sticky;
+
+		fp = ftGetStruct(fighter_gobj);
+		if (fp == NULL)
+		{
+			continue;
+		}
+		slot_index = fp->player;
+		if ((slot_index < 0) || (slot_index >= GMCOMMON_PLAYERS_MAX))
+		{
+			continue;
+		}
+		blob = &slot->fighters[slot_index];
+		if (blob->is_valid == FALSE)
+		{
+			continue;
+		}
+		soft_lip_sticky = blob->soft_lip_sticky_flags;
+		soft_lip_sticky |= blob->coll.floor_flags & (MAP_VERTEX_COLL_PASS | MAP_VERTEX_COLL_CLIFF);
+		mpProcessNetplaySoftLipStickySet(fp->player, soft_lip_sticky);
+	}
+}
+#endif
 
 static void syNetRbSnapHardPinFighterFoldContributorsFromSlot(const SYNetRbSnapshotSlot *slot)
 {

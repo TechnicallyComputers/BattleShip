@@ -418,10 +418,24 @@ extern void syNetInputZeroOnsetMaybeStageAuthRunway(u32 sim_tick);
 /* TRUE while post-Go wire_need soft-pacing grace covers `sim_tick` (hr freeze cover). */
 extern sb32 syNetInputPostGoWirePacingGraceActive(u32 sim_tick);
 /*
- * TRUE when local stick is recently hot AND (Restrict or remote stick recently hot).
- * Shrinks predict credit / forces zero-onset stall during dual-stick onset.
+ * Count remote-human slots with recent non-neutral analog (lookback 8). Scales to N remotes.
+ */
+extern u32 syNetInputHotRemoteHumanSlotCount(u32 sim_tick);
+/*
+ * TRUE under multi-stick pressure: ≥2 remotes hot, or local hot + (≥1 remote hot | Restrict).
+ * Shrinks predict credit / forces zero-onset stall. Returns FALSE while stick-absorb
+ * coalesce waits (runway hang avoidance).
  */
 extern sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick);
+#if defined(SSB64_NETMENU)
+/*
+ * Same multi-stick probe as PredictTighten but ignores absorb coalesce (NoteHard skip /
+ * absorb sizing). See docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+ */
+extern sb32 syNetInputMultiStickHotActive(u32 sim_tick);
+/* Alias of MultiStickHotActive (legacy name). */
+extern sb32 syNetInputDualStickHotActive(u32 sim_tick);
+#endif
 /*
  * TRUE when peek-ahead shows a true analog ramp vs last_confirmed (intent/mag disagree)
  * while wire for `sim_tick` is still missing. Peek miss / same-mag hold → FALSE
@@ -461,6 +475,19 @@ extern void syNetInputPromoteAllLocalAuthoritySlots(u32 tick);
 #if defined(PORT) && defined(SSB64_NETMENU)
 /* After local BRANCH_COMMITTED: ensure feel-0 gameplay + LOCAL_PUBLISH for `tick` if missing. */
 extern void syNetInputEnsureLocalSimTickPublished(s32 player, u32 tick);
+/*
+ * Lowest sim tick the current resim replayed with hold_last / predicted remote input; 0 if none.
+ * Reset by syNetInputRollbackPrepareForResim. Rollback caps resolved_through here so late wire
+ * for guessed span ticks can still rewind (light episodes have no seal-row exchange).
+ */
+extern u32 syNetInputResimLowestPredictedReplayTick(void);
+/*
+ * Highest sim tick T >= from_tick where every tick in [from_tick, T] has remote-confirmed
+ * input (ledger/wire). 0 if from_tick itself is missing. Scan stops at to_tick_inclusive.
+ * Used to clamp light-episode targets to the wire frontier so hold_last does not invent
+ * past known sticks (soak 2026-07-27 micro-cascade @400).
+ */
+extern u32 syNetInputContiguousRemoteConfirmedThrough(s32 player, u32 from_tick, u32 to_tick_inclusive);
 #endif
 extern void syNetInputMaybeLogFrameCommitLocalAuthorityDiag(u32 validation_tick, u32 win_begin);
 extern void syNetInputMaybeLogFrameCommitSealLocalMismatch(u32 validation_tick, u32 win_begin, u32 win_end);

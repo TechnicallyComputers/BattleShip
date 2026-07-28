@@ -572,6 +572,10 @@ static u32 sSYNetPeerBootstrapRetrySleepUsCached;
 static sb32 sSYNetPeerBootstrapTimingCached;
 static u32 sSYNetPeerLastFrameCommitValidationTick;
 static sb32 sSYNetPeerFrameCommitCadenceLogged;
+#if defined(SSB64_NETMENU)
+/* Grid-aligned FC validation id whose boundary mint was blocked; minted late from the snapshot ring. */
+static u32 sSYNetPeerFrameCommitLateMintPendingTick;
+#endif
 static void syNetPeerRefreshBootstrapTimingFromEnv(void);
 static u32 syNetPeerBootstrapRetryCount(void);
 static u32 syNetPeerBootstrapRetrySleepUs(void);
@@ -7303,6 +7307,9 @@ void syNetPeerStartVSSession(void)
 	sSYNetPeerLastLogTick = 0;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
 	sSYNetPeerFrameCommitCadenceLogged = FALSE;
+#if defined(SSB64_NETMENU)
+	sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+#endif
 	sSYNetPeerSendSeq = 0;
 	sSYNetPeerRecvSeqInitialized = FALSE;
 	sSYNetPeerRecvSeqHighWater = 0;
@@ -10252,6 +10259,9 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerFrameCommitItemOnlySkewFirstTick = 0U;
 	sSYNetPeerLastFrameCommitValidationTick = 0U;
 	sSYNetPeerFrameCommitCadenceLogged = FALSE;
+#if defined(SSB64_NETMENU)
+	sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+#endif
 	sSYNetPeerSnapAgreeEnvCache = -999;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
 }
@@ -12187,6 +12197,71 @@ void syNetPeerLogStats(void)
 #endif
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * FC grid mint blocked at the boundary (deferred GGPO covered the completed tick) — mint the
+ * same grid-aligned validation id a few ticks later instead of skipping the whole interval.
+ * Light episodes churn every few ticks, so exact-boundary skips starved the FC safety net
+ * (soak 2026-07-27: sent=2 over 960 ticks, grids 480/600/720 all eaten; state fork @397 went
+ * undetected until FC@841). Token digests are retro-safe: state hashes come from the stored
+ * snapshot ring at validation-1 and the input digest from settled history. tick_anchor is
+ * snap_tick (validation-1) so late mint pairs with an on-time peer (GetTick-as-anchor made
+ * completed=845 vs 840 PAIRING_FAIL).
+ */
+static void syNetPeerFrameCommitTryLateMint(u32 completed_tick)
+{
+	u32 validation_tick;
+	u32 win_begin;
+	u32 win_length;
+	u32 val_win;
+
+	validation_tick = sSYNetPeerFrameCommitLateMintPendingTick;
+	if (validation_tick == 0U)
+	{
+		return;
+	}
+	if (validation_tick <= sSYNetPeerLastFrameCommitValidationTick)
+	{
+		sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+		return;
+	}
+	/*
+	 * Snapshot ring must still hold validation-1 or BuildToken silently falls back to live
+	 * hashes (wrong tick). Blockers clear within a few ticks; 96 is well inside ring depth.
+	 */
+	if ((completed_tick > validation_tick) && ((completed_tick - validation_tick) > 96U))
+	{
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_DROP validation=%u completed=%u (ring depth)\n",
+		    validation_tick,
+		    completed_tick);
+		sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+		return;
+	}
+	if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
+	    ((completed_tick > 0U) && (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)) ||
+	    (syNetRollbackDeferredInputCorrectionCoversTick(validation_tick - 1U) != FALSE))
+	{
+		return;
+	}
+	sSYNetPeerLastFrameCommitValidationTick = validation_tick;
+	sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+	val_win = syNetPeerValidationWindowTicks();
+	win_length = validation_tick;
+	win_begin = 0U;
+	if (validation_tick >= val_win)
+	{
+		win_begin = validation_tick - val_win;
+		win_length = val_win;
+	}
+	port_log(
+	    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT validation=%u completed=%u\n",
+	    validation_tick,
+	    completed_tick);
+	syNetPeerFrameCommitAfterValidation(validation_tick, win_begin, win_length);
+}
+#endif
+
 void syNetPeerFrameCommitAfterCompletedSimStep(void)
 {
 #ifdef PORT
@@ -12253,6 +12328,9 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		}
 		if ((completed_tick == 0U) || ((completed_tick % fc_interval) != 0U))
 		{
+#if defined(SSB64_NETMENU)
+			syNetPeerFrameCommitTryLateMint(completed_tick);
+#endif
 			return;
 		}
 		validation_tick = completed_tick + 1U;
@@ -12265,11 +12343,19 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		 * we mint diverge tokens for a prediction miss that is already queued to rewind
 		 * (RebirthWait stick drop class). Do not bump LastFrameCommitValidationTick so the
 		 * next grid point retries after the episode completes.
+		 * NETMENU: arm a late mint for this grid id instead of losing the interval —
+		 * light-episode churn ate most grid boundaries (see FrameCommitTryLateMint).
 		 */
 		if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
 		    ((completed_tick > 0U) &&
 		     (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)))
 		{
+#if defined(SSB64_NETMENU)
+			sSYNetPeerFrameCommitLateMintPendingTick = validation_tick;
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_ARM validation=%u (deferred covers boundary)\n",
+			    validation_tick);
+#endif
 			return;
 		}
 		sSYNetPeerLastFrameCommitValidationTick = validation_tick;

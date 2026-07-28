@@ -109,6 +109,10 @@ extern sb32 syNetRbSnapGetItemTranslateForHashFold(struct GObj *gobj, const stru
 extern void syNetRbSnapshotLogGuardShieldLoadDriftDiag(u32 tick, u32 live_f, u32 slot_f, u32 live_a, u32 slot_a);
 /* Eject hollow/dead quake shells after synctest emergency restore (efManagerQuakeProcUpdate crash guard). */
 extern void syNetRbSnapshotSanitizeLiveQuakeEffectsAfterEmergencyRestore(void);
+#if defined(SSB64_NETMENU)
+/* After synctest emergency restore: integrate camera only when CObj.at is interest-yanked (>500). */
+extern void syNetRbSnapSynctestRecoverCameraIfInterestYanked(void);
+#endif
 /* Quake predicate for the sync-hash layer: gates folding effect_vars.quake.priority to genuine quakes. */
 extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const struct EFStruct *ep);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);

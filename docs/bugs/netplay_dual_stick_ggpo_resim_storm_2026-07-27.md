@@ -42,11 +42,14 @@ Matched APK + Linux netmenu:
 
 - Dual-stick mash: episode rate drops vs pre-fix (~every-7-tick ping-pong); expect `stick_absorb_coalesce` / widened deferred, not 2× begins per GGPO sustained
 - No perpetual `rollback_epoch_cap … source=2` after stick GGPO + FC pending
-- Spans may widen inside one absorb window (≤~16–32) — preferred over storm frequency
+- Spans may widen inside one absorb window (≤~8 NETMENU after metronome fix) — preferred over storm frequency
 - Soft GGPO on real polarity flips still allowed after absorb expires
 
 ## Related
 
+- [`netplay_stick_absorb_peer_convergence_runway_hang_2026-07-27.md`](netplay_stick_absorb_peer_convergence_runway_hang_2026-07-27.md) — **follow-on:** absorb coalesce still hung via peer_convergence + dual-hot runway
+- [`netplay_stick_absorb_resim_metronome_2026-07-27.md`](netplay_stick_absorb_resim_metronome_2026-07-27.md) — **follow-on:** shorten absorb (no ×2) + hard ledger refresh clears coalesce wait
+- [`netplay_stick_absorb_dual_slot_pingpong_2026-07-27.md`](netplay_stick_absorb_dual_slot_pingpong_2026-07-27.md) — **follow-on:** narrow NoteHard so mag REPLACE does not defeat dual-slot coalesce
 - [`netplay_stick_storm_cooldown_livecap_deadlock_2026-07-12.md`](netplay_stick_storm_cooldown_livecap_deadlock_2026-07-12.md) — prior live-cap ↔ cooldown deadlock
 - [`netplay_stick_lr_baseline_stash_hang_2026-07-12.md`](netplay_stick_lr_baseline_stash_hang_2026-07-12.md) — original same-player stick absorb
 - [`netplay_fc_episode_begin_stall_retire_2026-07-26.md`](netplay_fc_episode_begin_stall_retire_2026-07-26.md) — `fc_peer_sym_prefer_began` (still present; not the hang root)

@@ -100,6 +100,13 @@ static sb32 sSYNetInputRemoteAnalogOnsetPredEnvCache = -999;
  * docs/bugs/netplay_presim_invent_confirm_without_rewind_2026-07-26.md.
  */
 #define SYNETINPUT_GGPO_STICK_COMPLETED_SIM_CONTINUITY_DEADBAND_DEFAULT 12
+/*
+ * Local enqueue: collapse ±1 same-intent stick chatter before gameplay/wire store so
+ * Android/Linux analogs do not fork physics on noise (soak FC@841 fold_hold 0x0A vs 0x0B).
+ * Kill with SSB64_NETPLAY_NET_STICK_CHATTER_QUANT=0.
+ * See docs/bugs/netplay_fc_onset_older_than_ring_hard_fork_2026-07-27.md.
+ */
+#define SYNETINPUT_NET_STICK_CHATTER_QUANT_DEFAULT 1
 #define SYNETINPUT_ANALOG_ONSET_LOOKBACK_DEFAULT 60
 #define SYNETINPUT_ANALOG_ONSET_FACING_THRESH_DEFAULT 4
 #define SYNETINPUT_ANALOG_ONSET_LARGE_DELTA_DEFAULT 40
@@ -114,6 +121,10 @@ static s32 sSYNetInputGgpoStickDeadband = -1;
 static s32 sSYNetInputGgpoStickDeadbandPredict = -1;
 static s32 sSYNetInputGgpoStickCompletedSimMicroDeadband = -1;
 static s32 sSYNetInputGgpoStickCompletedSimContinuityDeadband = -1;
+#if defined(SSB64_NETMENU)
+static s32 sSYNetInputNetStickChatterQuantCache = -999;
+static u32 sSYNetInputNetStickChatterLogsRemaining = 8U;
+#endif
 #if defined(SSB64_NETMENU)
 static u32 sSYNetInputGgpoClassQueuedButton;
 static u32 sSYNetInputGgpoClassQueuedOnset;
@@ -1482,6 +1493,7 @@ static sb32 syNetInputStickDashGateDisagreeX(s8 hold_x, s8 wire_x);
 static sb32 syNetInputTryPeekRemoteStickRowAtTick(s32 player, u32 t, SYNetInputFrame *out_frame);
 static sb32 syNetInputStickLooksAnalog(s8 stick_x, s8 stick_y);
 static sb32 syNetInputFrameSticksNearNeutral(const SYNetInputFrame *frame);
+static sb32 syNetInputSlotStickHotRecent(s32 player, u32 sim_tick, u32 lookback);
 static u32 syNetInputGgpoStickCompletedSimMicroDeadband(void);
 static u32 syNetInputGgpoStickCompletedSimContinuityDeadband(void);
 static s32 syNetInputAbsS8Diff(s8 a, s8 b);
@@ -1500,6 +1512,9 @@ static sb32 syNetInputMixedInputQuantizeEnabled(void);
 static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y);
 static void syNetInputSnapStickDominantAxisForPrediction(s8 *stick_x, s8 *stick_y);
 static void syNetInputNoteLocalEncodingOnSample(s32 player, s8 stick_x, s8 stick_y, u32 tick);
+#if defined(SSB64_NETMENU)
+static void syNetInputCollapseNetStickChatter(s32 player, u32 owner_tick, SYNetInputFrame *frame);
+#endif
 static sb32 syNetInputTryGetRemoteConfirmedHistoryForSimTick(s32 player, u32 sim_tick, SYNetInputFrame *out_frame);
 static sb32 syNetInputForkDiagWindow(u32 sim_tick, u32 *out_begin, u32 *out_end);
 static void syNetInputMaybeLogForkDiagRemoteWire(s32 player, u32 wire_tick, u32 sim_tick, const SYNetInputFrame *frame,
@@ -1562,6 +1577,7 @@ static void syNetInputBuildLocalFrameFromLatch(s32 player, u32 owner_tick, SYNet
 	syNetInputMakeFrame(out_frame, owner_tick, syNetInputButtonsFromController(controller), stick_x, stick_y,
 	                   nSYNetInputSourceLocal, FALSE);
 #if defined(PORT) && defined(SSB64_NETMENU)
+	syNetInputCollapseNetStickChatter(player, owner_tick, out_frame);
 	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
 	{
 		syNetInputForceFrameNeutralButtonsStick(out_frame);
@@ -3943,6 +3959,91 @@ static void syNetInputQuantizeStickToDigitalCardinals(s8 *stick_x, s8 *stick_y)
 	}
 }
 
+#if defined(SSB64_NETMENU)
+static s32 syNetInputNetStickChatterQuant(void)
+{
+	const char *e;
+
+	if (sSYNetInputNetStickChatterQuantCache == -999)
+	{
+		sSYNetInputNetStickChatterQuantCache = SYNETINPUT_NET_STICK_CHATTER_QUANT_DEFAULT;
+		e = getenv("SSB64_NETPLAY_NET_STICK_CHATTER_QUANT");
+		if ((e != NULL) && (e[0] != '\0'))
+		{
+			sSYNetInputNetStickChatterQuantCache = atoi(e);
+			if (sSYNetInputNetStickChatterQuantCache < 0)
+			{
+				sSYNetInputNetStickChatterQuantCache = 0;
+			}
+			if (sSYNetInputNetStickChatterQuantCache > 3)
+			{
+				sSYNetInputNetStickChatterQuantCache = 3;
+			}
+		}
+	}
+	return sSYNetInputNetStickChatterQuantCache;
+}
+
+/*
+ * Snap fresh local HID to the prior gameplay sample when only ±chatter noise moved.
+ * Wire-locked / gap-restage paths never call BuildLocalFrameFromLatch for a new sample.
+ */
+static void syNetInputCollapseNetStickChatter(s32 player, u32 owner_tick, SYNetInputFrame *frame)
+{
+	SYNetInputFrame prev;
+	s32 quant;
+	s32 dx;
+	s32 dy;
+
+	quant = syNetInputNetStickChatterQuant();
+	if ((quant <= 0) || (frame == NULL) || (owner_tick <= 1U) || (syNetInputCheckPlayer(player) == FALSE))
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (syNetInputGetLocalGameplayFrame(player, owner_tick - 1U, &prev) == FALSE)
+	{
+		return;
+	}
+	if ((prev.is_valid == FALSE) || (frame->buttons != prev.buttons))
+	{
+		return;
+	}
+	dx = syNetInputAbsS8Diff(frame->stick_x, prev.stick_x);
+	dy = syNetInputAbsS8Diff(frame->stick_y, prev.stick_y);
+	if ((dx == 0) && (dy == 0))
+	{
+		return;
+	}
+	if ((dx > quant) || (dy > quant))
+	{
+		return;
+	}
+	if (syNetInputStickSameAnalogIntent(frame->stick_x, frame->stick_y, prev.stick_x, prev.stick_y) == FALSE)
+	{
+		return;
+	}
+	if (sSYNetInputNetStickChatterLogsRemaining > 0U)
+	{
+		port_log(
+		    "SSB64 NetInput: NET_STICK_CHATTER_QUANT player=%d tick=%u sx=%d->%d sy=%d->%d quant=%d\n",
+		    (int)player,
+		    (unsigned int)owner_tick,
+		    (int)frame->stick_x,
+		    (int)prev.stick_x,
+		    (int)frame->stick_y,
+		    (int)prev.stick_y,
+		    (int)quant);
+		sSYNetInputNetStickChatterLogsRemaining--;
+	}
+	frame->stick_x = prev.stick_x;
+	frame->stick_y = prev.stick_y;
+}
+#endif
+
 /*
  * Remote prediction only: legacy hook — promotion from partial analog to ±85 is disabled.
  * Confirmed ±85 cardinals are already on the wire; partial sticks stay at wire magnitude.
@@ -4303,16 +4404,18 @@ static sb32 syNetInputTryPeekRemoteAnalogForOnset(s32 player, u32 tick, u32 max_
 /*
  * Prefer a non-neutral that landed after last_confirmed over inventing 0,0. Never reinflate when
  * last_confirmed is a newer near-neutral (release) — last_nn.tick must be strictly after confirm.
+ * Exception: remote stick still hot + last_confirmed near-neutral — brief wire (0,0) must not
+ * bury last_nn or dual-stick invents onset-from-zero every gap (soak1 Fix2 frequency).
  * Ring-pure: copy last_nn sticks verbatim — onset floor amplify (|sy| 13→20) invents mag the
  * owner never played (soak 985824253). See
- * docs/bugs/netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md.
+ * docs/bugs/netplay_hold_last_soft_onset_floor_ahead_peer_2026-07-26.md and
+ * docs/bugs/netplay_stick_absorb_dual_slot_pingpong_2026-07-27.md.
  */
 static sb32 syNetInputTryFillFromLastNonNeutral(s32 player, u32 tick, SYNetInputFrame *out_frame)
 {
 	const SYNetInputFrame *last_nn;
 	const SYNetInputFrame *last_confirmed;
 
-	(void)tick;
 	if ((out_frame == NULL) || (syNetInputCheckPlayer(player) == FALSE))
 	{
 		return FALSE;
@@ -4326,7 +4429,22 @@ static sb32 syNetInputTryFillFromLastNonNeutral(s32 player, u32 tick, SYNetInput
 	}
 	if ((last_confirmed->is_valid != FALSE) && (last_nn->tick <= last_confirmed->tick))
 	{
-		return FALSE;
+		u32 nn_age;
+
+		/*
+		 * True release: last_confirmed is newer near-neutral and remote is idle — keep
+		 * refuse. Stick still hot: allow last_nn through the neutral confirm gap.
+		 */
+		if ((syNetInputFrameSticksNearNeutral(last_confirmed) == FALSE) ||
+		    (syNetInputSlotStickHotRecent(player, tick, 8U) == FALSE))
+		{
+			return FALSE;
+		}
+		nn_age = (tick > last_nn->tick) ? (tick - last_nn->tick) : 0U;
+		if (nn_age > 8U)
+		{
+			return FALSE;
+		}
 	}
 	out_frame->stick_x = last_nn->stick_x;
 	out_frame->stick_y = last_nn->stick_y;
@@ -4623,40 +4741,20 @@ static sb32 syNetInputSlotStickHotRecent(s32 player, u32 sim_tick, u32 lookback)
 }
 
 /*
- * Local stick hot + (Restrict or remote stick hot): dual-stick onset / spam class.
- * Used to harden zero-onset stall inside grace and shrink wire_need predict credit.
+ * Count remote-human slots with recent non-neutral analog (lookback 8). Scales to N remotes.
  */
-sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick)
+u32 syNetInputHotRemoteHumanSlotCount(u32 sim_tick)
 {
-	s32 local_slot;
 	s32 i;
 	s32 n;
 	s32 slot;
-	sb32 remote_hot;
+	u32 hot;
 
-	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
-	    (syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
+	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE))
 	{
-		return FALSE;
+		return 0U;
 	}
-	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
-	{
-		return FALSE;
-	}
-	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
-	{
-		return FALSE;
-	}
-	local_slot = syNetPeerGetLocalSimSlot();
-	if (syNetInputSlotStickHotRecent(local_slot, sim_tick, 8U) == FALSE)
-	{
-		return FALSE;
-	}
-	if (syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE)
-	{
-		return TRUE;
-	}
-	remote_hot = FALSE;
+	hot = 0U;
 	n = syNetPeerGetRemoteHumanSlotCount();
 	for (i = 0; i < n; i++)
 	{
@@ -4666,12 +4764,88 @@ sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick)
 		}
 		if (syNetInputSlotStickHotRecent(slot, sim_tick, 8U) != FALSE)
 		{
-			remote_hot = TRUE;
-			break;
+			hot++;
 		}
 	}
-	return remote_hot;
+	return hot;
 }
+
+/*
+ * Multi-stick pressure (arbitrary remote count):
+ *  - ≥2 remotes hot, or
+ *  - local hot + ≥1 remote hot, or
+ *  - local hot + zero-onset Restrict
+ * ignore_absorb: TRUE for NoteHard / absorb sizing (PredictTighten returns FALSE while
+ * absorb coalesce waits — must not re-enable NoteHard mid-window).
+ * See docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+ */
+static sb32 syNetInputMultiStickHotActiveEx(u32 sim_tick, sb32 ignore_absorb)
+{
+	s32 local_slot;
+	u32 remote_hot;
+	sb32 local_hot;
+
+	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
+	    (syNetSessionParamsRollbackEnabled() == FALSE) || (syNetInputGetUseInputPrediction() == FALSE))
+	{
+		return FALSE;
+	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Multi-hot D+1 runway during post-episode absorb freezes the peer whose hr paused
+	 * under peer_convergence — mutual hang (soak1 @445 / @723). Absorb needs sim ticks;
+	 * honor full StickAbsorbWindowActive, not only coalesce-with-deferred.
+	 * See docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+	 */
+	if ((ignore_absorb == FALSE) && (syNetRollbackStickAbsorbWindowActive() != FALSE))
+	{
+		return FALSE;
+	}
+#else
+	(void)ignore_absorb;
+#endif
+	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
+	{
+		return FALSE;
+	}
+	if ((gSCManagerBattleState != NULL) && (gSCManagerBattleState->game_status == nSCBattleGameStatusWait))
+	{
+		return FALSE;
+	}
+	local_slot = syNetPeerGetLocalSimSlot();
+	local_hot = syNetInputSlotStickHotRecent(local_slot, sim_tick, 8U);
+	remote_hot = syNetInputHotRemoteHumanSlotCount(sim_tick);
+	if (remote_hot >= 2U)
+	{
+		return TRUE;
+	}
+	if ((local_hot != FALSE) && (syNetInputRemoteHumanZeroOnsetPredictRestrict(sim_tick) != FALSE))
+	{
+		return TRUE;
+	}
+	if ((local_hot != FALSE) && (remote_hot >= 1U))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+sb32 syNetInputDualStickHotPredictTighten(u32 sim_tick)
+{
+	return syNetInputMultiStickHotActiveEx(sim_tick, FALSE);
+}
+
+#if defined(SSB64_NETMENU)
+sb32 syNetInputMultiStickHotActive(u32 sim_tick)
+{
+	return syNetInputMultiStickHotActiveEx(sim_tick, TRUE);
+}
+
+sb32 syNetInputDualStickHotActive(u32 sim_tick)
+{
+	return syNetInputMultiStickHotActive(sim_tick);
+}
+#endif
 
 /*
  * Soak 1040202646 / 1809694209: v1 stalled on every predict past analog last_confirmed
@@ -4708,6 +4882,13 @@ sb32 syNetInputRemoteHumanAnalogRampPredictTighten(u32 sim_tick)
 	{
 		return FALSE;
 	}
+#if defined(SSB64_NETMENU)
+	/* Same absorb-window hang as MultiStickHot — skip D+1 runway tighten. */
+	if (syNetRollbackStickAbsorbWindowActive() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	if (syNetInputIntroWaitForceNeutralActive() != FALSE)
 	{
 		return FALSE;
@@ -5785,6 +5966,13 @@ sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInpu
 					}
 					return FALSE;
 				}
+				/*
+				 * absorb_coalesce_same_intent Promote-without-rewind retired (soak Fix5
+				 * PEER@425): predicted same-intent soft-own under coalesce forked figh
+				 * while "inputs agree through load". Predicted → wire still needs
+				 * hash_confirm or rewind — same contract as soak 740113729. See
+				 * docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+				 */
 			}
 		}
 		/* Any remaining stick/button gameplay delta on completed sim still rewinds. */
@@ -7355,6 +7543,69 @@ void syNetInputAuthorityLedgerCommitSeal(s32 player, u32 sim_tick, const SYNetIn
  * promote/patch/publish call this instead of inventing RemoteConfirmed from wire/hold-last.
  * Write-once does not block ledger refresh (ledger outranks published).
  */
+
+/*
+ * Polarity / button hard corrections may exempt one slot from post-episode stick absorb.
+ * Do NOT treat same-octant mag or same-sign dash-gate smash shed as hard — dual-stick
+ * dash-dance was NoteHard every few ticks (soak Fix3). Soft mag / dash-gate still
+ * QueueOrWiden under absorb. See docs/bugs/netplay_stick_absorb_dual_hot_notehard_2026-07-27.md.
+ */
+static sb32 syNetInputLedgerRefreshHardStickCorrection(const SYNetInputFrame *published,
+                                                       const SYNetInputFrame *ledger,
+                                                       sb32 deferred_same_stick)
+{
+	if ((published == NULL) || (ledger == NULL))
+	{
+		return FALSE;
+	}
+	if (deferred_same_stick != FALSE)
+	{
+		return TRUE;
+	}
+	if (published->buttons != ledger->buttons)
+	{
+		return TRUE;
+	}
+	if (syNetInputStickReplaceIsRelease(published, ledger) != FALSE)
+	{
+		return TRUE;
+	}
+	if ((syNetInputFrameSticksNearNeutral(published) != FALSE) &&
+	    (syNetInputFrameSticksNearNeutral(ledger) == FALSE))
+	{
+		return TRUE;
+	}
+	if ((syNetInputStickLooksAnalog(published->stick_x, published->stick_y) != FALSE) &&
+	    (syNetInputStickLooksAnalog(ledger->stick_x, ledger->stick_y) != FALSE) &&
+	    (syNetInputStickSameAnalogIntent(published->stick_x, published->stick_y, ledger->stick_x,
+	                                     ledger->stick_y) == FALSE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static void syNetInputLedgerRefreshMaybeNoteHardAbsorb(s32 player, u32 sim_tick,
+                                                       const SYNetInputFrame *published,
+                                                       const SYNetInputFrame *ledger,
+                                                       sb32 deferred_same_stick)
+{
+	if (syNetInputLedgerRefreshHardStickCorrection(published, ledger, deferred_same_stick) == FALSE)
+	{
+		return;
+	}
+	/*
+	 * Multi-stick mash: wait the full absorb window — NoteHard exempt reopened
+	 * cross-slot Begin ping-pong when multiple remotes stay hot (soak Fix3 ~12/s).
+	 * Hard polarity widens the union deferred span; Begin waits global coalesce.
+	 */
+	if (syNetInputMultiStickHotActive(sim_tick) != FALSE)
+	{
+		return;
+	}
+	syNetRollbackStickAbsorbNoteHardCorrection(player);
+}
+
 static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_tick, const char *reason)
 {
 	SYNetInputFrame ledger;
@@ -7393,6 +7644,7 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 				    (int)ledger.stick_x, (int)ledger.stick_y, (unsigned int)ledger.buttons,
 				    (reason != NULL) ? reason : "?");
 			}
+			syNetInputLedgerRefreshMaybeNoteHardAbsorb(player, sim_tick, &published, &ledger, TRUE);
 			syNetRollbackQueueOrWidenStickCorrection(player, sim_tick);
 		}
 		sSYNetInputSlots[player].last_confirmed = ledger;
@@ -7536,6 +7788,8 @@ static sb32 syNetInputRefreshPublishedFromAuthorityLedger(s32 player, u32 sim_ti
 			}
 			if (hash_confirm_handled == FALSE)
 			{
+				syNetInputLedgerRefreshMaybeNoteHardAbsorb(player, sim_tick, &published, &ledger,
+				                                           deferred_same_stick);
 				u32 protect_hold_db;
 				s32 protect_dx;
 				s32 protect_dy;
@@ -7956,6 +8210,33 @@ static void syNetInputResolveRemoteHumanAuthoritativeFrame(s32 player, u32 tick,
 	}
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Lowest sim tick the current resim replayed with hold_last / predicted remote input (no
+ * wire / seal / confirmed tier available). Light episodes skip the seal-row exchange, so
+ * span ticks past the wire frontier replay as guesses; the rollback layer caps
+ * resolved_through at this watermark so late wire for those ticks can still rewind instead
+ * of being CORRECTION_CLAMP_RESOLVED into promote-only input loss (soak 2026-07-27: light
+ * ep 396-400 replayed 397-399 as hold_last 13,0; wire 40,0/53,2/57,4 promote-only ->
+ * tap-counter fork -> FC diverge @721). 0 = no predicted replay this resim.
+ */
+static u32 sSYNetInputResimPredictedReplayLowestTick;
+
+static void syNetInputNoteResimPredictedReplay(u32 tick)
+{
+	if ((sSYNetInputResimPredictedReplayLowestTick == 0U) ||
+	    (tick < sSYNetInputResimPredictedReplayLowestTick))
+	{
+		sSYNetInputResimPredictedReplayLowestTick = tick;
+	}
+}
+
+u32 syNetInputResimLowestPredictedReplayTick(void)
+{
+	return sSYNetInputResimPredictedReplayLowestTick;
+}
+#endif
+
 static void syNetInputMaybeStorePredictedOverlayForDiag(s32 player, u32 tick)
 {
 	SYNetInputFrame predicted;
@@ -8181,6 +8462,7 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 					syNetInputMakeFrame(out_frame, tick, buttons, stick_x, stick_y,
 					                    nSYNetInputSourceRemotePredicted, TRUE);
 					syNetInputFillHoldLastSoftOnsetIfNeeded(player, tick, out_frame);
+					syNetInputNoteResimPredictedReplay(tick);
 					port_log(
 					    "SSB64 NetInput: RESIM_INPUT_SOURCE player=%d tick=%u selected=hold_last "
 					    "wire=0 sealed=0 hist=%d hist_conf=%d ledger=%d in_span=%d sx=%d sy=%d\n",
@@ -9440,6 +9722,34 @@ sb32 syNetInputGetRemoteHistoryFrame(s32 player, u32 tick, SYNetInputFrame *out_
 	return syNetInputTryGetRemoteHistoryForSimTick(player, tick, out_frame);
 #endif
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+u32 syNetInputContiguousRemoteConfirmedThrough(s32 player, u32 from_tick, u32 to_tick_inclusive)
+{
+	u32 t;
+	u32 last;
+
+	if ((syNetInputCheckPlayer(player) == FALSE) || (from_tick == 0U) ||
+	    (to_tick_inclusive < from_tick))
+	{
+		return 0U;
+	}
+	if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, from_tick, NULL) == FALSE)
+	{
+		return 0U;
+	}
+	last = from_tick;
+	for (t = from_tick + 1U; t <= to_tick_inclusive; t++)
+	{
+		if (syNetInputTryGetRemoteConfirmedHistoryForSimTick(player, t, NULL) == FALSE)
+		{
+			break;
+		}
+		last = t;
+	}
+	return last;
+}
+#endif
 
 sb32 syNetInputHasRemoteInputForWireTick(s32 player, u32 wire_tick)
 {
@@ -11175,6 +11485,7 @@ void syNetInputRollbackPrepareForResim(u32 resim_start_tick)
 	 * instead of silently keeping a stale PortHwLatchTick and skipping consume.
 	 */
 	sSYNetInputPortHwLatchTick = ~(u32)0;
+	sSYNetInputResimPredictedReplayLowestTick = 0U;
 #endif
 	if (resim_start_tick > 0)
 	{

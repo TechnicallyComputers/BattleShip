@@ -146,6 +146,28 @@ extern void syNetRollbackQueueOrWidenStickCorrection(s32 player, u32 sim_tick);
 extern void syNetRollbackRequestInputCorrection(s32 player, u32 sim_tick);
 #if defined(SSB64_NETMENU)
 /*
+ * TRUE while post-episode StickAbsorbUntilSim has not expired (sim ticks). Broader than
+ * CoalesceWaiting — covers gaps with no deferred pending when peer_convergence would
+ * still freeze live. See docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+ */
+extern sb32 syNetRollbackStickAbsorbWindowActive(void);
+/*
+ * TRUE while absorb window holds local deferred Begin (not peer-sym). TryBegin waits this.
+ * Live peer_convergence / dual-hot runway also honor StickAbsorbWindowActive.
+ */
+extern sb32 syNetRollbackStickAbsorbCoalesceWaiting(void);
+/*
+ * Polarity / button hard stick REPLACE while post-episode absorb is active: exempt `player`
+ * so that slot's Begin can arm without clearing global absorb — only when a single slot is
+ * dirty. Mag-only / multi-stick mash should not call this. See
+ * docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+ */
+extern void syNetRollbackStickAbsorbNoteHardCorrection(s32 player);
+/*
+ * TRUE when deferred input GGPO union already covers `player`+`tick` (slot bit in mask).
+ */
+extern sb32 syNetRollbackDeferredInputCorrectionCoversPlayerTick(s32 player, u32 tick);
+/*
  * Drop a pending deferred input GGPO whose mismatch_tick equals sim_tick (optional player match).
  * Used when hash_confirm Promote/soft-defer owns that invent REPLACE so a prior wire
  * RequestInputCorrection cannot still BeginResim. See

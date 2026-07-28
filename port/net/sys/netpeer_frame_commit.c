@@ -63,12 +63,14 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	out->input_digest = inp_all;
 	out->slot_binding_hash = syNetFrameCommitHashSlotBindings(local_sim_slot, remote_sim_slot, extra_local_sim_slot,
 								  peer_sender_count, peer_sender_slots);
-	out->tick_anchor = syNetInputGetTick();
 #ifdef PORT
 	/*
 	 * Snapshot is saved in syNetRollbackAfterBattleUpdate for completed_tick; frame-commit runs
-	 * before syNetInputAdvanceAuthoritativeSimTick with validation_tick = completed_tick + 1, so
-	 * tick_anchor and snap_tick both name the completed boundary.
+	 * before syNetInputAdvanceAuthoritativeSimTick with validation_tick = completed_tick + 1.
+	 * tick_anchor must name the snap boundary (validation-1), not live GetTick — late mint
+	 * (deferred covered the grid) builds the same digests from the ring but GetTick has moved
+	 * on, so anchor_diff > 1 falsely PAIRING_FAIL'd (soak 2026-07-27: Linux LATE_MINT@841
+	 * completed=845 vs Android on-time anchor=840 → pairing_fail=1, fork undetected until 961).
 	 */
 	{
 		u32 snap_tick;
@@ -81,6 +83,7 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 		s32 si;
 
 		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
+		out->tick_anchor = snap_tick;
 		if (syNetRbSnapshotGetStoredSubsystemHashesEx(snap_tick, &snap_f, &snap_w, &snap_i, &snap_r, &snap_ef) !=
 		    FALSE)
 		{
@@ -116,6 +119,7 @@ void syNetFrameCommitBuildToken(SYNetFrameCommitToken *out, u32 validation_tick,
 	}
 #else
 	{
+		out->tick_anchor = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
 		out->fighter_digest = syNetSyncHashBattleFightersFull();
 		out->world_digest = syNetSyncHashRollbackWorld();
 		out->item_digest = syNetSyncHashActiveItemsForRollback();

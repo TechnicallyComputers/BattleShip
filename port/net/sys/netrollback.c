@@ -209,6 +209,8 @@ static sb32 sSYNetRollbackDeferredMismatchPending;
 static u32 sSYNetRollbackDeferredMismatchTick;
 static u32 sSYNetRollbackDeferredMismatchTargetTick;
 static s32 sSYNetRollbackDeferredMismatchPlayer;
+/* Bitmask of remote slots with pending REPLACE in the union deferred span. */
+static u32 sSYNetRollbackDeferredMismatchSlotMask;
 static sb32 sSYNetRollbackDeferredMismatchFromPeerSymmetric;
 /* Live cap when peer-symmetric deferred queue is rejected (hold below mismatch until retried). */
 static u32 sSYNetRollbackPeerSymmetricRejectLiveCap;
@@ -224,6 +226,12 @@ static sb32 sSYNetRollbackFcStateRecoveryActive;
 static u32 sSYNetRollbackFcStateRecoveryMismatchTick;
 static u32 sSYNetRollbackFcStateRecoveryTargetTick;
 static u32 sSYNetRollbackFcStateRecoverySuppressLogsRemaining;
+/* Join attempts for FC divergent-load negotiate (not shared with baseline deepen). */
+static u32 sSYNetRollbackFcRecoveryJoinAttempts;
+#if defined(SSB64_NETMENU)
+/* TryBegin pumps spent waiting for light wire-ready to widen past span-1. */
+static u32 sSYNetRollbackLightWireCoalesceWaits;
+#endif
 static u32 sSYNetRollbackFcDeepenLoadTick;
 static u32 sSYNetRollbackFcDeepenAttempts;
 static sb32 sSYNetRollbackFcDeepenInFlight;
@@ -250,6 +258,47 @@ static u32 sSYNetRollbackEpisodeExtensions;
 /* After episode complete: stick REPLACE through this sim tick coalesces into deferred (no ep spam). */
 static u32 sSYNetRollbackStickAbsorbUntilSim;
 static s32 sSYNetRollbackStickAbsorbPlayer;
+#if defined(SSB64_NETMENU)
+/* Hard polarity: allow Begin for this slot only when a single slot is dirty. */
+static s32 sSYNetRollbackStickAbsorbExemptPlayer;
+/* Sim tick when current absorb window was armed (sticky multi-stick refresh cap). */
+static u32 sSYNetRollbackStickAbsorbArmedFromSim;
+/*
+ * Multi-stick mash absorb: window = clamp(phase_lock + K*(pressure-1), …, MAX).
+ * pressure = hot_remote_count, or 2 when MultiStickHot (local+1 remote). Scales to N.
+ * See docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+ */
+#define SYNETROLLBACK_MULTI_STICK_ABSORB_K 4U
+#define SYNETROLLBACK_MULTI_STICK_ABSORB_MAX 12U
+#define SYNETROLLBACK_MULTI_STICK_ABSORB_CAP 16U
+/*
+ * Light input episodes: pure GGPO input corrections resim locally — no symmetric notify
+ * (no peer_follower mirror), no baseline digest gate, no seal-rows exchange. Peer-coupled
+ * episode protocol stays for state recovery (FC diverge / BASELINE_UNIVERSE / peer-sym).
+ * Merge-only absorb window while enabled. Scales per-peer O(own mispredictions) for N
+ * joysticks. See docs/bugs/netplay_light_input_episodes_2026-07-27.md.
+ */
+#define SYNETROLLBACK_LIGHT_EPISODE_ABSORB_WINDOW 2U
+/*
+ * Light episodes that would invent hold_last past the contiguous wire frontier
+ * (target > wire_ready exclusive) SoftLip-fork vs the owner's LOCAL stick ramp.
+ * Cap / widen deferred + light Begin targets to wire-ready exclusive end.
+ * See docs/bugs/netplay_light_pred_cap_wire_ready_coalesce_2026-07-27.md.
+ */
+#define SYNETROLLBACK_LIGHT_WIRE_READY_SCAN_SLACK 16U
+/*
+ * PEER_SNAPSHOT_DIVERGE fail-closed may be deferred by context waits (resim seal wait,
+ * stick absorb) only this many times per load_tick before the abort proceeds anyway.
+ * Progress criterion: waits must terminate; they may not re-suppress the exit forever
+ * (soak 891751718 @960: seal-wait on host / absorb on guest re-suppressed every peer
+ * baseline until session timeout). replay_determinism class never defers at all.
+ * See docs/bugs/netplay_close_wire_cap_diverge_hang_exit_2026-07-27.md.
+ */
+#define SYNETROLLBACK_PEER_DIVERGE_SUPPRESS_BUDGET 8U
+static s32 sSYNetRollbackLightInputEpisodesEnvCache = -999;
+/* TRUE while the in-flight resim episode is a light (local-only) input episode. */
+static sb32 sSYNetRollbackLightEpisodeActive;
+#endif
 static u32 sSYNetRollbackLastRollbackBeginSimTick;
 static u32 sSYNetRollbackSuppressReloadLoadTick;
 static u32 sSYNetRollbackSuppressReloadUntilSim;
@@ -367,6 +416,17 @@ static void syNetRollbackOnResimPostMatchCommitted(const SYNetRollbackResimPostK
 static void syNetRollbackPendingEpisodeClearAll(void);
 static void syNetRollbackPendingEpisodeClearSlot(s32 slot);
 static void syNetRollbackClearDeferredInputMismatch(void);
+static void syNetRollbackDeferredMismatchNoteSlot(s32 player);
+static void syNetRollbackDeferredMismatchSyncPlayerFromMask(void);
+static u32 syNetRollbackDeferredMismatchSlotCount(void);
+#if defined(SSB64_NETMENU)
+static u32 syNetRollbackMultiStickAbsorbWindow(u32 sim_tick);
+static sb32 syNetRollbackLightInputEpisodesEnabled(void);
+static u32 syNetRollbackLightWireReadyTargetExclusive(u32 mismatch_tick, s32 player);
+static void syNetRollbackAlignTargetToWireReady(u32 mismatch_tick, s32 player, u32 *inout_target,
+					       const char *tag);
+static void syNetRollbackAlignDeferredTargetToWireReady(const char *tag);
+#endif
 static void syNetRollbackClearPeerSymmetricRejectLiveCap(void);
 static sb32 syNetRollbackFinishForwardResim(void);
 static void syNetRollbackEmitResimCompleteAfterFinish(u32 completed_mismatch);
@@ -558,7 +618,59 @@ static void syNetRollbackReleaseLiveCapsAfterResimPostMatch(const SYNetRollbackR
 	    (syNetRollbackSpanOverlapsResimPostKey(sSYNetRollbackDeferredMismatchTick,
 						   sSYNetRollbackDeferredMismatchTargetTick, key) != FALSE))
 	{
+#if defined(SSB64_NETMENU)
+		/*
+		 * Overlap-clear assumes the completed resim replayed the deferred span with
+		 * authoritative inputs (heavy seal contract). Light episodes replay past the wire
+		 * frontier with hold_last guesses; a wire REPLACE that armed deferred mid-resim for
+		 * one of those ticks must survive completion or the guess becomes permanent
+		 * promote-only input loss (soak 2026-07-27 tick 397: deferred armed @397, cleared
+		 * here, ep2 began @400 -> tap-counter fork -> FC diverge @721).
+		 *
+		 * Follow-on (JumpAerial SoftLip soak 2026-07-27 @740): mid-resim wire armed
+		 * deferred@740 then CORRECTION_MERGE_DEEPEN pulled mismatch back to 739; keep
+		 * required mismatch>=watermark so 739 was cleared while hold_last@740 stayed
+		 * baked. Raise mismatch up to the watermark when the deferred target still
+		 * covers predicted-replay ticks.
+		 */
+		u32 watermark;
+
+		watermark = syNetInputResimLowestPredictedReplayTick();
+		if ((watermark != 0U) && (sSYNetRollbackDeferredMismatchTick >= watermark))
+		{
+			port_log(
+			    "SSB64 NetRollback: DEFERRED_KEEP_PRED_SPAN mismatch=%u target=%u watermark=%u (hold_last replay not resolved)\n",
+			    sSYNetRollbackDeferredMismatchTick,
+			    sSYNetRollbackDeferredMismatchTargetTick,
+			    watermark);
+			/*
+			 * Clamp/widen to contiguous wire so the follow-up light ep does not
+			 * invent hold_last ahead of sticks already on the ledger (soak
+			 * 2026-07-27: KEEP target=405 with wire only through 401 → SoftLip cascade).
+			 */
+			syNetRollbackAlignDeferredTargetToWireReady("KEEP_PRED");
+		}
+		else if ((watermark != 0U) &&
+			 (sSYNetRollbackDeferredMismatchTargetTick > watermark) &&
+			 (sSYNetRollbackDeferredMismatchTick < watermark))
+		{
+			port_log(
+			    "SSB64 NetRollback: DEFERRED_RAISE_PRED_SPAN mismatch=%u->%u target=%u watermark=%u "
+			    "(merge_deepen undercut hold_last tick)\n",
+			    sSYNetRollbackDeferredMismatchTick,
+			    watermark,
+			    sSYNetRollbackDeferredMismatchTargetTick,
+			    watermark);
+			sSYNetRollbackDeferredMismatchTick = watermark;
+			syNetRollbackAlignDeferredTargetToWireReady("RAISE_PRED");
+		}
+		else
+		{
+			syNetRollbackClearDeferredInputMismatch();
+		}
+#else
 		syNetRollbackClearDeferredInputMismatch();
+#endif
 	}
 	if ((sSYNetRollbackPendingPeerSymmetricTick != ~(u32)0) &&
 	    (syNetRollbackSpanOverlapsResimPostKey(sSYNetRollbackPendingPeerSymmetricTick,
@@ -992,6 +1104,19 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 #define SYNETROLLBACK_BASELINE_SNAPSHOT_RETRY_MAX 4U
 /* Max deepen retries per load_tick during frame-commit state recovery (baseline packet storm guard). */
 #define SYNETROLLBACK_FC_DEEPEN_MAX_PER_LOAD 4U
+/*
+ * FC input-agree recovery join budget — independent of BASELINE_DEEPER_MAX.
+ * Soak 3849468025: baseline deepen burned attempts=2 before the first foreign
+ * baseline arrived, so LOAD_TICK_NEGOTIATE 817→803 forever "deeper exhausted"
+ * and never joined. See docs/bugs/netplay_fc_join_budget_light_wire_coalesce_2026-07-27.md.
+ */
+#define SYNETROLLBACK_FC_RECOVERY_JOIN_MAX_ATTEMPTS 4U
+/*
+ * Light episodes: when wire-ready exclusive end is only mismatch+1 (span-1), defer
+ * Begin up to this many TryBegin pumps so contiguous wire can widen the burst.
+ * Live-cap at mismatch-1 stays armed (unlike stick_absorb_coalesce which lifts it).
+ */
+#define SYNETROLLBACK_LIGHT_WIRE_COALESCE_MAX_WAITS 4U
 #define SYNETROLLBACK_LOAD_TICK_REWIND_MAX 16U
 #define SYNETROLLBACK_ROLLBACK_COOLDOWN_FRAMES_DEFAULT 2U
 
@@ -1000,6 +1125,12 @@ void syNetRollbackOnPeerResimPostDigest(u32 epoch_id, u32 load_tick, u32 mismatc
 #define SYNETROLLBACK_RESIM_MAX_BURST_TICKS_DEFAULT 24U
 #define SYNETROLLBACK_RESIM_MAX_BURST_TICKS_CAP     64U
 
+#if defined(SSB64_NETMENU)
+static void syNetRollbackStickAbsorbMaybeStickyRefresh(void);
+static void syNetRollbackStickAbsorbClampDeferredTarget(void);
+static u32 syNetRollbackStickAbsorbDeferredTargetCap(void);
+#endif
+static sb32 syNetRollbackLightEpisodeIsActive(void);
 static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 correction_player);
 static u32 syNetRollbackComputeResimTickLimit(void);
 static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call);
@@ -1016,7 +1147,7 @@ static void syNetRollbackPendingEpisodeSet(s32 slot, u32 mismatch_tick, u32 targ
 					   u8 flags);
 static s32 syNetRollbackResolveRemoteHumanPlayer(s32 preferred_slot);
 static sb32 syNetRollbackRemoteHumanHasPredictedPublishedInSpan(u32 from_tick, u32 to_tick);
-static void syNetRollbackMaybeLogEpisodeExec(sb32 from_peer_notify);
+static void syNetRollbackMaybeLogEpisodeExec(sb32 from_peer_notify, sb32 light);
 static void syNetRollbackLogEpisodeProof(const char *event, u32 epoch_id, u32 mismatch_tick, u32 load_tick,
 					 u32 target_tick, const char *source, const char *reason,
 					 const char *class_name);
@@ -1144,7 +1275,7 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 static void syNetRollbackEpisodeReset(void);
 static void syNetRollbackEpisodeSyncToLegacy(void);
 static void syNetRollbackEpisodeBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick, s32 corrected_slot,
-				      sb32 initiator, sb32 from_peer_notify);
+				      sb32 initiator, sb32 from_peer_notify, sb32 light);
 static void syNetRollbackEpisodeSetPhase(SYNetRollbackEpisodePhase phase);
 static void syNetRollbackQueueDeferredInputCorrection(s32 player, u32 sim_tick);
 typedef enum SYNetRollbackCorrectionMismatchSource
@@ -1444,6 +1575,7 @@ void syNetRollbackInit(void)
 	sSYNetRollbackDeferredMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchTargetTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchPlayer = -1;
+	sSYNetRollbackDeferredMismatchSlotMask = 0U;
 	sSYNetRollbackDeferredMismatchFromPeerSymmetric = FALSE;
 	sSYNetRollbackPeerSymmetricRejectLiveCap = ~(u32)0;
 	sSYNetRollbackStateHashRollback = TRUE;
@@ -1460,6 +1592,11 @@ void syNetRollbackInit(void)
 	sSYNetRollbackPeerResolvedThrough = 0U;
 	sSYNetRollbackStickAbsorbUntilSim = 0U;
 	sSYNetRollbackStickAbsorbPlayer = -1;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackStickAbsorbExemptPlayer = -1;
+	sSYNetRollbackStickAbsorbArmedFromSim = 0U;
+	sSYNetRollbackLightEpisodeActive = FALSE;
+#endif
 	sSYNetRollbackLastRollbackBeginSimTick = ~(u32)0;
 	sSYNetRollbackSuppressReloadLoadTick = ~(u32)0;
 	sSYNetRollbackSuppressReloadUntilSim = 0U;
@@ -1693,6 +1830,7 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackDeferredMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchTargetTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchPlayer = -1;
+	sSYNetRollbackDeferredMismatchSlotMask = 0U;
 	sSYNetRollbackDeferredMismatchFromPeerSymmetric = FALSE;
 	sSYNetRollbackPeerSymmetricRejectLiveCap = ~(u32)0;
 	sSYNetRollbackDeferredStateMismatchPending = FALSE;
@@ -1713,6 +1851,10 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackLoadSafePromotedThrough = 0U;
 	sSYNetRollbackLoadSafePromoteLogBudget = 12U;
 	sSYNetRollbackPeerBaselineForeignLoadTick = ~(u32)0;
+	sSYNetRollbackFcRecoveryJoinAttempts = 0U;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackLightWireCoalesceWaits = 0U;
+#endif
 	sSYNetRollbackResimCorrectionPlayer = -1;
 	sSYNetRollbackLastPeerOutcomeValid = FALSE;
 	sSYNetRollbackLastPeerOutcomeTick = ~(u32)0;
@@ -1722,6 +1864,11 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackPeerResolvedThrough = 0U;
 	sSYNetRollbackStickAbsorbUntilSim = 0U;
 	sSYNetRollbackStickAbsorbPlayer = -1;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackStickAbsorbExemptPlayer = -1;
+	sSYNetRollbackStickAbsorbArmedFromSim = 0U;
+	sSYNetRollbackLightEpisodeActive = FALSE;
+#endif
 	sSYNetRollbackLastRollbackBeginSimTick = ~(u32)0;
 	sSYNetRollbackSuppressReloadLoadTick = ~(u32)0;
 	sSYNetRollbackSuppressReloadUntilSim = 0U;
@@ -2463,6 +2610,31 @@ static u32 syNetRollbackGetSharedCorrectionFrontier(void)
 	return frontier;
 }
 
+/*
+ * Intersected correction frontier — MIN(local, peer) when both are known.
+ * Used by FC input-agree recovery load pick so both peers prefer the same
+ * in-ring anchor when peer resolved_through has already arrived. MAX (shared)
+ * remains the GGPO clamp / seal-cancel authority. See
+ * docs/bugs/netplay_fc_recovery_divergent_load_hang_2026-07-27.md.
+ */
+static u32 syNetRollbackGetIntersectedCorrectionFrontier(void)
+{
+	u32 local_f;
+	u32 peer_f;
+
+	local_f = sSYNetRollbackEpisodeResolvedThrough;
+	peer_f = sSYNetRollbackPeerResolvedThrough;
+	if (local_f == 0U)
+	{
+		return peer_f;
+	}
+	if (peer_f == 0U)
+	{
+		return local_f;
+	}
+	return (peer_f < local_f) ? peer_f : local_f;
+}
+
 sb32 syNetRollbackIsBattleSimHoldActive(void)
 {
 	return (sSYNetRollbackBattleSimHoldAfterLoadFail != FALSE) ? TRUE : FALSE;
@@ -2604,15 +2776,131 @@ static void syNetRollbackArmBattleSimHoldAfterLoadFail(u32 load_tick)
 	    sSYNetRollbackLoadFailCount);
 }
 
+#if defined(SSB64_NETMENU)
+/*
+ * Wire-exclusive end for a completing light episode: identical bound to Begin's
+ * LIGHT_WIRE_READY clamp (contiguous remote-confirmed from the episode mismatch).
+ * player < 0 scans every remote human slot (MIN) — the frontier protects all players,
+ * so all remote slots must be wired through the protected span.
+ */
+static u32 syNetRollbackLightCloseWireReadyExclusiveEnd(u32 mismatch_tick, s32 player)
+{
+	u32 scan_cap;
+	u32 live;
+	u32 through;
+	u32 ready;
+	s32 slot;
+	sb32 any;
+
+	live = syNetInputGetTick();
+	scan_cap = live + SYNETROLLBACK_LIGHT_WIRE_READY_SCAN_SLACK;
+	if (scan_cap < mismatch_tick)
+	{
+		scan_cap = mismatch_tick;
+	}
+	if (player >= 0)
+	{
+		through = syNetInputContiguousRemoteConfirmedThrough(player, mismatch_tick, scan_cap);
+		if (through >= mismatch_tick)
+		{
+			return through + 1U;
+		}
+		return mismatch_tick + 1U;
+	}
+	ready = ~(u32)0;
+	any = FALSE;
+	for (slot = 0; slot < GMCOMMON_PLAYERS_MAX; slot++)
+	{
+		if (syNetInputIsRemoteHumanSlot(slot) == FALSE)
+		{
+			continue;
+		}
+		through = syNetInputContiguousRemoteConfirmedThrough(slot, mismatch_tick, scan_cap);
+		if (through < mismatch_tick)
+		{
+			return mismatch_tick + 1U;
+		}
+		if ((through + 1U) < ready)
+		{
+			ready = through + 1U;
+		}
+		any = TRUE;
+	}
+	if (any == FALSE)
+	{
+		return mismatch_tick + 1U;
+	}
+	return ready;
+}
+
+/*
+ * resolved_through may only protect ticks the resim replayed with authoritative inputs.
+ * Light episodes have no seal-row exchange, so span ticks past the wire frontier replay as
+ * hold_last guesses; advancing the floor over them turns the late wire REPLACE into
+ * CORRECTION_CLAMP_RESOLVED promote-only input loss (soak 2026-07-27: light ep 396-400
+ * replayed 397-399 as hold_last 13,0; wire 40,0/53,2/57,4 never rewound -> tap-counter
+ * fork -> FC diverge @721). Heavy sealed episodes replay no predictions -> cap is a no-op.
+ * See docs/bugs/netplay_light_episode_resolved_floor_pred_cap_2026-07-27.md.
+ *
+ * Close/frontier wire contract (2026-07-27): additionally, a light episode may never
+ * raise resolved_through past the same contiguous remote-confirmed exclusive end that
+ * bounds Begin (LIGHT_WIRE_READY). The predicted-replay watermark alone can miss spans
+ * (watermark reset between replays); the wire ledger is the authority. Heavy sealed
+ * episodes stay exempt — peer seal rows are authoritative even when the local wire
+ * ledger lags. See docs/bugs/netplay_close_wire_cap_diverge_hang_exit_2026-07-27.md.
+ */
+static u32 syNetRollbackCapResolvedThroughForPredictedReplay(u32 completed_target)
+{
+	u32 watermark;
+	u32 capped;
+
+	capped = completed_target;
+	watermark = syNetInputResimLowestPredictedReplayTick();
+	if ((watermark != 0U) && (watermark < capped))
+	{
+		port_log(
+		    "SSB64 NetRollback: RESOLVED_THROUGH_PRED_CAP target=%u -> %u (hold_last replay in span)\n",
+		    completed_target,
+		    watermark);
+		capped = watermark;
+	}
+	if ((syNetRollbackLightEpisodeIsActive() != FALSE) && (sSYNetRollbackResimMismatchTick != 0U) &&
+	    (sSYNetRollbackResimMismatchTick != ~(u32)0))
+	{
+		u32 ready;
+
+		ready = syNetRollbackLightCloseWireReadyExclusiveEnd(sSYNetRollbackResimMismatchTick,
+		                                                    sSYNetRollbackResimCorrectionPlayer);
+		if ((ready > sSYNetRollbackResimMismatchTick) && (ready < capped))
+		{
+			port_log(
+			    "SSB64 NetRollback: RESOLVED_THROUGH_WIRE_CAP target=%u -> %u mismatch=%u player=%d "
+			    "(light close bounded by contiguous remote-confirmed exclusive end)\n",
+			    capped,
+			    ready,
+			    sSYNetRollbackResimMismatchTick,
+			    (int)sSYNetRollbackResimCorrectionPlayer);
+			capped = ready;
+		}
+	}
+	return capped;
+}
+#endif
+
 static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 {
 	if ((completed_target != 0U) && (completed_target != ~(u32)0))
 	{
 		u32 absorb_window;
+		u32 resolved_raise;
 
-		if (completed_target > sSYNetRollbackEpisodeResolvedThrough)
+		resolved_raise = completed_target;
+#if defined(SSB64_NETMENU)
+		resolved_raise = syNetRollbackCapResolvedThroughForPredictedReplay(completed_target);
+#endif
+		if (resolved_raise > sSYNetRollbackEpisodeResolvedThrough)
 		{
-			sSYNetRollbackEpisodeResolvedThrough = completed_target;
+			sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
 		}
 		if ((sSYNetRollbackPeerEpochTargetTick != 0U) && (completed_target >= sSYNetRollbackPeerEpochTargetTick) &&
 		    (syNetRollbackRetainPeerEpochAfterLocalResim() == FALSE))
@@ -2624,15 +2912,40 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 		 * REPLACE coalesces into deferred instead of dual-initiator baseline races.
 		 * See docs/bugs/netplay_stick_lr_baseline_stash_hang_2026-07-12.md.
 		 * Soak 1156067044: DamageFall DI produced three stick episodes (5154/5165/5169) when
-		 * absorb ≈ phase_lock (~8). Widen to max(2×phase_lock, 16) capped at 32 so same-player
-		 * REPLACE storms coalesce before JumpAerial.
+		 * absorb ≈ phase_lock (~8). Legacy widen (×2, cap 32) coalesced storms but NETMENU
+		 * dual-stick deferred targets track the live frontier during coalesce → ~17-tick fat
+		 * resim metronome. Shorter window: phase_lock clamped [4,8], no ×2.
+		 * Hard ledger corrections expire absorb early (netinput LEDGER_REFRESH).
+		 * See docs/bugs/netplay_stick_absorb_resim_metronome_2026-07-27.md.
 		 *
 		 * NETMENU dual-mover (soak 1811750376 @1200–1450): each peer only GGPOs its remote.
 		 * Absorb scoped to ResimCorrectionPlayer let the *other* remote open a fresh
 		 * initiator every ~D ticks → ~2.2 begins/GGPO ping-pong while both sticks move.
 		 * Absorb any slot; TryBegin waits the window without live-cap (below).
 		 * See docs/bugs/netplay_dual_stick_ggpo_resim_storm_2026-07-27.md.
+		 * Follow-on hangs: peer_convergence (source=2) during absorb and after episode
+		 * when CoalesceWaiting was false (no deferred) — live-cap/runway honor
+		 * StickAbsorbWindowActive; NotePeerEpochTarget ignored during window. See
+		 * docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+		 *
+		 * Multi-stick mash: absorb = clamp(phase_lock + K*(pressure-1), …, MAX) so N
+		 * dirty remotes coalesce into one Begin (not per-slot ping-pong). See
+		 * docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
+		 *
+		 * Light input episodes: resim is local + cheap, so absorb is merge-only (2) —
+		 * just enough to fold same-burst REPLACEs into one span. Long windows only
+		 * added correction latency. See docs/bugs/netplay_light_input_episodes_2026-07-27.md.
 		 */
+#if defined(SSB64_NETMENU)
+		if (syNetRollbackLightInputEpisodesEnabled() != FALSE)
+		{
+			absorb_window = SYNETROLLBACK_LIGHT_EPISODE_ABSORB_WINDOW;
+		}
+		else
+		{
+			absorb_window = syNetRollbackMultiStickAbsorbWindow(completed_target);
+		}
+#else
 		absorb_window = syNetPeerGetPhaseLockPredictionWindowTicks();
 		if (absorb_window < 8U)
 		{
@@ -2643,9 +2956,13 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 		{
 			absorb_window = 32U;
 		}
+#endif
 		sSYNetRollbackStickAbsorbUntilSim = completed_target + absorb_window;
 #if defined(SSB64_NETMENU)
+		sSYNetRollbackStickAbsorbArmedFromSim = completed_target;
 		sSYNetRollbackStickAbsorbPlayer = -1;
+		sSYNetRollbackStickAbsorbExemptPlayer = -1;
+		syNetRollbackEpisodeFsmOnPostMatch();
 #else
 		sSYNetRollbackStickAbsorbPlayer = sSYNetRollbackResimCorrectionPlayer;
 #endif
@@ -3028,9 +3345,21 @@ static void syNetRollbackNoteEpisodeResimCompleted(void)
 			sSYNetRollbackSuppressReloadUntilSim = sim_tick + cooldown;
 		}
 	}
-	if (sSYNetRollbackResimTargetTick > sSYNetRollbackEpisodeResolvedThrough)
 	{
-		sSYNetRollbackEpisodeResolvedThrough = sSYNetRollbackResimTargetTick;
+		u32 resolved_raise;
+
+		resolved_raise = sSYNetRollbackResimTargetTick;
+#if defined(SSB64_NETMENU)
+		/* Cap floor at hold_last replay watermark — see CloseCorrectionEpisode. */
+		if ((resolved_raise != 0U) && (resolved_raise != ~(u32)0))
+		{
+			resolved_raise = syNetRollbackCapResolvedThroughForPredictedReplay(resolved_raise);
+		}
+#endif
+		if (resolved_raise > sSYNetRollbackEpisodeResolvedThrough)
+		{
+			sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
+		}
 	}
 	if (sSYNetRollbackEpisodeAnchorMismatch == ~(u32)0)
 	{
@@ -3462,16 +3791,55 @@ static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick
 	}
 	if (sSYNetRollbackDeferredMismatchPending != FALSE)
 	{
+		syNetRollbackDeferredMismatchNoteSlot(player);
 		if (sim_tick < sSYNetRollbackDeferredMismatchTick)
 		{
+#if defined(SSB64_NETMENU)
+			/*
+			 * Do not pull mismatch below a hold_last watermark already covered by
+			 * deferred — MERGE_DEEPEN 740→739 left DEFERRED_KEEP unable to retain the
+			 * predicted-replay tick (JumpAerial SoftLip soak 2026-07-27). Still widen
+			 * the target so the follow-up episode covers the new wire.
+			 */
+			{
+				u32 pred_watermark;
+
+				pred_watermark = syNetInputResimLowestPredictedReplayTick();
+				if ((pred_watermark != 0U) &&
+				    (sSYNetRollbackDeferredMismatchTick >= pred_watermark) &&
+				    (sim_tick < pred_watermark))
+				{
+					port_log(
+					    "SSB64 NetRollback: CORRECTION_MERGE_DEEPEN_PRED_HOLD player=%d "
+					    "keep_mismatch=%u reject_deepen=%u target=%u watermark=%u "
+					    "slot_mask=0x%x\n",
+					    (int)player,
+					    sSYNetRollbackDeferredMismatchTick,
+					    sim_tick,
+					    (target_tick > sSYNetRollbackDeferredMismatchTargetTick)
+						? target_tick
+						: sSYNetRollbackDeferredMismatchTargetTick,
+					    pred_watermark,
+					    (unsigned int)sSYNetRollbackDeferredMismatchSlotMask);
+					if (target_tick > sSYNetRollbackDeferredMismatchTargetTick)
+					{
+						sSYNetRollbackDeferredMismatchTargetTick = target_tick;
+					}
+					syNetRollbackStickAbsorbClampDeferredTarget();
+					syNetRollbackAlignDeferredTargetToWireReady("MERGE_PRED_HOLD");
+					return;
+				}
+			}
+#endif
 			port_log(
-			    "SSB64 NetRollback: CORRECTION_MERGE_DEEPEN player=%d mismatch=%u->%u target=%u\n",
+			    "SSB64 NetRollback: CORRECTION_MERGE_DEEPEN player=%d mismatch=%u->%u target=%u "
+			    "slot_mask=0x%x\n",
 			    (int)player,
 			    sSYNetRollbackDeferredMismatchTick,
 			    sim_tick,
-			    target_tick);
+			    target_tick,
+			    (unsigned int)sSYNetRollbackDeferredMismatchSlotMask);
 			sSYNetRollbackDeferredMismatchTick = sim_tick;
-			sSYNetRollbackDeferredMismatchPlayer = player;
 		}
 		if (sim_tick >= sSYNetRollbackDeferredMismatchTick)
 		{
@@ -3479,6 +3847,10 @@ static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick
 			{
 				sSYNetRollbackDeferredMismatchTargetTick = target_tick;
 			}
+#if defined(SSB64_NETMENU)
+			syNetRollbackStickAbsorbClampDeferredTarget();
+			syNetRollbackAlignDeferredTargetToWireReady("MERGE_WIDEN");
+#endif
 			return;
 		}
 		if (target_tick > sSYNetRollbackDeferredMismatchTargetTick)
@@ -3486,13 +3858,21 @@ static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick
 			sSYNetRollbackDeferredMismatchTargetTick = target_tick;
 		}
 		sSYNetRollbackDeferredMismatchTick = sim_tick;
-		sSYNetRollbackDeferredMismatchPlayer = player;
+#if defined(SSB64_NETMENU)
+		syNetRollbackStickAbsorbClampDeferredTarget();
+		syNetRollbackAlignDeferredTargetToWireReady("MERGE_DEEPEN");
+#endif
 		return;
 	}
 	sSYNetRollbackDeferredMismatchPending = TRUE;
 	sSYNetRollbackDeferredMismatchTick = sim_tick;
 	sSYNetRollbackDeferredMismatchTargetTick = target_tick;
-	sSYNetRollbackDeferredMismatchPlayer = player;
+	sSYNetRollbackDeferredMismatchSlotMask = 0U;
+	syNetRollbackDeferredMismatchNoteSlot(player);
+#if defined(SSB64_NETMENU)
+	syNetRollbackStickAbsorbClampDeferredTarget();
+	syNetRollbackAlignDeferredTargetToWireReady("QUEUE");
+#endif
 	if (from_peer_symmetric != FALSE)
 	{
 		syNetRollbackClearPeerSymmetricRejectLiveCap();
@@ -3782,12 +4162,29 @@ void syNetRollbackQueueOrWidenStickCorrection(s32 player, u32 sim_tick)
 	if ((sSYNetRollbackStickAbsorbUntilSim != 0U) && (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim) &&
 	    ((sSYNetRollbackStickAbsorbPlayer < 0) || (sSYNetRollbackStickAbsorbPlayer == player)))
 	{
-		syNetRollbackQueueDeferredInputCorrection(player, sim_tick);
-		if (deferred_ticket != FALSE)
+#if defined(SSB64_NETMENU)
+		/*
+		 * Hard polarity NoteHard exempts one slot so its Begin is not stuck behind
+		 * dual-slot absorb; other slots still coalesce. See
+		 * docs/bugs/netplay_stick_absorb_dual_hot_notehard_2026-07-27.md.
+		 */
+		if ((sSYNetRollbackStickAbsorbExemptPlayer < 0) ||
+		    (sSYNetRollbackStickAbsorbExemptPlayer != player))
+#endif
 		{
-			syNetplayBranchClearDeferred(player, sim_tick);
+#if defined(SSB64_NETMENU)
+			syNetRollbackStickAbsorbMaybeStickyRefresh();
+#endif
+			syNetRollbackQueueDeferredInputCorrection(player, sim_tick);
+#if defined(SSB64_NETMENU)
+			syNetRollbackStickAbsorbClampDeferredTarget();
+#endif
+			if (deferred_ticket != FALSE)
+			{
+				syNetplayBranchClearDeferred(player, sim_tick);
+			}
+			return;
 		}
-		return;
 	}
 	syNetRollbackRequestInputCorrection(player, sim_tick);
 }
@@ -3808,7 +4205,13 @@ void syNetRollbackDeferRemoteInputCorrection(s32 player, u32 sim_tick)
 		syNetRollbackQueueDeferredInputCorrection(player, sim_tick);
 		return;
 	}
-	if (sSYNetRollbackResimPending == FALSE)
+	/*
+	 * Must arm while actively replaying too — ResimPending is cleared when the load/replay
+	 * gate opens, so a mid-resim late wire used to hit `ResimPending==FALSE` and silently
+	 * drop (promote-only history) while hold_last ticks stayed wrong. Light-ep JumpAerial
+	 * SoftLip soak 2026-07-27 @740: wire (-19,31) during hold_last(-7,13) replay.
+	 */
+	if ((sSYNetRollbackResimPending == FALSE) && (syNetRollbackIsResimulating() == FALSE))
 	{
 		return;
 	}
@@ -4297,13 +4700,71 @@ static void syNetRollbackCoalesceScanResimSpan(u32 *io_mismatch, u32 *io_target,
 	*io_target = merged_target;
 }
 
+static u32 syNetRollbackDeferredMismatchSlotCount(void)
+{
+	u32 mask;
+	u32 count;
+
+	mask = sSYNetRollbackDeferredMismatchSlotMask;
+	count = 0U;
+	while (mask != 0U)
+	{
+		count += mask & 1U;
+		mask >>= 1;
+	}
+	return count;
+}
+
+static void syNetRollbackDeferredMismatchSyncPlayerFromMask(void)
+{
+	u32 mask;
+	s32 slot;
+	s32 found;
+
+	mask = sSYNetRollbackDeferredMismatchSlotMask;
+	if (mask == 0U)
+	{
+		sSYNetRollbackDeferredMismatchPlayer = -1;
+		return;
+	}
+	if (syNetRollbackDeferredMismatchSlotCount() > 1U)
+	{
+		/* Union episode: reconcile all remotes. */
+		sSYNetRollbackDeferredMismatchPlayer = -1;
+		return;
+	}
+	found = -1;
+	for (slot = 0; slot < MAXCONTROLLERS; slot++)
+	{
+		if ((mask & (1U << slot)) != 0U)
+		{
+			found = slot;
+			break;
+		}
+	}
+	sSYNetRollbackDeferredMismatchPlayer = found;
+}
+
+static void syNetRollbackDeferredMismatchNoteSlot(s32 player)
+{
+	if ((player >= 0) && (player < MAXCONTROLLERS))
+	{
+		sSYNetRollbackDeferredMismatchSlotMask |= (1U << player);
+	}
+	syNetRollbackDeferredMismatchSyncPlayerFromMask();
+}
+
 static void syNetRollbackClearDeferredInputMismatch(void)
 {
 	sSYNetRollbackDeferredMismatchPending = FALSE;
 	sSYNetRollbackDeferredMismatchTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchTargetTick = ~(u32)0;
 	sSYNetRollbackDeferredMismatchPlayer = -1;
+	sSYNetRollbackDeferredMismatchSlotMask = 0U;
 	sSYNetRollbackDeferredMismatchFromPeerSymmetric = FALSE;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackLightWireCoalesceWaits = 0U;
+#endif
 	syNetRollbackClearPeerSymmetricRejectLiveCap();
 }
 
@@ -4320,19 +4781,49 @@ void syNetRollbackCancelDeferredInputCorrectionIfMismatchTick(s32 player, u32 si
 	{
 		return;
 	}
-	if ((player >= 0) && (sSYNetRollbackDeferredMismatchPlayer >= 0) &&
-	    (sSYNetRollbackDeferredMismatchPlayer != player))
+	if ((player >= 0) && (player < MAXCONTROLLERS))
 	{
+		if ((sSYNetRollbackDeferredMismatchSlotMask & (1U << player)) == 0U)
+		{
+			return;
+		}
+		sSYNetRollbackDeferredMismatchSlotMask &= ~(1U << player);
+		if (sSYNetRollbackDeferredMismatchSlotMask == 0U)
+		{
+			if (sCancelLogsRemaining > 0U)
+			{
+				port_log(
+				    "SSB64 NetRollback: HASH_CONFIRM_CANCEL_DEFERRED player=%d mismatch_tick=%u "
+				    "target_tick=%u (union empty)\n",
+				    (int)player, (unsigned int)sim_tick,
+				    (unsigned int)sSYNetRollbackDeferredMismatchTargetTick);
+				sCancelLogsRemaining--;
+			}
+			syNetRollbackClearDeferredInputMismatch();
+			return;
+		}
+		syNetRollbackDeferredMismatchSyncPlayerFromMask();
+		if (sCancelLogsRemaining > 0U)
+		{
+			port_log(
+			    "SSB64 NetRollback: HASH_CONFIRM_CANCEL_DEFERRED player=%d mismatch_tick=%u "
+			    "target_tick=%u remain_mask=0x%x\n",
+			    (int)player, (unsigned int)sim_tick,
+			    (unsigned int)sSYNetRollbackDeferredMismatchTargetTick,
+			    (unsigned int)sSYNetRollbackDeferredMismatchSlotMask);
+			sCancelLogsRemaining--;
+		}
 		return;
 	}
 	if (sCancelLogsRemaining > 0U)
 	{
 		port_log(
 		    "SSB64 NetRollback: HASH_CONFIRM_CANCEL_DEFERRED player=%d mismatch_tick=%u "
-		    "target_tick=%u prior_slot=%d\n",
+		    "target_tick=%u prior_slot=%d slot_mask=0x%x\n",
 		    (int)player, (unsigned int)sim_tick,
 		    (unsigned int)sSYNetRollbackDeferredMismatchTargetTick,
-		    (int)sSYNetRollbackDeferredMismatchPlayer);
+		    (int)sSYNetRollbackDeferredMismatchPlayer,
+		    (unsigned int)sSYNetRollbackDeferredMismatchSlotMask);
 		sCancelLogsRemaining--;
 	}
 	syNetRollbackClearDeferredInputMismatch();
@@ -4420,6 +4911,361 @@ static sb32 syNetRollbackSymmetricLocalAuthorityDeferredPending(void)
 }
 
 /* Hold live sim below mismatch tick until deferred GGPO/symmetric resim loads snapshot (figatree freeze). */
+#if defined(SSB64_NETMENU)
+sb32 syNetRollbackStickAbsorbWindowActive(void)
+{
+	if (sSYNetRollbackStickAbsorbUntilSim == 0U)
+	{
+		return FALSE;
+	}
+	if (syNetInputGetTick() > sSYNetRollbackStickAbsorbUntilSim)
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+sb32 syNetRollbackStickAbsorbCoalesceWaiting(void)
+{
+	if (syNetRollbackStickAbsorbWindowActive() == FALSE)
+	{
+		return FALSE;
+	}
+	if (sSYNetRollbackDeferredMismatchPending == FALSE)
+	{
+		return FALSE;
+	}
+	if (sSYNetRollbackDeferredMismatchFromPeerSymmetric != FALSE)
+	{
+		return FALSE;
+	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Light episodes: absorb still arms (peer-cap / epoch ignore) but never delays Begin.
+	 * Coalesce wait let SoftLip run on Wait geometry while the owner already Dashed
+	 * (soak 2026-07-27: mismatch=648 deferred ~3t behind absorb → status=10 SoftLip vs
+	 * peer status=18 → figh briefly healed @655 then permanent cam/pos fork → FC@961
+	 * replay_determinism with inputs agreeing). Same-burst REPLACE still merges via
+	 * deferred Queue while pending / open resim. See
+	 * docs/bugs/netplay_light_absorb_coalesce_onset_delay_2026-07-27.md.
+	 */
+	if (syNetRollbackLightInputEpisodesEnabled() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
+	if ((sSYNetRollbackDeferredMismatchTick == ~(u32)0) ||
+	    (sSYNetRollbackDeferredMismatchTargetTick == ~(u32)0) ||
+	    (sSYNetRollbackDeferredMismatchTargetTick <= sSYNetRollbackDeferredMismatchTick))
+	{
+		return FALSE;
+	}
+	/*
+	 * Single-slot hard polarity: exempt may Begin while absorb blocks others.
+	 * Multi-slot union stays coalesced (no per-slot Begin ping-pong).
+	 */
+	if ((sSYNetRollbackStickAbsorbExemptPlayer >= 0) &&
+	    (syNetRollbackDeferredMismatchSlotCount() <= 1U) &&
+	    (sSYNetRollbackDeferredMismatchPlayer == sSYNetRollbackStickAbsorbExemptPlayer))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * Max deferred target while absorb coalesce waits: mismatch + absorb window.
+ * Prevents frontier-tracking fat spans (soak Linux 715→724 during coalesce).
+ */
+static u32 syNetRollbackStickAbsorbDeferredTargetCap(void)
+{
+	u32 mismatch;
+	u32 window;
+
+	if (sSYNetRollbackDeferredMismatchPending == FALSE)
+	{
+		return ~(u32)0;
+	}
+	mismatch = sSYNetRollbackDeferredMismatchTick;
+	if ((mismatch == 0U) || (mismatch == ~(u32)0))
+	{
+		return ~(u32)0;
+	}
+	window = syNetRollbackMultiStickAbsorbWindow(syNetInputGetTick());
+	if (window < 4U)
+	{
+		window = 4U;
+	}
+	if (mismatch > (~(u32)0 - window))
+	{
+		return ~(u32)0;
+	}
+	return mismatch + window;
+}
+
+void syNetRollbackStickAbsorbNoteHardCorrection(s32 player)
+{
+	if (player < 0)
+	{
+		return;
+	}
+	if ((sSYNetRollbackStickAbsorbUntilSim == 0U) ||
+	    (syNetInputGetTick() > sSYNetRollbackStickAbsorbUntilSim))
+	{
+		return;
+	}
+	/*
+	 * Do not clear global absorb (that reopened cross-slot Begin ping-pong). Exempt
+	 * this slot only so polarity/button Begin can arm; other remotes stay coalesced.
+	 */
+	sSYNetRollbackStickAbsorbExemptPlayer = player;
+}
+
+#if defined(SSB64_NETMENU)
+/* Default ON — kill with SSB64_NETPLAY_ROLLBACK_LIGHT_INPUT_EPISODES=0. */
+static sb32 syNetRollbackLightInputEpisodesEnabled(void)
+{
+	const char *env;
+
+	if (sSYNetRollbackLightInputEpisodesEnvCache == -999)
+	{
+		sSYNetRollbackLightInputEpisodesEnvCache = 1;
+		env = getenv("SSB64_NETPLAY_ROLLBACK_LIGHT_INPUT_EPISODES");
+		if ((env != NULL) && (env[0] != '\0') && (atoi(env) == 0))
+		{
+			sSYNetRollbackLightInputEpisodesEnvCache = 0;
+		}
+	}
+	return (sSYNetRollbackLightInputEpisodesEnvCache != 0) ? TRUE : FALSE;
+}
+
+/*
+ * Exclusive resim target covering only contiguous remote-confirmed ticks from mismatch.
+ * Multi-slot deferred: MIN across dirty remotes (union Begin needs every slot wired).
+ * Returns mismatch+1 when no wire yet (minimal span; caller may still hold).
+ */
+static u32 syNetRollbackLightWireReadyTargetExclusive(u32 mismatch_tick, s32 player)
+{
+	u32 scan_cap;
+	u32 live;
+	u32 through;
+	u32 ready;
+	s32 slot;
+	sb32 any;
+
+	if ((mismatch_tick == 0U) || (mismatch_tick == ~(u32)0))
+	{
+		return 0U;
+	}
+	live = syNetInputGetTick();
+	scan_cap = live + SYNETROLLBACK_LIGHT_WIRE_READY_SCAN_SLACK;
+	if (scan_cap < mismatch_tick)
+	{
+		scan_cap = mismatch_tick;
+	}
+	if (player >= 0)
+	{
+		through = syNetInputContiguousRemoteConfirmedThrough(player, mismatch_tick, scan_cap);
+		if (through >= mismatch_tick)
+		{
+			return through + 1U;
+		}
+		return mismatch_tick + 1U;
+	}
+	ready = ~(u32)0;
+	any = FALSE;
+	for (slot = 0; slot < GMCOMMON_PLAYERS_MAX; slot++)
+	{
+		if ((sSYNetRollbackDeferredMismatchSlotMask & (1U << slot)) == 0U)
+		{
+			continue;
+		}
+		if (syNetInputIsRemoteHumanSlot(slot) == FALSE)
+		{
+			continue;
+		}
+		through = syNetInputContiguousRemoteConfirmedThrough(slot, mismatch_tick, scan_cap);
+		if (through < mismatch_tick)
+		{
+			return mismatch_tick + 1U;
+		}
+		if ((through + 1U) < ready)
+		{
+			ready = through + 1U;
+		}
+		any = TRUE;
+	}
+	if (any == FALSE)
+	{
+		return mismatch_tick + 1U;
+	}
+	return ready;
+}
+
+static void syNetRollbackAlignTargetToWireReady(u32 mismatch_tick, s32 player, u32 *inout_target,
+					       const char *tag)
+{
+	u32 ready;
+	u32 before;
+
+	if ((inout_target == NULL) || (syNetRollbackLightInputEpisodesEnabled() == FALSE))
+	{
+		return;
+	}
+	if ((mismatch_tick == 0U) || (mismatch_tick == ~(u32)0) || (*inout_target <= mismatch_tick))
+	{
+		return;
+	}
+	ready = syNetRollbackLightWireReadyTargetExclusive(mismatch_tick, player);
+	if ((ready == 0U) || (ready <= mismatch_tick))
+	{
+		return;
+	}
+	before = *inout_target;
+	if (before == ready)
+	{
+		return;
+	}
+	*inout_target = ready;
+	port_log(
+	    "SSB64 NetRollback: LIGHT_WIRE_READY_%s mismatch=%u target=%u->%u player=%d reason=%s "
+	    "(contiguous remote-confirmed exclusive end)\n",
+	    (before > ready) ? "CLAMP" : "WIDEN",
+	    mismatch_tick,
+	    before,
+	    ready,
+	    (int)player,
+	    (tag != NULL) ? tag : "align");
+}
+
+static void syNetRollbackAlignDeferredTargetToWireReady(const char *tag)
+{
+	s32 player;
+
+	if (sSYNetRollbackDeferredMismatchPending == FALSE)
+	{
+		return;
+	}
+	player = sSYNetRollbackDeferredMismatchPlayer;
+	if (syNetRollbackDeferredMismatchSlotCount() > 1U)
+	{
+		player = -1;
+	}
+	syNetRollbackAlignTargetToWireReady(sSYNetRollbackDeferredMismatchTick, player,
+					    &sSYNetRollbackDeferredMismatchTargetTick, tag);
+}
+#endif
+
+static sb32 syNetRollbackLightEpisodeIsActive(void)
+{
+#if defined(SSB64_NETMENU)
+	return sSYNetRollbackLightEpisodeActive;
+#else
+	return FALSE;
+#endif
+}
+
+/*
+ * Multi-stick absorb length from hot remote pressure (scales to N remotes).
+ * pressure = hot_remote_count, floored to 2 when MultiStickHot (local + ≥1 remote).
+ */
+static u32 syNetRollbackMultiStickAbsorbWindow(u32 sim_tick)
+{
+	u32 base;
+	u32 pressure;
+	u32 window;
+
+	base = syNetPeerGetPhaseLockPredictionWindowTicks();
+	if (base < 4U)
+	{
+		base = 4U;
+	}
+	if (base > 8U)
+	{
+		base = 8U;
+	}
+	pressure = syNetInputHotRemoteHumanSlotCount(sim_tick);
+	if ((pressure < 2U) && (syNetInputMultiStickHotActive(sim_tick) != FALSE))
+	{
+		pressure = 2U;
+	}
+	if (pressure < 2U)
+	{
+		return base;
+	}
+	window = base + (SYNETROLLBACK_MULTI_STICK_ABSORB_K * (pressure - 1U));
+	if (window > SYNETROLLBACK_MULTI_STICK_ABSORB_MAX)
+	{
+		window = SYNETROLLBACK_MULTI_STICK_ABSORB_MAX;
+	}
+	return window;
+}
+
+/*
+ * While multi-stick pressure stays hot, push absorb expiry forward (capped) so REPLACE
+ * storms do not Begin every phase_lock ticks. Cap from arm tick avoids indefinite defer.
+ */
+static void syNetRollbackStickAbsorbMaybeStickyRefresh(void)
+{
+	u32 now;
+	u32 ext;
+	u32 cap;
+	u32 window;
+
+	if ((sSYNetRollbackStickAbsorbUntilSim == 0U) || (sSYNetRollbackStickAbsorbArmedFromSim == 0U))
+	{
+		return;
+	}
+	/* Light input episodes: merge-only absorb — never extend the window. */
+	if (syNetRollbackLightInputEpisodesEnabled() != FALSE)
+	{
+		return;
+	}
+	now = syNetInputGetTick();
+	if (now > sSYNetRollbackStickAbsorbUntilSim)
+	{
+		return;
+	}
+	if (syNetInputMultiStickHotActive(now) == FALSE)
+	{
+		return;
+	}
+	window = syNetRollbackMultiStickAbsorbWindow(now);
+	ext = now + window;
+	cap = sSYNetRollbackStickAbsorbArmedFromSim + SYNETROLLBACK_MULTI_STICK_ABSORB_CAP;
+	if (ext > cap)
+	{
+		ext = cap;
+	}
+	if (ext > sSYNetRollbackStickAbsorbUntilSim)
+	{
+		sSYNetRollbackStickAbsorbUntilSim = ext;
+	}
+}
+
+/*
+ * Bound deferred target growth under absorb coalesce so REPLACE storms do not revive
+ * frontier-tracking fat spans (Fix2 metronome / soak 715→724). Always clamp while
+ * coalesce waits — not only when MultiStickHot (that gate missed the hang soak).
+ */
+static void syNetRollbackStickAbsorbClampDeferredTarget(void)
+{
+	u32 max_target;
+
+	if (syNetRollbackStickAbsorbCoalesceWaiting() == FALSE)
+	{
+		return;
+	}
+	max_target = syNetRollbackStickAbsorbDeferredTargetCap();
+	if ((max_target == ~(u32)0) ||
+	    (sSYNetRollbackDeferredMismatchTargetTick <= max_target))
+	{
+		return;
+	}
+	sSYNetRollbackDeferredMismatchTargetTick = max_target;
+}
+#endif
+
 static sb32 syNetRollbackDeferredCorrectionBlocksLiveAdvance(u32 *out_cap)
 {
 	if (out_cap == NULL)
@@ -4443,9 +5289,7 @@ static sb32 syNetRollbackDeferredCorrectionBlocksLiveAdvance(u32 *out_cap)
 	 * (netplay_stick_storm_cooldown_livecap_deadlock). Peer-sym deferred still caps.
 	 * See docs/bugs/netplay_dual_stick_ggpo_resim_storm_2026-07-27.md.
 	 */
-	if ((sSYNetRollbackStickAbsorbUntilSim != 0U) &&
-	    (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim) &&
-	    (sSYNetRollbackDeferredMismatchFromPeerSymmetric == FALSE))
+	if (syNetRollbackStickAbsorbCoalesceWaiting() != FALSE)
 	{
 		return FALSE;
 	}
@@ -4483,6 +5327,29 @@ sb32 syNetRollbackDeferredInputCorrectionCoversTick(u32 tick)
 	}
 	return TRUE;
 }
+
+#if defined(SSB64_NETMENU)
+sb32 syNetRollbackDeferredInputCorrectionCoversPlayerTick(s32 player, u32 tick)
+{
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return FALSE;
+	}
+	if (sSYNetRollbackDeferredMismatchSlotMask != 0U)
+	{
+		if ((sSYNetRollbackDeferredMismatchSlotMask & (1U << player)) == 0U)
+		{
+			return FALSE;
+		}
+	}
+	else if ((sSYNetRollbackDeferredMismatchPlayer >= 0) &&
+		 (sSYNetRollbackDeferredMismatchPlayer != player))
+	{
+		return FALSE;
+	}
+	return syNetRollbackDeferredInputCorrectionCoversTick(tick);
+}
+#endif
 
 static sb32 syNetRollbackSymmetricDeferredCommitRetriable(u32 mismatch, u32 target)
 {
@@ -4678,21 +5545,89 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 	/*
 	 * Dual-stick storm: coalesce REPLACE into deferred across the absorb window; one Begin
 	 * when the window expires (widened target). Peer-sym still Begins immediately.
-	 * Live-cap lifted while waiting — see DeferredCorrectionBlocksLiveAdvance.
+	 * Live-cap lifted while waiting — see DeferredCorrectionBlocksLiveAdvance /
+	 * StickAbsorbCoalesceWaiting (peer_convergence + ComputePeerEpochLiveCap).
 	 */
-	if ((sSYNetRollbackStickAbsorbUntilSim != 0U) &&
-	    (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim) &&
-	    (sSYNetRollbackDeferredMismatchFromPeerSymmetric == FALSE))
+	if (syNetRollbackStickAbsorbCoalesceWaiting() != FALSE)
 	{
 		syNetRollbackLogTryBeginFail("stick_absorb_coalesce", sSYNetRollbackDeferredMismatchTick,
 					     sSYNetRollbackDeferredMismatchTargetTick,
 					     sSYNetRollbackDeferredMismatchPlayer);
+		/*
+		 * Drop peer_convergence that may have re-armed from symmetric notify of this
+		 * deferred span — otherwise epoch_cap source=2 freezes sim and absorb never
+		 * expires (soak1 dual-stick hang @441).
+		 */
+		syNetRollbackEpisodeFsmOnPostMatch();
 		return FALSE;
 	}
 #endif
 	mismatch = sSYNetRollbackDeferredMismatchTick;
 	target = sSYNetRollbackDeferredMismatchTargetTick;
 	player = sSYNetRollbackDeferredMismatchPlayer;
+	/*
+	 * Union of dirty remotes → Begin with correction_player=-1 so reconcile applies
+	 * all remote humans in [mismatch,target). Single dirty slot keeps that player.
+	 */
+	if (syNetRollbackDeferredMismatchSlotCount() > 1U)
+	{
+		player = -1;
+	}
+#if defined(SSB64_NETMENU)
+	/* Re-align just before Begin — more wire may have landed since KEEP/MERGE. */
+	syNetRollbackAlignTargetToWireReady(mismatch, player, &target, "TRY_BEGIN");
+	sSYNetRollbackDeferredMismatchTargetTick = target;
+	/*
+	 * Light wire coalesce: span-1 (target == mismatch+1) means only one contiguous
+	 * confirmed tick — Begin would micro-chase every stick REPLACE and SoftLip-fork
+	 * (soak 3849468025: 155 light eps / avg gap ~2.7t). Wait up to MAX_WAITS pumps
+	 * for the burst to widen ONLY while live-cap can still hold (sim < mismatch):
+	 * DeferredCorrectionBlocksLiveAdvance caps at mismatch-1, so Wait geometry
+	 * cannot advance under the wrong stick.
+	 *
+	 * When sim >= mismatch the cap cannot rewind — soak 1064408286: 100% of
+	 * LIGHT_WIRE_COALESCE waits had sim already past (e.g. mismatch=417 sim=420).
+	 * Delaying Begin then only prolongs SoftLip prediction under wrong sticks;
+	 * Begin immediately with the span-1 wire we have. Peer-symmetric deferred
+	 * never waits. Force Begin after the budget so a lone wire tick still heals.
+	 * See docs/bugs/netplay_light_wire_coalesce_past_sim_2026-07-27.md.
+	 */
+	if ((syNetRollbackLightInputEpisodesEnabled() != FALSE) &&
+	    (sSYNetRollbackDeferredMismatchFromPeerSymmetric == FALSE) &&
+	    (target == (mismatch + 1U)) &&
+	    (syNetInputGetTick() < mismatch))
+	{
+		if (sSYNetRollbackLightWireCoalesceWaits < SYNETROLLBACK_LIGHT_WIRE_COALESCE_MAX_WAITS)
+		{
+			sSYNetRollbackLightWireCoalesceWaits++;
+			syNetRollbackLogTryBeginFail("light_wire_coalesce", mismatch, target, player);
+			port_log(
+			    "SSB64 NetRollback: LIGHT_WIRE_COALESCE wait=%u/%u mismatch=%u target=%u player=%d "
+			    "sim=%u (span-1; live-cap held for contiguous wire widen)\n",
+			    (unsigned int)sSYNetRollbackLightWireCoalesceWaits,
+			    (unsigned int)SYNETROLLBACK_LIGHT_WIRE_COALESCE_MAX_WAITS,
+			    mismatch,
+			    target,
+			    (int)player,
+			    (unsigned int)syNetInputGetTick());
+			return FALSE;
+		}
+		port_log(
+		    "SSB64 NetRollback: LIGHT_WIRE_COALESCE force_begin mismatch=%u target=%u player=%d "
+		    "(wait budget exhausted; span-1 heal)\n",
+		    mismatch,
+		    target,
+		    (int)player);
+	}
+	else
+	{
+		/*
+		 * Includes span-1 with sim >= mismatch: coalesce skipped — live-cap cannot
+		 * rewind; Begin immediately (see bugdoc light_wire_coalesce_past_sim).
+		 */
+		sSYNetRollbackLightWireCoalesceWaits = 0U;
+	}
+#endif
 	if ((mismatch == ~(u32)0) || (target <= mismatch))
 	{
 		syNetRollbackClearDeferredInputMismatch();
@@ -4704,10 +5639,12 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		if (syNetRollbackGgpoDeferredShouldAbandon(mismatch, target) != FALSE)
 		{
 			port_log(
-			    "SSB64 NetRollback: ggpo deferred abandon mismatch_tick=%u target_tick=%u slot=%d\n",
+			    "SSB64 NetRollback: ggpo deferred abandon mismatch_tick=%u target_tick=%u slot=%d "
+			    "slot_mask=0x%x\n",
 			    mismatch,
 			    target,
-			    (int)player);
+			    (int)player,
+			    (unsigned int)sSYNetRollbackDeferredMismatchSlotMask);
 			syNetRollbackClearDeferredInputMismatch();
 			syNetRollbackClearLastPeerOutcome();
 			syNetRollbackLogDeferDiag("ggpo_deferred_abandon", mismatch, target, player);
@@ -4717,6 +5654,7 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 	{
 		u32 frontier;
 		sb32 wire_lock;
+		s32 ep_slot;
 
 		frontier = syNetInputGetTick();
 		if (frontier < ~(u32)0)
@@ -4728,8 +5666,9 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		{
 			SYNetRollbackPendingEpisode defer_ep;
 
+			ep_slot = (player >= 0) ? player : sSYNetRollbackDeferredMismatchPlayer;
 			if ((syNetRollbackEpisodeAuthorityEnabled() != FALSE) &&
-			    (syNetRollbackPendingEpisodeCopyValid(player, &defer_ep) != FALSE))
+			    (syNetRollbackPendingEpisodeCopyValid(ep_slot, &defer_ep) != FALSE))
 			{
 				sSYNetRollbackAuthoritativeEpisodeActive = TRUE;
 				target = syNetRollbackClampResimTargetTickAuthoritative(mismatch, defer_ep.target_tick);
@@ -4744,8 +5683,10 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		SYNetRollbackCorrectionCommitSnap commit_snap;
 
 		sb32 deferred_from_peer_symmetric;
+		u32 saved_slot_mask;
 
 		deferred_from_peer_symmetric = sSYNetRollbackDeferredMismatchFromPeerSymmetric;
+		saved_slot_mask = sSYNetRollbackDeferredMismatchSlotMask;
 		if (syNetRollbackTryCommitCorrectionBegin(mismatch, mismatch - 1U, target, &commit_snap) == FALSE)
 		{
 			if ((deferred_from_peer_symmetric != FALSE) &&
@@ -4762,10 +5703,12 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 			else if (syNetRollbackGgpoDeferredShouldAbandon(mismatch, target) != FALSE)
 			{
 				port_log(
-				    "SSB64 NetRollback: ggpo deferred abandon mismatch_tick=%u target_tick=%u slot=%d\n",
+				    "SSB64 NetRollback: ggpo deferred abandon mismatch_tick=%u target_tick=%u slot=%d "
+				    "slot_mask=0x%x\n",
 				    mismatch,
 				    target,
-				    (int)player);
+				    (int)player,
+				    (unsigned int)saved_slot_mask);
 				syNetRollbackClearDeferredInputMismatch();
 				syNetRollbackClearLastPeerOutcome();
 				syNetRollbackLogDeferDiag("ggpo_deferred_abandon", mismatch, target, player);
@@ -4803,10 +5746,12 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 		else
 		{
 			port_log(
-			    "SSB64 NetRollback: GGPO deferred input correction resim mismatch_tick=%u target_tick=%u slot=%d\n",
+			    "SSB64 NetRollback: GGPO deferred input correction resim mismatch_tick=%u target_tick=%u "
+			    "slot=%d slot_mask=0x%x\n",
 			    mismatch,
 			    target,
-			    (int)player);
+			    (int)player,
+			    (unsigned int)saved_slot_mask);
 		}
 		sSYNetRollbackResimFromPeerSymmetric = deferred_from_peer_symmetric;
 		if (syNetRollbackBeginResim(mismatch, target, player) == FALSE)
@@ -4817,7 +5762,8 @@ static sb32 syNetRollbackTryBeginDeferredMismatch(void)
 				sSYNetRollbackDeferredMismatchPending = TRUE;
 				sSYNetRollbackDeferredMismatchTick = mismatch;
 				sSYNetRollbackDeferredMismatchTargetTick = target;
-				sSYNetRollbackDeferredMismatchPlayer = player;
+				sSYNetRollbackDeferredMismatchSlotMask = saved_slot_mask;
+				syNetRollbackDeferredMismatchSyncPlayerFromMask();
 				sSYNetRollbackDeferredMismatchFromPeerSymmetric = TRUE;
 			}
 			syNetRollbackLogDeferDiag("begin_resim_failed", mismatch, target, player);
@@ -4976,7 +5922,12 @@ static u32 syNetRollbackPickInRingFcInputAgreeLoad(u32 validation_tick, u32 min_
 		return ~(u32)0;
 	}
 
-	frontier = syNetRollbackGetSharedCorrectionFrontier();
+	/*
+	 * Prefer the intersected (MIN) frontier so both peers land on the same
+	 * load-safe slot when peer resolved_through is already known. MAX shared
+	 * frontier produced soak 4126729879 divergent FC loads (1057 vs 1047).
+	 */
+	frontier = syNetRollbackGetIntersectedCorrectionFrontier();
 	if ((frontier >= min_load) && (frontier <= max_load))
 	{
 		resolved = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(frontier, min_load);
@@ -5272,7 +6223,7 @@ static sb32 syNetRollbackTryBeginDeferredStateMismatch(void)
 			    clamp_load,
 			    clamp_load + 1U,
 			    min_load_safe,
-			    syNetRollbackGetSharedCorrectionFrontier(),
+			    syNetRollbackGetIntersectedCorrectionFrontier(),
 			    clamp_reason);
 			load_tick = clamp_load;
 			mismatch = clamp_load + 1U;
@@ -5491,43 +6442,124 @@ static void syNetRollbackHandleFrameCommitStateMismatchCore(u32 validation_tick,
 				 * fc_storm_limit / PEER_BASELINE_RESYNC_STORM despite resolved_through=3751.
 				 */
 				onset_load = (onset > 0U) ? (onset - 1U) : 0U;
-				resolved = ~(u32)0;
-				if (onset_load >= min_load)
+				/*
+				 * Input-agree FC recovery only when we can load at (or before) the shared
+				 * onset. Two unrecovered cases — both fail closed, no short resim:
+				 *  1) onset older than ring (onset_load < min_load)
+				 *  2) onset in-ring but Resolve misses → RING_CLAMP abandons onset
+				 *     (clamped_load > onset_load). Soak seed 4086048930 validation=481
+				 *     onset=454 min_load=354 → clamp 480/477; permanent fork from 454;
+				 *     doomed frontier resim then PEER at 477.
+				 * See docs/bugs/netplay_fc_onset_older_than_ring_hard_fork_2026-07-27.md.
+				 */
 				{
-					if (onset > 0U)
+					const char *unrec_reason;
+					u32 clamp_load_diag;
+
+					unrec_reason = NULL;
+					clamp_load_diag = ~(u32)0;
+					if ((min_load > 0U) && (onset_load < min_load))
 					{
-						resolved = syNetRollbackResolveStateMismatchLoadTick(onset - 1U, min_load);
+						unrec_reason = "fork older than ring";
 					}
-					else
+					resolved = ~(u32)0;
+					if (unrec_reason == NULL)
 					{
-						resolved = syNetRollbackResolveStateMismatchLoadTick(validation_tick, min_load);
+						if (onset_load >= min_load)
+						{
+							if (onset > 0U)
+							{
+								resolved = syNetRollbackResolveStateMismatchLoadTick(onset - 1U,
+														    min_load);
+							}
+							else
+							{
+								resolved = syNetRollbackResolveStateMismatchLoadTick(
+								    validation_tick, min_load);
+							}
+						}
+						if ((resolved == ~(u32)0) || (resolved < min_load))
+						{
+							clamp_reason = 0U;
+							resolved = syNetRollbackPickInRingFcInputAgreeLoad(
+							    validation_tick, min_load, &clamp_reason);
+							if (resolved != ~(u32)0)
+							{
+								clamp_load_diag = resolved;
+								port_log(
+								    "SSB64 NetRollback: FRAME_COMMIT_INPUT_AGREE_ONSET_RING_CLAMP "
+								    "validation=%u onset=%u shared=%u predicted=%u clamped_load=%u "
+								    "mismatch=%u min_load=%u frontier=%u reason=%u\n",
+								    validation_tick,
+								    onset,
+								    shared_onset,
+								    predicted_onset,
+								    resolved,
+								    resolved + 1U,
+								    min_load,
+								    syNetRollbackGetIntersectedCorrectionFrontier(),
+								    clamp_reason);
+								if (resolved > onset_load)
+								{
+									unrec_reason = "ring clamp abandoned onset";
+								}
+								else
+								{
+									mismatch_tick = resolved + 1U;
+								}
+							}
+						}
+						else if ((resolved + 1U) < mismatch_tick)
+						{
+							mismatch_tick = resolved + 1U;
+						}
 					}
-				}
-				if ((resolved == ~(u32)0) || (resolved < min_load))
-				{
-					clamp_reason = 0U;
-					resolved = syNetRollbackPickInRingFcInputAgreeLoad(validation_tick, min_load, &clamp_reason);
-					if (resolved != ~(u32)0)
+					if (unrec_reason != NULL)
 					{
+						SYNetRollbackHashSet local_h;
+						SYNetRollbackHashSet peer_h;
+						u32 snap_tick;
+						u32 slot_digests[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
+						s32 si;
+
+						snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
 						port_log(
-						    "SSB64 NetRollback: FRAME_COMMIT_INPUT_AGREE_ONSET_RING_CLAMP validation=%u "
-						    "onset=%u shared=%u predicted=%u clamped_load=%u mismatch=%u min_load=%u "
-						    "frontier=%u reason=%u\n",
+						    "SSB64 NetRollback: FRAME_COMMIT_INPUT_AGREE_ONSET_UNRECOVERABLE "
+						    "validation=%u onset=%u shared=%u predicted=%u onset_load=%u "
+						    "min_load=%u clamped_load=%u sim=%u ring_cap=%u — %s; "
+						    "fail closed (no short resim)\n",
 						    validation_tick,
 						    onset,
 						    shared_onset,
 						    predicted_onset,
-						    resolved,
-						    resolved + 1U,
+						    onset_load,
 						    min_load,
-						    syNetRollbackGetSharedCorrectionFrontier(),
-						    clamp_reason);
-						mismatch_tick = resolved + 1U;
+						    (clamp_load_diag != ~(u32)0) ? clamp_load_diag : 0U,
+						    sim_tick,
+						    ring_cap,
+						    unrec_reason);
+						syNetRbSnapshotLogFighterFieldDiffAtTick(
+						    snap_tick, "frame_commit_onset_unrecoverable");
+						memset(&local_h, 0, sizeof(local_h));
+						memset(&peer_h, 0, sizeof(peer_h));
+						local_h.fighter = local->fighter_digest;
+						local_h.world = local->world_digest;
+						local_h.item = local->item_digest;
+						local_h.rng = local->rng_digest;
+						local_h.effect = local->effect_digest;
+						peer_h.fighter = peer->fighter_digest;
+						peer_h.world = peer->world_digest;
+						peer_h.item = peer->item_digest;
+						peer_h.rng = peer->rng_digest;
+						peer_h.effect = peer->effect_digest;
+						for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
+						{
+							slot_digests[si] = peer->fighter_slot_digest[si];
+						}
+						syNetRollbackFailPeerSnapshotDiverge(snap_tick, &peer_h, &local_h,
+										     slot_digests);
+						return;
 					}
-				}
-				else if ((resolved + 1U) < mismatch_tick)
-				{
-					mismatch_tick = resolved + 1U;
 				}
 				probe = syNetInputGetTick();
 				if (probe < ~(u32)0)
@@ -5702,6 +6734,7 @@ static void syNetRollbackHandleFrameCommitStateMismatchCore(u32 validation_tick,
 		sSYNetRollbackFcStateRecoveryActive = TRUE;
 		sSYNetRollbackFcStateRecoveryMismatchTick = mismatch_tick;
 		sSYNetRollbackFcStateRecoveryTargetTick = target_tick;
+		sSYNetRollbackFcRecoveryJoinAttempts = 0U;
 	}
 	sSYNetRollbackDeferredStateMismatchPending = TRUE;
 	sSYNetRollbackDeferredStateMismatchTick = mismatch_tick;
@@ -5745,6 +6778,7 @@ void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNe
 	if (local->fighter_digest != peer->fighter_digest)
 	{
 		u32 snap_tick;
+		s32 p;
 
 		snap_tick = (validation_tick > 0U) ? (validation_tick - 1U) : 0U;
 		/*
@@ -5757,6 +6791,51 @@ void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNe
 		 */
 		syNetSyncLogFighterSlotHashes(snap_tick);
 		syNetRbSnapshotLogFighterFieldDiffAtTick(snap_tick, "frame_commit_figh_diverge");
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * Input digest hashes authority sticks (buttons/sx/sy), not fighter tap/hold
+		 * counters. When inp MATCH but tap_stick_* peer-differs, name the contract:
+		 * either published history at snap_tick matches what the digest hashed (true
+		 * replay_determinism / older fork), or history drifted from authority resolve.
+		 * See docs/bugs/netplay_fc_onset_older_than_ring_hard_fork_2026-07-27.md.
+		 */
+		if (local->input_digest == peer->input_digest)
+		{
+			for (p = 0; p < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; p++)
+			{
+				SYNetInputFrame hist;
+				sb32 have_hist;
+				const SYNetFrameCommitFighterDiag *ld;
+				const SYNetFrameCommitFighterDiag *pd;
+
+				ld = &local->fighter_diag[p];
+				pd = &peer->fighter_diag[p];
+				if ((ld->valid == 0U) && (pd->valid == 0U))
+				{
+					continue;
+				}
+				have_hist = syNetInputGetHistoryFrame(p, snap_tick, &hist);
+				port_log(
+				    "SSB64 NetRollback: FRAME_COMMIT_INPUT_APPLY_AUDIT validation=%u snap=%u player=%d "
+				    "inp_match=1 hist_ok=%d hist_sx=%d hist_sy=%d "
+				    "local_tap_y=0x%02X peer_tap_y=0x%02X local_hold_x=0x%02X peer_hold_x=0x%02X "
+				    "local_hold_y=0x%02X peer_hold_y=0x%02X "
+				    "note=inp_digest_is_hist_sticks_not_fighter_tap\n",
+				    validation_tick,
+				    snap_tick,
+				    (int)p,
+				    (int)have_hist,
+				    have_hist ? (int)hist.stick_x : 0,
+				    have_hist ? (int)hist.stick_y : 0,
+				    (unsigned int)(ld->tap_stick_y & 0xFFU),
+				    (unsigned int)(pd->tap_stick_y & 0xFFU),
+				    (unsigned int)(ld->hold_stick_x & 0xFFU),
+				    (unsigned int)(pd->hold_stick_x & 0xFFU),
+				    (unsigned int)(ld->hold_stick_y & 0xFFU),
+				    (unsigned int)(pd->hold_stick_y & 0xFFU));
+			}
+		}
+#endif
 	}
 	if (local->item_digest != peer->item_digest)
 	{
@@ -6111,6 +7190,19 @@ static void syNetRollbackNotePeerEpochTarget(s32 slot, u32 mismatch_tick, u32 ta
 	{
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Post-episode absorb: ignore peer-epoch / FSM convergence arming. Live-cap is
+	 * lifted while WindowActive; updating PeerEpochTarget here would re-cap the
+	 * instant the window expires (soak 3438514102 epoch_cap source=2 @723).
+	 * See docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+	 */
+	if (syNetRollbackStickAbsorbWindowActive() != FALSE)
+	{
+		syNetRollbackEpisodeFsmOnPostMatch();
+		return;
+	}
+#endif
 	if ((sSYNetRollbackPeerEpochTargetTick == 0U) || (target_tick > sSYNetRollbackPeerEpochTargetTick) ||
 	    ((target_tick == sSYNetRollbackPeerEpochTargetTick) && (mismatch_tick < sSYNetRollbackPeerEpochMismatchTick)))
 	{
@@ -6149,6 +7241,18 @@ static u32 syNetRollbackComputePeerEpochLiveCap(void)
 	{
 		return ~(u32)0;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Absorb window waits on sim ticks. peer_target from deferred / notify would re-cap
+	 * live (source|=2) and freeze before StickAbsorbUntil — including gaps with no
+	 * deferred pending (post-Begin / post-complete). See
+	 * docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+	 */
+	if (syNetRollbackStickAbsorbWindowActive() != FALSE)
+	{
+		return ~(u32)0;
+	}
+#endif
 	peer_target = 0U;
 	if (sSYNetRollbackPeerEpochTargetTick != 0U)
 	{
@@ -6287,12 +7391,47 @@ sb32 syNetRollbackGetLiveSimCap(u32 *out_max_live_sim, u32 *out_cap_source)
 
 		if (syNetRollbackEpisodeFsmGetLiveSimCap(&fsm_cap, &fsm_source) != FALSE)
 		{
-			if (out_cap_source != NULL)
+#if defined(SSB64_NETMENU)
+			/*
+			 * peer_convergence (source=2): clear and fall through when (a) absorb
+			 * window is active, or (b) live already reached the cap with no resim /
+			 * deferred work — otherwise soak @723 hangs forever after absorb expires.
+			 * See docs/bugs/netplay_stick_absorb_peer_convergence_post_episode_hang_2026-07-27.md.
+			 */
+			if ((fsm_source & 2U) != 0U)
 			{
-				*out_cap_source = fsm_source;
+				u32 live_sim;
+
+				live_sim = syNetInputGetTick();
+				if ((syNetRollbackStickAbsorbWindowActive() != FALSE) ||
+				    ((sSYNetRollbackResimPending == FALSE) &&
+				     (syNetRollbackIsResimulating() == FALSE) &&
+				     (sSYNetRollbackDeferredMismatchPending == FALSE) &&
+				     (fsm_cap != ~(u32)0) && (live_sim >= fsm_cap)))
+				{
+					syNetRollbackEpisodeFsmOnPostMatch();
+					syNetRollbackClearPeerEpochState();
+				}
+				else
+				{
+					if (out_cap_source != NULL)
+					{
+						*out_cap_source = fsm_source;
+					}
+					*out_max_live_sim = fsm_cap;
+					return TRUE;
+				}
 			}
-			*out_max_live_sim = fsm_cap;
-			return TRUE;
+			else
+#endif
+			{
+				if (out_cap_source != NULL)
+				{
+					*out_cap_source = fsm_source;
+				}
+				*out_max_live_sim = fsm_cap;
+				return TRUE;
+			}
 		}
 	}
 	cap = ~(u32)0;
@@ -8428,16 +9567,14 @@ void syNetRollbackAfterBattleUpdate(void)
 #if defined(SSB64_NETMENU)
 					/*
 					 * Synctest load pins CObj with used_run=0 (load-hash fidelity). Emergency restore
-					 * puts live CObj back, but if forward sim left at/eye far from fighter interests
-					 * (quake vel_at yank), one integrate starts pan recovery immediately instead of
-					 * waiting for the next battle camera tick. See
+					 * puts live CObj back. Do NOT unconditionally gmCameraRunFuncCamera here — that
+					 * advances hashed camera scalars one tick on the probing peer only (soak1
+					 * DamageFly SYNCTEST@1713). Integrate only when CObj.at is interest-yanked
+					 * (>500), preserving the cliffwait quake recovery path.
+					 * See docs/bugs/netplay_synctest_emergency_damagefly_mpcoll_2026-07-27.md,
 					 * docs/bugs/netplay_cliffwait_camera_cobj_yank_2026-07-10.md.
 					 */
-					if (gGMCameraGObj != NULL)
-					{
-						gmCameraRunFuncCamera(gGMCameraGObj);
-						syNetplayCanonicalizeGMCameraSimState();
-					}
+					syNetRbSnapSynctestRecoverCameraIfInterestYanked();
 					syNetRollbackWhispyPresentationAfterLoad(completed_tick, "synctest_restore");
 					syNetRbSnapDiagLogGuardShieldJointPose("synctest_post_whispy_presentation");
 #endif
@@ -8567,6 +9704,24 @@ static void syNetRollbackClearTimelineForCompletedResim(void)
 	}
 	from_tick = sSYNetRollbackResimMismatchTick;
 	to_tick = sSYNetRollbackResimTargetTick;
+#if defined(SSB64_NETMENU)
+	/*
+	 * Ticks replayed with hold_last guesses are not resolved: a wire REPLACE that landed
+	 * mid-resim gets promote-patched into published (post_pre_promote), so the reconcile
+	 * below would see published==remote and clear the earliest-incorrect mark even though
+	 * the *state* for that tick was simmed with the guess. Keep those marks so the next
+	 * episode's scan deepens to the true fork (soak 2026-07-27 tick 397).
+	 */
+	{
+		u32 watermark;
+
+		watermark = syNetInputResimLowestPredictedReplayTick();
+		if ((watermark != 0U) && (watermark < to_tick))
+		{
+			to_tick = watermark;
+		}
+	}
+#endif
 	syNetInputTimelineClearResolvedSpan(from_tick, to_tick);
 }
 
@@ -8957,6 +10112,9 @@ static u32 syNetRollbackGetResimBaselineGateTimeoutFrames(void)
 static void syNetRollbackEpisodeReset(void)
 {
 	memset(&sSYNetRollbackEpisode, 0, sizeof(sSYNetRollbackEpisode));
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackLightEpisodeActive = FALSE;
+#endif
 }
 
 static void syNetRollbackAlignResimLoadTickToWireBaseline(void)
@@ -8982,7 +10140,11 @@ static void syNetRollbackAlignResimLoadTickToWireBaseline(void)
 
 static void syNetRollbackEpisodeSyncToLegacy(void)
 {
-	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
+	/*
+	 * Light episodes never arm the FSM — routing through FsmSyncToLegacy would read the
+	 * inactive FSM (phase Live) and clobber ResimPending mid-replay. Use legacy fields.
+	 */
+	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) && (syNetRollbackLightEpisodeIsActive() == FALSE))
 	{
 		syNetRollbackEpisodeFsmSyncToLegacy(&sSYNetRollbackResimPending, &sSYNetRollbackResimAwaitingPeerBaseline,
 						  &sSYNetRollbackResimBaselineGateOpen, &sSYNetRollbackResimMismatchTick,
@@ -9012,12 +10174,34 @@ static void syNetRollbackEpisodeSyncToLegacy(void)
 }
 
 static void syNetRollbackEpisodeBegin(u32 mismatch_tick, u32 load_tick, u32 target_tick, s32 corrected_slot,
-				      sb32 initiator, sb32 from_peer_notify)
+				      sb32 initiator, sb32 from_peer_notify, sb32 light)
 {
 	if (sSYNetRollbackEpochId < ~(u32)0)
 	{
 		sSYNetRollbackEpochId++;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Light input episode: local-only GGPO correction. No FSM begin, no input seal,
+	 * no baseline gate — phase goes straight to ForwardResim so the span replays
+	 * immediately. See docs/bugs/netplay_light_input_episodes_2026-07-27.md.
+	 */
+	if (light != FALSE)
+	{
+		sSYNetRollbackLightEpisodeActive = TRUE;
+		sSYNetRollbackEpisode.phase = nSYNetRollbackEpisodePhaseForwardResim;
+		sSYNetRollbackEpisode.mismatch_tick = mismatch_tick;
+		sSYNetRollbackEpisode.load_tick = load_tick;
+		sSYNetRollbackEpisode.target_tick = target_tick;
+		sSYNetRollbackEpisode.corrected_slot = corrected_slot;
+		sSYNetRollbackEpisode.initiator = initiator;
+		sSYNetRollbackEpisode.from_peer_notify = FALSE;
+		syNetRollbackEpisodeSyncToLegacy();
+		return;
+	}
+#else
+	(void)light;
+#endif
 	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
 	{
 		syNetRollbackEpisodeFsmBegin(sSYNetRollbackEpochId, mismatch_tick, load_tick, target_tick, corrected_slot,
@@ -9048,7 +10232,7 @@ static void syNetRollbackEpisodeBegin(u32 mismatch_tick, u32 load_tick, u32 targ
 
 static void syNetRollbackEpisodeSetPhase(SYNetRollbackEpisodePhase phase)
 {
-	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
+	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) && (syNetRollbackLightEpisodeIsActive() == FALSE))
 	{
 		SYNetRollbackEpisodeFsmPhase fsm_phase;
 
@@ -9143,7 +10327,8 @@ static sb32 syNetRollbackFinishForwardResim(void)
 	completed_target = sSYNetRollbackResimTargetTick;
 	mismatch_tick = sSYNetRollbackResimMismatchTick;
 	correction_player = sSYNetRollbackResimCorrectionPlayer;
-	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) &&
+	/* Light episodes skip the Verify/peer post-digest handshake — close directly. */
+	if ((syNetRollbackEpisodeFsmEnabled() != FALSE) && (syNetRollbackLightEpisodeIsActive() == FALSE) &&
 	    (syNetRollbackEpisodeFsmGetPhase() != nSYNetRollbackEpisodeFsmPhaseCommit) &&
 	    (syNetRollbackEpisodeFsmGetPhase() != nSYNetRollbackEpisodeFsmPhaseLive) &&
 	    (syNetRollbackEpisodeFsmGetPhase() != nSYNetRollbackEpisodeFsmPhaseAbort))
@@ -9524,6 +10709,20 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 		}
 #endif
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Light input episodes: keep pre-hashes / slot digests for local diagnostics, but never
+	 * put digests on the wire (sync send here was racing the post-Arm pending clear and
+	 * poisoning the peer with BASELINE_PREEMPTIVE_LIVE_CAP). See
+	 * docs/bugs/netplay_light_input_episodes_2026-07-27.md.
+	 */
+	if (syNetRollbackLightEpisodeIsActive() != FALSE)
+	{
+		sSYNetRollbackPeerBaselineSendPending = FALSE;
+		port_log("SSB64 NetRollback: RESIM_BASELINE_WIRE_SKIP light load_tick=%u\n", load_tick);
+		return;
+	}
+#endif
 	syNetPeerTrySendRollbackBaselineDigest();
 	syNetPeerTrySendEpisodeSealRows();
 }
@@ -10126,7 +11325,7 @@ static void syNetRollbackAbortInFlightResimForPeerEpisode(void)
 	syNetRollbackClearFcDeepenGuard();
 }
 
-static void syNetRollbackMaybeLogEpisodeExec(sb32 from_peer_notify)
+static void syNetRollbackMaybeLogEpisodeExec(sb32 from_peer_notify, sb32 light)
 {
 	const char *owner;
 	SYNetRollbackPendingEpisode *req;
@@ -10140,7 +11339,7 @@ static void syNetRollbackMaybeLogEpisodeExec(sb32 from_peer_notify)
 	{
 		return;
 	}
-	owner = from_peer_notify != FALSE ? "peer_follower" : "local_initiator";
+	owner = (light != FALSE) ? "local_light" : (from_peer_notify != FALSE ? "peer_follower" : "local_initiator");
 	port_log(
 	    "SSB64 NetRollback: EPISODE_EXEC owner=%s req_load=%u req_mismatch=%u req_target=%u exec_load=%u exec_mismatch=%u exec_target=%u sim=%u epoch=%u slot=%d timeline_earliest=%u last_confirmed=%u\n",
 	    owner,
@@ -10477,6 +11676,9 @@ static void syNetRollbackResetBaselineResimState(void)
 	sSYNetRollbackResimFromPeerSymmetric = FALSE;
 	sSYNetRollbackResimPreHashesValid = FALSE;
 	sSYNetRollbackResimLoadTick = ~(u32)0;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackLightEpisodeActive = FALSE;
+#endif
 	syNetRollbackClearBaselineResimNegotiationFlags();
 	syNetRollbackEpisodeSetPhase(nSYNetRollbackEpisodePhaseLive);
 }
@@ -10509,6 +11711,7 @@ static void syNetRollbackClearFcStateRecovery(void)
 	sSYNetRollbackFcStateRecoveryActive = FALSE;
 	sSYNetRollbackFcStateRecoveryMismatchTick = ~(u32)0;
 	sSYNetRollbackFcStateRecoveryTargetTick = ~(u32)0;
+	sSYNetRollbackFcRecoveryJoinAttempts = 0U;
 }
 
 static void syNetRollbackOnFcDeepenStormLimit(u32 load_tick)
@@ -10944,13 +12147,25 @@ static void syNetRollbackAbortPendingResimForBaselineMismatch(u32 failed_load_ti
 static sb32 syNetRollbackTryNegotiateResimLoadTickWithPeer(u32 peer_load_tick)
 {
 	u32 local_load;
+	sb32 fc_input_agree_recovery;
 
 	if ((peer_load_tick == 0U) || (sSYNetRollbackResimPending == FALSE) ||
 	    (sSYNetRollbackResimAwaitingPeerBaseline == FALSE) || (sSYNetRollbackResimBaselineGateOpen != FALSE))
 	{
 		return FALSE;
 	}
-	if ((syNetRollbackEpisodeAuthorityEnabled() != FALSE) && (sSYNetRollbackAuthoritativeEpisodeActive != FALSE))
+	fc_input_agree_recovery = (sSYNetRollbackFcStateRecoveryActive != FALSE) ? TRUE : FALSE;
+	/*
+	 * Authoritative peer-locked tuples must not silently rewrite load. Exception:
+	 * FC input-agree state recovery — each peer independently ring-clamps load from
+	 * its local frontier, so AuthoritativeEpisodeActive would otherwise block the
+	 * MIN(local, peer) join forever (soak 4126729879: Linux 1057 never negotiated
+	 * down to Android 1047 → seal hang). See
+	 * docs/bugs/netplay_fc_recovery_divergent_load_hang_2026-07-27.md.
+	 */
+	if ((syNetRollbackEpisodeAuthorityEnabled() != FALSE) &&
+	    (sSYNetRollbackAuthoritativeEpisodeActive != FALSE) &&
+	    (sSYNetRollbackFcStateRecoveryActive == FALSE))
 	{
 		return FALSE;
 	}
@@ -10962,8 +12177,10 @@ static sb32 syNetRollbackTryNegotiateResimLoadTickWithPeer(u32 peer_load_tick)
 	/*
 	 * Peer walked back for effect-probe fragility after we already matched baseline @local_load —
 	 * do not downgrade the initiator (soak1 @520: Linux matched @519, peer @487 → 471 crash).
+	 * FC input-agree recovery with unmatched baseline is the opposite case — negotiate.
 	 */
-	if ((sSYNetRollbackResimBaselineDigestMatched != FALSE) && (local_load == sSYNetRollbackResimLoadTick))
+	if ((sSYNetRollbackResimBaselineDigestMatched != FALSE) && (local_load == sSYNetRollbackResimLoadTick) &&
+	    (fc_input_agree_recovery == FALSE))
 	{
 		port_log(
 		    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE refused local baseline matched load=%u peer=%u sim=%u\n",
@@ -10973,11 +12190,26 @@ static sb32 syNetRollbackTryNegotiateResimLoadTickWithPeer(u32 peer_load_tick)
 		return FALSE;
 	}
 	port_log(
-	    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE local=%u peer=%u negotiated=%u sim=%u\n",
+	    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE local=%u peer=%u negotiated=%u sim=%u fc_recovery=%d\n",
 	    local_load,
 	    peer_load_tick,
 	    peer_load_tick,
-	    syNetInputGetTick());
+	    syNetInputGetTick(),
+	    (int)sSYNetRollbackFcStateRecoveryActive);
+	if (fc_input_agree_recovery != FALSE)
+	{
+		if (sSYNetRollbackFcRecoveryJoinAttempts >= SYNETROLLBACK_FC_RECOVERY_JOIN_MAX_ATTEMPTS)
+		{
+			port_log(
+			    "SSB64 NetRollback: LOAD_TICK_NEGOTIATE refused fc_join exhausted local=%u peer=%u attempts=%u\n",
+			    local_load,
+			    peer_load_tick,
+			    (unsigned int)sSYNetRollbackFcRecoveryJoinAttempts);
+			return FALSE;
+		}
+		sSYNetRollbackFcRecoveryJoinAttempts++;
+		return syNetRollbackTryRestartResimAtDeeperLoad(peer_load_tick);
+	}
 	if (sSYNetRollbackResimBaselineDeeperAttempts >= SYNETROLLBACK_BASELINE_DEEPER_MAX_ATTEMPTS)
 	{
 		port_log(
@@ -11287,7 +12519,14 @@ static sb32 syNetRollbackTryRestartResimAtDeeperLoad(u32 deeper_load_tick)
 	{
 		return FALSE;
 	}
-	if ((syNetRollbackEpisodeAuthorityEnabled() != FALSE) && (sSYNetRollbackAuthoritativeEpisodeActive != FALSE))
+	/*
+	 * Authoritative peer-locked tuples must not silently rewrite load — except FC
+	 * input-agree recovery, which ring-clamps load locally and must join the peer's
+	 * MIN load (soak 3849468025: Restart refused authoritative → join never ran).
+	 */
+	if ((syNetRollbackEpisodeAuthorityEnabled() != FALSE) &&
+	    (sSYNetRollbackAuthoritativeEpisodeActive != FALSE) &&
+	    (sSYNetRollbackFcStateRecoveryActive == FALSE))
 	{
 		return FALSE;
 	}
@@ -11578,6 +12817,91 @@ static sb32 syNetRollbackTryProceedAfterDivergentLoadBaselineTimeout(u32 load_ti
 }
 
 /*
+ * FC input-agree recovery opened at divergent loads (each peer ring-clamped from its
+ * own frontier). Seals never complete while loads disagree, so DIVERGENT_LOAD_PROCEED
+ * cannot fire. Higher peer must join MIN(local, foreign); if already at MIN and the
+ * peer still has not joined after a streak budget, fail closed — no SoftLip/absorb wait.
+ * See docs/bugs/netplay_fc_recovery_divergent_load_hang_2026-07-27.md.
+ */
+static sb32 syNetRollbackTryFcRecoveryDivergentLoadTimeout(u32 load_tick)
+{
+	u32 foreign;
+	u32 shared_load;
+
+	if (sSYNetRollbackFcStateRecoveryActive == FALSE)
+	{
+		return FALSE;
+	}
+	if (sSYNetRollbackResimBaselineDigestMatched != FALSE)
+	{
+		return FALSE;
+	}
+	foreign = sSYNetRollbackPeerBaselineForeignLoadTick;
+	if ((foreign == ~(u32)0) || (foreign == 0U) || (foreign == load_tick))
+	{
+		return FALSE;
+	}
+	shared_load = (foreign < load_tick) ? foreign : load_tick;
+	if (shared_load < load_tick)
+	{
+		port_log(
+		    "SSB64 NetRollback: FC_RECOVERY_DIVERGENT_LOAD_JOIN load_tick=%u -> %u peer_load=%u streak=%u\n",
+		    load_tick,
+		    shared_load,
+		    foreign,
+		    (unsigned int)sSYNetRollbackBaselineTimeoutStreak);
+		if (syNetRollbackTryNegotiateResimLoadTickWithPeer(shared_load) != FALSE)
+		{
+			sSYNetRollbackBaselineTimeoutStreak = 0U;
+			return TRUE;
+		}
+	}
+	if (sSYNetRollbackBaselineTimeoutStreak < 2U)
+	{
+		/* Lower peer (or join failed once): give the higher peer one more timeout to join. */
+		sSYNetRollbackResimBaselineWaitFrames = 0U;
+		sSYNetRollbackResimAwaitingPeerBaseline = TRUE;
+		sSYNetRollbackResimPending = TRUE;
+		sSYNetRollbackPeerBaselineSendPending = TRUE;
+		port_log(
+		    "SSB64 NetRollback: FC_RECOVERY_DIVERGENT_LOAD_WAIT load_tick=%u peer_load=%u streak=%u "
+		    "(await shared load join)\n",
+		    load_tick,
+		    foreign,
+		    (unsigned int)sSYNetRollbackBaselineTimeoutStreak);
+		return TRUE;
+	}
+	port_log(
+	    "SSB64 NetRollback: FC_RECOVERY_DIVERGENT_LOAD_ABORT load_tick=%u peer_load=%u streak=%u "
+	    "(inputs_agree state recovery — fail closed)\n",
+	    load_tick,
+	    foreign,
+	    (unsigned int)sSYNetRollbackBaselineTimeoutStreak);
+	sSYNetRollbackResimPending = FALSE;
+	sSYNetRollbackResimAwaitingPeerBaseline = FALSE;
+	sSYNetRollbackResimBaselineGateOpen = FALSE;
+	sSYNetRollbackPeerBaselineSendPending = FALSE;
+	sSYNetRollbackResimBaselineWaitFrames = 0U;
+	syNetRollbackClearFcStateRecovery();
+	syNetRollbackClearFcDeepenGuard();
+	if (syNetRollbackEpisodeFsmEnabled() != FALSE)
+	{
+		syNetRollbackEpisodeFsmSessionReset();
+	}
+	else
+	{
+		syNetRollbackEpisodeReset();
+	}
+	if (sSYNetRollbackPeerSnapshotAbort != FALSE)
+	{
+		syNetPeerSendVsSessionEndNotifyPeer();
+		syNetRollbackStopVSSession();
+		syNetPeerStopVSSession();
+	}
+	return TRUE;
+}
+
+/*
  * Behind-frontier episode already covered by a completed span (local and/or peer
  * resolved_through). Abandon seal wait instead of hard-desync. Soak1 642600542:
  * ep0 resolved@420, host opened mismatch@414, guest never sealed → EXHAUSTED.
@@ -11844,6 +13168,10 @@ static void syNetRollbackOnBaselineGateTimeout(void)
 		return;
 	}
 	if (syNetRollbackTryProceedAfterDivergentLoadBaselineTimeout(load_tick) != FALSE)
+	{
+		return;
+	}
+	if (syNetRollbackTryFcRecoveryDivergentLoadTimeout(load_tick) != FALSE)
 	{
 		return;
 	}
@@ -13432,6 +14760,7 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 	u32 local_slot[GMCOMMON_PLAYERS_MAX];
 	SYNetSyncRollbackWorldComponents local_world;
 	const char *proof_class;
+	sb32 input_poisoned;
 
 	if (syNetRollbackIsBattleSimHoldActive() != FALSE)
 	{
@@ -13442,32 +14771,63 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 		    (local != NULL) ? local->fighter : 0U);
 		return;
 	}
+	input_poisoned = syNetRollbackUniverseMismatchInputPoisonedAtLoad(load_tick, NULL, NULL);
 #if defined(PORT) && defined(SSB64_NETMENU)
 	/*
 	 * Stick-onset GGPO / EPISODE_SEAL_ROWS_WAIT (soak1 871504438): peer baseline can land
 	 * while seal rows / stick absorb are still open — fail-closed mid-heal. Defer kill until
 	 * defer-interface wait clears; deeper exhaust still fail-closes after. See
 	 * docs/bugs/netplay_zero_onset_predict_runway_peer_2026-07-20.md.
+	 *
+	 * Hang-exit contract (2026-07-27, soak 891751718 @960): the defer applies only to the
+	 * protocol class (a pending input correction can still heal) and only within a bounded
+	 * budget per load_tick. inputs_agree ∧ state_disagree (replay_determinism) reaches this
+	 * point with deepen already exhausted — no wait can heal it; context windows
+	 * (seal wait on host, stick absorb on guest) re-suppressed every retransmitted peer
+	 * baseline until session timeout. That class falls through to the fail-closed abort.
+	 * See docs/bugs/netplay_close_wire_cap_diverge_hang_exit_2026-07-27.md.
 	 */
-	if (syNetRollbackShouldDeferInterfaceDuringResimWait() != FALSE)
+	if (input_poisoned != FALSE)
 	{
-		port_log(
-		    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (resim_seal_wait) load_tick=%u peer figh=0x%08X local figh=0x%08X\n",
-		    load_tick,
-		    (peer != NULL) ? peer->fighter : 0U,
-		    (local != NULL) ? local->fighter : 0U);
-		return;
-	}
-	if ((sSYNetRollbackStickAbsorbUntilSim != 0U) &&
-	    (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim))
-	{
-		port_log(
-		    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (stick_absorb) load_tick=%u until=%u peer figh=0x%08X local figh=0x%08X\n",
-		    load_tick,
-		    sSYNetRollbackStickAbsorbUntilSim,
-		    (peer != NULL) ? peer->fighter : 0U,
-		    (local != NULL) ? local->fighter : 0U);
-		return;
+		static u32 sSuppressLoadTick = ~(u32)0;
+		static u32 sSuppressCount = 0U;
+		const char *suppress_reason;
+
+		suppress_reason = NULL;
+		if (syNetRollbackShouldDeferInterfaceDuringResimWait() != FALSE)
+		{
+			suppress_reason = "resim_seal_wait";
+		}
+		else if ((sSYNetRollbackStickAbsorbUntilSim != 0U) &&
+			 (syNetInputGetTick() <= sSYNetRollbackStickAbsorbUntilSim))
+		{
+			suppress_reason = "stick_absorb";
+		}
+		if (suppress_reason != NULL)
+		{
+			if (load_tick != sSuppressLoadTick)
+			{
+				sSuppressLoadTick = load_tick;
+				sSuppressCount = 0U;
+			}
+			if (sSuppressCount < SYNETROLLBACK_PEER_DIVERGE_SUPPRESS_BUDGET)
+			{
+				sSuppressCount++;
+				port_log(
+				    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppressed (%s) load_tick=%u budget=%u/%u peer figh=0x%08X local figh=0x%08X\n",
+				    suppress_reason,
+				    load_tick,
+				    (unsigned int)sSuppressCount,
+				    (unsigned int)SYNETROLLBACK_PEER_DIVERGE_SUPPRESS_BUDGET,
+				    (peer != NULL) ? peer->fighter : 0U,
+				    (local != NULL) ? local->fighter : 0U);
+				return;
+			}
+			port_log(
+			    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE suppress budget exhausted (%s) load_tick=%u — fail closed\n",
+			    suppress_reason,
+			    load_tick);
+		}
 	}
 #endif
 	if ((peer != NULL) && (local != NULL) &&
@@ -13495,9 +14855,7 @@ static void syNetRollbackFailPeerSnapshotDiverge(u32 load_tick, const SYNetRollb
 		    local->fighter);
 		return;
 	}
-	proof_class = (syNetRollbackUniverseMismatchInputPoisonedAtLoad(load_tick, NULL, NULL) == FALSE)
-			  ? "replay_determinism"
-			  : "protocol";
+	proof_class = (input_poisoned == FALSE) ? "replay_determinism" : "protocol";
 	port_log(
 	    "SSB64 NetRollback: PEER_SNAPSHOT_DIVERGE load_tick=%u peer figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X wpn=0x%08X map=0x%08X cam=0x%08X | local figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X anim=0x%08X wpn=0x%08X map=0x%08X cam=0x%08X class=%s\n",
 	    load_tick,
@@ -13814,6 +15172,13 @@ sb32 syNetRollbackTakePeerBaselineDigestForSend(u32 *out_load_tick, u32 *out_fig
 {
 	s32 si;
 
+#if defined(SSB64_NETMENU)
+	if (syNetRollbackLightEpisodeIsActive() != FALSE)
+	{
+		sSYNetRollbackPeerBaselineSendPending = FALSE;
+		return FALSE;
+	}
+#endif
 	if ((sSYNetRollbackPeerBaselineSendPending == FALSE) || (out_load_tick == NULL) || (out_figh == NULL) ||
 	    (out_world == NULL) || (out_item == NULL) || (out_rng == NULL) || (out_anim == NULL) ||
 	    (out_weapon == NULL) || (out_map == NULL) || (out_camera == NULL) || (out_effect == NULL))
@@ -13845,12 +15210,33 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 {
 	u32 load_tick;
 	sb32 from_peer_notify;
+	sb32 light;
 
 	if ((mismatch_tick >= target_tick) || (mismatch_tick == 0))
 	{
 		return FALSE;
 	}
 	from_peer_notify = sSYNetRollbackResimFromPeerSymmetric;
+	/*
+	 * Light classifier: pure GGPO input correction — local initiator, no FC state
+	 * recovery, no peer-symmetric authority. These resim locally with no peer
+	 * coordination (GGPO-proper). State recovery / peer-sym keep the full protocol.
+	 */
+	light = FALSE;
+#if defined(SSB64_NETMENU)
+	if ((syNetRollbackLightInputEpisodesEnabled() != FALSE) && (from_peer_notify == FALSE) &&
+	    (sSYNetRollbackFcStateRecoveryActive == FALSE) &&
+	    (syNetRollbackPeerSymmetricAuthoritySlotForPlayer(correction_player) < 0))
+	{
+		light = TRUE;
+		/*
+		 * Cap light span to contiguous remote-confirmed wires so the episode does not
+		 * invent hold_last past the ledger (PRED_CAP micro-cascade SoftLip fork).
+		 */
+		syNetRollbackAlignTargetToWireReady(mismatch_tick, correction_player, &target_tick,
+						    "BEGIN_LIGHT");
+	}
+#endif
 	sSYNetRollbackAuthoritativeEpisodeActive = FALSE;
 	memset(&sSYNetRollbackExecutingEpisode, 0, sizeof(sSYNetRollbackExecutingEpisode));
 	{
@@ -14041,6 +15427,16 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 #endif
 	syNetSyncLogRollbackWorldDetail("rollback_load", load_tick);
 	syNetSyncLogFighterDetail("rollback_load", load_tick);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Arm light before baseline arm so ArmResimBaselineAfterLoad skips the synchronous
+	 * wire send (pending-clear after Arm was too late).
+	 */
+	if (light != FALSE)
+	{
+		sSYNetRollbackLightEpisodeActive = TRUE;
+	}
+#endif
 	syNetRollbackArmResimBaselineAfterLoad(load_tick);
 	{
 		u32 probe_attempts;
@@ -14102,10 +15498,16 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 #endif
 	syNetInputRollbackPrepareForResim(mismatch_tick);
 #ifdef PORT
-	if (syNetRollbackEpisodeFsmEnabled() == FALSE)
+	/*
+	 * Light episodes skip the FSM (no SealInputs, whose seal path normally reconciles) —
+	 * reconcile the span from wire/ledger here, like the non-FSM legacy path.
+	 */
+	if ((syNetRollbackEpisodeFsmEnabled() == FALSE) || (light != FALSE))
 	{
 		syNetInputRollbackReconcileResimSpan(mismatch_tick, target_tick, correction_player);
-		if ((from_peer_notify != FALSE) || (syNetRollbackPeerSymmetricAuthoritySlotForPlayer(correction_player) >= 0))
+		if ((light == FALSE) &&
+		    ((from_peer_notify != FALSE) ||
+		     (syNetRollbackPeerSymmetricAuthoritySlotForPlayer(correction_player) >= 0)))
 		{
 			s32 authority_slot;
 
@@ -14131,9 +15533,13 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 	    (unsigned int)(target_tick - mismatch_tick),
 	    (unsigned int)sSYNetRollbackResimTicksPerFrame,
 	    (unsigned int)sSYNetRollbackResimMaxBurstTicks,
-	    from_peer_notify != FALSE ? "peer_follower" : "local_initiator");
+	    (light != FALSE) ? "local_light" : (from_peer_notify != FALSE ? "peer_follower" : "local_initiator"));
 	sSYNetRollbackResimBudgetedCatchUpLogged = FALSE;
-	if ((from_peer_notify == FALSE) && (syNetRollbackSymmetricWireLockActive() != FALSE))
+	/*
+	 * Light: no symmetric notify — the peer never mirrors a follower episode for a pure
+	 * input correction. See docs/bugs/netplay_light_input_episodes_2026-07-27.md.
+	 */
+	if ((light == FALSE) && (from_peer_notify == FALSE) && (syNetRollbackSymmetricWireLockActive() != FALSE))
 	{
 		sb32 follower_local_auth;
 		s32 notify_slot;
@@ -14152,8 +15558,9 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 	                          target_tick,
 	                          correction_player,
 	                          (from_peer_notify == FALSE) ? TRUE : FALSE,
-	                          from_peer_notify);
-	syNetRollbackMaybeLogEpisodeExec(from_peer_notify);
+	                          from_peer_notify,
+	                          light);
+	syNetRollbackMaybeLogEpisodeExec(from_peer_notify, light);
 	syNetRollbackLogEpisodeProofBegin(correction_player,
 					  mismatch_tick,
 					  load_tick,
@@ -14508,7 +15915,8 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 			(void)syNetRbSnapshotSave(t);
 		}
 #endif
-		if (syNetRollbackEpisodeFsmEnabled() != FALSE)
+		/* Light episodes have no seal/verify — skip per-tick replay-log hashing. */
+		if ((syNetRollbackEpisodeFsmEnabled() != FALSE) && (syNetRollbackLightEpisodeIsActive() == FALSE))
 		{
 			SYNetRollbackHashSet tick_h;
 			u32 tick_inp;
