@@ -4613,6 +4613,21 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 		return;
 	}
 	/*
+	 * LandingLight/Heavy (+ LandingAirNull) own status_vars.common.landing.is_allow_interrupt.
+	 * LandingFallSpecial owns fallspecial.is_allow_interrupt at a different overlay but the
+	 * same scrub memsets would alias it. Zeroing allow on save → light reload skips the
+	 * entire Landing ProcInterrupt block (Turn/Walk/Squat) until anim-end, while the peer's
+	 * first-pass still interrupts → Turn status_total_tics skew → PEER replay_determinism
+	 * (soak1 seed 3078154319 FC@803/@913, Android Turn@795 vs Linux Landing@795–797). See
+	 * docs/bugs/netplay_landing_allow_interrupt_statusvars_scrub_fc_2026-07-28.md.
+	 */
+	if ((status_id == nFTCommonStatusLandingLight) || (status_id == nFTCommonStatusLandingHeavy) ||
+	    (status_id == nFTCommonStatusLandingAirNull) ||
+	    (status_id == nFTCommonStatusLandingFallSpecial))
+	{
+		return;
+	}
+	/*
 	 * Pikachu / NPikachu Quick Attack owns status_vars.pikachu.specialhi at union offset 0.
 	 * Capture quantizes specialhi then scrub runs; without this skip, attackair/dead/rebirth
 	 * zero anim_frames and force Start→Zip catch-up after load. Defer-scope helper already

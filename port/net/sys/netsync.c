@@ -350,6 +350,21 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsSquat(fp)->pass_wait);
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsSquat(fp)->unk_0x8);
 	}
+	/*
+	 * Soak1 3078154319 @795: LandingLight interrupt allow was hash-blind; scrub-poisoned
+	 * light reload skipped Turn/Walk until anim-end → status_total_tics skew on Turn.
+	 * See docs/bugs/netplay_landing_allow_interrupt_statusvars_scrub_fc_2026-07-28.md.
+	 */
+	if ((fp->status_id == nFTCommonStatusLandingLight) || (fp->status_id == nFTCommonStatusLandingHeavy) ||
+	    (fp->status_id == nFTCommonStatusLandingAirNull))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsLanding(fp)->is_allow_interrupt != FALSE));
+	}
+	else if (fp->status_id == nFTCommonStatusLandingFallSpecial)
+	{
+		h = syNetSyncFnvAccumulateU32(h,
+		                              (u32)(ftStatusVarsFallSpecial(fp)->is_allow_interrupt != FALSE));
+	}
 	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{
