@@ -16,6 +16,8 @@ Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authorit
 
 **Canonical State Image (CSI)** — cross-peer / cross-build comparison via explicit serialization (not raw struct `memcmp`) — is documented in [`docs/netplay_canonical_state_image.md`](netplay_canonical_state_image.md).
 
+**Portable input contract** (frozen GGPO stick-replace decision table; pure core in `port/net/sys/netinput_contract.c` with SSB64 gates behind a host vtable; recomp-net export target) is documented in [`docs/netplay_input_contract_portable.md`](netplay_input_contract_portable.md).
+
 ## Debugging environment (commit / edges / pacing)
 
 A **complete index** of `SSB64_*` netplay/netmenu environment variables lives in [`docs/netplay_environment_variables.md`](netplay_environment_variables.md).

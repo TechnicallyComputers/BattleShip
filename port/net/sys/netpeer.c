@@ -244,7 +244,7 @@ static int syNetPeerGetStateDetailDiagLevel(void)
  */
 #define SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S 20
 #define SYNETPEER_FRAME_COMMIT_TOKEN_U32S                                                                              \
-	(9 + SYNET_FRAME_COMMIT_FIGHTER_SLOTS +                                                                          \
+	(10 + SYNET_FRAME_COMMIT_FIGHTER_SLOTS +                                                                         \
 	 (SYNET_FRAME_COMMIT_FIGHTER_SLOTS * SYNETPEER_FRAME_COMMIT_FIGHTER_DIAG_U32S))
 #define SYNETPEER_FRAME_COMMIT_BYTES (12 + 4 + (SYNETPEER_FRAME_COMMIT_TOKEN_U32S * 4) + 4)
 #define SYNETPEER_PACKET_RECV_MAX_INPUT_OR_SEAL                                                                        \
@@ -9394,18 +9394,12 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 		{
 			for (i = 0; i < MAXCONTROLLERS; i++)
 			{
-				sb32 follower_local_auth;
-
 				if (recv_sym_mismatch_tick[i] > 0)
 				{
-					follower_local_auth =
-					    ((recv_sym_notify_flags[i] & SYNETROLLBACK_SYM_NOTIFY_FLAG_FOLLOWER_LOCAL_AUTH) != 0U)
-					        ? TRUE
-					        : FALSE;
 					syNetRollbackOnPeerSymmetricRollbackNotify(
 					    i, (u32)recv_sym_mismatch_tick[i],
 					    (recv_sym_target_tick[i] > 0) ? (u32)recv_sym_target_tick[i] : 0U,
-					    follower_local_auth);
+					    recv_sym_notify_flags[i]);
 				}
 			}
 		}
@@ -9775,6 +9769,19 @@ static struct
 	sb32 matched;
 } sSYNetPeerSnapAgreeOutcome[SYNETPEER_SNAP_AGREE_RING];
 static int sSYNetPeerSnapAgreeEnvCache = -999;
+#if defined(SSB64_NETMENU)
+/*
+ * snap_agree mismatch escalation: N consecutive figh/state mismatches arm an off-grid FC
+ * late mint so input-agree onset recovery runs while the fork is still in-ring (the sparse
+ * 120-tick FC grid detected soak seed 277502444's fork @393 only at FC@721 — 162 ticks past
+ * ring eviction → ONSET_UNRECOVERABLE). Streak counting is monotonic in snap_tick.
+ * See docs/bugs/netplay_snap_agree_mismatch_fc_escalate_2026-07-28.md.
+ */
+static u32 sSYNetPeerSnapAgreeMismatchStreak;
+static u32 sSYNetPeerSnapAgreeStreakLastTick;
+static int sSYNetPeerSnapAgreeEscalateEnvCache = -999;
+static void syNetPeerFrameCommitArmLateMint(u32 validation_tick, const char *reason);
+#endif
 static u32 sSYNetPeerFrameCommitPairingStarvationCount;
 #define SYNETPEER_POST_RECOVERY_CONVERGENCE_EPOCHS 2U
 static sb32 sSYNetPeerPostRecoveryConvergenceWatch;
@@ -10261,6 +10268,9 @@ static void syNetPeerFrameCommitReset(void)
 	sSYNetPeerFrameCommitCadenceLogged = FALSE;
 #if defined(SSB64_NETMENU)
 	sSYNetPeerFrameCommitLateMintPendingTick = 0U;
+	sSYNetPeerSnapAgreeMismatchStreak = 0U;
+	sSYNetPeerSnapAgreeStreakLastTick = 0U;
+	sSYNetPeerSnapAgreeEscalateEnvCache = -999;
 #endif
 	sSYNetPeerSnapAgreeEnvCache = -999;
 	memset(&sSYNetPeerFrameCommitDiag, 0, sizeof(sSYNetPeerFrameCommitDiag));
@@ -10470,22 +10480,51 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 		if (local->input_digest != peer->input_digest)
 		{
 			u32 snap_tick;
+#if defined(SSB64_NETMENU)
+			sb32 escalate_bypass;
+
+			escalate_bypass = syNetPeerSnapAgreeEscalateBypassInputSkew();
+#else
+			sb32 escalate_bypass = FALSE;
+#endif
 
 			snap_tick = (vtick > 0U) ? (vtick - 1U) : 0U;
 			/*
 			 * Prediction miss already queued as input GGPO, or authority peer waiting
 			 * for that episode: do not open competing FC state recovery.
 			 * See docs/bugs/netplay_fc_rebirth_stick_drop_input_skew_2026-07-12.md.
+			 *
+			 * Exception (NETMENU): sustained snap_agree mismatch streak already armed
+			 * off-grid FC escalate — light GGPO will not heal the state fork, and waiting
+			 * for input digests to converge ages onset out of the ring (soak 1221028269).
 			 */
-			if (syNetRollbackDeferredInputCorrectionCoversTick(snap_tick) != FALSE)
+			if (escalate_bypass == FALSE)
 			{
+				if (syNetRollbackDeferredInputCorrectionCoversTick(snap_tick) != FALSE)
+				{
+					if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
+					{
+						sSYNetPeerFrameCommitMismatchLogCount++;
+						port_log(
+						    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_PENDING_GGPO validation=%u snap=%u "
+						    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
+						    "defer to input GGPO\n",
+						    vtick,
+						    snap_tick,
+						    local->fighter_digest,
+						    peer->fighter_digest,
+						    local->input_digest,
+						    peer->input_digest);
+					}
+					return;
+				}
 				if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
 				{
 					sSYNetPeerFrameCommitMismatchLogCount++;
 					port_log(
-					    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_PENDING_GGPO validation=%u snap=%u "
+					    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_WAIT validation=%u snap=%u "
 					    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
-					    "defer to input GGPO\n",
+					    "not arming state resim (expect peer input GGPO)\n",
 					    vtick,
 					    snap_tick,
 					    local->fighter_digest,
@@ -10495,21 +10534,16 @@ static void syNetPeerFrameCommitTryCompare(u32 vtick, const SYNetFrameCommitToke
 				}
 				return;
 			}
-			if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
-			{
-				sSYNetPeerFrameCommitMismatchLogCount++;
-				port_log(
-				    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_WAIT validation=%u snap=%u "
-				    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
-				    "not arming state resim (expect peer input GGPO)\n",
-				    vtick,
-				    snap_tick,
-				    local->fighter_digest,
-				    peer->fighter_digest,
-				    local->input_digest,
-				    peer->input_digest);
-			}
-			return;
+			port_log(
+			    "SSB64 NetPeer: FRAME_COMMIT_INPUT_SKEW_ESCALATE_BYPASS validation=%u snap=%u "
+			    "local figh=0x%08X peer figh=0x%08X inp_local=0x%08X inp_peer=0x%08X — "
+			    "snap_agree streak armed; arming FC state recovery\n",
+			    vtick,
+			    snap_tick,
+			    local->fighter_digest,
+			    peer->fighter_digest,
+			    local->input_digest,
+			    peer->input_digest);
 		}
 		if (syNetPeerFrameCommitDiagLevel() >= 2)
 		{
@@ -10625,6 +10659,7 @@ static void syNetPeerSendFrameCommitPacket(u32 validation_tick, const SYNetFrame
 	syNetPeerWriteU32(&cursor, t->item_digest);
 	syNetPeerWriteU32(&cursor, t->rng_digest);
 	syNetPeerWriteU32(&cursor, t->effect_digest);
+	syNetPeerWriteU32(&cursor, t->state_agreed_tick);
 	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
 	{
 		syNetPeerWriteU32(&cursor, t->fighter_slot_digest[si]);
@@ -10680,6 +10715,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	peer.item_digest = syNetPeerReadU32(&c);
 	peer.rng_digest = syNetPeerReadU32(&c);
 	peer.effect_digest = syNetPeerReadU32(&c);
+	peer.state_agreed_tick = syNetPeerReadU32(&c);
 	for (si = 0; si < SYNET_FRAME_COMMIT_FIGHTER_SLOTS; si++)
 	{
 		peer.fighter_slot_digest[si] = syNetPeerReadU32(&c);
@@ -10717,6 +10753,17 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 	else
 	{
 		syNetPeerFrameCommitStorePeerPending(validation_tick, &peer);
+#if defined(SSB64_NETMENU)
+		/*
+		 * Off-grid token we never minted (peer snap_agree escalation): late-mint our
+		 * matching token from the snapshot ring so the pair compares instead of the
+		 * pending slot rotting. Grid ids we are about to mint dedupe via Last check.
+		 */
+		if (validation_tick > sSYNetPeerLastFrameCommitValidationTick)
+		{
+			syNetPeerFrameCommitArmLateMint(validation_tick, "peer token unmatched");
+		}
+#endif
 	}
 }
 
@@ -10741,6 +10788,48 @@ static sb32 syNetPeerSnapAgreeEnabled(void)
 	}
 	return (sSYNetPeerSnapAgreeEnvCache != 0) ? TRUE : FALSE;
 }
+
+#if defined(SSB64_NETMENU)
+/* Consecutive-mismatch threshold for off-grid FC escalation (0 disables). */
+static u32 syNetPeerSnapAgreeEscalateStreak(void)
+{
+	const char *e;
+	int v;
+
+	if (sSYNetPeerSnapAgreeEscalateEnvCache != -999)
+	{
+		return (u32)sSYNetPeerSnapAgreeEscalateEnvCache;
+	}
+	v = 8;
+	e = getenv("SSB64_NETPLAY_SNAP_AGREE_ESCALATE");
+	if ((e != NULL) && (e[0] != '\0'))
+	{
+		v = atoi(e);
+		if (v < 0)
+		{
+			v = 0;
+		}
+		if (v > 64)
+		{
+			v = 64;
+		}
+	}
+	sSYNetPeerSnapAgreeEscalateEnvCache = v;
+	return (u32)v;
+}
+
+sb32 syNetPeerSnapAgreeEscalateBypassInputSkew(void)
+{
+	u32 escalate;
+
+	escalate = syNetPeerSnapAgreeEscalateStreak();
+	if (escalate == 0U)
+	{
+		return FALSE;
+	}
+	return (sSYNetPeerSnapAgreeMismatchStreak >= escalate) ? TRUE : FALSE;
+}
+#endif
 
 static void syNetPeerSnapAgreeStoreLocal(u32 snap_tick, u32 figh, u32 world, u32 item, u32 rng, u32 wpn)
 {
@@ -10922,10 +11011,41 @@ static void syNetPeerSnapAgreeTryMatch(u32 snap_tick, u32 local_figh, u32 local_
 		sSYNetPeerFrameCommitDiag.snap_agree_matched++;
 		syNetPeerSnapAgreeNoteOutcome(snap_tick, TRUE);
 		syNetRollbackNoteFrameCommitStateAgreed(snap_tick + 1U);
+#if defined(SSB64_NETMENU)
+		if (snap_tick >= sSYNetPeerSnapAgreeStreakLastTick)
+		{
+			sSYNetPeerSnapAgreeMismatchStreak = 0U;
+			sSYNetPeerSnapAgreeStreakLastTick = snap_tick;
+		}
+#endif
 		return;
 	}
 	sSYNetPeerFrameCommitDiag.snap_agree_mismatch++;
 	syNetPeerSnapAgreeNoteOutcome(snap_tick, FALSE);
+#if defined(SSB64_NETMENU)
+	/*
+	 * Sustained figh/state mismatch with the sparse FC grid still far away: request a full
+	 * FC token exchange now (input digests + fighter slots), while the fork onset is still
+	 * within the snapshot ring. snap_agree itself never resims — recovery semantics stay
+	 * with the FC input-agree path.
+	 */
+	if (snap_tick > sSYNetPeerSnapAgreeStreakLastTick)
+	{
+		u32 escalate;
+
+		sSYNetPeerSnapAgreeStreakLastTick = snap_tick;
+		sSYNetPeerSnapAgreeMismatchStreak++;
+		escalate = syNetPeerSnapAgreeEscalateStreak();
+		if ((escalate > 0U) && ((sSYNetPeerSnapAgreeMismatchStreak % escalate) == 0U))
+		{
+			port_log(
+			    "SSB64 NetPeer: SNAP_AGREE_ESCALATE snap=%u streak=%u — arm off-grid FC mint\n",
+			    snap_tick,
+			    sSYNetPeerSnapAgreeMismatchStreak);
+			syNetPeerFrameCommitArmLateMint(snap_tick + 1U, "snap_agree mismatch streak");
+		}
+	}
+#endif
 	if (sSYNetPeerFrameCommitMismatchLogCount < 16U)
 	{
 		sSYNetPeerFrameCommitMismatchLogCount++;
@@ -11412,7 +11532,7 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	{
 		syNetRollbackNotePeerResolvedThrough(resolved_through);
 	}
-	if (syNetRollbackAcceptPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick) == FALSE)
+	if (syNetRollbackAcceptPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick, flags) == FALSE)
 	{
 		sSYNetPeerPacketsReceived++;
 		return;
@@ -11428,9 +11548,7 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	    resolved_through,
 	    (unsigned int)flags,
 	    (unsigned int)wire_version);
-	syNetRollbackOnPeerSymmetricRollbackNotifyEx(
-	    (s32)slot, mismatch_tick, target_tick, load_tick, epoch_id,
-	    ((flags & SYNETROLLBACK_SYNC_FLAG_FOLLOWER_LOCAL_AUTH) != 0U) ? TRUE : FALSE);
+	syNetRollbackOnPeerSymmetricRollbackNotifyEx((s32)slot, mismatch_tick, target_tick, load_tick, epoch_id, flags);
 }
 
 static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
@@ -11800,6 +11918,10 @@ static void syNetPeerFrameCommitAfterValidation(u32 validation_tick, u32 win_beg
 	syNetInputMaybeLogFrameCommitLocalAuthorityDiag(validation_tick, win_begin);
 	syNetFrameCommitBuildToken(&tok, validation_tick, win_begin, win_len, sSYNetPeerLocalPlayer, sSYNetPeerRemotePlayer,
 				  sSYNetPeerExtraLocalSenderSlot, sSYNetPeerPeerSenderCount, sSYNetPeerPeerSenderSlots);
+#if defined(SSB64_NETMENU)
+	/* Bilateral onset scan floor — see FRAME_COMMIT_INPUT_AGREE_ONSET / state_agreed_tick. */
+	tok.state_agreed_tick = syNetRollbackGetLastFrameCommitStateAgreedTick();
+#endif
 	syNetInputMaybeLogFrameCommitSealLocalMismatch(validation_tick, win_begin, validation_tick);
 	syNetPeerFrameCommitStoreLocal(validation_tick, &tok);
 	syNetPeerSendFrameCommitPacket(validation_tick, &tok);
@@ -12207,13 +12329,67 @@ void syNetPeerLogStats(void)
  * snapshot ring at validation-1 and the input digest from settled history. tick_anchor is
  * snap_tick (validation-1) so late mint pairs with an on-time peer (GetTick-as-anchor made
  * completed=845 vs 840 PAIRING_FAIL).
+ *
+ * Soak 190673804 / soak1 00:27 (2026-07-28): light resim ate FC grids → ONSET_UNRECOVERABLE.
+ * Live FuncUpdate early-returns while IsResimulating; BattleSimOnly must call
+ * NoteResimCompletedSimStep (AfterCompleted resim-arm alone is unreachable). Keep pending
+ * until ring_cap-2; FORCE mint when age > half ring. See
+ * docs/bugs/netplay_fc_late_mint_resim_grid_skip_2026-07-28.md.
  */
+static void syNetPeerFrameCommitArmLateMint(u32 validation_tick, const char *reason)
+{
+	if ((validation_tick == 0U) || (validation_tick <= sSYNetPeerLastFrameCommitValidationTick))
+	{
+		return;
+	}
+	if (sSYNetPeerFrameCommitLateMintPendingTick != 0U)
+	{
+		if (sSYNetPeerFrameCommitLateMintPendingTick == validation_tick)
+		{
+			return;
+		}
+		/* Keep the oldest pending grid id — dropping it loses the in-ring onset. */
+		if (sSYNetPeerFrameCommitLateMintPendingTick < validation_tick)
+		{
+			return;
+		}
+	}
+	sSYNetPeerFrameCommitLateMintPendingTick = validation_tick;
+	port_log(
+	    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_ARM validation=%u (%s)\n",
+	    validation_tick,
+	    (reason != NULL) ? reason : "pending");
+}
+
+static void syNetPeerFrameCommitArmLateMintIfGridBoundary(u32 completed_tick)
+{
+	u32 fc_interval;
+	u32 validation_tick;
+
+	fc_interval = syNetPeerNetSyncLogInterval();
+	if (fc_interval < 1U)
+	{
+		fc_interval = 1U;
+	}
+	if ((completed_tick == 0U) || ((completed_tick % fc_interval) != 0U))
+	{
+		return;
+	}
+	validation_tick = completed_tick + 1U;
+	syNetPeerFrameCommitArmLateMint(validation_tick, "resim skipped grid boundary");
+}
+
 static void syNetPeerFrameCommitTryLateMint(u32 completed_tick)
 {
 	u32 validation_tick;
 	u32 win_begin;
 	u32 win_length;
 	u32 val_win;
+	u32 ring_cap;
+	u32 max_late;
+	u32 force_age;
+	u32 age;
+	sb32 deferred_blocks;
 
 	validation_tick = sSYNetPeerFrameCommitLateMintPendingTick;
 	if (validation_tick == 0U)
@@ -12227,20 +12403,36 @@ static void syNetPeerFrameCommitTryLateMint(u32 completed_tick)
 	}
 	/*
 	 * Snapshot ring must still hold validation-1 or BuildToken silently falls back to live
-	 * hashes (wrong tick). Blockers clear within a few ticks; 96 is well inside ring depth.
+	 * hashes (wrong tick). Bound late wait to ring_cap-2 (was hardcoded 96).
 	 */
-	if ((completed_tick > validation_tick) && ((completed_tick - validation_tick) > 96U))
+	ring_cap = syNetRbSnapshotRingCapacity();
+	max_late = (ring_cap > 2U) ? (ring_cap - 2U) : 1U;
+	force_age = (max_late > 1U) ? (max_late / 2U) : 1U;
+	age = 0U;
+	if (completed_tick > validation_tick)
+	{
+		age = completed_tick - validation_tick;
+	}
+	if (age > max_late)
 	{
 		port_log(
-		    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_DROP validation=%u completed=%u (ring depth)\n",
+		    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_DROP validation=%u completed=%u age=%u "
+		    "max_late=%u (ring depth)\n",
 		    validation_tick,
-		    completed_tick);
+		    completed_tick,
+		    age,
+		    max_late);
 		sSYNetPeerFrameCommitLateMintPendingTick = 0U;
 		return;
 	}
+	deferred_blocks = FALSE;
 	if ((syNetRollbackDeferredInputCorrectionCoversTick(completed_tick) != FALSE) ||
 	    ((completed_tick > 0U) && (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)) ||
 	    (syNetRollbackDeferredInputCorrectionCoversTick(validation_tick - 1U) != FALSE))
+	{
+		deferred_blocks = TRUE;
+	}
+	if ((deferred_blocks != FALSE) && (age <= force_age))
 	{
 		return;
 	}
@@ -12254,10 +12446,23 @@ static void syNetPeerFrameCommitTryLateMint(u32 completed_tick)
 		win_begin = validation_tick - val_win;
 		win_length = val_win;
 	}
-	port_log(
-	    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT validation=%u completed=%u\n",
-	    validation_tick,
-	    completed_tick);
+	if (deferred_blocks != FALSE)
+	{
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_FORCE validation=%u completed=%u age=%u "
+		    "force_age=%u (deferred storm — mint before ring eviction)\n",
+		    validation_tick,
+		    completed_tick,
+		    age,
+		    force_age);
+	}
+	else
+	{
+		port_log(
+		    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT validation=%u completed=%u\n",
+		    validation_tick,
+		    completed_tick);
+	}
 	syNetPeerFrameCommitAfterValidation(validation_tick, win_begin, win_length);
 }
 #endif
@@ -12274,6 +12479,14 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 	}
 	if (syNetRollbackIsResimulating() != FALSE)
 	{
+#if defined(SSB64_NETMENU)
+		/*
+		 * Belt-and-suspenders: live FuncUpdate normally early-returns before this call
+		 * while resimulating (BattleSimOnly owns the step). Keep the arm if any path
+		 * still reaches AfterCompleted during resim.
+		 */
+		syNetPeerFrameCommitArmLateMintIfGridBoundary(syNetInputGetTick());
+#endif
 		return;
 	}
 #if defined(SSB64_NETMENU)
@@ -12311,16 +12524,16 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		u32 fc_interval;
 
 		completed_tick = syNetInputGetTick();
-		/*
-		 * Shared FC validation grid (session fc_validation_ticks, default 120).
-		 * Former cadence minted at whatever completed+1 first satisfied
-		 * (validation - Last) >= interval — peers left Wait with different Last and
-		 * forever chose distinct validation_tick ids → sent=N recv=N compared=0
-		 * (soak seed 2908879106). Both peers mint only when completed hits the grid
-		 * so validation_tick (= completed+1) matches. Item/Ness stress interval cap
-		 * must not choose the id (asymmetric cap → same pairing miss). See
-		 * docs/bugs/netplay_frame_commit_pairing_grid_2026-07-26.md.
-		 */
+/*
+ * Shared FC validation grid (session fc_validation_ticks, default 120).
+ * Former cadence minted at whatever completed+1 first satisfied
+ * (validation - Last) >= interval — peers left Wait with different Last and
+ * forever chose distinct validation_tick ids → sent=N recv=N compared=0
+ * (soak seed 2908879106). Both peers mint only when completed hits the grid
+ * so validation_tick (= completed+1) matches. Item/Ness stress interval cap
+ * must not choose the id (asymmetric cap → same pairing miss). See
+ * docs/bugs/netplay_frame_commit_pairing_grid_2026-07-26.md.
+ */
 		fc_interval = syNetPeerNetSyncLogInterval();
 		if (fc_interval < 1U)
 		{
@@ -12351,10 +12564,7 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		     (syNetRollbackDeferredInputCorrectionCoversTick(completed_tick - 1U) != FALSE)))
 		{
 #if defined(SSB64_NETMENU)
-			sSYNetPeerFrameCommitLateMintPendingTick = validation_tick;
-			port_log(
-			    "SSB64 NetPeer: FRAME_COMMIT_LATE_MINT_ARM validation=%u (deferred covers boundary)\n",
-			    validation_tick);
+			syNetPeerFrameCommitArmLateMint(validation_tick, "deferred covers boundary");
 #endif
 			return;
 		}
@@ -12390,6 +12600,24 @@ void syNetPeerFrameCommitAfterCompletedSimStep(void)
 		 */
 		syNetPeerFrameCommitAfterValidation(validation_tick, win_begin, win_length);
 	}
+#endif
+}
+
+void syNetPeerFrameCommitNoteResimCompletedSimStep(void)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * BattleSimOnly path: FuncUpdate does not call AfterCompleted while IsResimulating
+	 * (soak1 2026-07-28 00:27: LATE_MINT_ARM never logged; android resim load_tick=480).
+	 * Arm only — TryLateMint / FORCE still run on the next live AfterCompleted.
+	 */
+	if (sSYNetPeerIsActive == FALSE)
+	{
+		return;
+	}
+	syNetPeerFrameCommitArmLateMintIfGridBoundary(syNetInputGetTick());
+#else
+	(void)0;
 #endif
 }
 

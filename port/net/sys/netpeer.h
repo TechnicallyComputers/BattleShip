@@ -151,6 +151,12 @@ extern void syNetPeerTrySendResimPostDigest(u32 epoch_id, u32 load_tick, u32 mis
 extern void syNetPeerArmPostRecoveryConvergenceWatch(void);
 extern void syNetPeerFrameCommitAfterCompletedSimStep(void); /* Post-advance frame-commit token sample/send/compare. */
 /*
+ * Light/heavy resim completes ticks via scVSBattleFuncUpdateBattleSimOnly — FuncUpdate early-returns
+ * before FrameCommitAfterCompletedSimStep. Call after AfterBattleUpdate / before Advance so grid
+ * boundaries still LATE_MINT_ARM (see docs/bugs/netplay_fc_late_mint_resim_grid_skip_2026-07-28.md).
+ */
+extern void syNetPeerFrameCommitNoteResimCompletedSimStep(void);
+/*
  * Diagnostic sim-state/fighter-slot-hash trace (env-gated, no-op unless SSB64_NETPLAY_SIM_STATE_TICK_INTERVAL
  * or a sibling trace env is set). Must be called AFTER syNetRollbackAfterBattleUpdate() (post-quantize) so the
  * logged hash matches what syNetFrameCommitBuildToken actually compares, not the pre-quantize live state.
@@ -188,6 +194,12 @@ extern u32 syNetPeerGetRemoteSimRunwayCap(void);
 extern sb32 syNetPeerSnapAgreeTryConfirmTick(u32 snap_tick);
 /* TRUE when peer snap hashes for snap_tick were received and disagreed with local. */
 extern sb32 syNetPeerSnapAgreeTickKnownMismatch(u32 snap_tick);
+/*
+ * TRUE when snap_agree mismatch streak has reached the escalate threshold — FC input-digest
+ * skew must not block state recovery (soak 1221028269: escalate minted from 1591 but
+ * INPUT_SKEW_WAIT dropped every compare until 1697 → onset aged out of ring).
+ */
+extern sb32 syNetPeerSnapAgreeEscalateBypassInputSkew(void);
 #endif
 /* `sim_tick + D` with saturating add (base strict frontier; no extra slack). */
 extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);

@@ -22,6 +22,7 @@
 #include <sys/netrollbacksnapshot.h>
 #include <sys/netsession_params.h>
 #include <sys/netinput_timeline.h>
+#include <sys/netinput_contract.h>
 #include <sys/taskman.h>
 
 #ifdef PORT
@@ -1502,6 +1503,9 @@ static sb32 syNetInputStickReplaceHashConfirmAllowsPromote(s32 player, u32 sim_t
                                                           const SYNetInputFrame *old_frame,
                                                           const SYNetInputFrame *wire);
 static void syNetInputApplyAnalogPredictionDecay(s8 *stick_x, s8 *stick_y, u32 lead_ticks);
+/* Portable contract bridge (netinput_contract.c): env-tuned params + frame view. */
+static const SYNetInputContractParams *syNetInputContractParamsCurrent(void);
+static void syNetInputContractFrameFrom(const SYNetInputFrame *src, SYNetInputContractFrame *dst);
 #endif
 /* One-frame taps (Start pause) live in button_tap; history rings must OR tap into stored buttons. */
 static u16 syNetInputButtonsFromController(const SYController *controller)
@@ -4430,13 +4434,29 @@ static sb32 syNetInputTryFillFromLastNonNeutral(s32 player, u32 tick, SYNetInput
 	if ((last_confirmed->is_valid != FALSE) && (last_nn->tick <= last_confirmed->tick))
 	{
 		u32 nn_age;
+		u32 confirm_lead;
 
 		/*
 		 * True release: last_confirmed is newer near-neutral and remote is idle — keep
-		 * refuse. Stick still hot: allow last_nn through the neutral confirm gap.
+		 * refuse. Stick still hot: allow last_nn through a *one-tick* neutral confirm gap
+		 * (dual-hot brief wire hole — soak Fix2). Durable release must not reinflate
+		 * hold_last for confirm+2…: soak1 seed 2833555211 LEDGER_REFRESH release @772
+		 * then hold_last -41 @774-776 via last_nn → SoftLip TopN / FC@780 input skew.
+		 * See docs/bugs/netplay_hold_last_nn_reinflate_after_release_2026-07-28.md.
 		 */
-		if ((syNetInputFrameSticksNearNeutral(last_confirmed) == FALSE) ||
-		    (syNetInputSlotStickHotRecent(player, tick, 8U) == FALSE))
+		if (syNetInputFrameSticksNearNeutral(last_confirmed) == FALSE)
+		{
+			return FALSE;
+		}
+		if ((syNetInputFrameIsRemoteStrictConfirmed(last_confirmed) != FALSE))
+		{
+			confirm_lead = (tick > last_confirmed->tick) ? (tick - last_confirmed->tick) : 0U;
+			if (confirm_lead != 1U)
+			{
+				return FALSE;
+			}
+		}
+		if (syNetInputSlotStickHotRecent(player, tick, 8U) == FALSE)
 		{
 			return FALSE;
 		}
@@ -5550,120 +5570,28 @@ sb32 syNetInputGgpoStickNeutralAnalogFlip(const SYNetInputFrame *published, cons
 }
 
 /*
- * Predicted ±85 on one axis vs remote neutral/partial on that axis — heuristic promotion artifact,
- * not a committed digital jump. Suppresses oversized GGPO resim when promotion already slipped through.
+ * Runway significance (buttons / onset-from-neutral / facing flip / large delta /
+ * deadband / predicted false-digital heuristic) is owned by the portable contract
+ * core — see netinput_contract.c and docs/netplay_input_contract_portable.md.
  */
-static sb32 syNetInputGgpoFalseDigitalHeuristicMismatch(const SYNetInputFrame *published,
-                                                        const SYNetInputFrame *remote)
-{
-	s32 weak_thresh;
-
-	if ((published == NULL) || (remote == NULL))
-	{
-		return FALSE;
-	}
-	weak_thresh = 25;
-	if ((syNetInputStickAxisIsDigital(published->stick_y) != FALSE) &&
-	    (syNetInputStickAxisIsDigital(remote->stick_y) == FALSE) &&
-	    (syNetInputAbsS8Diff(published->stick_x, 0) <= 14) && (syNetInputAbsS8Diff(remote->stick_x, 0) <= 14) &&
-	    (syNetInputAbsS8Diff(remote->stick_y, 0) <= weak_thresh))
-	{
-		return TRUE;
-	}
-	if ((syNetInputStickAxisIsDigital(published->stick_x) != FALSE) &&
-	    (syNetInputStickAxisIsDigital(remote->stick_x) == FALSE) &&
-	    (syNetInputAbsS8Diff(published->stick_y, 0) <= 14) && (syNetInputAbsS8Diff(remote->stick_y, 0) <= 14) &&
-	    (syNetInputAbsS8Diff(remote->stick_x, 0) <= weak_thresh))
-	{
-		return TRUE;
-	}
-	return FALSE;
-}
-
 sb32 syNetInputGameplayCorrectionIsSignificantEx(const SYNetInputFrame *old, const SYNetInputFrame *new,
                                                 sb32 correction_is_predicted)
 {
-	u32 deadband;
-	u32 facing_thresh;
-	u32 large_delta;
+	SYNetInputContractFrame old_view;
+	SYNetInputContractFrame new_view;
 
 	if ((old == NULL) || (new == NULL))
 	{
 		return TRUE;
 	}
-	if (old->buttons != new->buttons)
-	{
-		return TRUE;
-	}
-	if ((correction_is_predicted != FALSE) &&
-	    (syNetInputGgpoFalseDigitalHeuristicMismatch(old, new) != FALSE))
-	{
-		return FALSE;
-	}
-	if (correction_is_predicted != FALSE)
-	{
-		deadband = syNetInputGgpoStickDeadbandPredict();
-	}
-	else
-	{
-		deadband = syNetInputGgpoStickDeadband();
-	}
-#ifdef PORT
-	facing_thresh = syNetInputAnalogOnsetFacingThresh();
-	large_delta = syNetInputAnalogOnsetLargeDelta();
-	if (syNetInputFrameSticksNearNeutralWithDeadband(old, deadband) != FALSE)
-	{
-		if (syNetInputFrameSticksNearNeutralWithDeadband(new, deadband) == FALSE)
-		{
-			return TRUE;
-		}
-		if ((syNetInputAbsS8Diff(new->stick_x, 0) > 25) || (syNetInputAbsS8Diff(new->stick_y, 0) > 25))
-		{
-			return TRUE;
-		}
-	}
-	if ((syNetInputAbsS8Diff(old->stick_x, 0) > (s32)facing_thresh) &&
-	    (syNetInputAbsS8Diff(new->stick_x, 0) > (s32)facing_thresh) &&
-	    (syNetInputStickSign(old->stick_x) != syNetInputStickSign(new->stick_x)))
-	{
-		return TRUE;
-	}
-	if (syNetInputAbsS8Diff(old->stick_x, new->stick_x) > (s32)large_delta)
-	{
-		return TRUE;
-	}
-	if (syNetInputAbsS8Diff(old->stick_y, new->stick_y) > (s32)large_delta)
-	{
-		return TRUE;
-	}
-#endif
-	if (deadband == 0U)
-	{
-		return ((old->stick_x != new->stick_x) || (old->stick_y != new->stick_y)) ? TRUE : FALSE;
-	}
-	if (syNetInputAbsS8Diff(old->stick_x, new->stick_x) > (s32)deadband)
-	{
-		return TRUE;
-	}
-	if (syNetInputAbsS8Diff(old->stick_y, new->stick_y) > (s32)deadband)
-	{
-		return TRUE;
-	}
-	if ((correction_is_predicted != FALSE) &&
-	    (syNetInputFrameSticksNearNeutralWithDeadband(old, deadband) == FALSE) &&
-	    (syNetInputFrameSticksNearNeutralWithDeadband(new, deadband) == FALSE) &&
-	    (syNetInputStickSameAnalogIntent(old->stick_x, old->stick_y, new->stick_x, new->stick_y) != FALSE))
-	{
-		u32 same_intent_tol;
-
-		same_intent_tol = SYNETINPUT_ANALOG_SAME_INTENT_TOLERANCE;
-		if ((syNetInputAbsS8Diff(old->stick_x, new->stick_x) <= (s32)same_intent_tol) &&
-		    (syNetInputAbsS8Diff(old->stick_y, new->stick_y) <= (s32)same_intent_tol))
-		{
-			return FALSE;
-		}
-	}
-	return FALSE;
+	syNetInputContractFrameFrom(old, &old_view);
+	syNetInputContractFrameFrom(new, &new_view);
+	return (syNetInputContractCorrectionIsSignificant(&old_view, &new_view,
+	                                                  (correction_is_predicted != FALSE) ? (uint8_t)1
+	                                                                                     : (uint8_t)0,
+	                                                  syNetInputContractParamsCurrent()) != 0U)
+	           ? TRUE
+	           : FALSE;
 }
 
 sb32 syNetInputGameplayCorrectionIsSignificant(const SYNetInputFrame *old, const SYNetInputFrame *new)
@@ -5686,35 +5614,19 @@ static void syNetInputMaybeStorePredictedOverlayForDiag(s32 player, u32 tick);
  */
 static sb32 syNetInputStickReplaceIsRelease(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
 {
-	u32 confirmed_db;
-	s32 old_mag;
-	s32 wire_mag;
+	SYNetInputContractFrame old_view;
+	SYNetInputContractFrame wire_view;
 
 	if ((old_frame == NULL) || (wire == NULL))
 	{
 		return FALSE;
 	}
-	confirmed_db = syNetInputGgpoStickDeadband();
-	if (syNetInputFrameSticksNearNeutralWithDeadband(old_frame, confirmed_db) != FALSE)
-	{
-		return FALSE;
-	}
-	if (syNetInputFrameSticksNearNeutralWithDeadband(wire, confirmed_db) != FALSE)
-	{
-		return TRUE;
-	}
-	old_mag = syNetInputAbsS8Diff(old_frame->stick_x, 0);
-	if (syNetInputAbsS8Diff(old_frame->stick_y, 0) > old_mag)
-	{
-		old_mag = syNetInputAbsS8Diff(old_frame->stick_y, 0);
-	}
-	wire_mag = syNetInputAbsS8Diff(wire->stick_x, 0);
-	if (syNetInputAbsS8Diff(wire->stick_y, 0) > wire_mag)
-	{
-		wire_mag = syNetInputAbsS8Diff(wire->stick_y, 0);
-	}
-	/* Clearly shedding magnitude (not a same-intent ramp up). */
-	return ((wire_mag + (s32)confirmed_db) < old_mag) ? TRUE : FALSE;
+	syNetInputContractFrameFrom(old_frame, &old_view);
+	syNetInputContractFrameFrom(wire, &wire_view);
+	return (syNetInputContractStickReplaceIsRelease(&old_view, &wire_view,
+	                                                syNetInputContractParamsCurrent()) != 0U)
+	           ? TRUE
+	           : FALSE;
 }
 
 sb32 syNetInputShouldDeferPredictedAnalogCorrection(s32 player, u32 sim_tick, const SYNetInputFrame *published,
@@ -5790,43 +5702,184 @@ sb32 syNetInputJibakuStickAbsorbBlocksGgpo(s32 player, u32 sim_tick, const SYNet
 	return FALSE;
 }
 
+/*
+ * Portable-contract bridge: env-tuned thresholds for netinput_contract.c. Refilled per
+ * call (getters cache; session resets can rewrite the env caches) — single sim thread.
+ */
+static const SYNetInputContractParams *syNetInputContractParamsCurrent(void)
+{
+	static SYNetInputContractParams sParams;
+
+	syNetInputContractParamsInitDefaults(&sParams);
+	sParams.confirmed_deadband = syNetInputGgpoStickDeadband();
+	sParams.predict_deadband = syNetInputGgpoStickDeadbandPredict();
+	sParams.micro_deadband = syNetInputGgpoStickCompletedSimMicroDeadband();
+	sParams.continuity_deadband = syNetInputGgpoStickCompletedSimContinuityDeadband();
+	sParams.analog_min_mag = syNetInputAnalogPredMinMag();
+	sParams.same_intent_tolerance = SYNETINPUT_ANALOG_SAME_INTENT_TOLERANCE;
+	sParams.onset_facing_thresh = syNetInputAnalogOnsetFacingThresh();
+	sParams.onset_large_delta = syNetInputAnalogOnsetLargeDelta();
+	sParams.dash_gate_min = SYNETINPUT_DASH_STICK_RANGE_MIN;
+	return &sParams;
+}
+
+static void syNetInputContractFrameFrom(const SYNetInputFrame *src, SYNetInputContractFrame *dst)
+{
+	dst->tick = src->tick;
+	dst->buttons = src->buttons;
+	dst->stick_x = src->stick_x;
+	dst->stick_y = src->stick_y;
+	dst->is_predicted = (src->is_predicted != FALSE) ? (uint8_t)1 : (uint8_t)0;
+}
+
+/*
+ * SSB64 host gates behind the portable contract vtable. The core queries these lazily
+ * in decision order (a gate only runs when every portable condition ahead of it holds),
+ * matching the pre-extraction inline evaluation order exactly.
+ * Binding table + rationale: docs/netplay_input_contract_portable.md.
+ */
+typedef struct SYNetInputStickReplaceGateCtx
+{
+	s32 player;
+	u32 sim_tick;
+	const SYNetInputFrame *old_frame;
+	const SYNetInputFrame *wire;
+	const SYNetInputFrame *defer_published;
+} SYNetInputStickReplaceGateCtx;
+
+/*
+ * Same sticks can still hide a BRANCH_DEFERRED status miss (Turn stayed while owner
+ * Dashed). Predicted→wire must rewind when a deferred ticket exists.
+ * See docs/bugs/netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md.
+ */
+static uint8_t syNetInputGateEqualPredictedForceRewind(void *ctx)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+
+	return (syNetplayBranchDeferredNeedsRewind(gate->player, gate->sim_tick) != FALSE) ? (uint8_t)1
+	                                                                                   : (uint8_t)0;
+}
+
+/*
+ * Dead*: stick REPLACE cannot change hashed fighter/map sim but still opened a
+ * span-5 resim that burned gameplay LCG on one peer only (soak 1790844706 @3820 →
+ * matched Open→Blow onset, wind_dur 276 vs 290). Promote wire; buttons still rewind.
+ * Mag-shed "release" is also absorbed — soak 1945843913 @5178 (−43,66)→(−4,27) was
+ * IsRelease and bypassed the old hole → KO resim storm / epoch-cap hang.
+ * RebirthWait is_ghost is intentionally NOT in scope (soak 1174892281 leave stick).
+ * Scope prefers snap@sim_tick Dead*. See
+ * docs/bugs/netplay_dead_stick_ggpo_resim_rng_whispy_blow_2026-07-20.md and
+ * docs/bugs/netplay_dead_statusvars_scrub_ko_resim_2026-07-27.md.
+ */
+static uint8_t syNetInputGateDeadGhostAbsorbStickReplace(void *ctx)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+
+	return (syNetplayPlayerInDeadGhostStickAbsorbScope(gate->player, gate->sim_tick) != FALSE)
+	           ? (uint8_t)1
+	           : (uint8_t)0;
+}
+
+/*
+ * Jibaku / Hold protect — post-jibaku uncapped; confirmed Hold Start/Hold/End
+ * capped at micro_db (not continuity). Predicted Hold invent never Protects
+ * (soak 213935103 @3527). soak 250129717: Δ4–11 under continuity=12 walked
+ * head → BASELINE. Material Hold aim falls through to rewind. See
+ * docs/bugs/netplay_pkthunder_hold_aim_protect_universe_spike_2026-07-27.md,
+ * docs/bugs/netplay_pkthunder_hold_predicted_micro_protect_softlip_2026-07-27.md.
+ */
+static uint8_t syNetInputGateNessProtectPromote(void *ctx, s32 dx, s32 dy, u32 micro_deadband,
+                                                uint8_t old_predicted)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+
+	return (syNetplayNessStickReplaceProtectAllowsPromote(gate->player, gate->sim_tick, dx, dy,
+	                                                      micro_deadband,
+	                                                      (old_predicted != 0U) ? TRUE : FALSE) != FALSE)
+	           ? (uint8_t)1
+	           : (uint8_t)0;
+}
+
+/*
+ * Hold + Δ>micro: skip continuity/hash_confirm Promote — short GGPO. Post-jibaku
+ * already promoted via protect (uncapped).
+ */
+static uint8_t syNetInputGateNessHoldBlocksDeadbandPromote(void *ctx)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+
+	return (syNetplayNessSnapTickIsPKThunderHold(gate->player, gate->sim_tick) != FALSE) ? (uint8_t)1
+	                                                                                     : (uint8_t)0;
+}
+
+/*
+ * Predicted hold_last: no bare deadband skip (soak 740113729 JA PEER); hash-confirm
+ * Promote-only when FC already agreed on first-pass state at sim_tick. See
+ * docs/bugs/netplay_hash_confirm_runway_align_2026-07-26.md.
+ */
+static uint8_t syNetInputGateHashConfirmPromote(void *ctx)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+
+	return (syNetInputStickReplaceHashConfirmAllowsPromote(gate->player, gate->sim_tick, gate->old_frame,
+	                                                       gate->wire) != FALSE)
+	           ? (uint8_t)1
+	           : (uint8_t)0;
+}
+
+static uint8_t syNetInputGateDeferPredictedCorrection(void *ctx)
+{
+	const SYNetInputStickReplaceGateCtx *gate = (const SYNetInputStickReplaceGateCtx *)ctx;
+	const SYNetInputFrame *pub;
+
+	pub = (gate->defer_published != NULL) ? gate->defer_published : gate->old_frame;
+	return (syNetInputShouldDeferPredictedAnalogCorrection(gate->player, gate->sim_tick, pub,
+	                                                       gate->wire) != FALSE)
+	           ? (uint8_t)1
+	           : (uint8_t)0;
+}
+
+/*
+ * Decision policy lives in the portable contract core (netinput_contract.c) — this
+ * wrapper binds SSB64 gates and keeps all telemetry/logging. Decision table + soak
+ * invariants: docs/netplay_input_contract_portable.md.
+ */
 sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInputFrame *old_frame,
                                        const SYNetInputFrame *wire, const SYNetInputFrame *defer_published)
 {
-	const SYNetInputFrame *pub;
+	SYNetInputStickReplaceGateCtx gate_ctx;
+	SYNetInputContractHostGates gates;
+	SYNetInputContractFrame published_view;
+	SYNetInputContractFrame wire_view;
+	const SYNetInputContractParams *params;
+	SYNetInputContractDecision decision;
 
 	if ((old_frame == NULL) || (wire == NULL) || (sim_tick == 0U))
 	{
 		return FALSE;
 	}
-	if (syNetInputFrameGameplayEquals(old_frame, wire) != FALSE)
+	gate_ctx.player = player;
+	gate_ctx.sim_tick = sim_tick;
+	gate_ctx.old_frame = old_frame;
+	gate_ctx.wire = wire;
+	gate_ctx.defer_published = defer_published;
+	gates.ctx = &gate_ctx;
+	gates.equal_predicted_force_rewind = syNetInputGateEqualPredictedForceRewind;
+	gates.absorb_stick_replace = syNetInputGateDeadGhostAbsorbStickReplace;
+	gates.protect_promote = syNetInputGateNessProtectPromote;
+	gates.block_deadband_promote = syNetInputGateNessHoldBlocksDeadbandPromote;
+	gates.hash_confirm_promote = syNetInputGateHashConfirmPromote;
+	gates.defer_predicted_correction = syNetInputGateDeferPredictedCorrection;
+	params = syNetInputContractParamsCurrent();
+	syNetInputContractFrameFrom(old_frame, &published_view);
+	syNetInputContractFrameFrom(wire, &wire_view);
+	decision = syNetInputContractStickReplaceDecide(&published_view, &wire_view,
+	                                                (syNetInputGetTick() > sim_tick) ? (uint8_t)1
+	                                                                                 : (uint8_t)0,
+	                                                params, &gates);
+	switch (decision)
 	{
-		/*
-		 * Same sticks can still hide a BRANCH_DEFERRED status miss (Turn stayed while
-		 * owner Dashed). Predicted→wire must rewind when a deferred ticket exists.
-		 * See docs/bugs/netplay_branch_deferred_same_stick_silent_peer_2026-07-26.md.
-		 */
-		if ((old_frame->is_predicted != FALSE) &&
-		    (syNetplayBranchDeferredNeedsRewind(player, sim_tick) != FALSE))
-		{
-			return TRUE;
-		}
-		return FALSE;
-	}
-	/*
-	 * Dead*: stick REPLACE cannot change hashed fighter/map sim but still opened a
-	 * span-5 resim that burned gameplay LCG on one peer only (soak 1790844706 @3820 →
-	 * matched Open→Blow onset, wind_dur 276 vs 290). Promote wire; buttons still rewind.
-	 * Mag-shed "release" is also absorbed — soak 1945843913 @5178 (−43,66)→(−4,27) was
-	 * IsRelease and bypassed the old hole → KO resim storm / epoch-cap hang.
-	 * RebirthWait is_ghost is intentionally NOT in scope (soak 1174892281 leave stick).
-	 * Scope prefers snap@sim_tick Dead*. See
-	 * docs/bugs/netplay_dead_stick_ggpo_resim_rng_whispy_blow_2026-07-20.md and
-	 * docs/bugs/netplay_dead_statusvars_scrub_ko_resim_2026-07-27.md.
-	 */
-	if ((old_frame->buttons == wire->buttons) &&
-	    (syNetplayPlayerInDeadGhostStickAbsorbScope(player, sim_tick) != FALSE))
-	{
+	case nSYNetInputContractPromoteAbsorb:
 		/* Always log Dead* absorbs — rate-limit hid rebirth false positives previously. */
 		port_log(
 		    "SSB64 NetInput: GGPO stick replace skipped class=dead_ghost_stick player=%d "
@@ -5837,211 +5890,94 @@ sb32 syNetInputStickReplaceNeedsRewind(s32 player, u32 sim_tick, const SYNetInpu
 		    (int)old_frame->stick_y,
 		    (int)wire->stick_x,
 		    (int)wire->stick_y);
-		return FALSE;
-	}
-	/*
-	 * Already-simulated tick: release / buttons / onset / non-micro stick still rewind.
-	 * Same-intent ±micro deadband (default 3) Promote without episode — soak 1490370675
-	 * paid span-2 GGPO for 70/60→71/59 class noise. Feel-0 release (13,4→0,0) stays covered
-	 * by StickReplaceIsRelease. See docs/bugs/netplay_feel0_release_deadband_skips_ggpo_2026-07-12.md
-	 * and docs/bugs/netplay_input_contract_micro_deadband_onset_peek_2026-07-17.md.
-	 */
-	if (syNetInputGetTick() > sim_tick)
-	{
-		u32 micro_db;
-		u32 continuity_db;
-		s32 dx;
-		s32 dy;
-
-		if (old_frame->buttons != wire->buttons)
+		break;
+	case nSYNetInputContractPromoteProtect:
+		sSYNetInputGgpoClassSkippedSnapPostJibakuMicro++;
+		if (sSYNetInputGgpoSkipSnapPostJibakuMicroLogsRemaining > 0U)
 		{
-			return TRUE;
+			port_log(
+			    "SSB64 NetInput: GGPO stick replace skipped "
+			    "class=ness_jibaku_stick_protect player=%d sim_tick=%u old sx=%d "
+			    "sy=%d | wire sx=%d sy=%d\n",
+			    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
+			    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y);
+			sSYNetInputGgpoSkipSnapPostJibakuMicroLogsRemaining--;
 		}
-		if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
+		break;
+	case nSYNetInputContractPromoteMicro:
+		sSYNetInputGgpoClassSkippedMicro++;
+		if (sSYNetInputGgpoSkipMicroLogsRemaining > 0U)
 		{
-			return TRUE;
+			port_log(
+			    "SSB64 NetInput: GGPO stick replace skipped class=micro_stick "
+			    "player=%d sim_tick=%u old sx=%d sy=%d | wire sx=%d sy=%d "
+			    "micro_db=%u\n",
+			    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
+			    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
+			    (unsigned int)params->micro_deadband);
+			sSYNetInputGgpoSkipMicroLogsRemaining--;
 		}
-		micro_db = syNetInputGgpoStickCompletedSimMicroDeadband();
-		continuity_db = syNetInputGgpoStickCompletedSimContinuityDeadband();
-		dx = syNetInputAbsS8Diff(old_frame->stick_x, wire->stick_x);
-		dy = syNetInputAbsS8Diff(old_frame->stick_y, wire->stick_y);
-		/*
-		 * Confirmed same-intent Promote-only (portable frame-delta contract):
-		 *  - micro_db (default 3): noise floor
-		 *  - continuity_db (default 12): same-intent mag drift on confirmed rows
-		 * Never skip when Turn dash gate would disagree (|sx| crosses 56 / smash sign
-		 * flip) — soak1 179193526. Predicted hold_last: no bare deadband skip
-		 * (soak 740113729 JA PEER); hash-confirm Promote-only when FC already agreed
-		 * on first-pass state at sim_tick. See
-		 * docs/bugs/netplay_hash_confirm_runway_align_2026-07-26.md and
-		 * docs/bugs/netplay_hold_last_micro_skip_predicted_peer_2026-07-26.md.
-		 */
-		if ((syNetInputStickLooksAnalog(old_frame->stick_x, old_frame->stick_y) != FALSE) &&
-		    (syNetInputStickLooksAnalog(wire->stick_x, wire->stick_y) != FALSE) &&
-		    (syNetInputStickSameAnalogIntent(old_frame->stick_x, old_frame->stick_y, wire->stick_x,
-		                                     wire->stick_y) != FALSE) &&
-		    (syNetInputStickDashGateDisagreeX(old_frame->stick_x, wire->stick_x) == FALSE))
+		break;
+	case nSYNetInputContractPromoteContinuity:
+		sSYNetInputGgpoClassSkippedContinuity++;
+		if (sSYNetInputGgpoSkipContinuityLogsRemaining > 0U)
 		{
-		/*
-		 * Jibaku / Hold protect — post-jibaku uncapped; confirmed Hold Start/Hold/End
-		 * capped at micro_db (not continuity). Predicted Hold invent never Protects
-		 * (soak 213935103 @3527). soak 250129717: Δ4–11 under continuity=12 walked
-		 * head → BASELINE. Material Hold aim falls through to rewind. See
-		 * docs/bugs/netplay_pkthunder_hold_aim_protect_universe_spike_2026-07-27.md,
-		 * docs/bugs/netplay_pkthunder_hold_predicted_micro_protect_softlip_2026-07-27.md.
-		 */
-			if (syNetplayNessStickReplaceProtectAllowsPromote(player, sim_tick, dx, dy, micro_db,
-			                                                 old_frame->is_predicted) != FALSE)
-			{
-				sSYNetInputGgpoClassSkippedSnapPostJibakuMicro++;
-				if (sSYNetInputGgpoSkipSnapPostJibakuMicroLogsRemaining > 0U)
-				{
-					port_log(
-					    "SSB64 NetInput: GGPO stick replace skipped "
-					    "class=ness_jibaku_stick_protect player=%d sim_tick=%u old sx=%d "
-					    "sy=%d | wire sx=%d sy=%d\n",
-					    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
-					    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y);
-					sSYNetInputGgpoSkipSnapPostJibakuMicroLogsRemaining--;
-				}
-				return FALSE;
-			}
-			/*
-			 * Hold + Δ>micro: skip continuity/hash_confirm Promote — short GGPO.
-			 * Post-jibaku already returned via protect (uncapped).
-			 */
-			if (syNetplayNessSnapTickIsPKThunderHold(player, sim_tick) == FALSE)
-			{
-				if (old_frame->is_predicted == FALSE)
-				{
-					if ((micro_db > 0U) && (dx <= (s32)micro_db) && (dy <= (s32)micro_db))
-					{
-						sSYNetInputGgpoClassSkippedMicro++;
-						if (sSYNetInputGgpoSkipMicroLogsRemaining > 0U)
-						{
-							port_log(
-							    "SSB64 NetInput: GGPO stick replace skipped class=micro_stick "
-							    "player=%d sim_tick=%u old sx=%d sy=%d | wire sx=%d sy=%d "
-							    "micro_db=%u\n",
-							    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
-							    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
-							    (unsigned int)micro_db);
-							sSYNetInputGgpoSkipMicroLogsRemaining--;
-						}
-						return FALSE;
-					}
-					if ((continuity_db > micro_db) && (dx <= (s32)continuity_db) &&
-					    (dy <= (s32)continuity_db))
-					{
-						sSYNetInputGgpoClassSkippedContinuity++;
-						if (sSYNetInputGgpoSkipContinuityLogsRemaining > 0U)
-						{
-							port_log(
-							    "SSB64 NetInput: GGPO stick replace skipped "
-							    "class=same_intent_continuity player=%d sim_tick=%u old sx=%d "
-							    "sy=%d | wire sx=%d sy=%d continuity_db=%u\n",
-							    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
-							    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
-							    (unsigned int)continuity_db);
-							sSYNetInputGgpoSkipContinuityLogsRemaining--;
-						}
-						return FALSE;
-					}
-				}
-				else if ((dx <= (s32)continuity_db) && (dy <= (s32)continuity_db) &&
-				         (syNetInputStickReplaceHashConfirmAllowsPromote(player, sim_tick, old_frame,
-				                                                         wire) != FALSE))
-				{
-					sSYNetInputGgpoClassSkippedHashConfirm++;
-					if (sSYNetInputGgpoSkipHashConfirmLogsRemaining > 0U)
-					{
-						port_log(
-						    "SSB64 NetInput: GGPO stick replace skipped class=hash_confirm "
-						    "player=%d sim_tick=%u old sx=%d sy=%d | wire sx=%d sy=%d "
-						    "fc_agreed=%u\n",
-						    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
-						    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
-						    (unsigned int)syNetRollbackGetLastFrameCommitStateAgreedTick());
-						sSYNetInputGgpoSkipHashConfirmLogsRemaining--;
-					}
-					return FALSE;
-				}
-				/*
-				 * absorb_coalesce_same_intent Promote-without-rewind retired (soak Fix5
-				 * PEER@425): predicted same-intent soft-own under coalesce forked figh
-				 * while "inputs agree through load". Predicted → wire still needs
-				 * hash_confirm or rewind — same contract as soak 740113729. See
-				 * docs/bugs/netplay_multistick_correction_union_2026-07-27.md.
-				 */
-			}
+			port_log(
+			    "SSB64 NetInput: GGPO stick replace skipped "
+			    "class=same_intent_continuity player=%d sim_tick=%u old sx=%d "
+			    "sy=%d | wire sx=%d sy=%d continuity_db=%u\n",
+			    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
+			    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
+			    (unsigned int)params->continuity_deadband);
+			sSYNetInputGgpoSkipContinuityLogsRemaining--;
 		}
-		/* Any remaining stick/button gameplay delta on completed sim still rewinds. */
-		return TRUE;
+		break;
+	case nSYNetInputContractPromoteHashConfirm:
+		sSYNetInputGgpoClassSkippedHashConfirm++;
+		if (sSYNetInputGgpoSkipHashConfirmLogsRemaining > 0U)
+		{
+			port_log(
+			    "SSB64 NetInput: GGPO stick replace skipped class=hash_confirm "
+			    "player=%d sim_tick=%u old sx=%d sy=%d | wire sx=%d sy=%d "
+			    "fc_agreed=%u\n",
+			    (int)player, (unsigned int)sim_tick, (int)old_frame->stick_x,
+			    (int)old_frame->stick_y, (int)wire->stick_x, (int)wire->stick_y,
+			    (unsigned int)syNetRollbackGetLastFrameCommitStateAgreedTick());
+			sSYNetInputGgpoSkipHashConfirmLogsRemaining--;
+		}
+		break;
+	default:
+		break;
 	}
-	/*
-	 * Analog→neutral / shedding magnitude: never treat as onset-ahead defer, always rewind.
-	 * See docs/bugs/netplay_stick_ramp_predict_deadband_silent_promote_2026-07-12.md.
-	 */
-	if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
-	{
-		return TRUE;
-	}
-	pub = (defer_published != NULL) ? defer_published : old_frame;
-	if (syNetInputShouldDeferPredictedAnalogCorrection(player, sim_tick, pub, wire) != FALSE)
-	{
-		return FALSE;
-	}
-	/*
-	 * Runway / feel-0 REPLACE: use confirmed deadband (default 12), not predict (14).
-	 * Continuous stick ramps (Δ≈5–12) were "insignificant" under predict and Promote'd
-	 * without GGPO → p1 topn phase lag → FC inputs+figh diverge.
-	 */
-	return syNetInputGameplayCorrectionIsSignificantEx(old_frame, wire, FALSE);
+	return (syNetInputContractDecisionIsRewind(decision) != 0U) ? TRUE : FALSE;
 }
 
 const char *syNetInputClassifyGgpoCorrection(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
 {
-	u32 micro_db;
-	u32 continuity_db;
-	s32 dx;
-	s32 dy;
+	SYNetInputContractFrame old_view;
+	SYNetInputContractFrame wire_view;
 
 	if ((old_frame == NULL) || (wire == NULL))
 	{
 		return "unknown";
 	}
-	if (old_frame->buttons != wire->buttons)
+	syNetInputContractFrameFrom(old_frame, &old_view);
+	syNetInputContractFrameFrom(wire, &wire_view);
+	switch (syNetInputContractClassifyCorrection(&old_view, &wire_view, syNetInputContractParamsCurrent()))
 	{
+	case nSYNetInputContractClassButton:
 		return "button";
-	}
-	if (syNetInputStickReplaceIsRelease(old_frame, wire) != FALSE)
-	{
+	case nSYNetInputContractClassRelease:
 		return "release";
-	}
-	if ((syNetInputFrameSticksNearNeutral(old_frame) != FALSE) &&
-	    (syNetInputFrameSticksNearNeutral(wire) == FALSE))
-	{
+	case nSYNetInputContractClassOnsetFromZero:
 		return "onset_from_zero";
+	case nSYNetInputContractClassMicroStick:
+		return "micro_stick";
+	case nSYNetInputContractClassSameIntentContinuity:
+		return "same_intent_continuity";
+	default:
+		return "real_stick";
 	}
-	micro_db = syNetInputGgpoStickCompletedSimMicroDeadband();
-	continuity_db = syNetInputGgpoStickCompletedSimContinuityDeadband();
-	dx = syNetInputAbsS8Diff(old_frame->stick_x, wire->stick_x);
-	dy = syNetInputAbsS8Diff(old_frame->stick_y, wire->stick_y);
-	if ((syNetInputStickLooksAnalog(old_frame->stick_x, old_frame->stick_y) != FALSE) &&
-	    (syNetInputStickLooksAnalog(wire->stick_x, wire->stick_y) != FALSE) &&
-	    (syNetInputStickSameAnalogIntent(old_frame->stick_x, old_frame->stick_y, wire->stick_x, wire->stick_y) !=
-	     FALSE))
-	{
-		if ((micro_db > 0U) && (dx <= (s32)micro_db) && (dy <= (s32)micro_db))
-		{
-			return "micro_stick";
-		}
-		if ((continuity_db > micro_db) && (dx <= (s32)continuity_db) && (dy <= (s32)continuity_db))
-		{
-			return "same_intent_continuity";
-		}
-	}
-	return "real_stick";
 }
 
 void syNetInputNoteGgpoCorrectionQueued(const SYNetInputFrame *old_frame, const SYNetInputFrame *wire)
@@ -7134,7 +7070,89 @@ void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 			out_frame->is_predicted = FALSE;
 			return;
 		}
-		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
+#if defined(SSB64_NETMENU)
+		/*
+		 * Light / unsealed resim often reaches exclusive-target ticks before feel-0
+		 * LOCAL_PUBLISH exists. Hard (0,0) here desyncs from the peer's remote hold_last
+		 * of the same prior stick → tap/hold counters fork → SoftLip / PEER after FC
+		 * deepen (soak1 seed 106015840: Linux local P0 @540 sx=0 while Android remote
+		 * P0 hold_last -75; POST_RESIM_GAP_HOLD_LAST then rewrote History too late).
+		 * Prefer the same donor walk as ResyncControllersAfterResim gap pin.
+		 * See docs/bugs/netplay_resim_local_neutral_invent_tap_fork_2026-07-28.md.
+		 */
+		{
+			SYNetInputFrame donor;
+			u32 donor_tick = 0U;
+			u32 lookback;
+			u32 oldest;
+			u32 u;
+
+			if ((tick > 0U) && (syNetInputGetLocalGameplayFrame(player, tick - 1U, &donor) != FALSE))
+			{
+				donor_tick = tick - 1U;
+			}
+			else if ((tick > 0U) && (syNetInputGetHistoryFrame(player, tick - 1U, &donor) != FALSE) &&
+			         (donor.tick == (tick - 1U)))
+			{
+				donor_tick = tick - 1U;
+			}
+			else if ((sSYNetInputLocalGameplayLastTick[player] > 0U) &&
+			         (sSYNetInputLocalGameplayLastTick[player] < tick) &&
+			         (syNetInputGetLocalGameplayFrame(player, sSYNetInputLocalGameplayLastTick[player],
+			                                         &donor) != FALSE))
+			{
+				donor_tick = sSYNetInputLocalGameplayLastTick[player];
+			}
+			else if ((sSYNetInputSlots[player].last_published.is_valid != FALSE) &&
+			         (sSYNetInputSlots[player].last_published.tick > 0U) &&
+			         (sSYNetInputSlots[player].last_published.tick < tick) &&
+			         ((tick - sSYNetInputSlots[player].last_published.tick) <= 32U))
+			{
+				donor = sSYNetInputSlots[player].last_published;
+				donor_tick = donor.tick;
+			}
+			else
+			{
+				lookback = 32U;
+				if (tick < lookback)
+				{
+					lookback = tick;
+				}
+				oldest = tick - lookback;
+				for (u = tick; u > oldest;)
+				{
+					u--;
+					if (syNetInputGetLocalGameplayFrame(player, u, &donor) != FALSE)
+					{
+						donor_tick = u;
+						break;
+					}
+					if ((syNetInputGetHistoryFrame(player, u, &donor) != FALSE) && (donor.tick == u))
+					{
+						donor_tick = u;
+						break;
+					}
+					if (u == oldest)
+					{
+						break;
+					}
+				}
+			}
+			if (donor_tick != 0U)
+			{
+				syNetInputMakeFrame(out_frame, tick, donor.buttons, donor.stick_x, donor.stick_y,
+				                    nSYNetInputSourceLocal, TRUE);
+				port_log(
+				    "SSB64 NetInput: RESIM_LOCAL_GAP_HOLD_LAST player=%d tick=%u from=%u "
+				    "btn=0x%04X sx=%d sy=%d\n",
+				    (int)player, (unsigned int)tick, (unsigned int)donor_tick,
+				    (unsigned int)donor.buttons, (int)donor.stick_x, (int)donor.stick_y);
+				return;
+			}
+		}
+#endif
+		/* Last resort idle — mark predicted so later feel-0 can promote. */
+		syNetInputMakeFrame(out_frame, tick, 0, 0, 0, nSYNetInputSourceLocal, TRUE);
 		return;
 	}
 	if ((syNetInputAuthoritativeWireContractEnabled() != FALSE) && (syNetInputIsLocalDelaySlot(player) != FALSE))

@@ -351,6 +351,8 @@ extern u32 syNetRbSnapshotFindLatestValidTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(u32 tick, u32 min_tick);
 extern u32 syNetRbSnapshotGetLastLoadSafeTick(void);
 extern void syNetRbSnapshotMarkLoadUnsafe(u32 tick);
+/* Clear is_valid/is_load_safe for tick; walk LastCommitted / LastLoadSafe tips back. */
+extern void syNetRbSnapshotInvalidateTick(u32 tick);
 /* TRUE when load_tick (or its first forward-sim tick) matches synctest fragile probe scopes. */
 extern sb32 syNetRbSnapshotIsLoadAnchorFragile(u32 load_tick, const char **reason_out);
 /*

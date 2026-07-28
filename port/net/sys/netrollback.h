@@ -119,16 +119,20 @@ extern void syNetRollbackArmPredictionRecoveryForStickMismatch(u32 sim_tick, u32
 /* Follower runs local-authority resim on GetLocalSimSlot() (not blind peer_follower). */
 #define SYNETROLLBACK_SYM_NOTIFY_FLAG_FOLLOWER_LOCAL_AUTH 0x01U
 #define SYNETROLLBACK_SYNC_FLAG_FOLLOWER_LOCAL_AUTH SYNETROLLBACK_SYM_NOTIFY_FLAG_FOLLOWER_LOCAL_AUTH
+/* FC state-recovery episode: follower must join at peer onset (no resolved_through clamp). */
+#define SYNETROLLBACK_SYM_NOTIFY_FLAG_FC_RECOVERY 0x02U
+#define SYNETROLLBACK_SYNC_FLAG_FC_RECOVERY SYNETROLLBACK_SYM_NOTIFY_FLAG_FC_RECOVERY
 /* Fill per-slot symmetric rollback ticks for INPUT peer_connect_status padding (-1 = none). */
 extern void syNetRollbackExportPeerSymmetricNotify(s32 *out_tick_per_slot, s32 *out_target_tick_per_slot,
 						   u8 *out_flags_per_slot, s32 count);
 /* Peer announced a correction on `slot` at `mismatch_tick` (24-bit wire); queue resim through `target_tick` (24-bit). */
 /* FALSE when notify is stale or already covered by pending/deferred symmetric rollback. */
-extern sb32 syNetRollbackAcceptPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick);
+extern sb32 syNetRollbackAcceptPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick,
+							  u8 notify_flags);
 extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_tick, u32 target_tick,
-						       sb32 follower_local_auth);
+						       u8 notify_flags);
 extern void syNetRollbackOnPeerSymmetricRollbackNotifyEx(s32 slot, u32 mismatch_tick, u32 target_tick, u32 load_tick,
-						       u32 epoch_id, sb32 follower_local_auth);
+						       u32 epoch_id, u8 notify_flags);
 extern void syNetRollbackExportPeerSymmetricEpisode(s32 slot, u32 *out_load_tick, u32 *out_epoch_id);
 /* Local correction frontier (last completed episode target); advertised on ROLLBACK_SYNC. */
 extern u32 syNetRollbackGetEpisodeResolvedThrough(void);

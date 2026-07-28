@@ -45,6 +45,17 @@ Follow-up after older-than-ring harden (seed `4086048930`): permanent live fork 
 
 RING_CLAMP that does **not** move past `onset_load` may still arm recovery.
 
+## Follow-on (2026-07-28)
+
+1. Soak `190673804`: light resim **skipped FC grids 1200/1320** → first compare past ring
+   depth. Fixed in [fc late mint resim grid skip](netplay_fc_late_mint_resim_grid_skip_2026-07-28.md).
+2. Soak `2028838966` / seed `3538623210`: onset **in-ring** but Resolve raised min_load to
+   `EpisodeResolvedThrough-1` → false miss → RING_CLAMP abandon. Fixed in
+   [fc onset Resolve episode floor](netplay_fc_onset_resolve_episode_floor_2026-07-28.md).
+
+Fail-closed here remains correct when the onset genuinely predates the ring or no load-safe
+slot exists at/before onset.
+
 ## Acceptance
 
 - [ ] Re-soak deep / abandoned-onset FC: `ONSET_UNRECOVERABLE` (`older than ring` or `ring clamp abandoned onset`) + fail-closed **without** doomed short state resim / asymmetric clamp loads.

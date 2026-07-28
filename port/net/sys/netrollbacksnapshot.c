@@ -49152,6 +49152,40 @@ void syNetRbSnapshotMarkLoadUnsafe(u32 tick)
 	}
 }
 
+void syNetRbSnapshotInvalidateTick(u32 tick)
+{
+	SYNetRbSnapshotSlot *slot;
+	u32 probe;
+
+	if (tick == 0U)
+	{
+		return;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if (slot->tick != tick)
+	{
+		return;
+	}
+	/*
+	 * Drop existence entirely — MarkLoadUnsafe alone still lets ResolveLoadTick /
+	 * GetStoredSubsystemHashes accept the slot. Light Finish uses this for the
+	 * exclusive frontier (first-pass poison never rewritten under AwaitLiveSim).
+	 * See docs/bugs/netplay_light_exclusive_frontier_poison_load_2026-07-28.md.
+	 */
+	slot->is_valid = FALSE;
+	slot->is_load_safe = FALSE;
+	if (tick == sSYNetRbSnapshotLastLoadSafeTick)
+	{
+		probe = (tick > 0U) ? (tick - 1U) : 0U;
+		sSYNetRbSnapshotLastLoadSafeTick = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(probe, 0U);
+	}
+	if (tick == sSYNetRbSnapshotLastCommittedTick)
+	{
+		probe = (tick > 0U) ? (tick - 1U) : 0U;
+		sSYNetRbSnapshotLastCommittedTick = syNetRbSnapshotFindLatestValidTickAtOrBefore(probe, 0U);
+	}
+}
+
 void syNetRbSnapshotPinLoadSafeAtTick(u32 tick)
 {
 	SYNetRbSnapshotSlot *slot;

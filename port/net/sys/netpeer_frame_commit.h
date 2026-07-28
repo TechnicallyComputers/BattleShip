@@ -48,6 +48,11 @@ typedef struct SYNetFrameCommitToken
 	u32 item_digest;
 	u32 rng_digest;
 	u32 effect_digest;
+	/*
+	 * Local LastFrameCommitStateAgreedTick at mint time. Peers take min() as the shared
+	 * input-agree onset scan floor so asymmetric snap_agree watermarks cannot fork mismatch.
+	 */
+	u32 state_agreed_tick;
 	/* Per-slot commit diagnostics; light slot hashes name the diverging player, fields name likely fork source. */
 	u32 fighter_slot_digest[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
 	SYNetFrameCommitFighterDiag fighter_diag[SYNET_FRAME_COMMIT_FIGHTER_SLOTS];
