@@ -31,6 +31,7 @@ extern void syTaskmanSetIntervals(u16 update, u16 framedraw);
 #include <sys/netdesyncclassifier.h>
 #include <sys/netpeer_frame_commit.h>
 #if defined(SSB64_NETMENU)
+#include <gr/grdef.h>
 #include <gr/grcommon/grpupupu.h>
 #include <gr/ground.h>
 #include <gm/gmcamera.h>
@@ -111,6 +112,15 @@ static u32 sSYNetRollbackResimStallFrames;
 static u32 sSYNetRollbackResimMismatchTick;
 static u32 sSYNetRollbackResimTargetTick;
 static u32 sSYNetRollbackResimNextTick;
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Highest sim tick for which a post-load BattleSimOnly completed (GetTick advanced).
+ * SavePostTick(T) for T > load requires proven_through >= T — otherwise the ring can
+ * store pre-advance load world under the mismatch index (+1 Pupupu phase skew).
+ * See docs/bugs/netplay_deepen_resim_map_save_phase_skew_peer_2026-07-28.md.
+ */
+static u32 sSYNetRollbackResimBattleProvenThrough;
+#endif
 static sb32 sSYNetRollbackForceIdentityPending;
 static u32 sSYNetRollbackForceIdentityTick;
 static u32 sSYNetRollbackPredictionRecoveryUntilSim;
@@ -1516,6 +1526,9 @@ void syNetRollbackInit(void)
 	sSYNetRollbackResimMismatchTick = ~(u32)0;
 	sSYNetRollbackResimTargetTick = ~(u32)0;
 	sSYNetRollbackResimNextTick = ~(u32)0;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetRollbackResimBattleProvenThrough = 0U;
+#endif
 	sSYNetRollbackForceIdentityPending = FALSE;
 	sSYNetRollbackForceIdentityTick = ~(u32)0;
 	sSYNetRollbackPredictionRecoveryUntilSim = 0U;
@@ -8283,6 +8296,24 @@ static sb32 syNetRollbackSavePostTick(u32 tick)
 		    tick);
 		return FALSE;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * Resim: refuse SavePostTick(T>load) until BattleSimOnly proved completion for T.
+	 * Broken deepen labeled load Pupupu under mismatch → Linux[t]==Android[t-1] map PEER.
+	 * See docs/bugs/netplay_deepen_resim_map_save_phase_skew_peer_2026-07-28.md.
+	 */
+	if ((sSYNetRollbackResimPending != FALSE) && (sSYNetRollbackResimAnchorProbeActive == FALSE) &&
+	    (sSYNetRollbackResimLoadTick != ~(u32)0) && (tick > sSYNetRollbackResimLoadTick) &&
+	    (sSYNetRollbackResimBattleProvenThrough < tick))
+	{
+		port_log(
+		    "SSB64 NetRollback: SNAPSHOT_SAVE_SKIP resim_no_battle_proof tick=%u load=%u proven=%u\n",
+		    (unsigned int)tick,
+		    (unsigned int)sSYNetRollbackResimLoadTick,
+		    (unsigned int)sSYNetRollbackResimBattleProvenThrough);
+		return FALSE;
+	}
+#endif
 #endif
 	if (syNetRollbackIsActive() == FALSE)
 	{
@@ -10650,6 +10681,9 @@ static sb32 syNetRollbackFinishForwardResim(void)
 	sSYNetRollbackAuthoritativeEpisodeActive = FALSE;
 	memset(&sSYNetRollbackExecutingEpisode, 0, sizeof(sSYNetRollbackExecutingEpisode));
 	sSYNetRollbackResimNextTick = ~(u32)0;
+#if defined(SSB64_NETMENU)
+	sSYNetRollbackResimBattleProvenThrough = 0U;
+#endif
 	sSYNetRollbackResimDepth = 0;
 	sSYNetRollbackResimStallFrames = 0U;
 	sSYNetRollbackResimBaselineWaitFrames = 0U;
@@ -10801,6 +10835,10 @@ static void syNetRollbackArmResimBaselineAfterLoad(u32 load_tick)
 	live = syNetRollbackCollectHashes();
 	wire = syNetRollbackCollectSlotBaselineDigests(load_tick);
 	sSYNetRollbackResimLoadTick = load_tick;
+#if defined(SSB64_NETMENU)
+	/* Load slot is proven; mismatch+ requires BattleSimOnly before SavePostTick. */
+	sSYNetRollbackResimBattleProvenThrough = load_tick;
+#endif
 	sSYNetRollbackResimPreHashes = live;
 	sSYNetRollbackResimPreHashesValid = TRUE;
 	sSYNetRollbackPeerBaselineSendPending = TRUE;
@@ -11917,6 +11955,7 @@ static void syNetRollbackResetBaselineResimState(void)
 	sSYNetRollbackResimLoadTick = ~(u32)0;
 #if defined(SSB64_NETMENU)
 	sSYNetRollbackLightEpisodeActive = FALSE;
+	sSYNetRollbackResimBattleProvenThrough = 0U;
 #endif
 	syNetRollbackClearBaselineResimNegotiationFlags();
 	syNetRollbackEpisodeSetPhase(nSYNetRollbackEpisodePhaseLive);
@@ -13041,6 +13080,10 @@ static sb32 syNetRollbackTryAlignActiveEpisodeTuple(s32 slot, u32 load_tick, u32
 	    (int)follower_local_auth);
 	sSYNetRollbackResimBaselineGateOpen = FALSE;
 	sSYNetRollbackResimNextTick = mismatch_tick;
+#if defined(SSB64_NETMENU)
+	/* Replaying from mismatch without a new Load: drop stale battle proof from any prior span. */
+	sSYNetRollbackResimBattleProvenThrough = align_load;
+#endif
 	syNetRollbackEpisodeResealForDeeperLoad(align_load, mismatch_tick, target_tick, correction_player);
 	sSYNetRollbackEpisode.mismatch_tick = mismatch_tick;
 	sSYNetRollbackEpisode.load_tick = align_load;
@@ -16164,9 +16207,59 @@ static void syNetRollbackAdvanceResimBudgetEx(u32 max_ticks_this_call)
 		syNetplayNessResimReplayHardeningAfterLoadStep();
 		syNetplayResimReplayHangDiagNoteReplayTickBegin(t, ran, limit);
 #endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * BattleSimHold makes BattleSimOnly a no-op, but the old loop still SnapshotSave(t)
+		 * — that commits load world under the mismatch index (+1 map phase). Stop the burst.
+		 * See docs/bugs/netplay_deepen_resim_map_save_phase_skew_peer_2026-07-28.md.
+		 */
+		if (syNetRollbackIsBattleSimHoldActive() != FALSE)
+		{
+			port_log(
+			    "SSB64 NetRollback: RESIM_ADVANCE_BLOCKED battle_sim_hold tick=%u load=%u\n",
+			    (unsigned int)t,
+			    (unsigned int)sSYNetRollbackResimLoadTick);
+			break;
+		}
+#endif
 		syNetInputSetTick(t);
 		syNetInputPublishSynchronizedTick(t);
 		scVSBattleFuncUpdateBattleSimOnly();
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * BattleSimOnly must Advance past t. If GetTick stayed at t, interface/Advance did not
+		 * complete — never SavePostTick (would publish pre-battle load as T).
+		 */
+		if (syNetInputGetTick() <= t)
+		{
+			port_log(
+			    "SSB64 NetRollback: RESIM_SAVE_SKIP no_tick_advance tick=%u get=%u load=%u\n",
+			    (unsigned int)t,
+			    (unsigned int)syNetInputGetTick(),
+			    (unsigned int)sSYNetRollbackResimLoadTick);
+			break;
+		}
+		sSYNetRollbackResimBattleProvenThrough = t;
+		/*
+		 * Pupupu: after a real Advance, map must leave the load slot. Equal hash means the
+		 * "battle" did not consume a Whispy wait tick — refuse to publish that phase as T.
+		 */
+		if ((t > sSYNetRollbackResimLoadTick) && (sSYNetRollbackResimLoadTick != 0U) &&
+		    (sSYNetRollbackResimLoadTick != ~(u32)0) && (gSCManagerBattleState != NULL) &&
+		    (gSCManagerBattleState->gkind == nGRKindPupupu) &&
+		    (syNetRbSnapshotComputeMapHashLive() ==
+		     syNetRbSnapshotGetSlotHashMap(sSYNetRollbackResimLoadTick)))
+		{
+			port_log(
+			    "SSB64 NetRollback: RESIM_SAVE_PHASE_STALE tick=%u load=%u map=0x%08X — skip save\n",
+			    (unsigned int)t,
+			    (unsigned int)sSYNetRollbackResimLoadTick,
+			    (unsigned int)syNetRbSnapshotComputeMapHashLive());
+			/* Leave a hole rather than a +1-skewed baseline slot; do not advance NextTick. */
+			syNetInputSetTick(t);
+			break;
+		}
+#endif
 #if defined(SSB64_NETMENU)
 		/*
 		 * Resim must reproduce the forward sim's *canonicalized* per-tick state. Accepted forward ticks

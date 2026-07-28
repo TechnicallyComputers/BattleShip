@@ -4601,6 +4601,18 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 		return;
 	}
 	/*
+	 * Squat / SquatWait / SquatRv own status_vars.common.squat (is_allow_pass, pass_wait,
+	 * unk_0x8). attackair/dead/rebirth memsets alias those bytes and zero the Pass arm on
+	 * every ring save. Light resim then reloads a disarmed squat while the peer's live
+	 * first-pass still counts pass_wait → Pass(33) vs SquatWait(29) with inputs MATCH
+	 * (soak1 seed 1327280249 FC@961/@1144). See
+	 * docs/bugs/netplay_squat_pass_wait_statusvars_scrub_fc_2026-07-28.md.
+	 */
+	if ((status_id >= nFTCommonStatusSquat) && (status_id <= nFTCommonStatusSquatRv))
+	{
+		return;
+	}
+	/*
 	 * Pikachu / NPikachu Quick Attack owns status_vars.pikachu.specialhi at union offset 0.
 	 * Capture quantizes specialhi then scrub runs; without this skip, attackair/dead/rebirth
 	 * zero anim_frames and force Start→Zip catch-up after load. Defer-scope helper already

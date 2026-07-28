@@ -338,6 +338,18 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTurn(fp)->lr_dash);
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsTurn(fp)->lr_turn);
 	}
+	/*
+	 * Soak1 1327280249 @1135→1136: fhash matched in Squat while squat.pass_wait was
+	 * hash-blind; scrub-poisoned light reload disarmed Pass → SquatWait vs Pass FC.
+	 * Fold allow/wait so FIGHTER_LIGHT_ONSET catches overlay skew before status fork.
+	 * See docs/bugs/netplay_squat_pass_wait_statusvars_scrub_fc_2026-07-28.md.
+	 */
+	if ((fp->status_id >= nFTCommonStatusSquat) && (fp->status_id <= nFTCommonStatusSquatRv))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsSquat(fp)->is_allow_pass != FALSE));
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsSquat(fp)->pass_wait);
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsSquat(fp)->unk_0x8);
+	}
 	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{

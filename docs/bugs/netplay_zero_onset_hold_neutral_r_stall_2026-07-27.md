@@ -29,6 +29,8 @@ In `syNetInputRemoteHumanZeroOnsetPredictRestrict`: if `last_confirmed` is valid
 
 Soft GGPO on true onset through hold-neutral invent remains accepted (same tradeoff as analog_ramp hold_last).
 
+**Follow-up (soak seed `3839642009`):** age ≤ `pred_win` (often 4) still invented `(0,0)` one delay slot past `D` while owner soft-onset `(0,-31)` → SoftLip / FC `inputs_agree=0`. v12 tightens allow age to committed `D` — [`netplay_zero_onset_fresh_neutral_pred_win_softlip_2026-07-28.md`](netplay_zero_onset_fresh_neutral_pred_win_softlip_2026-07-28.md).
+
 ## Acceptance
 
 Matched APK + Linux, one or both sticks idle/moving after Go:

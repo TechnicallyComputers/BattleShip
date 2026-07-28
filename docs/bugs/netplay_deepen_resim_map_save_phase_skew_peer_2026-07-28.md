@@ -2,10 +2,11 @@
 
 **Date:** 2026-07-28  
 **Build:** netmenu (`SSB64_NETMENU=ON`)  
-**Status:** ROOT CAUSE IDENTIFIED (`PORT && SSB64_NETMENU`, fix pending)  
+**Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)  
 **Soak:** Android client ↔ Linux host, Dream Land Ness ditto, seed `116880861`  
+**Follow-up soak:** seed `15672945` — FC@1526 `inputs_agree=1`, PEER@1525 map+figh+anim (`agree_through_load=1`); Android resim rewrote `map_hash_save tick=1525` to a different Pupupu phase than peer’s first-pass slot  
 **Logs:** `/mnt/raid0/Software/BattleShip/logs/soak1-{android,linux}.log`  
-**Kill:** `PEER_SNAPSHOT_DIVERGE` @load **3366** — `figh` match, **`map`+`anim`**, `agree_through_load=1`  
+**Kill (116880861):** `PEER_SNAPSHOT_DIVERGE` @load **3366** — `figh` match, **`map`+`anim`**, `agree_through_load=1`  
 **Related:** [post-resim live save without battle](netplay_post_resim_live_save_without_battle_map_skew_2026-07-16.md), [light exclusive poison](netplay_light_exclusive_frontier_poison_load_2026-07-28.md), [Pupupu ground_fold / Whispy](netplay_pupupu_ground_fold_whispy_anim_2026-07-12.md)
 
 ## Symptom
@@ -52,17 +53,20 @@ Resim contract: after `LoadPostTick(load)`, `SavePostTick(T)` for `T > load` mus
 
 Broken deepen violates that: first `SavePostTick(mismatch)` commits **pre-advance load world** under the mismatch index. Downstream exclusive frontier + baseline compare then disagree by one Pupupu phase even when fighters later hash-match and inputs agree.
 
+Primary mechanism in `AdvanceResimBudget`: `scVSBattleFuncUpdateBattleSimOnly` is a **no-op** under `BattleSimHold`, but the loop still called `syNetRbSnapshotSave(t)` and advanced `NextTick` — publishing load Pupupu as mismatch.
+
 This is the same *family* as [post-resim live save without battle](netplay_post_resim_live_save_without_battle_map_skew_2026-07-16.md) (label post-(T−1) as T), but the onset here is **inside deepen/resim SavePostTick**, not the live Await/SamePass path — and it is **asymmetric across peers** when one deepen attempt takes the good path and the other the bad path.
 
 SoftLip figh @3353 is only the deepen *stimulus*. Patching Whispy blink / flower / map hash with more context would not fix the mis-tagged ring.
 
-## Contract-effective fix (do not band-aid PEER)
+## Fix (`PORT && SSB64_NETMENU`)
 
-Prefer invariants over “if Dream Land / if blink Δ=1 allow deepen”:
+In `port/net/sys/netrollback.c`:
 
-1. **Resim save gate:** During `ResimPending`, refuse `SavePostTick(T)` for `T == mismatch` (or any `T > load`) unless a post-load battle completion for `T` is proven (same spirit as `AllowLivePostBattleSave` / `live_battle_sim_ran`). If `GetTick` was bumped to `mismatch` without `gcRunAll`, do not save.
-2. **Load-slot identity check (diag → hard):** If saving `T > load` and live Pupupu `(wind_wait, blink)` (or full `hash_map`) still equals the load slot, log `RESIM_SAVE_PHASE_STALE` and skip/defer — never publish that slot as baseline.
-3. **Baseline phase detect:** If peer/local map disagree but `peer_map == local_map_at(load-1)` / Pupupu blink Δ=1 with figh match, classify `PEER_MAP_PHASE_FORK` and re-deepen from a proven load rather than immediate `PEER_SNAPSHOT_DIVERGE` (recovery aid; primary fix remains (1)).
+1. **`sSYNetRollbackResimBattleProvenThrough`** — armed to `load` in `ArmResimBaselineAfterLoad`; cleared on reset / Finish / tuple_align rewind.
+2. **`AdvanceResimBudget`:** if `BattleSimHold`, break (no save, no NextTick++). After `BattleSimOnly`, require `GetTick > t` before proving/saving; else `RESIM_SAVE_SKIP no_tick_advance` and break.
+3. **Pupupu phase stale:** if `T > load` and live `hash_map` still equals the load-slot map, `RESIM_SAVE_PHASE_STALE` — skip save, pin GetTick back to `t`, break (hole ≫ +1 skew).
+4. **`SavePostTick` belt:** refuse `T > load` while `proven_through < T` (`SNAPSHOT_SAVE_SKIP resim_no_battle_proof`).
 
 Do **not** widen SoftLip suppress, ignore map in baseline, or special-case seed/tick windows.
 
@@ -71,5 +75,6 @@ Do **not** widen SoftLip suppress, ignore map in baseline, or special-case seed/
 Re-soak Dream Land dual-stick after the save gate:
 
 - Every deepen: first `map_hash_save` at `mismatch` must show `blink = load_blink - 1` (Wait countdown), never equal to load blink.
-- No sustained `Linux[t]==Android[t-1]` Pupupu stream after deepen.
-- SoftLip figh @~3353 may still FC-recover; map baseline at exclusive frontier must match when `agree_through_load=1`.
+- Grep: `RESIM_SAVE_SKIP` / `RESIM_SAVE_PHASE_STALE` / `RESIM_ADVANCE_BLOCKED` only on hold/stale paths; no sustained `Linux[t]==Android[t-1]` Pupupu stream after deepen.
+- SoftLip figh may still FC-recover; map baseline at exclusive frontier must match when `agree_through_load=1`.
+- Rebuild desktop **and** Android APK before re-soak.

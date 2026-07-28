@@ -4999,11 +4999,17 @@ sb32 syNetInputRemoteHumanAnalogRampPredictTighten(u32 sim_tick)
  *
  * v11 (soak 1454017460): HardStall≡Restrict while last_conf was confirmed neutral made
  * remote-idle hold-neutral invent a full-sim R freeze (~23% host pct_R) even when the
- * owner stayed at (0,0). Hold-neutral invent inside pred_win of a fresh last_conf is
- * allowed (same soft-GGPO tradeoff as analog_ramp hold_last). Stale last_conf (age >
- * pred_win) — e.g. Go@391 last_conf=384 age=7 — still Restricts so invent-(0,0) through
- * unseen onset stays hard-R. See
+ * owner stayed at (0,0). Hold-neutral invent for a fresh last_conf is allowed (same
+ * soft-GGPO tradeoff as analog_ramp hold_last). Stale last_conf still Restricts so
+ * invent-(0,0) through unseen onset stays hard-R. See
  * docs/bugs/netplay_zero_onset_hold_neutral_r_stall_2026-07-27.md.
+ *
+ * v12 (soak seed 3839642009): v11 allowed invent through age≤pred_win (often 4). At
+ * P1@1125 last_conf=1122 age=3≤4 invented (0,0) while owner soft-onset (0,-31) →
+ * SoftLip / FC@1134 inputs_agree=0; light span-1 did not converge. Fresh-neutral
+ * allow age is committed D (floor 1) — still covers idle age 1–2, HardStalls the
+ * extra predict slot where soft onset sneaks past deadband. See
+ * docs/bugs/netplay_zero_onset_fresh_neutral_pred_win_softlip_2026-07-28.md.
  */
 sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 {
@@ -5015,6 +5021,7 @@ sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 	const SYNetInputFrame *last_nn;
 	sb32 hit;
 	u32 pred_win;
+	u32 fresh_neutral_allow;
 	u32 conf_age;
 
 	if ((sim_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE) ||
@@ -5043,6 +5050,11 @@ sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 	{
 		pred_win = 2U;
 	}
+	fresh_neutral_allow = syNetPeerGetCommittedInputDelay();
+	if (fresh_neutral_allow < 1U)
+	{
+		fresh_neutral_allow = 1U;
+	}
 	for (i = 0; i < n; i++)
 	{
 		if (syNetPeerGetRemoteHumanSlotByIndex(i, &slot) == FALSE)
@@ -5062,14 +5074,16 @@ sb32 syNetInputRemoteHumanZeroOnsetPredictRestrict(u32 sim_tick)
 		}
 		/*
 		 * Fresh confirmed neutral: invent (0,0) is hold_last of idle, not an unseen
-		 * onset. Age > pred_win means confirm lag — keep Restrict (Go invent PEER class).
+		 * onset. Age > committed D means predict past the delay contract — Restrict
+		 * so soft onset cannot land on a peer that already invented hard zero
+		 * (soak seed 3839642009 @1125). Go / stale-confirm (age≫D) still Restricts.
 		 */
 		if ((last_confirmed->is_valid != FALSE) &&
 		    (syNetInputFrameSticksNearNeutral(last_confirmed) != FALSE) &&
 		    (last_confirmed->tick != 0U) && (sim_tick >= last_confirmed->tick))
 		{
 			conf_age = sim_tick - last_confirmed->tick;
-			if (conf_age <= pred_win)
+			if (conf_age <= fresh_neutral_allow)
 			{
 				continue;
 			}
