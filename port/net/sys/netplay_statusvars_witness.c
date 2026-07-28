@@ -218,11 +218,14 @@ static void syNetplayStatusVarsWitnessInitOwnershipTable(void)
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusThrownStart, nFTCommonStatusThrownEnd, nFTStatusVarsOverlayThrown);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusThrownKirbyStar, nFTCommonStatusThrownCopyStar, nFTStatusVarsOverlayThrown);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttack11, nFTCommonStatusAttackDash, nFTStatusVarsOverlayAttack1);
+    /* C2c ownership gaps: tilts/smashes with their own common overlays (accessors already exist). */
+    syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackLw3, nFTCommonStatusAttackLw3, nFTStatusVarsOverlayAttackLw3);
+    syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackS4Hi, nFTCommonStatusAttackLw4, nFTStatusVarsOverlayAttack4);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackAirStart, nFTCommonStatusAttackAirEnd, nFTStatusVarsOverlayAttackAir);
     syNetplayStatusVarsWitnessFillRange(nFTFoxStatusSpecialHiStart, nFTFoxStatusSpecialAirHi, nFTStatusVarsOverlayFoxSpecialHi);
 }
 
-static FTStatusVarsOverlay syNetplayStatusVarsWitnessExpectedOverlay(const FTStruct *fp)
+FTStatusVarsOverlay syNetplayStatusVarsExpectedOverlay(const FTStruct *fp)
 {
     FTStatusVarsOverlay expected;
 
@@ -435,7 +438,7 @@ void syNetplayStatusVarsWitnessNoteAccess(const FTStruct *fp, FTStatusVarsOverla
 
     syNetplayStatusVarsWitnessLogArmedOnce();
 
-    expected = syNetplayStatusVarsWitnessExpectedOverlay(fp);
+    expected = syNetplayStatusVarsExpectedOverlay(fp);
     syNetplayStatusVarsWitnessCheckIntegrity(fp, overlay, expected);
 
     if (expected == nFTStatusVarsOverlayNone)

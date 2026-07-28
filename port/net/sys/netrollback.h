@@ -134,6 +134,13 @@ extern void syNetRollbackOnPeerSymmetricRollbackNotify(s32 slot, u32 mismatch_ti
 extern void syNetRollbackOnPeerSymmetricRollbackNotifyEx(s32 slot, u32 mismatch_tick, u32 target_tick, u32 load_tick,
 						       u32 epoch_id, u8 notify_flags);
 extern void syNetRollbackExportPeerSymmetricEpisode(s32 slot, u32 *out_load_tick, u32 *out_epoch_id);
+/*
+ * Episode seal target-fork defense shrunk FSM target to peer's shorter prefix.
+ * Sync FC arm / pending / outbound ROLLBACK_SYNC targets down so peers do not keep
+ * advertising the abandoned deepen (dup_pending / invent hang).
+ * See docs/bugs/netplay_fc_shrink_target_fork_hang_2026-07-28.md.
+ */
+extern void syNetRollbackOnEpisodeTargetShrunkToPeerPrefix(u32 mismatch_tick, u32 old_target, u32 new_target);
 /* Local correction frontier (last completed episode target); advertised on ROLLBACK_SYNC. */
 extern u32 syNetRollbackGetEpisodeResolvedThrough(void);
 /* Peer-advertised frontier from ROLLBACK_SYNC; monotonic max. */

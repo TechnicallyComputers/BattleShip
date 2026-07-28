@@ -5,6 +5,8 @@
 #include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
+#include <sys/netplay_statusvars_bank.h>
+#include <sys/netplay_statusvars_witness.h>
 #if defined(PORT)
 #include <sys/netplay_sim_quantize.h>
 #endif
@@ -479,6 +481,13 @@ typedef struct SYNetRbSnapFighterBlob
 	FTTexturePartStatus texturepart_status[2];
 
 	u8 status_vars[sizeof(union FTStatusVars)];
+	/*
+	 * C2a tag: owning FTStatusVars overlay for the captured bytes (witness ownership table),
+	 * nFTStatusVarsOverlayNone (-1) when unowned. Captured bytes are the exact live union — no
+	 * overlay memsets — so apply/synctest round-trip every active overlay field. Both peers ship
+	 * the same binary (hash recipe lockstep), so the tag never travels the wire. C2b bank payload.
+	 */
+	s16 status_vars_overlay;
 	u8 passive_vars[sizeof(union FTPassiveVars)];
 
 	f32 gobj_anim_frame;
@@ -4441,10 +4450,18 @@ static sb32 syNetRbSnapBlobInCaptainFalconSpecialHiScope(const SYNetRbSnapFighte
 static sb32 syNetRbSnapBlobInCliffMotionSynctestFragileScope(const SYNetRbSnapFighterBlob *blob);
 static sb32 syNetRbSnapBlobInPikachuQuickAttackSynctestDeferScope(const SYNetRbSnapFighterBlob *blob);
 
+#if !defined(SSB64_NETMENU)
 /*
  * status_vars is a per-status union; memcpy captures inactive overlay bytes (e.g. attackair.rehit
  * garbage while in JumpAerialF). Scrub known stale overlays before save so blob diagnostics and any
  * future status_vars folds stay deterministic.
+ *
+ * PORT (non-netmenu) only. C2a (netmenu): tagged exact capture replaces the overlay memsets — see
+ * syNetRbSnapCaptureFighterStatusVarsFromLive + status_vars_overlay. Every denylist early-return
+ * below existed to dodge union aliasing on a live overlay; exact capture keeps the bytes instead.
+ * Supersedes docs/bugs/netplay_{squat_pass_wait,landing_allow_interrupt}_statusvars_scrub_fc_2026-07-28.md
+ * and the older scrub early-returns (Kirby Stone, Firefox, Rebirth/Dead, Samus charge, CliffMotion,
+ * PK Thunder, Twister/TaruCann, JumpAerial/KneeBend, Damage, Turn).
  */
 static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blob)
 {
@@ -4682,8 +4699,93 @@ static void syNetRbSnapScrubInactiveStatusVarsInBlob(SYNetRbSnapFighterBlob *blo
 		memset(&status_vars->common.tarucann, 0, sizeof(status_vars->common.tarucann));
 	}
 }
+#endif /* !SSB64_NETMENU — C2a tagged exact capture retires the overlay scrub */
 
 #if defined(SSB64_NETMENU)
+/*
+ * C2a/C2b tagged capture: ring payload is bank[live_overlay] when the status owns an overlay.
+ * Unowned locomotion (Wait/Walk/Jump/Fall/Pass/…) must emit tag=None — never a sticky prior
+ * KneeBend/Squat/Turn tag (soak1 4092906820 STATUSVARS_TAG_HEAL storm). Payload for None is the
+ * union projection (residual raw readers); light folds are status-gated so it stays hash-invisible.
+ */
+static void syNetRbSnapCaptureFighterStatusVarsFromLive(SYNetRbSnapFighterBlob *blob, const FTStruct *fp)
+{
+	s32 player;
+	s32 live_overlay;
+	FTStatusVarsOverlay expected;
+
+	if ((blob == NULL) || (fp == NULL))
+	{
+		return;
+	}
+	player = fp->player;
+	expected = syNetplayStatusVarsExpectedOverlay(fp);
+	live_overlay = syNetplayStatusVarsBankLiveOverlay(player);
+	/*
+	 * Prefer the ownership-table answer. If live_overlay drifted (pre-clear SetStatus, apply hole),
+	 * still capture bank[expected] so peers stay on the real overlay slot.
+	 */
+	if (expected != nFTStatusVarsOverlayNone)
+	{
+		s32 slot = (s32)expected;
+
+		if ((live_overlay >= 0) && (live_overlay < nFTStatusVarsOverlayCount) &&
+		    (live_overlay != slot))
+		{
+			/* Quiet repair of sticky live tag — capture still uses expected. */
+			syNetplayStatusVarsBankSetLiveOverlay(player, slot);
+		}
+		syNetplayStatusVarsBankCopyOverlayOut(player, slot, blob->status_vars,
+		                                      sizeof(blob->status_vars));
+		blob->status_vars_overlay = (s16)slot;
+		return;
+	}
+	memcpy(blob->status_vars, &fp->status_vars, sizeof(blob->status_vars));
+	blob->status_vars_overlay = (s16)nFTStatusVarsOverlayNone;
+	if ((live_overlay >= 0) && (live_overlay < nFTStatusVarsOverlayCount))
+	{
+		/* Stickiness should already be cleared in SetStatus; keep bank tag in lockstep. */
+		syNetplayStatusVarsBankSetLiveOverlay(player, (s32)nFTStatusVarsOverlayNone);
+	}
+}
+
+/*
+ * Apply-side tag validation.
+ * - expected == None (unowned status): quiet-clear any stale owned tag so bank apply does not
+ *   re-stick KneeBend/Squat while in Jump/Wait. Do not log STATUSVARS_TAG_HEAL (noise).
+ * - expected is a real overlay: heal mismatch to the table answer (log — binary/layout skew).
+ */
+static void syNetRbSnapValidateFighterStatusVarsTagFromBlob(SYNetRbSnapFighterBlob *blob)
+{
+	FTStruct probe_fp;
+	FTStatusVarsOverlay expected;
+	FTStatusVarsOverlay captured;
+
+	if ((blob == NULL) || (blob->is_valid == FALSE))
+	{
+		return;
+	}
+	memset(&probe_fp, 0, sizeof(probe_fp));
+	probe_fp.status_id = blob->status_id;
+	probe_fp.camera_mode = blob->camera_mode;
+	expected = syNetplayStatusVarsExpectedOverlay(&probe_fp);
+	captured = (FTStatusVarsOverlay)blob->status_vars_overlay;
+	if (expected == nFTStatusVarsOverlayNone)
+	{
+		if (captured != nFTStatusVarsOverlayNone)
+		{
+			blob->status_vars_overlay = (s16)nFTStatusVarsOverlayNone;
+		}
+		return;
+	}
+	if (captured != expected)
+	{
+		port_log("SSB64 NetSync: STATUSVARS_TAG_HEAL tick=%d blob_status=%d captured_tag=%d expected_tag=%d\n",
+		         (int)syNetInputGetTick(), (int)blob->status_id, (int)captured, (int)expected);
+		blob->status_vars_overlay = (s16)expected;
+	}
+}
+
 static u32 syNetRbSnapFoxFirefoxProbeF32Bits(f32 value)
 {
 	union
@@ -8932,8 +9034,10 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 #if defined(SSB64_NETMENU)
 	syNetplayNessSanitizePKJibakuStatusVars(fp);
 	syNetplayPikachuSanitizeQuickAttackStatusVars(fp);
-#endif
+	syNetRbSnapCaptureFighterStatusVarsFromLive(blob, fp);
+#else
 	memcpy(blob->status_vars, &fp->status_vars, sizeof(blob->status_vars));
+#endif
 #if defined(SSB64_NETMENU)
 	syNetRbSnapLogFoxFirefoxAnimFramesProbe("capture_raw", fp, blob);
 #endif
@@ -8954,10 +9058,13 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 	syNetplayQuantizePikachuQuickAttackLandingStatusVars(fp, (union FTStatusVars *)blob->status_vars);
 #endif
 #ifdef PORT
+#ifndef SSB64_NETMENU
 	syNetRbSnapScrubInactiveStatusVarsInBlob(blob);
+#endif
 	/*
-	 * Pin dead.wait from the netmenu bridge after scrub. Pre-scrub pin was stomped by the
-	 * rebirth memset alias (Dead* early-return above); keep this as the durable capture rule.
+	 * Pin dead.wait from the netmenu bridge after status_vars capture. (Pre-C2a this ran after the
+	 * scrub memsets, which the rebirth overlay aliased and stomped.) C2a keeps the exact overlay
+	 * bytes; the bridge value stays the durable capture rule for the Dead countdown.
 	 */
 	if ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall))
 	{
@@ -10994,6 +11101,34 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 #endif
 	memcpy(&fp->status_vars, blob->status_vars, sizeof(fp->status_vars));
 #if defined(SSB64_NETMENU)
+	/* Ring slots are writable storage; the const here is only this function's view. Tag heal writes
+	   back into the slot so C2b's bank apply sees the corrected overlay index. */
+	syNetRbSnapValidateFighterStatusVarsTagFromBlob((SYNetRbSnapFighterBlob *)blob);
+	/*
+	 * C2b: the parallel bank is the authority. Restore the captured payload into bank[tag], set the
+	 * live overlay, then re-project the union from the bank so residual raw readers see the same
+	 * active overlay the accessors now write. Unowned tags (None): clear live_overlay and keep the
+	 * union memcpy — do not re-stick a prior owned slot (Wait/Jump/Fall capture/apply hole).
+	 */
+	{
+		s32 c2b_tag = (s32)blob->status_vars_overlay;
+		s32 c2b_player = fp->player;
+
+		if ((c2b_player >= 0) && (c2b_player < GMCOMMON_PLAYERS_MAX))
+		{
+			if ((c2b_tag >= 0) && (c2b_tag < nFTStatusVarsOverlayCount))
+			{
+				syNetplayStatusVarsBankCopyOverlayIn(c2b_player, c2b_tag, blob->status_vars,
+				                                     sizeof(blob->status_vars));
+				syNetplayStatusVarsBankSetLiveOverlay(c2b_player, c2b_tag);
+				syNetplayStatusVarsBankProjectUnion(fp);
+			}
+			else
+			{
+				syNetplayStatusVarsBankSetLiveOverlay(c2b_player, (s32)nFTStatusVarsOverlayNone);
+			}
+		}
+	}
 	syNetRbSnapCanonicalizeCaptainStatusVarsOnApply(fp, fighter_gobj, blob);
 	syNetRbSnapLogFoxFirefoxAnimFramesProbe("apply_live_post_status_memcpy", fp, blob);
 #endif
@@ -12211,6 +12346,35 @@ static u32 syNetRbSnapHashFighterBlobLight(const SYNetRbSnapFighterBlob *blob)
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)turn->lr_dash);
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)turn->lr_turn);
 	}
+	/*
+	 * Mirror syNetSyncHashFighterStructLight Squat / Landing folds (soak 1327280249, 3078154319).
+	 * Without these the blob light hash stays clean while the live fold arms pass/interrupt —
+	 * synctest load then self-diverges on the statuses C2a exact-capture is meant to protect.
+	 */
+	if ((blob->status_id >= nFTCommonStatusSquat) && (blob->status_id <= nFTCommonStatusSquatRv))
+	{
+		const ftCommonSquatStatusVars *squat =
+		    &((const union FTStatusVars *)blob->status_vars)->common.squat;
+
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)(squat->is_allow_pass != FALSE));
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)squat->pass_wait);
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)squat->unk_0x8);
+	}
+	if ((blob->status_id == nFTCommonStatusLandingLight) || (blob->status_id == nFTCommonStatusLandingHeavy) ||
+	    (blob->status_id == nFTCommonStatusLandingAirNull))
+	{
+		const ftCommonLandingStatusVars *landing =
+		    &((const union FTStatusVars *)blob->status_vars)->common.landing;
+
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)(landing->is_allow_interrupt != FALSE));
+	}
+	else if (blob->status_id == nFTCommonStatusLandingFallSpecial)
+	{
+		const ftCommonFallSpecialStatusVars *fallspecial =
+		    &((const union FTStatusVars *)blob->status_vars)->common.fallspecial;
+
+		h = syNetRbSnapFnvAccumulateU32(h, (u32)(fallspecial->is_allow_interrupt != FALSE));
+	}
 #endif
 	if ((blob->fkind == nFTKindKirby) && (blob->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (blob->status_id <= nFTKirbyStatusSpecialAirLwEnd))
@@ -13001,6 +13165,13 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 		                              (u32)blob->status_id);
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "motion_id", (u32)fp->motion_id,
 		                              (u32)blob->motion_id);
+#if defined(SSB64_NETMENU)
+		/* C2a/C2b: surface the tagged overlay vs the live expected overlay so scrub-class divergence
+		   shows which overlay the ring thinks is active (bank live tag vs blob tag). */
+		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_vars_overlay",
+		                              (u32)(u16)(s16)syNetplayStatusVarsExpectedOverlay(fp),
+		                              (u32)(u16)blob->status_vars_overlay);
+#endif
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "motion_attack_id", (u32)fp->motion_attack_id,
 		                              (u32)blob->motion_attack_id);
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "hitstatus", (u32)fp->hitstatus,

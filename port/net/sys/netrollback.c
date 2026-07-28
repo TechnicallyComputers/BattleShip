@@ -6,6 +6,9 @@
 #include <sys/netpeer.h>
 #include <sys/netreplay.h>
 #include <sys/netrollbacksnapshot.h>
+#if defined(PORT) && defined(SSB64_NETMENU)
+#include <sys/netplay_statusvars_bank.h>
+#endif
 #include <sys/netsync.h>
 #include <sys/netsync_rng_trace.h>
 #include <sys/objdef.h>
@@ -1790,6 +1793,9 @@ void syNetRollbackStartVSSession(void)
 		return;
 	}
 	syNetRbSnapshotResetSession();
+#if defined(PORT) && defined(SSB64_NETMENU)
+	syNetplayStatusVarsBankResetSession();
+#endif
 	sSYNetRollbackSessionActive = TRUE;
 	sSYNetRollbackResimDepth = 0;
 	sSYNetRollbackRollbackCount = 0;
@@ -2926,6 +2932,63 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 		{
 			sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
 		}
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * Drop pending/outbound deepen past the closed target for the same onset.
+		 * After SHRINK→Commit@peer_prefix, a stale peer SYNC at the abandoned deepen
+		 * must not stick in pending (dup_pending). See
+		 * docs/bugs/netplay_fc_shrink_target_fork_hang_2026-07-28.md.
+		 */
+		if ((sSYNetRollbackResimMismatchTick != 0U) && (sSYNetRollbackResimMismatchTick != ~(u32)0))
+		{
+			u32 settled_mismatch;
+			s32 sym_slot;
+
+			settled_mismatch = sSYNetRollbackResimMismatchTick;
+			if ((sSYNetRollbackPendingPeerSymmetricTick == settled_mismatch) &&
+			    (sSYNetRollbackPendingPeerSymmetricTargetTick != ~(u32)0) &&
+			    (sSYNetRollbackPendingPeerSymmetricTargetTick > completed_target))
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_CLOSE_CLEAR_ABANDONED_DEEPEN pending mismatch=%u "
+				    "target=%u->cleared completed=%u\n",
+				    settled_mismatch,
+				    sSYNetRollbackPendingPeerSymmetricTargetTick,
+				    completed_target);
+				sym_slot = sSYNetRollbackPendingPeerSymmetricSlot;
+				syNetRollbackClearPendingPeerSymmetricNotify();
+				if ((sym_slot >= 0) && (sym_slot < MAXCONTROLLERS))
+				{
+					syNetRollbackPendingEpisodeClearSlot(sym_slot);
+				}
+			}
+			if ((sSYNetRollbackDeferredPeerSymmetricPending != FALSE) &&
+			    (sSYNetRollbackDeferredPeerSymmetricTick == settled_mismatch) &&
+			    (sSYNetRollbackDeferredPeerSymmetricTargetTick > completed_target))
+			{
+				port_log(
+				    "SSB64 NetRollback: EPISODE_CLOSE_CLEAR_ABANDONED_DEEPEN deferred mismatch=%u "
+				    "target=%u->cleared completed=%u\n",
+				    settled_mismatch,
+				    sSYNetRollbackDeferredPeerSymmetricTargetTick,
+				    completed_target);
+				sSYNetRollbackDeferredPeerSymmetricPending = FALSE;
+				sSYNetRollbackDeferredPeerSymmetricTick = ~(u32)0;
+				sSYNetRollbackDeferredPeerSymmetricTargetTick = ~(u32)0;
+				sSYNetRollbackDeferredPeerSymmetricSlot = -1;
+				sSYNetRollbackDeferredPeerSymmetricFollowerLocalAuth = FALSE;
+				sSYNetRollbackDeferredPeerSymmetricFlags = 0U;
+			}
+			for (sym_slot = 0; sym_slot < MAXCONTROLLERS; sym_slot++)
+			{
+				if ((sSYNetRollbackSymmetricNotifyTick[sym_slot] == settled_mismatch) &&
+				    (sSYNetRollbackSymmetricNotifyTargetTick[sym_slot] > completed_target))
+				{
+					sSYNetRollbackSymmetricNotifyTargetTick[sym_slot] = completed_target;
+				}
+			}
+		}
+#endif
 		if ((sSYNetRollbackPeerEpochTargetTick != 0U) && (completed_target >= sSYNetRollbackPeerEpochTargetTick) &&
 		    (syNetRollbackRetainPeerEpochAfterLocalResim() == FALSE))
 		{
@@ -11992,6 +12055,101 @@ static void syNetRollbackClearFcStateRecovery(void)
 	sSYNetRollbackFcRecoveryJoinAttempts = 0U;
 }
 
+void syNetRollbackOnEpisodeTargetShrunkToPeerPrefix(u32 mismatch_tick, u32 old_target, u32 new_target)
+{
+	s32 slot;
+	sb32 touched;
+
+	if ((mismatch_tick == 0U) || (new_target <= mismatch_tick) || (new_target >= old_target))
+	{
+		return;
+	}
+	touched = FALSE;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	if ((sSYNetRollbackFcStateRecoveryActive != FALSE) &&
+	    (sSYNetRollbackFcStateRecoveryMismatchTick == mismatch_tick) &&
+	    (sSYNetRollbackFcStateRecoveryTargetTick != ~(u32)0) &&
+	    (sSYNetRollbackFcStateRecoveryTargetTick > new_target))
+	{
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SHRINK_SYNC fc_arm target=%u->%u mismatch=%u\n",
+		    sSYNetRollbackFcStateRecoveryTargetTick,
+		    new_target,
+		    mismatch_tick);
+		sSYNetRollbackFcStateRecoveryTargetTick = new_target;
+		touched = TRUE;
+	}
+	if ((sSYNetRollbackDeferredStateMismatchPending != FALSE) &&
+	    (sSYNetRollbackDeferredStateMismatchTick == mismatch_tick) &&
+	    (sSYNetRollbackDeferredStateMismatchTargetTick != ~(u32)0) &&
+	    (sSYNetRollbackDeferredStateMismatchTargetTick > new_target))
+	{
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SHRINK_SYNC deferred_fc target=%u->%u mismatch=%u\n",
+		    sSYNetRollbackDeferredStateMismatchTargetTick,
+		    new_target,
+		    mismatch_tick);
+		sSYNetRollbackDeferredStateMismatchTargetTick = new_target;
+		touched = TRUE;
+	}
+#endif
+	if ((sSYNetRollbackResimMismatchTick == mismatch_tick) && (sSYNetRollbackResimTargetTick != ~(u32)0) &&
+	    (sSYNetRollbackResimTargetTick > new_target))
+	{
+		sSYNetRollbackResimTargetTick = new_target;
+		touched = TRUE;
+	}
+	if ((sSYNetRollbackEpisode.mismatch_tick == mismatch_tick) && (sSYNetRollbackEpisode.target_tick > new_target))
+	{
+		sSYNetRollbackEpisode.target_tick = new_target;
+		touched = TRUE;
+	}
+	if ((sSYNetRollbackPendingPeerSymmetricTick == mismatch_tick) &&
+	    (sSYNetRollbackPendingPeerSymmetricTargetTick != ~(u32)0) &&
+	    (sSYNetRollbackPendingPeerSymmetricTargetTick > new_target))
+	{
+		sSYNetRollbackPendingPeerSymmetricTargetTick = new_target;
+		touched = TRUE;
+	}
+	if ((sSYNetRollbackDeferredPeerSymmetricPending != FALSE) &&
+	    (sSYNetRollbackDeferredPeerSymmetricTick == mismatch_tick) &&
+	    (sSYNetRollbackDeferredPeerSymmetricTargetTick > new_target))
+	{
+		sSYNetRollbackDeferredPeerSymmetricTargetTick = new_target;
+		touched = TRUE;
+	}
+	if ((sSYNetRollbackPeerEpochMismatchTick == mismatch_tick) && (sSYNetRollbackPeerEpochTargetTick > new_target))
+	{
+		sSYNetRollbackPeerEpochTargetTick = new_target;
+		touched = TRUE;
+	}
+	for (slot = 0; slot < MAXCONTROLLERS; slot++)
+	{
+		if ((sSYNetRollbackSymmetricNotifyTick[slot] == mismatch_tick) &&
+		    (sSYNetRollbackSymmetricNotifyTargetTick[slot] > new_target))
+		{
+			sSYNetRollbackSymmetricNotifyTargetTick[slot] = new_target;
+			touched = TRUE;
+		}
+		if ((sSYNetRollbackPendingEpisodeBySlot[slot].valid != FALSE) &&
+		    (sSYNetRollbackPendingEpisodeBySlot[slot].mismatch_tick == mismatch_tick) &&
+		    (sSYNetRollbackPendingEpisodeBySlot[slot].target_tick > new_target))
+		{
+			sSYNetRollbackPendingEpisodeBySlot[slot].target_tick = new_target;
+			touched = TRUE;
+		}
+	}
+	if (touched != FALSE)
+	{
+		port_log(
+		    "SSB64 NetRollback: EPISODE_SHRINK_SYNC_TARGETS mismatch=%u old_target=%u new_target=%u sim=%u\n",
+		    mismatch_tick,
+		    old_target,
+		    new_target,
+		    syNetInputGetTick());
+	}
+}
+
 static void syNetRollbackOnFcDeepenStormLimit(u32 load_tick)
 {
 	port_log(
@@ -12104,6 +12262,22 @@ static sb32 syNetRollbackPeerSymmetricFcJoinKeepOnset(u32 mismatch_tick, u32 tar
 	if ((sSYNetRollbackEpisodeResolvedThrough == 0U) ||
 	    (mismatch_tick >= sSYNetRollbackEpisodeResolvedThrough) ||
 	    (target_tick <= sSYNetRollbackEpisodeResolvedThrough))
+	{
+		return FALSE;
+	}
+	/*
+	 * Stale deepen after SHRINK_TO_PEER_PREFIX: local already closed this onset
+	 * (LastCommittedMismatch) through resolved_through and no longer has an FC arm
+	 * wanting the deeper target. Peer's pre-shrink ROLLBACK_SYNC still carries
+	 * FC_RECOVERY + abandoned deepen → keep-onset would re-queue forever
+	 * (dup_pending / invent spin). Soak seed 2437168353: 2278→2296 after commit@2288.
+	 * Legitimate escalate deepen re-arms local FC before notify.
+	 * See docs/bugs/netplay_fc_shrink_target_fork_hang_2026-07-28.md.
+	 */
+	if ((sSYNetRollbackFcStateRecoveryActive == FALSE) &&
+	    (sSYNetRollbackDeferredStateMismatchPending == FALSE) &&
+	    (sSYNetRollbackLastCommittedMismatchTick == mismatch_tick) &&
+	    (sSYNetRollbackEpisodeResolvedThrough > mismatch_tick))
 	{
 		return FALSE;
 	}

@@ -2,6 +2,7 @@
 
 #include <sys/netinput.h>
 #include <sys/netpeer.h>
+#include <sys/netrollback.h>
 
 #ifdef PORT
 #include <PR/os.h>
@@ -471,6 +472,12 @@ static sb32 syNetRollbackEpisodeTryShrinkTargetToPeerPrefix(u32 peer_target)
 	    peer_target,
 	    peer_span,
 	    old_span);
+	/*
+	 * Shrink alone leaves FcStateRecoveryTarget / ROLLBACK_SYNC at the abandoned deepen
+	 * (e.g. 2296) while exec commits at peer_target (2288) → peer re-joins deepen forever.
+	 * See docs/bugs/netplay_fc_shrink_target_fork_hang_2026-07-28.md.
+	 */
+	syNetRollbackOnEpisodeTargetShrunkToPeerPrefix(local_mismatch, local_target, peer_target);
 	return TRUE;
 }
 

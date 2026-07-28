@@ -36,6 +36,16 @@ Same scrub class as Turn `lr_dash`, JumpAerial `ja_*`, Damage `hitstun_tics`.
 1. **`syNetRbSnapScrubInactiveStatusVarsInBlob`** — early-return for `nFTCommonStatusSquat`…`SquatRv` (preserve captured squat overlay).
 2. **`syNetSyncHashFighterStructLight`** — fold `is_allow_pass`, `pass_wait`, `unk_0x8` via `ftStatusVarsSquat()` so `FIGHTER_LIGHT_ONSET` can see overlay skew before status fork.
 
+## Superseded by C2a (2026-07-28)
+
+Approach **C2a — tagged exact snap** replaces the scrub denylist wholesale:
+
+- `SYNetRbSnapFighterBlob` gains `s16 status_vars_overlay` (ownership-table tag from `syNetplayStatusVarsExpectedOverlay`).
+- Capture copies the live union **verbatim** and sets the tag; the netmenu build no longer runs the overlay `memset`s at all (scrub stays only in the offline/PORT build).
+- `syNetRbSnapHashFighterBlobLight` now mirrors the live squat folds (`is_allow_pass` / `pass_wait` / `unk_0x8`), so blob-vs-live light lockstep holds on Squat too.
+
+The scrub early-returns (this one plus Landing / Turn / JumpAerial / KneeBend / Damage / character arms) are retired together; this document stays for the diagnosis history. Structural replacement lives in `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md`.
+
 ## Verify on re-soak
 
 - Stick-down on Dream Land soft platforms through light GGPO storms: no Pass vs SquatWait FC with `inputs_agree=1`.

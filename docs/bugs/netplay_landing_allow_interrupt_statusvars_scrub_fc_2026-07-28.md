@@ -33,6 +33,16 @@ Same scrub class as Squat `pass_wait` / Turn `lr_dash`. Light exclusive-frontier
 1. **`syNetRbSnapScrubInactiveStatusVarsInBlob`** — early-return for `LandingLight`, `LandingHeavy`, `LandingAirNull`, `LandingFallSpecial`.
 2. **`syNetSyncHashFighterStructLight`** — fold `is_allow_interrupt` via `ftStatusVarsLanding` / `ftStatusVarsFallSpecial` so `FIGHTER_LIGHT_ONSET` can see allow skew before Turn entry fork.
 
+## Superseded by C2a (2026-07-28)
+
+Approach **C2a — tagged exact snap** replaces the scrub denylist wholesale:
+
+- `SYNetRbSnapFighterBlob` gains `s16 status_vars_overlay` (ownership-table tag from `syNetplayStatusVarsExpectedOverlay`).
+- Capture copies the live union **verbatim** and sets the tag; the netmenu build no longer runs the overlay `memset`s at all (scrub stays only in the offline/PORT build).
+- `syNetRbSnapHashFighterBlobLight` now mirrors the live Landing / FallSpecial folds (`is_allow_interrupt`), so blob-vs-live light lockstep holds on Landing too.
+
+The scrub early-returns (this one plus Squat / Turn / JumpAerial / KneeBend / Damage / character arms) are retired together; this document stays for the diagnosis history. Structural replacement lives in `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md`.
+
 ## Verify on re-soak
 
 - Stick left/right through LandingLight during light GGPO storms: matching Turn entry tick / `status_total_tics`.

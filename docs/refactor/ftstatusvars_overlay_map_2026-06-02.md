@@ -113,7 +113,7 @@ Every named overlay member starts at **0** (union). Individual field offsets bel
 | `ftCommonCatchPullProcUpdate` | `capture.is_goto_pulled_wait` | **victim** (`catch_gobj`) while grabber in CatchPull | Correct owner is victim capture overlay |
 | `ftCommonCatchWaitProcInterrupt` | `catchwait.throw_wait` | grabber in CatchWait | Direct countdown (upstream) |
 | `ftMainSetStatus` / motion figatree | entire blob | self | New status may read stale overlay bytes until init proc runs |
-| Snapshot save/load | entire blob | all fighters | Blind memcpy — no overlay tag (C2 follow-up) |
+| Snapshot save/load | entire blob | all fighters | ~~Blind memcpy~~ **Resolved by C2a/C2b** (see below) |
 | `ftCommonAttackS4CheckInterruptTurn` | `turn.lr_dash` | self in Turn | Same bytes as `attack4.lr` at union +0x10; must use turn accessor |
 | `ftCommonDamageInitDamageVars` | `damage.*` | self pre-SetStatus | Writes damage overlay while prior `status_id` still active until `ftMainSetStatus` |
 | Thrown motion `SetDamageThrown` / `ftCommonThrownProcStatus` | `damage.script_id` | self in Thrown | Stages throw release script before damage status owns the blob |
@@ -169,7 +169,7 @@ Ownership table covers common `status_id` 0 … `nFTCommonStatusSpecialStart-1` 
 | 10 (batch 7) | `ftcommonhammerkneebend.c`, `ftcommonhammerfall.c`, `ftcommonhammerlanding.c`, `ftdonkeythrowff.c`, `ftdonkeythrowfkneebend.c`, `ftdonkeythrowfdamage.c`, `ftdonkeythrowffall.c`, `ftdonkeythrowflanding.c` | hammer, throwff, throwf, throwfdamage |
 | 11 (batch 8 — sweep) | `ftcommoncapturecaptain.c`, `ftcommonrebound.c`, `ftcommondownattack.c`, `ftcommonescape.c`, `ftcommonget.c`, `ftcommonitemswing.c`, `ftcommonlanding.c`, `ftcommonpass.c`, `ftcommonattackair.c`, `ftcommonattacklw3.c`, `ftcommonattacklw4.c`, `ftcommoncliffcatchwait.c`, `ftcommondash.c`, `ftkirbyspecialn.c`, `ftyoshispecialn.c`, `ftkirbycopyyoshispecialn.c`, `ftcaptainspecialhi.c`, `gmcamera.c`, `netplay_pikachu_quickattack_gate.c`, `netplay_statusvars_witness.c` | capturecaptain, capturekirby, captureyoshi, rebound, downbounce, escape, lift, itemswing, landing, squat, attackair, attacklw3, attack4, cliffwait, turn, dead, entry, fallspecial, catchwait, kneebend |
 
-Deferred: C2 parallel storage, snapshot tag serialization.
+Deferred: ~~C2 parallel storage, snapshot tag serialization~~ — **implemented (C2a + C2b, 2026-07-28); see "Approach C2 — implemented" below.**
 
 **Phase A accessor sweep complete (batch 11):** all live `.c` call sites now route through `ftStatusVars*()` accessors. Remaining `status_vars.common.*` references are comments only (`ftcommonentry.c`, `netrollbacksnapshot.c`) plus the accessor definitions in `ftstatusvars.h`.
 
@@ -195,3 +195,41 @@ Expected witness behavior for Sector Z Kirby/Yoshi soak:
 3. **Rebirth** — expect `rebirth` overlay for status 7–9; deck canonicalize interactions documented separately in `docs/bugs/netplay_sector_z_intro_rebirth_quantize_2026-06-02.md`.
 
 After soak: extend `syNetplayStatusVarsWitnessFillRange` for any false negatives; migrate next overlay batch per witness output.
+
+---
+
+## Approach C2 — implemented (2026-07-28)
+
+The union-aliasing contract this map documents is now structurally removed under `PORT && SSB64_NETMENU`. Two phases; offline/vanilla layout untouched (decomp union + offline accessors unchanged).
+
+### C2a — tagged exact snap (retires the scrub denylist)
+
+| Piece | Where | What |
+|-------|-------|------|
+| `s16 status_vars_overlay` | `SYNetRbSnapFighterBlob` (`netrollbacksnapshot.c`) | Per-slot overlay tag from the ownership table (`syNetplayStatusVarsExpectedOverlay`). Never on the wire — digest-only protocol, both peers ship the same binary. |
+| Exact capture | `syNetRbSnapCaptureFighterStatusVarsFromLive` | Copies the active overlay bytes verbatim; the netmenu build no longer runs `syNetRbSnapScrubInactiveStatusVarsInBlob` overlay `memset`s (that function is `#if !defined(SSB64_NETMENU)` now). |
+| Apply tag validation | `syNetRbSnapValidateFighterStatusVarsTagFromBlob` | Real overlay mismatch → log + heal. Unowned (`None`) → quiet-clear stale owned tags (no TAG_HEAL flood). |
+| Blob light lockstep | `syNetRbSnapHashFighterBlobLight` | Mirrors the live `syNetSyncHashFighterStructLight` folds for Squat / Landing / FallSpecial so blob-vs-live light stays green on the statuses the scrub used to poison. |
+
+Supersedes the per-status scrub early-returns: `netplay_{squat_pass_wait,landing_allow_interrupt}_statusvars_scrub_fc_2026-07-28.md`, plus the older Turn / JumpAerial / KneeBend / Damage / Kirby-Stone / Firefox / Samus-charge / CliffMotion / PK-Thunder / Twister / TaruCann denylist arms.
+
+### C2b — parallel overlay bank (authority moves off the union)
+
+| Piece | Where | What |
+|-------|-------|------|
+| Sidecar bank | `port/net/sys/netplay_statusvars_bank.{h,c}` | `nFTStatusVarsOverlayCount` isolated overlay slots per fighter, keyed by sim player slot (~2.2 KB × 4). Union stops being shared storage — statuses can no longer stomp each other through it. |
+| Accessor redirect | `ftstatusvars.h` `FT_STATUSVARS_PTR` | Under netmenu every `ftStatusVarsX(fp)` returns the bank slot for overlay X, not `&fp->status_vars.*`. Offline build keeps the vanilla union path. |
+| SetStatus switch | `ftMainSetStatus` (`ftmain.c`) | Always sets `live_overlay` from ownership (including `None` for Wait/Jump/Fall/…) **before** status init procs; projects union only when expected is a real overlay. |
+| Fighter init / session reset | `ftManagerInitFighter`, `syNetRollbackStartVSSession` | Clean bank row on fighter (re)creation; full reset at VS start. |
+| Capture / apply | `netrollbacksnapshot.c` | Owned: `bank[expected]` + tag. Unowned: union projection + tag=`None`. Apply restores bank[tag] or clears live on `None`. |
+
+The union becomes a **projection** of the live overlay for residual raw readers (character arms that read a single `status_vars.<char>.*` family share one consistent view and are not an aliasing hazard). Residual raw common-overlay *writers* are the remaining C2b risk — the witness + audit own them; a bank write does not flow back into a raw reader that caches a stale union pointer.
+
+### C2 follow-up — unowned `live_overlay` lifecycle (2026-07-28)
+
+Soak `4092906820` proved scrub-class FC gone and 0× PEER, but ~900× `STATUSVARS_TAG_HEAL expected=-1` from sticky prior overlays on Wait/Jump/Fall/Pass. Fixed in `docs/bugs/netplay_statusvars_tag_heal_unowned_sticky_2026-07-28.md`. Remaining MATCH-input FC is SoftLip `topn_tx` (physics), not status_vars.
+
+### Verification status
+
+- Build: netmenu target compiles clean (no new warnings).
+- Soak gate (C2a + C2b): Dream Land Pass + Landing→Turn — scrub-class FC cleared on seed `4092906820`; re-soak after TAG_HEAL lifecycle fix. Watch for near-zero `STATUSVARS_TAG_HEAL`, no scrub-class MATCH FC, SoftLip `topn_tx` tracked separately.
