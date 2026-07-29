@@ -218,10 +218,11 @@ Supersedes the per-status scrub early-returns: `netplay_{squat_pass_wait,landing
 | Piece | Where | What |
 |-------|-------|------|
 | Sidecar bank | `port/net/sys/netplay_statusvars_bank.{h,c}` | `nFTStatusVarsOverlayCount` isolated overlay slots per fighter, keyed by sim player slot (~2.2 KB × 4). Union stops being shared storage — statuses can no longer stomp each other through it. |
-| Accessor redirect | `ftstatusvars.h` `FT_STATUSVARS_PTR` | Under netmenu every `ftStatusVarsX(fp)` returns the bank slot for overlay X, not `&fp->status_vars.*`. Offline build keeps the vanilla union path. |
-| SetStatus switch | `ftMainSetStatus` (`ftmain.c`) | Always sets `live_overlay` from ownership (including `None` for Wait/Jump/Fall/…) **before** status init procs; projects union only when expected is a real overlay. |
-| Fighter init / session reset | `ftManagerInitFighter`, `syNetRollbackStartVSSession` | Clean bank row on fighter (re)creation; full reset at VS start. |
-| Capture / apply | `netrollbacksnapshot.c` | Owned: `bank[expected]` + tag. Unowned: union projection + tag=`None`. Apply restores bank[tag] or clears live on `None`. |
+| Accessor redirect | `ftstatusvars.h` via `syNetplayStatusVarsBankAuthoritySlot` | **Per-overlay migration, not global.** A migrated `ftStatusVarsX(fp)` returns the bank slot when `syNetplayRollbackSemanticsActive()`; offline modes (and the offline build) keep the vanilla union path. Migrated so far: **Turn**, **KneeBend**, **JumpAerial**, **Dead**, **Rebirth**, **Damage**, **Squat**, **Landing**, **FallSpecial** (2026-07-28). |
+| Capture / apply | `netrollbacksnapshot.c` | Owned: `bank[expected]` + tag. Unowned: union projection + tag=`None`. Apply restores bank[tag] (or clears live on `None`). Migrated overlays that outlive their status additionally get always-captured blob sidecars (`turn_vars`, `squat_vars`). |
+| Session reset | `syNetRollbackReset` (`netrollback.c`) | `syNetplayStatusVarsBankResetSession()` at session reset; slots lazily init per fighter on first bank access. |
+
+> **Correction (2026-07-28):** earlier revisions of this table claimed a global `FT_STATUSVARS_PTR` accessor redirect plus `ftMainSetStatus` / `ftManagerInitFighter` bank wiring. Those were never implemented — the bank was only written at snapshot apply, so `bank[expected]` captures served stale bytes and mid-status loads projected them over the live union (the Turn `lr_dash` wipe, seed `3066947259`). See `docs/bugs/netplay_turn_statusvars_bank_authority_2026-07-28.md`. Migration is now explicitly per-overlay: redirect the accessor, verify SetStatus initializes every field, and add a blob sidecar only if the overlay is read outside its owning status.
 
 The union becomes a **projection** of the live overlay for residual raw readers (character arms that read a single `status_vars.<char>.*` family share one consistent view and are not an aliasing hazard). Residual raw common-overlay *writers* are the remaining C2b risk — the witness + audit own them; a bank write does not flow back into a raw reader that caches a stale union pointer.
 

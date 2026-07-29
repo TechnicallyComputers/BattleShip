@@ -266,6 +266,17 @@ static u32 sSYNetRollbackEpisodeAnchorMismatch;
 static u32 sSYNetRollbackEpisodeAnchorLoadTick;
 static u32 sSYNetRollbackEpisodeLastTargetTick;
 static u32 sSYNetRollbackEpisodeResolvedThrough;
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Durable exclusive-end coverage: raised with EpisodeResolvedThrough on Commit/close, NOT cleared
+ * by ResetCorrectionEpisode (FC deepen). Live ignore / StaleAggregate soft-continue use this so
+ * SoftLip cannot hard-kill after deepen clears EpisodeResolvedThrough (soak 2064608876).
+ * Begin must NOT refuse behind this frontier — that hung inputs_agree FC recovery when soft-continue
+ * had papered a real Hold/physics fork (soak1 session 313936707: mismatch=1264 < healed=1269,
+ * recovery_started=0). See docs/bugs/netplay_fc_healed_frontier_honest_fc_2026-07-28.md.
+ */
+static u32 sSYNetRollbackHealedThrough;
+#endif
 /* Peer-advertised correction frontier (ROLLBACK_SYNC resolved_through); monotonic max. */
 static u32 sSYNetRollbackPeerResolvedThrough;
 static u32 sSYNetRollbackEpisodeExtensions;
@@ -1611,6 +1622,9 @@ void syNetRollbackInit(void)
 	sSYNetRollbackOutcomeCorrectionLogsRemaining = 16U;
 	sSYNetRollbackCoalescedScanLogsRemaining = 16U;
 	syNetRollbackResetCorrectionEpisode();
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetRollbackHealedThrough = 0U;
+#endif
 	sSYNetRollbackPeerResolvedThrough = 0U;
 	sSYNetRollbackStickAbsorbUntilSim = 0U;
 	sSYNetRollbackStickAbsorbPlayer = -1;
@@ -1888,6 +1902,9 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackLastPeerOutcomeFighterSlotsValid = FALSE;
 	sSYNetRollbackLastOutcomeProbeFrontier = ~(u32)0;
 	syNetRollbackResetCorrectionEpisode();
+#if defined(PORT) && defined(SSB64_NETMENU)
+	sSYNetRollbackHealedThrough = 0U;
+#endif
 	sSYNetRollbackPeerResolvedThrough = 0U;
 	sSYNetRollbackStickAbsorbUntilSim = 0U;
 	sSYNetRollbackStickAbsorbPlayer = -1;
@@ -2604,7 +2621,55 @@ static void syNetRollbackResetCorrectionEpisode(void)
 	sSYNetRollbackEpisodeLastTargetTick = 0U;
 	sSYNetRollbackEpisodeResolvedThrough = 0U;
 	sSYNetRollbackEpisodeExtensions = 0U;
+	/* HealedThrough is session-durable — cleared only on VS session reset. */
 }
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+static void syNetRollbackRaiseResolvedThrough(u32 resolved_raise)
+{
+	if (resolved_raise > sSYNetRollbackEpisodeResolvedThrough)
+	{
+		sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
+	}
+	if (resolved_raise > sSYNetRollbackHealedThrough)
+	{
+		sSYNetRollbackHealedThrough = resolved_raise;
+	}
+}
+
+/* Exclusive-end coverage: live episode frontier, or durable heal if FC deepen cleared it. */
+static u32 syNetRollbackExclusiveEndCoveredThrough(void)
+{
+	u32 covered;
+
+	covered = sSYNetRollbackEpisodeResolvedThrough;
+	if (sSYNetRollbackHealedThrough > covered)
+	{
+		covered = sSYNetRollbackHealedThrough;
+	}
+	return covered;
+}
+
+/*
+ * Inputs-agree FC recovery must compare real fighter digests. Exclusive-end soft-continue
+ * (ignore_stale / FIGH_STALE_AGGREGATE) papers SoftLip/Hold forks and prevents deepen from
+ * seeing the onset the FC path already detected. Soak1 313936707: ignore_stale @1263 with
+ * healed=1269 while FC onset=1265.
+ */
+static sb32 syNetRollbackFcHonestFighCompareActive(void)
+{
+	if (sSYNetRollbackFcStateRecoveryActive != FALSE)
+	{
+		return TRUE;
+	}
+	if ((sSYNetRollbackDeferredStateMismatchPending != FALSE) &&
+	    (sSYNetRollbackDeferredStateMismatchInputAgreed != FALSE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
 
 u32 syNetRollbackGetEpisodeResolvedThrough(void)
 {
@@ -2928,10 +2993,14 @@ static void syNetRollbackCloseCorrectionEpisode(u32 completed_target)
 #if defined(SSB64_NETMENU)
 		resolved_raise = syNetRollbackCapResolvedThroughForPredictedReplay(completed_target);
 #endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+		syNetRollbackRaiseResolvedThrough(resolved_raise);
+#else
 		if (resolved_raise > sSYNetRollbackEpisodeResolvedThrough)
 		{
 			sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
 		}
+#endif
 #if defined(PORT) && defined(SSB64_NETMENU)
 		/*
 		 * Drop pending/outbound deepen past the closed target for the same onset.
@@ -3303,6 +3372,12 @@ static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_ti
 		syNetRollbackAbortCorrectionCommit(&snap);
 		return FALSE;
 	}
+	/*
+	 * HealedThrough soft-continues exclusive-end baselines after FC deepen (seed 2064608876)
+	 * but must NOT refuse Begin when mismatch < HealedThrough — that hung inputs_agree FC
+	 * (soak1 313936707). FC recovery uses syNetRollbackFcHonestFighCompareActive instead.
+	 * See docs/bugs/netplay_fc_healed_frontier_honest_fc_2026-07-28.md.
+	 */
 	if (syNetRollbackGlobalCooldownAllows(mismatch_tick) == FALSE)
 	{
 		syNetRollbackLogTryBeginFail("commit_cooldown", mismatch_tick, target_tick, -1);
@@ -3346,6 +3421,9 @@ static sb32 syNetRollbackTryCommitCorrectionBegin(u32 mismatch_tick, u32 load_ti
 		 * Ordinary GGPO still cannot open behind resolved. See
 		 * docs/bugs/netplay_fc_commit_behind_frontier_deepen_2026-07-26.md,
 		 * docs/bugs/netplay_fc_yield_commit_behind_frontier_2026-07-28.md.
+		 *
+		 * Exclusive-end soft-continue after deepen uses ExclusiveEndCoveredThrough (not a
+		 * Begin refuse). FC/state-hash deepen may ResetCorrectionEpisode here.
 		 */
 #if defined(PORT) && defined(SSB64_NETMENU)
 		if ((allow_frontier_deepen == FALSE) || (sim_tick < sSYNetRollbackEpisodeResolvedThrough))
@@ -3451,10 +3529,14 @@ static void syNetRollbackNoteEpisodeResimCompleted(void)
 			resolved_raise = syNetRollbackCapResolvedThroughForPredictedReplay(resolved_raise);
 		}
 #endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+		syNetRollbackRaiseResolvedThrough(resolved_raise);
+#else
 		if (resolved_raise > sSYNetRollbackEpisodeResolvedThrough)
 		{
 			sSYNetRollbackEpisodeResolvedThrough = resolved_raise;
 		}
+#endif
 	}
 	if (sSYNetRollbackEpisodeAnchorMismatch == ~(u32)0)
 	{
@@ -3505,14 +3587,31 @@ static sb32 syNetRollbackPreemptiveBaselineCapIsStale(u32 load_tick)
 	}
 	preempt_mismatch = load_tick + 1U;
 	/*
-	 * Strict `<`: mismatch == resolved_through is the first tick of the *next*
-	 * episode (load = resolved_through - 1), not a settled prior span.
+	 * Inclusive `<=`: load == resolved_through - 1 is the exclusive end of the
+	 * just-committed span, not the onset of a new episode. Soak seed 214064425:
+	 * after Commit@777, peer baseline@776 armed LIVE_CAP then PEER_SNAPSHOT_DIVERGE.
+	 * Use ExclusiveEndCoveredThrough so FC deepen clearing EpisodeResolvedThrough
+	 * does not re-arm (soak seed 2064608876).
+	 * See docs/bugs/netplay_fc_exclusive_end_baseline_diverge_post_heal_2026-07-28.md,
+	 * docs/bugs/netplay_fc_healed_frontier_survive_deepen_2026-07-28.md.
 	 */
+#if defined(PORT) && defined(SSB64_NETMENU)
+	{
+		u32 covered;
+
+		covered = syNetRollbackExclusiveEndCoveredThrough();
+		if ((covered != 0U) && (preempt_mismatch <= covered))
+		{
+			return TRUE;
+		}
+	}
+#else
 	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) &&
-	    (preempt_mismatch < sSYNetRollbackEpisodeResolvedThrough))
+	    (preempt_mismatch <= sSYNetRollbackEpisodeResolvedThrough))
 	{
 		return TRUE;
 	}
+#endif
 	return FALSE;
 }
 
@@ -13821,6 +13920,38 @@ static void syNetRollbackArmPeerBaselineResync(u32 load_tick)
 		syNetRollbackOnPeerBaselineResyncStormLimit(load_tick);
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Belt-and-suspenders with ComparePeerBaselineToLocal: never queue a deepen whose
+	 * onset is already covered by resolved_through while Live (inclusive exclusive end).
+	 * Soak seed 3282055674: healed Commit@482 then Arm(473) → 474→485.
+	 * Soak seed 214064425: exclusive-end load@776 with resolved=777 must not Arm either.
+	 * CoveredThrough includes HealedThrough after FC deepen clears EpisodeResolvedThrough.
+	 * Suspend while inputs-agree FC recovery is armed (honest figh compare).
+	 * See docs/bugs/netplay_fc_stale_baseline_resync_post_heal_2026-07-28.md,
+	 * docs/bugs/netplay_fc_exclusive_end_baseline_diverge_post_heal_2026-07-28.md,
+	 * docs/bugs/netplay_fc_healed_frontier_honest_fc_2026-07-28.md.
+	 */
+	{
+		u32 covered;
+
+		covered = syNetRollbackExclusiveEndCoveredThrough();
+		if ((covered != 0U) && (mismatch_tick <= covered) && (sSYNetRollbackResimPending == FALSE) &&
+		    (syNetRollbackIsResimulating() == FALSE) &&
+		    (syNetRollbackFcHonestFighCompareActive() == FALSE))
+		{
+			port_log(
+			    "SSB64 NetRollback: peer baseline resync ignore_stale load_tick=%u mismatch=%u "
+			    "resolved_through=%u healed_through=%u sim=%u\n",
+			    load_tick,
+			    mismatch_tick,
+			    sSYNetRollbackEpisodeResolvedThrough,
+			    sSYNetRollbackHealedThrough,
+			    syNetInputGetTick());
+			return;
+		}
+	}
+#endif
 	frontier = syNetInputGetTick();
 	if (frontier < ~(u32)0)
 	{
@@ -14332,6 +14463,19 @@ static sb32 syNetRollbackPeerBaselineDriftIsCameraOnlyCosmetic(const SYNetRollba
  * Egg-lay / CaptureYoshi resim: ring aggregate figh can lag post-apply canonicalize while every per-player
  * slot hash still matches live (Linux follower soak2 @519). Baseline wire intentionally used ring aggregate,
  * so one peer can send stale figh while slots and all other partitions agree — false PEER_SNAPSHOT_DIVERGE.
+ *
+ * Exclusive-end post-heal (soak seed 214064425): SoftLip/topn can leave peers with mismatched ring figh at
+ * load == resolved_through - 1 while world/rng/map/anim agree. Slot/live refresh can succeed on one peer
+ * and fail on the other — asymmetric hard kill. Covered exclusive-end figh drift is stale aggregate.
+ *
+ * Follow-on (soak seed 593462826): mid-resim deepen at exclusive-end can also skew camera (cosmetic) while
+ * Live peer ignore_stale already soft-continues. Require non-cam gameplay digests; allow cam mismatch when
+ * (load+1) <= resolved_through so both peers soft-continue. See
+ * docs/bugs/netplay_fc_exclusive_end_baseline_figh_cam_mid_resim_2026-07-28.md.
+ *
+ * Follow-on (soak seed 2064608876): FC deepen ResetCorrectionEpisode clears EpisodeResolvedThrough;
+ * exclusive-end coverage must use durable HealedThrough. See
+ * docs/bugs/netplay_fc_healed_frontier_survive_deepen_2026-07-28.md.
  */
 static sb32 syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(u32 load_tick, const SYNetRollbackHashSet *peer,
 								   const SYNetRollbackHashSet *local,
@@ -14349,10 +14493,38 @@ static sb32 syNetRollbackPeerBaselineDriftIsStaleAggregateFighOnly(u32 load_tick
 	{
 		return FALSE;
 	}
+	/* Non-cam gameplay partitions must match; camera is checked below (or waived at exclusive end). */
 	if ((peer->world != local->world) || (peer->item != local->item) || (peer->rng != local->rng) ||
 	    (peer->animation != local->animation) || (peer->weapon != local->weapon) || (peer->map != local->map) ||
-	    (peer->camera != local->camera) ||
 	    ((sSYNetRollbackLastPeerOutcomeEffectValid != FALSE) && (peer->effect != local->effect)))
+	{
+		return FALSE;
+	}
+#if defined(PORT)
+	/*
+	 * Exclusive-end soft-continue uses durable HealedThrough as well as live
+	 * EpisodeResolvedThrough — FC deepen ResetCorrectionEpisode zeros the latter
+	 * (soak seed 2064608876: load=1004 after Commit@1015 hard-killed without coverage).
+	 * Suspend during inputs-agree FC recovery so deepen sees real figh digests.
+	 */
+	if (syNetRollbackFcHonestFighCompareActive() == FALSE)
+	{
+		u32 covered;
+
+		covered = syNetRollbackExclusiveEndCoveredThrough();
+		if ((covered != 0U) && ((load_tick + 1U) <= covered))
+		{
+			return TRUE;
+		}
+	}
+#else
+	if ((sSYNetRollbackEpisodeResolvedThrough != 0U) &&
+	    ((load_tick + 1U) <= sSYNetRollbackEpisodeResolvedThrough))
+	{
+		return TRUE;
+	}
+#endif
+	if (peer->camera != local->camera)
 	{
 		return FALSE;
 	}
@@ -15019,6 +15191,38 @@ static void syNetRollbackComparePeerBaselineToLocal(u32 load_tick, const SYNetRo
 		}
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Live after Commit→Live: peer baselines for loads already covered by resolved_through
+	 * (inclusive exclusive end: load+1 == resolved) must not re-arm FC deepen or
+	 * PEER_SNAPSHOT_DIVERGE. In-flight AwaitingBaseline still compares.
+	 * Soak seed 3282055674: healed @482, stale peer baseline@473 → Arm 474→485.
+	 * Soak seed 214064425: exclusive-end @776 with resolved=777 → Linux hard kill.
+	 * CoveredThrough survives FC deepen ResetCorrectionEpisode (seed 2064608876).
+	 * Suspend while inputs-agree FC recovery needs honest figh compare (soak1 313936707).
+	 * See docs/bugs/netplay_fc_healed_frontier_honest_fc_2026-07-28.md.
+	 */
+	{
+		u32 covered;
+
+		covered = syNetRollbackExclusiveEndCoveredThrough();
+		if ((covered != 0U) && ((load_tick + 1U) <= covered) && (sSYNetRollbackResimPending == FALSE) &&
+		    (syNetRollbackIsResimulating() == FALSE) &&
+		    (sSYNetRollbackDeferredStateMismatchPending == FALSE) &&
+		    (syNetRollbackFcHonestFighCompareActive() == FALSE))
+		{
+			port_log(
+			    "SSB64 NetRollback: PEER_BASELINE_COMPARE ignore_stale_behind_resolved load_tick=%u "
+			    "resolved_through=%u healed_through=%u peer figh=0x%08X sim=%u\n",
+			    load_tick,
+			    sSYNetRollbackEpisodeResolvedThrough,
+			    sSYNetRollbackHealedThrough,
+			    peer->fighter,
+			    syNetInputGetTick());
+			return;
+		}
+	}
+#endif
 	if (syNetRollbackCollectBaselineCompareLocal(load_tick, &local) == FALSE)
 	{
 		/* live fallback already applied inside CollectBaselineCompareLocal */

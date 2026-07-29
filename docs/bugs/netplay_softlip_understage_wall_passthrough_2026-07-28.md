@@ -2,7 +2,8 @@
 
 **Status:** FIX IMPLEMENTED (`PORT && SSB64_NETMENU`, re-soak)  
 **Date:** 2026-07-28  
-**Sessions:** soak1 Android ↔ Linux Dream Land seed `2412131430`
+**Sessions:** soak1 Android ↔ Linux Dream Land seed `2412131430`  
+**Re-landed:** 2026-07-28 — docs claimed FIX but `mpprocess.c` still had forever-latch sticky (lost after prior session). Re-applied TTL / project-fail clear / SoftLipEx `fline!=-1` guards. Soak seed `2960495552` also died with SoftLip JumpF/JA `topn` FC@412 while this code was missing.
 
 ## Symptom
 

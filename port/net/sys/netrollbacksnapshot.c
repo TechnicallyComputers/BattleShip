@@ -488,6 +488,19 @@ typedef struct SYNetRbSnapFighterBlob
 	 * the same binary (hash recipe lockstep), so the tag never travels the wire. C2b bank payload.
 	 */
 	s16 status_vars_overlay;
+	/*
+	 * C2b migrated-overlay sidecar: bank[Turn] captured on every save regardless of the live
+	 * overlay tag. The Turn overlay legitimately outlives the Turn status (Dash tap buffer and
+	 * AttackS4 read lr_dash / lr_turn from Wait..Ottotto), so the tagged live-overlay payload
+	 * alone cannot carry it across loads. Restored into the bank unconditionally on apply.
+	 */
+	u8 turn_vars[sizeof(ftCommonTurnStatusVars)];
+	/*
+	 * C2b migrated-overlay sidecar: bank[Squat] captured every save. pass_wait / is_allow_pass
+	 * live across Squat→SquatWait and the Pass interrupt arm; tagged payload alone is not
+	 * enough when a mid-window load lands on an unowned/adjacent status.
+	 */
+	u8 squat_vars[sizeof(ftCommonSquatStatusVars)];
 	u8 passive_vars[sizeof(union FTPassiveVars)];
 
 	f32 gobj_anim_frame;
@@ -2063,9 +2076,14 @@ static u32 syNetRbSnapGobjId(const GObj *gobj)
  * Attack-record victim id for blob capture. Victim pointers dangle when the victim GObj is
  * ejected before timer_rehit clears the record; the memory can be recycled as an effect (shared
  * id 1011) by rollback churn. syNetRbSnapGobjId would happily return the recycled id, which the
- * apply-side syNetRbSnapResolveLiveGobj then rejects (no ft/it/wp payload) — capture/restore
- * asymmetry. Store the id only when the pointer is a currently-linked fighter/item/weapon GObj;
- * mirrors syNetSyncAttackRecordVictimIdForFold (netsync.c) so slot hash == blob == restore.
+ * apply-side resolve then rejects (no ft/it/wp payload) — capture/restore asymmetry. Store the
+ * id only when the pointer is a currently-linked fighter/item/weapon GObj.
+ *
+ * Fighters all share gobj->id == nGCCommonKindFighter (1000). Encoding that id made
+ * ResolveLiveGobj rebind every fighter victim to the first link-list fighter, clearing PK Fire
+ * (and other can_rehit_fighter) cooldowns on the real victim after mid-hitlag load — soak1
+ * 1020830879 PEER@4040. Encode fighter victims by sim player slot instead.
+ * Mirrors syNetSyncAttackRecordVictimIdForFold (netsync.c) so slot hash == blob == restore.
  */
 static u32 syNetRbSnapAttackVictimGobjIdForCapture(GObj *victim_gobj)
 {
@@ -2084,8 +2102,18 @@ static u32 syNetRbSnapAttackVictimGobjIdForCapture(GObj *victim_gobj)
 		{
 			if (gobj == victim_gobj)
 			{
-				if ((ftGetStruct(gobj) == NULL) && (itGetStruct(gobj) == NULL) &&
-				    (wpGetStruct(gobj) == NULL))
+				FTStruct *fp;
+
+				fp = ftGetStruct(gobj);
+				if (fp != NULL)
+				{
+					if ((fp->player < 0) || (fp->player >= GMCOMMON_PLAYERS_MAX))
+					{
+						return 0U;
+					}
+					return SYNETRB_ATTACK_VICTIM_ENCODE_FIGHTER(fp->player);
+				}
+				if ((itGetStruct(gobj) == NULL) && (wpGetStruct(gobj) == NULL))
 				{
 					return 0U;
 				}
@@ -2094,6 +2122,27 @@ static u32 syNetRbSnapAttackVictimGobjIdForCapture(GObj *victim_gobj)
 		}
 	}
 	return 0U;
+}
+
+static GObj *syNetRbSnapResolveAttackVictimGobj(u32 victim_id)
+{
+	if (victim_id == 0U)
+	{
+		return NULL;
+	}
+	if (SYNETRB_ATTACK_VICTIM_IS_FIGHTER(victim_id) != FALSE)
+	{
+		return syNetRbSnapResolveFighterGobjByPlayer(SYNETRB_ATTACK_VICTIM_FIGHTER_PLAYER(victim_id));
+	}
+	/*
+	 * Legacy blobs may still carry raw nGCCommonKindFighter (1000). Refuse rather than
+	 * rebind to the first fighter — empty rehit is safer than a wrong-player cooldown.
+	 */
+	if (victim_id == (u32)nGCCommonKindFighter)
+	{
+		return NULL;
+	}
+	return syNetRbSnapResolveLiveGobj(victim_id);
 }
 
 #ifdef PORT
@@ -4721,6 +4770,12 @@ static void syNetRbSnapCaptureFighterStatusVarsFromLive(SYNetRbSnapFighterBlob *
 	player = fp->player;
 	expected = syNetplayStatusVarsExpectedOverlay(fp);
 	live_overlay = syNetplayStatusVarsBankLiveOverlay(player);
+	/* Migrated-overlay sidecars: bank[Turn]/bank[Squat] forward-sim authority (accessor
+	 * redirect), captured every save so interrupt windows survive loads from unowned statuses. */
+	syNetplayStatusVarsBankCopyOverlayOut(player, (s32)nFTStatusVarsOverlayTurn, blob->turn_vars,
+	                                      sizeof(blob->turn_vars));
+	syNetplayStatusVarsBankCopyOverlayOut(player, (s32)nFTStatusVarsOverlaySquat, blob->squat_vars,
+	                                      sizeof(blob->squat_vars));
 	/*
 	 * Prefer the ownership-table answer. If live_overlay drifted (pre-clear SetStatus, apply hole),
 	 * still capture bank[expected] so peers stay on the real overlay slot.
@@ -4767,7 +4822,9 @@ static void syNetRbSnapValidateFighterStatusVarsTagFromBlob(SYNetRbSnapFighterBl
 	}
 	memset(&probe_fp, 0, sizeof(probe_fp));
 	probe_fp.status_id = blob->status_id;
+	probe_fp.fkind = blob->fkind;
 	probe_fp.camera_mode = blob->camera_mode;
+	/* fkind required: Fox SpecialHi status IDs collide with Ness PK Thunder (see ExpectedOverlay). */
 	expected = syNetplayStatusVarsExpectedOverlay(&probe_fp);
 	captured = (FTStatusVarsOverlay)blob->status_vars_overlay;
 	if (expected == nFTStatusVarsOverlayNone)
@@ -8636,7 +8693,8 @@ static void syNetRbSnapApplyAttackColl(FTAttackColl *dst, const SYNetRbSnapAttac
 	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
 	{
 		dst->attack_records[i].victim_flags = src->attack_records[i].victim_flags;
-		dst->attack_records[i].victim_gobj = syNetRbSnapResolveLiveGobj(src->attack_records[i].victim_gobj_id);
+		dst->attack_records[i].victim_gobj =
+		    syNetRbSnapResolveAttackVictimGobj(src->attack_records[i].victim_gobj_id);
 	}
 	dst->attack_matrix = src->attack_matrix;
 }
@@ -11121,11 +11179,24 @@ static void syNetRbSnapApplyFighter(const SYNetRbSnapFighterBlob *blob, FTStruct
 				syNetplayStatusVarsBankCopyOverlayIn(c2b_player, c2b_tag, blob->status_vars,
 				                                     sizeof(blob->status_vars));
 				syNetplayStatusVarsBankSetLiveOverlay(c2b_player, c2b_tag);
-				syNetplayStatusVarsBankProjectUnion(fp);
 			}
 			else
 			{
 				syNetplayStatusVarsBankSetLiveOverlay(c2b_player, (s32)nFTStatusVarsOverlayNone);
+			}
+			/*
+			 * Migrated-overlay sidecar restore — unconditional, before the union re-projection.
+			 * When the tag matches Turn/Squat this rewrites the same slot with identical bytes;
+			 * for every other tag it is the only thing that puts the saved-tick interrupt-window
+			 * state back, so the accessor redirect resumes from the load tick.
+			 */
+			syNetplayStatusVarsBankCopyOverlayIn(c2b_player, (s32)nFTStatusVarsOverlayTurn,
+			                                     blob->turn_vars, sizeof(blob->turn_vars));
+			syNetplayStatusVarsBankCopyOverlayIn(c2b_player, (s32)nFTStatusVarsOverlaySquat,
+			                                     blob->squat_vars, sizeof(blob->squat_vars));
+			if ((c2b_tag >= 0) && (c2b_tag < nFTStatusVarsOverlayCount))
+			{
+				syNetplayStatusVarsBankProjectUnion(fp);
 			}
 		}
 	}
@@ -11740,6 +11811,26 @@ static void syNetRbSnapRebindFighterStatusProcs(GObj *fighter_gobj, FTStruct *fp
 	fp->proc_lagupdate = NULL;
 	fp->proc_lagstart = NULL;
 	fp->proc_lagend = NULL;
+	/*
+	 * Damage procs are installed by ftCommonDamageInitDamageVars, not the status table.
+	 * Rebind nulls them; a mid-DamageE1/E2 load then drops ftCommonDamageSetStatus so the
+	 * hitlag-exit deferred transition to damage.status_id (FlyHi etc) never runs on the
+	 * peer that resimmed, while the peer that never loaded still transitions - soak1
+	 * 1473519344 PEER load_tick=1301 DamageE2 vs DamageFlyHi (inputs MATCH).
+	 * Mirror InitDamageVars. See docs/bugs/netplay_damage_e2_setstatus_proc_passive_rebind_2026-07-29.md
+	 */
+	if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
+	{
+		if ((fp->status_id == nFTCommonStatusDamageE1) || (fp->status_id == nFTCommonStatusDamageE2))
+		{
+			fp->proc_passive = ftCommonDamageSetStatus;
+		}
+		else
+		{
+			fp->proc_passive = ftCommonDamageCheckSetInvincible;
+		}
+		fp->proc_lagupdate = ftCommonDamageCommonProcLagUpdate;
+	}
 	if (syNetRbSnapFighterIsInThunderJoltThrowStatus(fp) != FALSE)
 	{
 		if (fp->fkind == nFTKindKirby)
@@ -12336,6 +12427,11 @@ static u32 syNetRbSnapHashFighterBlobLight(const SYNetRbSnapFighterBlob *blob)
 
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)damage->hitstun_tics);
 		h = syNetRbSnapFnvAccumulateU32(h, (u32)(damage->is_knockback_over != FALSE));
+		/* Mirror live E1/E2 deferred status_id fold (soak1 1473519344). */
+		if ((blob->status_id == nFTCommonStatusDamageE1) || (blob->status_id == nFTCommonStatusDamageE2))
+		{
+			h = syNetRbSnapFnvAccumulateU32(h, (u32)damage->status_id);
+		}
 	}
 	/* Mirror Turn lr_dash / lr_turn folds (soak 1579824759). */
 	if ((blob->status_id == nFTCommonStatusTurn) || (blob->status_id == nFTCommonStatusTurnRun))
@@ -12949,16 +13045,27 @@ static void syNetRbSnapLogFighterFieldDiffSecondLayer(const char *tag, u32 tick,
 		    &((const union FTStatusVars *)blob->status_vars)->common.damage;
 		u32 live_hitstun = 0U;
 		u32 live_kb_over = 0U;
+		u32 live_dmg_status_id = 0U;
 
 		if ((fp->status_id >= nFTCommonStatusDamageStart) && (fp->status_id <= nFTCommonStatusDamageEnd))
 		{
 			live_hitstun = (u32)ftStatusVarsDamage(fp)->hitstun_tics;
 			live_kb_over = (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE);
+			if ((fp->status_id == nFTCommonStatusDamageE1) || (fp->status_id == nFTCommonStatusDamageE2))
+			{
+				live_dmg_status_id = (u32)ftStatusVarsDamage(fp)->status_id;
+			}
 		}
 		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_hitstun_tics", live_hitstun,
 		                              (u32)blob_dmg->hitstun_tics);
 		syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_kb_over", live_kb_over,
 		                              (u32)(blob_dmg->is_knockback_over != FALSE));
+		if ((fp->status_id == nFTCommonStatusDamageE1) || (fp->status_id == nFTCommonStatusDamageE2) ||
+		    (blob->status_id == nFTCommonStatusDamageE1) || (blob->status_id == nFTCommonStatusDamageE2))
+		{
+			syNetRbSnapLogFieldDiffScalar(tag, tick, player, "fold_damage_status_id", live_dmg_status_id,
+			                              (u32)blob_dmg->status_id);
+		}
 	}
 	if ((fp->status_id == nFTCommonStatusTurn) || (fp->status_id == nFTCommonStatusTurnRun) ||
 	    (blob->status_id == nFTCommonStatusTurn) || (blob->status_id == nFTCommonStatusTurnRun))
@@ -15969,7 +16076,7 @@ static void syNetRbSnapApplyItemBlobMeta(ITStruct *ip, const SYNetRbSnapItemBlob
 	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
 	{
 		ip->attack_coll.attack_records[i].victim_gobj =
-		    syNetRbSnapResolveLiveGobj(blob->attack_record_victim_gobj_id[i]);
+		    syNetRbSnapResolveAttackVictimGobj(blob->attack_record_victim_gobj_id[i]);
 	}
 }
 
@@ -17739,7 +17846,7 @@ static void syNetRbSnapApplyWeaponBlobMeta(WPStruct *wp, const SYNetRbSnapWeapon
 	for (i = 0; i < GMATTACKREC_NUM_MAX; i++)
 	{
 		wp->attack_coll.attack_records[i].victim_gobj =
-		    syNetRbSnapResolveLiveGobj(blob->attack_record_victim_gobj_id[i]);
+		    syNetRbSnapResolveAttackVictimGobj(blob->attack_record_victim_gobj_id[i]);
 	}
 	switch (blob->kind)
 	{

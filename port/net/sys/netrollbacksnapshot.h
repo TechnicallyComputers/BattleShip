@@ -19,6 +19,22 @@ struct ITStruct;
 #define SYNETRB_SNAPSHOT_MAX_ITEMS    32
 #define SYNETRB_SNAPSHOT_MAX_WEAPONS  32
 /*
+ * Attack-record victim encoding for item/weapon/fighter hitboxes. All fighters share
+ * gobj->id == nGCCommonKindFighter (1000); storing that id makes ResolveLiveGobj rebind
+ * rehit cooldowns to the wrong fighter after load (soak1 1020830879 PK Fire @4039 resim).
+ * Tagged player encoding must stay in lockstep with netsync attack-record folds.
+ * See docs/bugs/netplay_attack_record_fighter_victim_gobjid_2026-07-29.md.
+ */
+#define SYNETRB_ATTACK_VICTIM_FIGHTER_TAG 0xF1000000U
+#define SYNETRB_ATTACK_VICTIM_FIGHTER_TAG_MASK 0xFFF00000U
+#define SYNETRB_ATTACK_VICTIM_FIGHTER_PLAYER_MASK 0xFU
+#define SYNETRB_ATTACK_VICTIM_IS_FIGHTER(id)                                                                    \
+	(((id) & SYNETRB_ATTACK_VICTIM_FIGHTER_TAG_MASK) == SYNETRB_ATTACK_VICTIM_FIGHTER_TAG)
+#define SYNETRB_ATTACK_VICTIM_FIGHTER_PLAYER(id)                                                               \
+	((s8)((id) & SYNETRB_ATTACK_VICTIM_FIGHTER_PLAYER_MASK))
+#define SYNETRB_ATTACK_VICTIM_ENCODE_FIGHTER(player)                                                           \
+	(SYNETRB_ATTACK_VICTIM_FIGHTER_TAG | ((u32)(player) & SYNETRB_ATTACK_VICTIM_FIGHTER_PLAYER_MASK))
+/*
  * Effect allocations are capped (~EFFECT_ALLOC_NUM in decomp). Snapshots bounded parallel to item/weapons tooling.
  */
 #define SYNETRB_SNAPSHOT_MAX_EFFECTS  48

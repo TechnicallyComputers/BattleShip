@@ -76,6 +76,7 @@ static void syNetplayNessResetJibakuStallState(s32 player);
 static void syNetplayNessCullOrphanPKThunderKeepHead(GObj *fighter_gobj, FTStruct *fp);
 static void syNetplayNessCullOrphanPKThunderKeepHeadDiag(GObj *fighter_gobj, FTStruct *fp, const char *site);
 static void syNetplayNessCullOrphanPKThunderForPlayer(s32 player);
+static void syNetplayNessForceTeardownAllPKThunderForPlayer(s32 player);
 static s32 syNetplayNessCountPKThunderWeaponsForPlayer(s32 player);
 static sb32 syNetplayNessAnyLiveFighterInPKThunderHoldScope(void);
 static sb32 syNetplayNessAirJibakuVanillaGroundSnapPath(const FTStruct *fp);
@@ -1193,121 +1194,6 @@ static u32 syNetplayNessHoldFramesSinceEntry(const FTStruct *fp)
 	return 0U;
 }
 
-static s32 syNetplayNessExpectedPkjibakuDelayFromTracking(const FTStruct *fp)
-{
-	s32 entry_delay;
-	s32 expected;
-	s32 pi;
-	u32 hold_frames;
-
-	if (fp == NULL)
-	{
-		return -1;
-	}
-	if (syNetplayNessFighterInPKThunderHoldStatus(fp->status_id) != FALSE)
-	{
-		pi = fp->player;
-		if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayNessHoldEntryTick[pi] != 0U))
-		{
-			entry_delay = sSYNetplayNessHoldEntryDelay[pi];
-			if (entry_delay >= 0)
-			{
-				/*
-				 * Hold-local age (status_total_tics), not wall GetTick() — same contract as
-				 * ExpectedGravityDelayFromTracking (soak 128377995). Wall-clock hold_frames
-				 * after a frontier-skewed EntryDelay rebuild resurrected pkjibaku_delay.
-				 */
-				hold_frames = fp->status_total_tics;
-				expected = entry_delay - (s32)hold_frames;
-				return (expected > 0) ? expected : 0;
-			}
-		}
-	}
-	if (fp->status_total_tics >= (u32)FTNESS_PKJIBAKU_DELAY)
-	{
-		return 0;
-	}
-	return (s32)FTNESS_PKJIBAKU_DELAY - (s32)fp->status_total_tics;
-}
-
-static s32 syNetplayNessExpectedGravityDelayFromTracking(const FTStruct *fp)
-{
-	s32 entry_gravity;
-	s32 hold_expected;
-	s32 pi;
-	s32 throw_expected;
-	u32 hold_frames;
-	u32 throw_frames;
-
-	if (fp == NULL)
-	{
-		return -1;
-	}
-	pi = fp->player;
-	/*
-	 * Hold countdown is hold-local. Never max() with throw_expected — a stale ThrowEntryTick
-	 * after resim load can yield throw_expected > 0 and resurrect pkthunder_gravity_delay,
-	 * skipping gravity ticks (cross-peer fall ladder fork).
-	 */
-	if (syNetplayNessFighterInPKThunderHoldStatus(fp->status_id) != FALSE)
-	{
-		if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayNessHoldEntryTick[pi] != 0U) &&
-		    (sSYNetplayNessHoldEntryGravityDelay[pi] >= 0))
-		{
-			entry_gravity = sSYNetplayNessHoldEntryGravityDelay[pi];
-			/*
-			 * Hold-local countdown must track status_total_tics, not wall GetTick()
-			 * delta. Soak 128377995: GetTick/status_tics skew during double sanitize
-			 * made expected > live and resurrected gravity freeze (+1 fall-onset tick).
-			 */
-			hold_frames = fp->status_total_tics;
-			hold_expected = entry_gravity - (s32)hold_frames;
-			return (hold_expected > 0) ? hold_expected : 0;
-		}
-		if (fp->status_total_tics >= (u32)FTNESS_PKTHUNDER_GRAVITY_DELAY)
-		{
-			return 0;
-		}
-		return (s32)FTNESS_PKTHUNDER_GRAVITY_DELAY - (s32)fp->status_total_tics;
-	}
-	if ((pi >= 0) && (pi < GMCOMMON_PLAYERS_MAX) && (sSYNetplayNessThrowEntryTick[pi] != 0U))
-	{
-		throw_frames = syNetplayNessThrowFramesSinceEntry(fp);
-		throw_expected = (s32)FTNESS_PKTHUNDER_GRAVITY_DELAY - (s32)throw_frames;
-		if (throw_expected < 0)
-		{
-			throw_expected = 0;
-		}
-		return throw_expected;
-	}
-	if (fp->status_total_tics >= (u32)FTNESS_PKTHUNDER_GRAVITY_DELAY)
-	{
-		return 0;
-	}
-	return (s32)FTNESS_PKTHUNDER_GRAVITY_DELAY - (s32)fp->status_total_tics;
-}
-
-/*
- * Hold with delay=0 after grace expired is normal (jibaku imminent). Only early Hold with
- * delay=0 is a rollback-scrub artifact. Uses hold-entry tracking when available so Start
- * countdown preserved into Hold is not overwritten by hold-local status_total_tics.
- */
-static sb32 syNetplayNessHoldDelayZeroIsLegitimate(const FTStruct *fp)
-{
-	s32 expected;
-
-	if ((fp == NULL) || (syNetplayNessFighterInPKThunderHoldStatus(fp->status_id) == FALSE))
-	{
-		return FALSE;
-	}
-	expected = syNetplayNessExpectedPkjibakuDelayFromTracking(fp);
-	if (expected >= 0)
-	{
-		return (expected == 0) ? TRUE : FALSE;
-	}
-	return (fp->status_total_tics >= (u32)FTNESS_PKJIBAKU_DELAY) ? TRUE : FALSE;
-}
-
 static void syNetplayNessSyncHoldEntryTracking(FTStruct *fp)
 {
 	s32 live_delay;
@@ -1545,133 +1431,55 @@ void syNetplayNessHardenPKThunderHoldAirFallAfterTranslate(GObj *fighter_gobj)
 
 static void syNetplayNessSanitizePKThunderGravityDelay(FTStruct *fp)
 {
-	s32 expected;
-	s32 was;
 	s32 live;
-	sb32 in_hold;
 
 	if ((fp == NULL) || (syNetplayNessFighterInPKThunderThrowGravityScope(fp->status_id) == FALSE))
 	{
 		return;
 	}
 	/*
-	 * Exclusive-frontier emergency/ring blob is authoritative during SamePass Hold
-	 * DEFER. Stale HoldEntryTracking must not resurrect pkthunder_gravity_delay
-	 * (soak 2082786682: was=3→5, Android vel_air.y stayed 0 at PEER@645).
+	 * Blob authority: pkthunder_gravity_delay lives in status_vars (Start→Hold preserved by
+	 * vanilla). Out-of-blob HoldEntryGravityDelay / ExpectedGravityFromTracking rewrote the
+	 * countdown asymmetrically across peers (soak1 313936707: Android live=0 vs Linux live=1
+	 * at status_tics=1 → topn_ty PHYSICS_FORK → FC hang behind healed exclusive-end).
+	 * Clamp range only — never resurrect or lower from tracking. See
+	 * docs/bugs/netplay_hold_gravity_blob_authority_2026-07-28.md.
 	 */
-	in_hold = syNetplayNessFighterInPKThunderHoldStatus(fp->status_id);
-	if ((sSYNetplayNessSamePassDeferHoldAimArmed != FALSE) && (in_hold != FALSE))
-	{
-		return;
-	}
-	if (fp->status_vars.ness.specialhi.pkthunder_gravity_delay > FTNESS_PKTHUNDER_GRAVITY_DELAY)
+	live = fp->status_vars.ness.specialhi.pkthunder_gravity_delay;
+	if (live > FTNESS_PKTHUNDER_GRAVITY_DELAY)
 	{
 		fp->status_vars.ness.specialhi.pkthunder_gravity_delay = FTNESS_PKTHUNDER_GRAVITY_DELAY;
 	}
-	if (fp->status_vars.ness.specialhi.pkthunder_gravity_delay < 0)
+	else if (live < 0)
 	{
 		fp->status_vars.ness.specialhi.pkthunder_gravity_delay = 0;
-	}
-	expected = syNetplayNessExpectedGravityDelayFromTracking(fp);
-	if (expected < 0)
-	{
-		return;
-	}
-	live = fp->status_vars.ness.specialhi.pkthunder_gravity_delay;
-	if (live == expected)
-	{
-		return;
-	}
-	/*
-	 * Soak 128377995 @8313–8315: sanitize was=0→1 / was=1→2 during forward Hold
-	 * (tracking Expected > live) re-froze gravity one peer longer → TopN.y −0.5
-	 * ladder fork → PEER_SNAPSHOT figh-only @8317. Live countdown + blob are
-	 * authoritative once Hold has started; never bump delay upward mid-Hold.
-	 * Resim may still lower delay to match expected; post-load ForceRebuild
-	 * re-pins tracking from the blob before sanitize runs.
-	 */
-	if ((in_hold != FALSE) && (expected > live))
-	{
-		if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
-		{
-			port_log(
-			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=hold_gravity_resurrect_blocked "
-			    "player=%d status=%d live=%d expected=%d status_tics=%u resim=%d\n",
-			    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, live,
-			    expected, (unsigned int)fp->status_total_tics,
-			    (int)(syNetRollbackIsResimulating() != FALSE));
-		}
-		return;
-	}
-	was = live;
-	fp->status_vars.ness.specialhi.pkthunder_gravity_delay = expected;
-	if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
-	{
-		port_log(
-		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_gravity player=%d status=%d was=%d now=%d expected=%d status_tics=%u resim=%d\n",
-		    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, was,
-		    fp->status_vars.ness.specialhi.pkthunder_gravity_delay, expected,
-		    (unsigned int)fp->status_total_tics, (int)(syNetRollbackIsResimulating() != FALSE));
 	}
 }
 
 static void syNetplayNessSanitizePKThunderDelayIfZero(FTStruct *fp)
 {
-	s32 expected;
-	s32 was;
-	sb32 resim;
-	sb32 in_hold;
+	s32 live;
 
-	if (fp->status_vars.ness.specialhi.pkjibaku_delay > 0)
+	if (fp == NULL)
 	{
-		return;
-	}
-	in_hold = syNetplayNessFighterInPKThunderHoldStatus(fp->status_id);
-	if (syNetplayNessHoldDelayZeroIsLegitimate(fp) != FALSE)
-	{
-		if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
-		{
-			resim = syNetRollbackIsResimulating();
-			port_log(
-			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_delay_skip player=%d status=%d reason=hold_grace_expired status_tics=%u resim=%d\n",
-			    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
-			    (unsigned int)fp->status_total_tics, (int)(resim != FALSE));
-		}
 		return;
 	}
 	/*
-	 * Mirror sanitize_gravity: never bump delay upward mid-Hold. Blob delay=0 after
-	 * grace (status_total_tics >= FTNESS_PKJIBAKU_DELAY) is authoritative — a skewed
-	 * EntryDelay must not re-arm collide block and miss self-hit on resim.
+	 * Blob authority (same contract as gravity delay): pkjibaku_delay lives in
+	 * status_vars.ness.specialhi. Tracking ExpectedPkjibaku resurrected wiped zeros after
+	 * FoxSpecialHi bank mis-capture (soak1 789297724: sanitize_delay was=0 now=30 at Start
+	 * apply) while peers disagreed (Android hold_enter delay=9 vs Linux delay=30). Clamp
+	 * range only — never rewrite from HoldEntry tracking. See
+	 * docs/bugs/netplay_ness_specialhi_fox_overlay_collision_2026-07-28.md.
 	 */
-	if ((in_hold != FALSE) && (fp->status_total_tics >= (u32)FTNESS_PKJIBAKU_DELAY))
+	live = fp->status_vars.ness.specialhi.pkjibaku_delay;
+	if (live > FTNESS_PKJIBAKU_DELAY)
 	{
-		if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
-		{
-			resim = syNetRollbackIsResimulating();
-			port_log(
-			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_delay_skip player=%d "
-			    "status=%d reason=hold_delay_zero_authoritative status_tics=%u resim=%d\n",
-			    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
-			    (unsigned int)fp->status_total_tics, (int)(resim != FALSE));
-		}
-		return;
+		fp->status_vars.ness.specialhi.pkjibaku_delay = FTNESS_PKJIBAKU_DELAY;
 	}
-	expected = syNetplayNessExpectedPkjibakuDelayFromTracking(fp);
-	if (expected < 1)
+	else if (live < 0)
 	{
-		expected = 1;
-	}
-	was = fp->status_vars.ness.specialhi.pkjibaku_delay;
-	fp->status_vars.ness.specialhi.pkjibaku_delay = expected;
-	if (syNetplayNessPKThunderGateDiagEnabled() != FALSE)
-	{
-		resim = syNetRollbackIsResimulating();
-		port_log(
-		    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=sanitize_delay player=%d status=%d was=%d now=%d expected=%d status_tics=%u resim=%d\n",
-		    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, was,
-		    (int)fp->status_vars.ness.specialhi.pkjibaku_delay, expected,
-		    (unsigned int)fp->status_total_tics, (int)(resim != FALSE));
+		fp->status_vars.ness.specialhi.pkjibaku_delay = 0;
 	}
 }
 
@@ -2379,6 +2187,41 @@ static void syNetplayNessCullOrphanPKThunderForPlayer(s32 player)
 			continue;
 		}
 		syNetplayNessCullOrphanPKThunderKeepHead(fighter_gobj, fp);
+		return;
+	}
+}
+
+/*
+ * Post-defer owner at cull_at_tick: destroy Head+Trails for the defer player.
+ * CullAllOrphanPKThunderLive skips mass-cull while jibaku catch-up preserve is armed, and
+ * cross-ISA head eject may not cascade trails — leaving weapon_count=4 forever (soak1
+ * 1845234634 @1414). keep_head=NULL; clear coupling only in PK/jibaku status (not rebirth
+ * union). See docs/bugs/netplay_ness_pkthunder_jibaku_cull_at_tick_trail_fork_2026-07-29.md.
+ */
+static void syNetplayNessForceTeardownAllPKThunderForPlayer(s32 player)
+{
+	GObj *fighter_gobj;
+
+	if ((player < 0) || (player >= GMCOMMON_PLAYERS_MAX))
+	{
+		return;
+	}
+	for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+	     fighter_gobj = fighter_gobj->link_next)
+	{
+		FTStruct *fp = ftGetStruct(fighter_gobj);
+
+		if ((fp == NULL) || (fp->player != player) ||
+		    ((fp->fkind != nFTKindNess) && (fp->fkind != nFTKindNNess)))
+		{
+			continue;
+		}
+		if ((syNetplayNessFighterInPkThunderScopeStatus(fp->status_id) != FALSE) ||
+		    (syNetplayNessFighterInPKJibakuCatchUpScope(fp) != FALSE))
+		{
+			fp->status_vars.ness.specialhi.pkthunder_gobj = NULL;
+		}
+		syNetRbSnapCullOwnedPKThunderForFighter(fighter_gobj, NULL);
 		return;
 	}
 }
@@ -3133,6 +2976,17 @@ void syNetplayNessRunLiveJibakuCatchUpAll(void)
 		sb32 had_pending_defer = (sSYNetplayNessDeferPKCullUntilTick != 0U) ? TRUE : FALSE;
 		s32 defer_player = sSYNetplayNessDeferPKCullPlayer;
 		sb32 hold_active = syNetplayNessAnyLiveFighterInPKThunderHoldScope();
+		const char *cull_action = "cull";
+
+		/*
+		 * Defer expiry owns full Head+Trail teardown. Orphan cull alone is insufficient:
+		 * jibaku preserve skips mass-cull, and head-only eject (Linux soak) leaves trails.
+		 */
+		if ((had_pending_defer != FALSE) && (defer_player >= 0) && (defer_player < GMCOMMON_PLAYERS_MAX))
+		{
+			syNetplayNessForceTeardownAllPKThunderForPlayer(defer_player);
+			cull_action = "force_teardown";
+		}
 
 		/* Hold ticks already run PrepareHoldSelfHitCoupling; per-frame global cull here
 		 * was stripping trail segments (head-only PK) when rollback broke parent links. */
@@ -3147,9 +3001,9 @@ void syNetplayNessRunLiveJibakuCatchUpAll(void)
 		    ((had_pending_defer != FALSE) || (weapons_before > 0) || (weapons_after > 0) || (hold_active != FALSE)))
 		{
 			port_log(
-			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=jibaku_post_cull action=cull weapons_before=%d weapons_after=%d player=%d hold_skip=%d resim=%d\n",
-			    (unsigned int)now_tick, weapons_before, weapons_after, defer_player, (int)hold_active,
-			    (int)(syNetRollbackIsResimulating() != FALSE));
+			    "SSB64 Netplay: NESS_PKTHUNDER_GATE tick=%u event=jibaku_post_cull action=%s weapons_before=%d weapons_after=%d player=%d hold_skip=%d resim=%d\n",
+			    (unsigned int)now_tick, cull_action, weapons_before, weapons_after, defer_player,
+			    (int)hold_active, (int)(syNetRollbackIsResimulating() != FALSE));
 		}
 		if ((had_pending_defer != FALSE) && (defer_player >= 0) && (defer_player < GMCOMMON_PLAYERS_MAX))
 		{

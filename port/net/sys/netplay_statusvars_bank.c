@@ -9,6 +9,7 @@
 #include <string.h>
 
 extern void port_log(const char *fmt, ...);
+extern sb32 syNetplayRollbackSemanticsActive(void);
 
 /*
  * Sidecar storage: nFTStatusVarsOverlayCount independent overlay slots per fighter.
@@ -85,6 +86,21 @@ void *syNetplayStatusVarsBankSlotOrUnion(FTStruct *fp, FTStatusVarsOverlay overl
     void *slot = syNetplayStatusVarsBankSlot(fp, overlay);
 
     return (slot != NULL) ? slot : union_member;
+}
+
+/*
+ * Forward-sim authority for migrated overlays (C2b completion). Union stays authoritative in
+ * offline modes of the netmenu binary (vanilla aliasing semantics, directive 7); the bank takes
+ * over only under rollback semantics, where ring capture reads bank slots and apply restores
+ * them — the accessor redirect is what keeps those slots fresh between capture and apply.
+ */
+void *syNetplayStatusVarsBankAuthoritySlot(FTStruct *fp, FTStatusVarsOverlay overlay, void *union_member)
+{
+    if (syNetplayRollbackSemanticsActive() == FALSE)
+    {
+        return union_member;
+    }
+    return syNetplayStatusVarsBankSlotOrUnion(fp, overlay, union_member);
 }
 
 s32 syNetplayStatusVarsBankLiveOverlay(s32 player)

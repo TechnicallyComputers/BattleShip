@@ -6,6 +6,7 @@
 #include <ft/ftchar/ftfox/ftfox.h>
 #include <ft/ftdef.h>
 #include <ft/ftstatusvars.h>
+#include <sys/netplay_statusvars_bank.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -222,6 +223,10 @@ static void syNetplayStatusVarsWitnessInitOwnershipTable(void)
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackLw3, nFTCommonStatusAttackLw3, nFTStatusVarsOverlayAttackLw3);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackS4Hi, nFTCommonStatusAttackLw4, nFTStatusVarsOverlayAttack4);
     syNetplayStatusVarsWitnessFillRange(nFTCommonStatusAttackAirStart, nFTCommonStatusAttackAirEnd, nFTStatusVarsOverlayAttackAir);
+    /*
+     * Fox-only by numeric range; ExpectedOverlay also gates on fkind — Ness PK Thunder
+     * SpecialHi* IDs collide (228..232). See netplay_ness_specialhi_fox_overlay_collision.
+     */
     syNetplayStatusVarsWitnessFillRange(nFTFoxStatusSpecialHiStart, nFTFoxStatusSpecialAirHi, nFTStatusVarsOverlayFoxSpecialHi);
 }
 
@@ -231,13 +236,32 @@ FTStatusVarsOverlay syNetplayStatusVarsExpectedOverlay(const FTStruct *fp)
 
     syNetplayStatusVarsWitnessInitOwnershipTable();
 
-    if ((fp->status_id >= 0) && (fp->status_id < SSB64_NETPLAY_STATUSVARS_OWNERSHIP_TABLE_SIZE))
+    if ((fp == NULL) || (fp->status_id < 0) ||
+        (fp->status_id >= SSB64_NETPLAY_STATUSVARS_OWNERSHIP_TABLE_SIZE))
     {
-        expected = s_statusvars_ownership_table[fp->status_id];
-        if (expected != nFTStatusVarsOverlayNone)
+        return nFTStatusVarsOverlayNone;
+    }
+
+    expected = s_statusvars_ownership_table[fp->status_id];
+    /*
+     * Character special status IDs reuse the same numeric range across fighters. The ownership
+     * table is status_id-only, so Fox SpecialHiStart..SpecialAirHi (227..232) also matches Ness
+     * SpecialHiStart..SpecialAirHiStart (228..232). Capture then reads bank[FoxSpecialHi] (zeros
+     * for Ness — no Fox accessor writes) and apply projects that over status_vars.ness.specialhi,
+     * wiping pkthunder_gravity_delay / pkjibaku_delay (soak1 789297724 Hold fall after Start
+     * resim). Gate character overlays by fkind. See
+     * docs/bugs/netplay_ness_specialhi_fox_overlay_collision_2026-07-28.md.
+     */
+    if (expected == nFTStatusVarsOverlayFoxSpecialHi)
+    {
+        if ((fp->fkind != nFTKindFox) && (fp->fkind != nFTKindNFox))
         {
-            return expected;
+            expected = nFTStatusVarsOverlayNone;
         }
+    }
+    if (expected != nFTStatusVarsOverlayNone)
+    {
+        return expected;
     }
 
     /*
@@ -350,12 +374,24 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
 
     if ((fp->status_id >= nFTCommonStatusDeadDown) && (fp->status_id <= nFTCommonStatusDeadUpFall))
     {
-        if (fp->status_vars.common.dead.wait != fp->dead_gate_wait)
+        /*
+         * Compare mirror to bank authority (not the union projection). Accessors redirect to
+         * the bank under rollback semantics; reading fp->status_vars.common.dead raw would
+         * false-positive every dead tick after C2b Dead migration.
+         */
         {
-            port_log(
-                "SSB64 NetStatusVars: corrupt dead_gate tick=%u player=%d fkind=%d status_id=%d union_wait=%d dead_gate_wait=%d\n",
-                (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
-                (int)fp->status_vars.common.dead.wait, (int)fp->dead_gate_wait);
+            ftCommonDeadStatusVars *dead_slot =
+                (ftCommonDeadStatusVars *)syNetplayStatusVarsBankSlot((FTStruct *)(void *)fp,
+                                                                      nFTStatusVarsOverlayDead);
+            s32 bank_wait = (dead_slot != NULL) ? dead_slot->wait : fp->status_vars.common.dead.wait;
+
+            if (bank_wait != fp->dead_gate_wait)
+            {
+                port_log(
+                    "SSB64 NetStatusVars: corrupt dead_gate tick=%u player=%d fkind=%d status_id=%d bank_wait=%d dead_gate_wait=%d\n",
+                    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
+                    (int)bank_wait, (int)fp->dead_gate_wait);
+            }
         }
     }
 
@@ -363,7 +399,10 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
         ((fp->status_id == nFTCommonStatusKneeBend) || (fp->status_id == nFTCommonStatusGuardKneeBend)) &&
         (fp->attr != NULL))
     {
-        f32 anim_frame = fp->status_vars.common.kneebend.anim_frame;
+        ftCommonKneeBendStatusVars *kb_slot =
+            (ftCommonKneeBendStatusVars *)syNetplayStatusVarsBankSlot((FTStruct *)(void *)fp,
+                                                                     nFTStatusVarsOverlayKneeBend);
+        f32 anim_frame = (kb_slot != NULL) ? kb_slot->anim_frame : fp->status_vars.common.kneebend.anim_frame;
         f32 anim_length = fp->attr->kneebend_anim_length;
 
         if ((anim_frame < -1.0F) || (anim_frame > (anim_length + 30.0F)))
@@ -378,8 +417,11 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
     if ((overlay == nFTStatusVarsOverlayJumpAerial) ||
         ((fp->status_id >= nFTCommonStatusJumpAerialF) && (fp->status_id <= nFTCommonStatusJumpAerialB)))
     {
-        f32 drift = fp->status_vars.common.jumpaerial.drift;
-        f32 vel_x = fp->status_vars.common.jumpaerial.vel_x;
+        ftCommonJumpAerialStatusVars *ja_slot =
+            (ftCommonJumpAerialStatusVars *)syNetplayStatusVarsBankSlot((FTStruct *)(void *)fp,
+                                                                       nFTStatusVarsOverlayJumpAerial);
+        f32 drift = (ja_slot != NULL) ? ja_slot->drift : fp->status_vars.common.jumpaerial.drift;
+        f32 vel_x = (ja_slot != NULL) ? ja_slot->vel_x : fp->status_vars.common.jumpaerial.vel_x;
         f32 vair_x = fp->physics.vel_air.x;
         f32 vair_y = fp->physics.vel_air.y;
 
@@ -406,7 +448,7 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
                     (unsigned int)syNetplayStatusVarsWitnessF32Bits(vel_x),
                     (unsigned int)syNetplayStatusVarsWitnessF32Bits(vair_x),
                     (unsigned int)syNetplayStatusVarsWitnessF32Bits(vair_y),
-                    (int)fp->status_vars.common.jumpaerial.turn_tics,
+                    (int)((ja_slot != NULL) ? ja_slot->turn_tics : fp->status_vars.common.jumpaerial.turn_tics),
                     (int)(syNetRollbackIsResimulating() != FALSE));
             }
         }
@@ -482,16 +524,24 @@ void syNetplayStatusVarsWitnessProbeJumpAerialEntry(const FTStruct *fp)
 
     syNetplayStatusVarsWitnessLogArmedOnce();
 
-    port_log(
-        "SSB64 NetStatusVars: jumpaerial entry tick=%u player=%d fkind=%d status_id=%d "
-        "drift=0x%08x vel_x=0x%08x vel_air=(0x%08x,0x%08x) turn_tics=%d jumps_used=%d resim=%d\n",
-        (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
-        (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->status_vars.common.jumpaerial.drift),
-        (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->status_vars.common.jumpaerial.vel_x),
-        (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->physics.vel_air.x),
-        (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->physics.vel_air.y),
-        (int)fp->status_vars.common.jumpaerial.turn_tics, (int)fp->jumps_used,
-        (int)(syNetRollbackIsResimulating() != FALSE));
+    {
+        ftCommonJumpAerialStatusVars *ja_slot =
+            (ftCommonJumpAerialStatusVars *)syNetplayStatusVarsBankSlot((FTStruct *)(void *)fp,
+                                                                       nFTStatusVarsOverlayJumpAerial);
+        f32 drift = (ja_slot != NULL) ? ja_slot->drift : fp->status_vars.common.jumpaerial.drift;
+        f32 vel_x = (ja_slot != NULL) ? ja_slot->vel_x : fp->status_vars.common.jumpaerial.vel_x;
+        s32 turn_tics = (ja_slot != NULL) ? ja_slot->turn_tics : fp->status_vars.common.jumpaerial.turn_tics;
+
+        port_log(
+            "SSB64 NetStatusVars: jumpaerial entry tick=%u player=%d fkind=%d status_id=%d "
+            "drift=0x%08x vel_x=0x%08x vel_air=(0x%08x,0x%08x) turn_tics=%d jumps_used=%d resim=%d\n",
+            (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
+            (unsigned int)syNetplayStatusVarsWitnessF32Bits(drift),
+            (unsigned int)syNetplayStatusVarsWitnessF32Bits(vel_x),
+            (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->physics.vel_air.x),
+            (unsigned int)syNetplayStatusVarsWitnessF32Bits(fp->physics.vel_air.y), (int)turn_tics,
+            (int)fp->jumps_used, (int)(syNetRollbackIsResimulating() != FALSE));
+    }
 }
 
 /*

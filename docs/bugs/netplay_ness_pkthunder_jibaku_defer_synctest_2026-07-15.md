@@ -50,5 +50,5 @@ Offline / non-netmenu unchanged. Hold-only live-forward prune after defer expire
 
 - [ ] Re-soak Ness Up+B → jibaku; synctest over `cull_at_tick-1` must not `LOAD_HASH_DRIFT diverged=eff,wpn`.
 - [ ] Capture at jibaku tick must fold `respawn=5` (not `0`) for the deferred wave.
-- [ ] Control: after defer expires, weapons+wave still tear down (`jibaku_post_cull action=cull`, `effect_count=0`).
+- [ ] Control: after defer expires, weapons+wave still tear down (`jibaku_post_cull action=force_teardown`, `weapons_after=0`, `effect_count=0`). See also [cull_at_tick trail fork](netplay_ness_pkthunder_jibaku_cull_at_tick_trail_fork_2026-07-29.md).
 - [ ] Control: empty-slot Hold Start verify cull still strips unmatched PK Thunder.

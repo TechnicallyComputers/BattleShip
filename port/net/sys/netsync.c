@@ -326,6 +326,15 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 	{
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsDamage(fp)->hitstun_tics);
 		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsDamage(fp)->is_knockback_over != FALSE));
+		/*
+		 * DamageE1/E2 deferred exit target (ftCommonDamageSetStatus). Hash-blind status_id
+		 * hid bank skew until hitlag end forked E2 vs FlyHi (soak1 1473519344 @1301).
+		 * See docs/bugs/netplay_damage_e2_setstatus_proc_passive_rebind_2026-07-29.md.
+		 */
+		if ((fp->status_id == nFTCommonStatusDamageE1) || (fp->status_id == nFTCommonStatusDamageE2))
+		{
+			h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsDamage(fp)->status_id);
+		}
 	}
 	/*
 	 * Soak 1579824759 @1960: Turn→Dash fork with matched sticks after Linux-only synctest
@@ -510,12 +519,12 @@ static u32 syNetSyncFoldFighterAnimRollback(const FTStruct *fp, GObj *fighter_go
  * Attack-record victim pointers can dangle: the decomp only clears them on timer_rehit expiry
  * while attack_state is active, so a stale record can outlive its victim GObj, whose memory is
  * then recycled (rollback effect churn reuses GObj slots as id=1011 effects every verify).
- * Reading victim_gobj->id raw folds a recycled/freed id into the slot hash at capture, while
- * snapshot restore (syNetRbSnapResolveLiveGobj) maps the same record to NULL -> verify folds 0
- * -> item LOAD_HASH_DRIFT (soak2 session 1854235190 ticks 869/989: live victim_id=0 vs blob
- * 1011 on stale atk_state=0 records). Fold the id only when the pointer is a currently-linked
- * fighter/item/weapon GObj — the exact criterion the restore path accepts — and never
- * dereference an unlinked pointer.
+ * Fold the id only when the pointer is a currently-linked fighter/item/weapon GObj — the exact
+ * criterion the restore path accepts — and never dereference an unlinked pointer.
+ *
+ * Fighters share gobj->id == nGCCommonKindFighter (1000); fold the tagged player encoding used
+ * by syNetRbSnapAttackVictimGobjIdForCapture so item/weapon rehit state is not hash-blind across
+ * players (soak1 1020830879 PK Fire). See docs/bugs/netplay_attack_record_fighter_victim_gobjid_2026-07-29.md.
  */
 static u32 syNetSyncAttackRecordVictimIdForFold(GObj *victim_gobj)
 {
@@ -534,8 +543,18 @@ static u32 syNetSyncAttackRecordVictimIdForFold(GObj *victim_gobj)
 		{
 			if (gobj == victim_gobj)
 			{
-				if ((ftGetStruct(gobj) == NULL) && (itGetStruct(gobj) == NULL) &&
-				    (wpGetStruct(gobj) == NULL))
+				FTStruct *fp;
+
+				fp = ftGetStruct(gobj);
+				if (fp != NULL)
+				{
+					if ((fp->player < 0) || (fp->player >= GMCOMMON_PLAYERS_MAX))
+					{
+						return 0U;
+					}
+					return SYNETRB_ATTACK_VICTIM_ENCODE_FIGHTER(fp->player);
+				}
+				if ((itGetStruct(gobj) == NULL) && (wpGetStruct(gobj) == NULL))
 				{
 					return 0U;
 				}

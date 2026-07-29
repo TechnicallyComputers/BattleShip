@@ -38,6 +38,16 @@ extern void *syNetplayStatusVarsBankSlot(struct FTStruct *fp, enum FTStatusVarsO
 extern void *syNetplayStatusVarsBankSlotOrUnion(struct FTStruct *fp, enum FTStatusVarsOverlay overlay,
                                                 void *union_member);
 
+/*
+ * Forward-sim authority slot: the bank when rollback semantics are active (online VS/resim),
+ * else the union member — offline modes inside the netmenu binary keep vanilla union aliasing.
+ * Only migrate overlays whose SetStatus initializes every field (the bank slot is not seeded
+ * from the union on first redirect). Migrated: Turn, KneeBend, JumpAerial, Dead, Rebirth,
+ * Damage, Squat, Landing, FallSpecial.
+ */
+extern void *syNetplayStatusVarsBankAuthoritySlot(struct FTStruct *fp, enum FTStatusVarsOverlay overlay,
+                                                  void *union_member);
+
 /* Mirror of the live overlay index, for ring capture tag + SetStatus switch. */
 extern s32 syNetplayStatusVarsBankLiveOverlay(s32 player);
 extern void syNetplayStatusVarsBankSetLiveOverlay(s32 player, s32 overlay);
