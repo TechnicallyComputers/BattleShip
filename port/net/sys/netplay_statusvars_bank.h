@@ -43,7 +43,7 @@ extern void *syNetplayStatusVarsBankSlotOrUnion(struct FTStruct *fp, enum FTStat
  * else the union member — offline modes inside the netmenu binary keep vanilla union aliasing.
  * Only migrate overlays whose SetStatus initializes every field (the bank slot is not seeded
  * from the union on first redirect). Migrated: Turn, KneeBend, JumpAerial, Dead, Rebirth,
- * Damage, Squat, Landing, FallSpecial.
+ * Damage, Squat, Landing, FallSpecial, CatchWait.
  */
 extern void *syNetplayStatusVarsBankAuthoritySlot(struct FTStruct *fp, enum FTStatusVarsOverlay overlay,
                                                   void *union_member);

@@ -1,8 +1,11 @@
 # Portable input contract (GGPO stick replace) — frozen decision table
 
-**Status:** Phase 1+2 implemented (2026-07-27) — pure core extracted to
-[`port/net/sys/netinput_contract.c`](../port/net/sys/netinput_contract.c), SSB64 gates behind a
-host vtable. Export target: `recomp-net` rollback mode.
+**Status:** Landed in recomp-net (2026-07-29) — the pure decision core now lives in
+recomp-net `feat/rollback` (`include/recomp_net/input_contract.h` +
+`src/input/rnet_input_contract.c`, `rnet_input_contract_*`). SSB64 gates stay behind a host
+vtable; [`port/net/sys/netinput_contract.h`](../port/net/sys/netinput_contract.h) is a thin
+compatibility shim mapping `SYNetInputContract*` → `RNetInputContract*` so `netinput.c` call
+sites are unchanged. The old local TU `port/net/sys/netinput_contract.c` was deleted.
 
 This is the **frozen contract** for "published input row vs late wire row → rewind or
 promote?". The core is a standalone C TU with **zero engine includes** (`stdint.h` only): no
@@ -99,14 +102,15 @@ core; all logging, counters (`GGPO_CLASS_SUMMARY`), and env caching stay in `net
 - Ledger/History write-once provenance — `netinput.c` / `netinput_timeline.c`.
 - Any SSB64 fighter status knowledge — host gates only.
 
-## Export map (recomp-net)
+## Export map (recomp-net) — landed
 
-| BattleShip | recomp-net (future) |
+| BattleShip | recomp-net (feat/rollback) |
 |------------|---------------------|
-| `netinput_contract.{h,c}` | drop-in TU (`rnet_input_contract.{h,c}`, rename prefix) |
+| `netinput_contract.{h,c}` | landed as `include/recomp_net/input_contract.h` + `src/input/rnet_input_contract.c` (`rnet_input_contract_*`) |
 | `SYNetInputContractFrame` | built from opaque `RNetInputSample` via a host stick-layout descriptor |
 | `hash_confirm_promote` | master-hash watermark (`state_agreed_through > tick`) |
 | other gates | NULL (portable defaults) until a title needs them |
+| consumer link | `port/net/sys/netinput_contract.h` shim → `recomp_net/input_contract.h`; `ssb64_game` links `recomp_net` when `SSB64_NETMENU=ON` |
 
 ## Related
 

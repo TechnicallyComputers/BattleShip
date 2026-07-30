@@ -74,6 +74,18 @@ typedef struct SYNetRollbackEpisodePostDigest
 extern sb32 syNetRollbackEpisodeFsmEnabled(void);
 extern void syNetRollbackEpisodeFsmSessionReset(void);
 
+/* Shared recomp-net rollback core (rnet_rb) mirror — opt-in via
+ * SSB64_NETPLAY_ROLLBACK_RNETRB=1. When off, the proven SSB64 FSM is authoritative
+ * and the hooks below no-op. Bridge lives in netrollback_episode_rnetrb.c. */
+extern sb32 syNetRollbackEpisodeRnetRbEnabled(void);
+extern void syNetRollbackEpisodeRnetRbSyncFromFsm(void);
+extern void syNetRollbackEpisodeRnetRbBegin(u32 epoch_id, u32 mismatch_tick, u32 load_tick,
+                                            u32 target_tick, s32 corrected_slot, sb32 from_peer_notify);
+extern void syNetRollbackEpisodeRnetRbSetPhase(SYNetRollbackEpisodeFsmPhase phase);
+extern void syNetRollbackEpisodeRnetRbSetPeerConvergence(u32 peer_target);
+extern void syNetRollbackEpisodeRnetRbOnPostMatch(void);
+extern void syNetRollbackEpisodeRnetRbCommitPromoteSealed(void);
+
 extern SYNetRollbackEpisodeFsmPhase syNetRollbackEpisodeFsmGetPhase(void);
 extern sb32 syNetRollbackEpisodeFsmIsActive(void);
 extern sb32 syNetRollbackEpisodeFsmIsResimulating(void);

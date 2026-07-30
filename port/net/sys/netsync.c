@@ -360,6 +360,16 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsSquat(fp)->unk_0x8);
 	}
 	/*
+	 * Soak1 1685497605 @1724: CatchWait→ThrowF while peer stayed CaptureWait/CatchWait;
+	 * fhash_light matched through 1723 with throw_wait hash-blind after mid-CatchWait
+	 * synctest wiped bank[CatchWait]. Fold throw_wait for FIGHTER_LIGHT_ONSET.
+	 * See docs/bugs/netplay_catchwait_throw_wait_statusvars_bank_authority_2026-07-29.md.
+	 */
+	if (fp->status_id == nFTCommonStatusCatchWait)
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsCatchWait(fp)->throw_wait);
+	}
+	/*
 	 * Soak1 3078154319 @795: LandingLight interrupt allow was hash-blind; scrub-poisoned
 	 * light reload skipped Turn/Walk until anim-end → status_total_tics skew on Turn.
 	 * See docs/bugs/netplay_landing_allow_interrupt_statusvars_scrub_fc_2026-07-28.md.

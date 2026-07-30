@@ -13,3 +13,7 @@
 [submodule "third_party/libjuice"]
 	path = third_party/libjuice
 	url = https://github.com/paullouisageneau/libjuice.git
+[submodule "recomp-net"]
+	path = recomp-net
+	url = https://github.com/TechnicallyComputers/recomp-net.git
+	branch = feat/rollback

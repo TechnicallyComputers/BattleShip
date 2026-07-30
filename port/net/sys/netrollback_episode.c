@@ -589,6 +589,7 @@ void syNetRollbackEpisodeFsmSessionReset(void)
 	       sizeof(sSYNetRollbackEpisodeFsm.seal_send_row_begin));
 	sSYNetRollbackEpisodePeerSealChunkSeen = FALSE;
 	syNetRollbackEpisodeClearPendingPeerSealRows();
+	syNetRollbackEpisodeRnetRbSyncFromFsm();
 }
 
 sb32 syNetRollbackEpisodePeerSealActivitySeen(void)
@@ -688,6 +689,8 @@ void syNetRollbackEpisodeFsmBegin(u32 epoch_id, u32 mismatch_tick, u32 load_tick
 	syNetRollbackEpisodeClearPendingPeerSealRowsExcept(epoch_id, mismatch_tick,
 							   sSYNetRollbackEpisodeFsm.target_tick);
 	sSYNetRollbackEpisodeFsm.phase = nSYNetRollbackEpisodeFsmPhaseSealInputs;
+	syNetRollbackEpisodeRnetRbBegin(epoch_id, mismatch_tick, load_tick,
+	                                sSYNetRollbackEpisodeFsm.target_tick, corrected_slot, from_peer_notify);
 	port_log(
 	    "SSB64 NetRollback: EPISODE_FSM begin epoch=%u mismatch=%u load=%u target=%u role=%s corrected=%d\n",
 	    epoch_id,
@@ -742,6 +745,7 @@ void syNetRollbackEpisodeFsmSetPhase(SYNetRollbackEpisodeFsmPhase phase)
 	    sSYNetRollbackEpisodeFsm.mismatch_tick,
 	    sSYNetRollbackEpisodeFsm.target_tick);
 	sSYNetRollbackEpisodeFsm.phase = phase;
+	syNetRollbackEpisodeRnetRbSetPhase(phase);
 #endif
 }
 
@@ -1180,6 +1184,7 @@ void syNetRollbackEpisodeCommitPromoteSealed(void)
 			}
 		}
 	}
+	syNetRollbackEpisodeRnetRbCommitPromoteSealed();
 	port_log(
 	    "SSB64 NetRollback: EPISODE_FSM commit_promote mismatch=%u target=%u\n",
 	    sSYNetRollbackEpisodeFsm.mismatch_tick,
@@ -1253,6 +1258,7 @@ void syNetRollbackEpisodeFsmSetPeerConvergence(u32 peer_target)
 	}
 	sSYNetRollbackEpisodeFsm.peer_convergence_target = peer_target;
 	sSYNetRollbackEpisodeFsm.peer_convergence_active = TRUE;
+	syNetRollbackEpisodeRnetRbSetPeerConvergence(peer_target);
 }
 
 void syNetRollbackEpisodeFsmOnPostDiverge(void)
@@ -1273,6 +1279,7 @@ void syNetRollbackEpisodeFsmOnPostMatch(void)
 {
 	sSYNetRollbackEpisodeFsm.peer_convergence_active = FALSE;
 	sSYNetRollbackEpisodeFsm.peer_convergence_target = 0U;
+	syNetRollbackEpisodeRnetRbOnPostMatch();
 }
 
 static void syNetRollbackEpisodeEventQueuePush(const SYNetRollbackEpisodeEvent *event)

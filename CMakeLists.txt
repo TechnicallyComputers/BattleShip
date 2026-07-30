@@ -697,6 +697,15 @@ if(SSB64_NETMENU)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuSources.cmake")
 endif()
 
+# Shared rollback core (feat/rollback). Only netmenu links it; delay-sync MotK/snes
+# stay on recomp-net main. BattleShip keeps its own juice/ICE path for now.
+if(SSB64_NETMENU)
+    set(RNET_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(RNET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(RNET_ENABLE_ICE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(recomp-net ${CMAKE_BINARY_DIR}/recomp-net)
+endif()
+
 ################################################################################
 # Excluded directories (not compiled):
 #   src/ovl8/   - Debug overlay
@@ -865,6 +874,7 @@ if(SSB64_NETMENU)
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
     ssb64_netmenu_attach_curl(ssb64_game)
+    target_link_libraries(ssb64_game PRIVATE recomp_net)
     if(SSB64_NETPLAY_ICE)
         ssb64_target_link_libjuice(ssb64_game)
     endif()
@@ -1169,6 +1179,12 @@ endif()
 # OBJECT library via $<TARGET_OBJECTS:ssb64_game> does not always serialize the
 # final link against every .o under parallel make — wait for ssb64_game first.
 add_dependencies(${PROJECT_NAME} ssb64_game)
+
+# OBJECT library usage requirements don't reach the final exe link; the shared
+# rollback core (input contract / episode FSM) is called from ssb64_game objects.
+if(SSB64_NETMENU)
+    target_link_libraries(${PROJECT_NAME} PRIVATE recomp_net)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set_target_properties(ssb64_game PROPERTIES

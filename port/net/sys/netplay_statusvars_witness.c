@@ -359,16 +359,26 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
 
     if (fp->status_id == nFTCommonStatusCatchWait)
     {
-        s32 throw_wait = fp->status_vars.common.catchwait.throw_wait;
-        s32 shuffle = fp->shuffle_tics;
-        s32 drift = throw_wait - shuffle;
-
-        if ((shuffle > 0) && (drift != 0) && (drift != 1))
+        /*
+         * Read bank[CatchWait] directly (not the accessor — NoteAccess → CheckIntegrity
+         * would recurse). Raw union is stale after C2b CatchWait bank migration.
+         */
         {
-            port_log(
-                "SSB64 NetStatusVars: corrupt catchwait tick=%u player=%d fkind=%d status_id=%d throw_wait=%d shuffle_tics=%d\n",
-                (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
-                (int)throw_wait, (int)shuffle);
+            ftCommonCatchWaITStatusVars *catchwait_slot =
+                (ftCommonCatchWaITStatusVars *)syNetplayStatusVarsBankSlot((FTStruct *)(void *)fp,
+                                                                           nFTStatusVarsOverlayCatchWait);
+            s32 throw_wait =
+                (catchwait_slot != NULL) ? catchwait_slot->throw_wait : fp->status_vars.common.catchwait.throw_wait;
+            s32 shuffle = fp->shuffle_tics;
+            s32 drift = throw_wait - shuffle;
+
+            if ((shuffle > 0) && (drift != 0) && (drift != 1))
+            {
+                port_log(
+                    "SSB64 NetStatusVars: corrupt catchwait tick=%u player=%d fkind=%d status_id=%d throw_wait=%d shuffle_tics=%d\n",
+                    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
+                    (int)throw_wait, (int)shuffle);
+            }
         }
     }
 

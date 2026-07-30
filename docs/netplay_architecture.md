@@ -16,7 +16,11 @@ Taskman vs **sim tick** (`syNetInputGetTick`) vs host push, and binding authorit
 
 **Canonical State Image (CSI)** — cross-peer / cross-build comparison via explicit serialization (not raw struct `memcmp`) — is documented in [`docs/netplay_canonical_state_image.md`](netplay_canonical_state_image.md).
 
-**Portable input contract** (frozen GGPO stick-replace decision table; pure core in `port/net/sys/netinput_contract.c` with SSB64 gates behind a host vtable; recomp-net export target) is documented in [`docs/netplay_input_contract_portable.md`](netplay_input_contract_portable.md).
+**Portable input contract** (frozen GGPO stick-replace decision table; pure core now lives in recomp-net `feat/rollback` as `rnet_input_contract`, consumed via the shim `port/net/sys/netinput_contract.h` with SSB64 gates behind a host vtable) is documented in [`docs/netplay_input_contract_portable.md`](netplay_input_contract_portable.md).
+
+**Shared rollback core:** recomp-net `feat/rollback` (vendored as the `recomp-net/` submodule, linked into `ssb64_game` only when `SSB64_NETMENU=ON`) is the home for game-agnostic rollback layers. Two layers are landed: the input contract (Phase 1, always consumed) and the episode orchestration core `rnet_rb` (Phase 2). SSB64 glue (typed snapshots, CSI, fighter/status gates, menus, automatch, decomp `#if PORT && SSB64_NETMENU` policy) stays in this tree.
+
+**Shared-core episode mirror (opt-in):** `port/net/sys/netrollback_episode_rnetrb.c` mirrors the episode FSM tuple/phase/resolved-through watermark into the shared `rnet_rb` core. Default is **off** — BattleShip's proven episode FSM (`netrollback_episode.c`) stays authoritative for sealing, peer seal-row exchange, span digests, and replay. Set `SSB64_NETPLAY_ROLLBACK_RNETRB=1` to run the shared core alongside for soak validation before it ever becomes the source of truth.
 
 ## Debugging environment (commit / edges / pacing)
 
