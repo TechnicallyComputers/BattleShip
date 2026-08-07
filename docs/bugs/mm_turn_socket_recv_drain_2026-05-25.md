@@ -6,13 +6,13 @@
 
 ## Symptom
 
-`turnutils_uclient -u netplay -w … -p 3478 -y coturn.technicallycomputers.ca` succeeds, but BattleShip logs:
+`turnutils_uclient -u netplay -w … -p 3478 -y coturn.retcomm.net` succeeds, but BattleShip logs:
 
 `SSB64 Automatch TURN: allocate failed server=216.154.76.149:3478 (no response from coturn)`
 
 and automatch joins with `turn=(none)`.
 
-The logged IP is the **DNS A record** for `coturn.technicallycomputers.ca`, not a wrong TURN host override.
+The logged IP is the **DNS A record** for `coturn.retcomm.net`, not a wrong TURN host override.
 
 ## Root cause (application-side)
 
@@ -38,7 +38,7 @@ The earlier **STUN class mask** bug (`0xC100` vs `0x0110`, see `mm_turn_stun_cla
 
 ## Verification
 
-1. Same machine as failing session: automatch should log `SSB64 Automatch TURN: relay=… server=coturn.technicallycomputers.ca (216.154.x.x:3478)`.
+1. Same machine as failing session: automatch should log `SSB64 Automatch TURN: relay=… server=coturn.retcomm.net (216.154.x.x:3478)`.
 2. If credentials wrong: `stun_err=401` (not “no response”).
 3. If STUN leftovers were the issue: one-time `drained N stale datagram(s) before Allocate` then success.
 
