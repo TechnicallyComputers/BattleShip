@@ -2,11 +2,11 @@
   <img src="assets/BattleShip.svg" alt="BattleShip" width="640">
 </p>
 
-# BattleShip
-
 ## Disclaimer
 
 This netplay fork of battleship is still in development.  Netcode from this project has contributed to netcode development in psxrecomp, and the advancements in psxrecomp will eventually make their way back to Battleship.  This decomp port is much more complicated than rollback netcode for a static recomp in a pseudo emulation runtime with snapshotting support, but migrating to psxrecomp has allowed me to refine the rollback scheduler and resim semantics more effectively without dealing with the added layers of depth from owning the entire game loop here.  I will soon resume development of netplay on Battleship, and I am determined to get this title to a very robust state.
+
+# BattleShip
 
 **BattleShip** is a PC port of **Super Smash Bros. (N64)** — both the **US** (NTSC-U v1.0) and **Japanese** (Nintendo All-Star! Dairantou Smash Brothers) releases — built on top of the [VetriTheRetri/ssb-decomp-re](https://github.com/vetritheretri/ssb-decomp-re) decompilation, using [libultraship](https://github.com/Kenix3/libultraship) for PC-native rendering / audio / input and [Torch](https://github.com/HarbourMasters/Torch) for extracting assets out of the ROM at build time.
 
