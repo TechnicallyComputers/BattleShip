@@ -41213,14 +41213,20 @@ static void syNetRbSnapApplyCamera(const SYNetRbSnapCameraBlob *cam)
 	}
 #if defined(SSB64_NETMENU)
 	/*
-	 * cobj_valid restore pins eye/at for load-hash capture. Re-integrate from live fighter interests for
-	 * presentation during forward resim (RefreshIntroPresentationAfterForwardResimTick /
-	 * RefreshIntroPresentationAfterResimComplete), not during load-hash verify — gmCameraRunFuncCamera
-	 * mutates GMCamera struct fields in the hash fold and breaks save→apply round-trip (soak2 cam-only
-	 * LOAD_HASH_DRIFT @389/480/519).
+	 * cobj_valid restore pins eye/at for load-hash capture. Intro countdown has no gcRunAll driving the
+	 * camera, so it still needs one integrate for presentation — but NOT during load-hash verify:
+	 * gmCameraRunFuncCamera mutates GMCamera struct fields in the hash fold and breaks the save→apply
+	 * round-trip (soak2 cam-only LOAD_HASH_DRIFT @389/480/519).
+	 *
+	 * Gameplay resim is deliberately excluded (was: || syNetplayRollbackSemanticsActive()). The blob
+	 * restore above already pins the camera exactly, and replay re-runs gcRunAll — which owns the camera
+	 * process (gmCameraMakeDefaultCamera registers gmCameraRunFuncCamera) — once per replayed tick. The
+	 * extra integrate therefore advanced hashed GMCamera scalars on the rolling-back peer ONLY. Same
+	 * failure the synctest path already documents above syNetRbSnapSynctestRecoverCameraIfInterestYanked.
+	 * See docs/bugs/netplay_resim_camera_extra_integrate_2026-08-22.md.
 	 */
 	if ((used_camera_run == FALSE) && (gGMCameraGObj != NULL) && (syNetRollbackLoadHashVerifyEnabled() == FALSE) &&
-	    ((syNetRbSnapIntroCountdownWaitActive() != FALSE) || (syNetplayRollbackSemanticsActive() != FALSE)))
+	    (syNetRbSnapIntroCountdownWaitActive() != FALSE))
 	{
 		gmCameraRunFuncCamera(gGMCameraGObj);
 		used_camera_run = TRUE;
@@ -44042,13 +44048,15 @@ void syNetRbSnapshotRefreshIntroPresentationAfterForwardResimTick(u32 presentati
 		}
 	}
 	/*
-	 * Gameplay resim camera: ApplyCamera skips integrate during load-hash verify; integrate each forward
-	 * replay tick so the viewport tracks fighters (Sector Z deck resim soak).
+	 * Gameplay resim camera: no integrate here. This runs immediately after
+	 * scVSBattleFuncUpdateBattleSimOnly(), whose ifCommonBattleUpdateInterfaceAll →
+	 * ifCommonBattleGoUpdateInterface → gcRunAll() already advanced the camera process for this replay
+	 * tick, so the viewport tracks fighters (the Sector Z deck resim soak this block was added for)
+	 * without help. Integrating again double-stepped hashed GMCamera scalars once per replayed tick on
+	 * the rolling-back peer only — 570 of 2266 ticks camera-diverged across 51 runs, every run starting
+	 * within 2 ticks of a resim (soak 2026-08-22).
+	 * See docs/bugs/netplay_resim_camera_extra_integrate_2026-08-22.md.
 	 */
-	if (syNetplayRollbackSemanticsActive() != FALSE)
-	{
-		syNetRbSnapRunIntroCameraIntegrateStep();
-	}
 #else
 	(void)presentation_tick;
 #endif
@@ -44093,9 +44101,11 @@ void syNetRbSnapshotRefreshIntroPresentationAfterResimComplete(u32 target_tick)
 	syNetRbSnapRebuildIntroFighterPartTransforms("resim_complete_gameplay");
 	if (slot->camera.cobj_valid != FALSE)
 	{
+		/* CObj-only: pins the end-of-replay view (CObj is excluded from syNetSyncHashGMCamera, so this
+		 * cannot move the hash). The integrate that used to follow advanced hashed GMCamera scalars on
+		 * the rolling-back peer only — replay's own gcRunAll already stepped the camera to target_tick. */
 		syNetRbSnapRestoreCameraCObjFromBlob(&slot->camera);
 	}
-	syNetRbSnapRunIntroCameraIntegrateStep();
 #else
 	(void)target_tick;
 #endif
@@ -46300,7 +46310,14 @@ void syNetRbSnapshotResyncLiveFightersFromSlotForSim(u32 load_tick)
 	}
 	syNetRbSnapRefreshKnockdownCollFromSlot(slot);
 	syNetRbSnapAnchorProbeSimPrepFromSlot(slot);
-	if ((syNetRbSnapIntroCountdownWaitActive() != FALSE) || (syNetplayRollbackSemanticsActive() != FALSE))
+	/*
+	 * Intro countdown only. Both callers (anchor probe, RESIM_BASELINE_ECHO live_apply) run straight
+	 * after a snapshot load, where the blob restore has already pinned the camera exactly — and the
+	 * replay that follows re-runs gcRunAll, which owns the camera process. Integrating for gameplay
+	 * resim here advanced hashed GMCamera scalars on the loading peer only.
+	 * See docs/bugs/netplay_resim_camera_extra_integrate_2026-08-22.md.
+	 */
+	if (syNetRbSnapIntroCountdownWaitActive() != FALSE)
 	{
 		syNetRbSnapRunIntroCameraIntegrateStep();
 	}
