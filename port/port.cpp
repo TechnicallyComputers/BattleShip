@@ -50,6 +50,9 @@ extern "C" void syNetReplayFinishVSSession(void);
 #if !defined(__ANDROID__)
 #include "port_window_icon.h"
 #endif
+#if defined(__ANDROID__)
+#include <android/api-level.h>  // android_get_device_api_level (audio-driver gate)
+#endif
 #ifndef DISABLE_SCRIPTING
 #include "mods/HookManager.h"
 #include "mods/SymbolResolver.h"
@@ -127,8 +130,14 @@ extern "C" void* sModBridgeAnchorDataFilesRef = (void*)&dFTManagerDataFiles_Ref;
 #include <filesystem>
 #include <system_error>
 
+#include <ship/debug/Console.h>
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 #ifdef _WIN32
@@ -630,6 +639,31 @@ static void portAndroidJniWarmupLate(void);
 static void portAndroidFinishPortMenuInit(void);
 #endif
 
+/* ── Console "reset" command ─────────────────────────────────────────────
+ * The ESC-menu Reset button (port/gui/Menu.cpp) and the Ctrl/Cmd-R shortcut
+ * (libultraship Gui.cpp) both Dispatch("reset") at the LUS console, but the
+ * command was never registered, so both fell through to "[LUS] Command not
+ * found" and did nothing.
+ *
+ * The handler performs an in-game reset back to the boot scene — the same
+ * "return to title" semantics as a console reset — via the scene manager's
+ * normal transition path. The mechanics live decomp-side in
+ * portSCManagerRequestReset() (decomp/src/sc/scmanager.c) because the port
+ * layer can't include decomp headers (the C shim stdlib shadows libc++ —
+ * see the include-path note in CMakeLists.txt) and mirroring the scene
+ * struct layout here would invite exactly the layout-drift bugs
+ * docs/debug_ido_bitfield_layout.md warns about. */
+extern "C" void portSCManagerRequestReset(void);
+
+static int32_t ResetCommandHandler(std::shared_ptr<Ship::Console> console, std::vector<std::string> args,
+                                   std::string* output) {
+	portSCManagerRequestReset();
+	if (output) {
+		*output = "Resetting to the opening scene...";
+	}
+	return 0;
+}
+
 extern "C" {
 
 static int PortInitImpl(int argc, char* argv[]);
@@ -859,6 +893,10 @@ static int PortInitImpl(int argc, char* argv[]) {
 	if (!sContext->InitCrashHandler()) { port_log("SSB64: InitCrashHandler failed\n"); return 1; }
 	if (!sContext->InitConsole()) { port_log("SSB64: InitConsole failed\n"); return 1; }
 	port_log("SSB64: CrashHandler + Console OK\n");
+
+	/* Back the ESC-menu Reset button / Ctrl+Cmd-R Dispatch("reset") with a
+	 * real command — see the reset block above PortInit for the mechanism. */
+	sContext->GetConsole()->AddCommand("reset", { ResetCommandHandler, "Resets the game to the opening scene" });
 
 	// ControlDeck MUST be initialized before Window — the DXGI window proc
 	// calls ControllerUnblockGameInput on WM_SETFOCUS during window creation.
@@ -1430,6 +1468,21 @@ int main(int argc, char* argv[]) {
 	}
 	port_log_report_sinks();
 
+#ifdef __APPLE__
+	/* Disable the macOS press-and-hold accent/diacritic popup for this app.
+	 * SDL keeps a Cocoa text-input context alive for the game window, so
+	 * holding a movement key (e.g. WASD) makes AppKit pop the accent picker
+	 * instead of delivering key-repeat — the held key stops registering as
+	 * down. AppKit reads ApplePressAndHoldEnabled from the app's user
+	 * defaults when the text-input context is first created, so this must
+	 * run before SDL creates the window (i.e. before PortInit). Writing it
+	 * per-app (kCFPreferencesCurrentApplication) leaves the global/system
+	 * default untouched. Key repeat still works. */
+	CFPreferencesSetAppValue(CFSTR("ApplePressAndHoldEnabled"), kCFBooleanFalse,
+	                         kCFPreferencesCurrentApplication);
+	CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+#endif
+
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(portWindowsCrashFilter);
 	AddVectoredExceptionHandler(1, portWindowsVectoredHandler);
@@ -1482,11 +1535,14 @@ int main(int argc, char* argv[]) {
 		port_log("SSB64: debug session ready\n");
 	}
 
-	// Prefer AAudio (Android 8.0+ low-latency audio API) over the default
-	// OpenSL ES backend. Worth a few ms of latency for a fighting game,
-	// and SDL2 falls back to OpenSL ES if AAudio isn't compiled in or
-	// the device rejects it.
-	SDL_SetHint(SDL_HINT_AUDIODRIVER, "aaudio");
+	// Prefer AAudio (low-latency) only where it exists — API 26+. AAudio's
+	// libaaudio.so is absent below that, and SDL_AudioInit does NOT fall back
+	// once a driver name is pinned (it fails with "Audio target not
+	// available"), so forcing it on older devices kills audio outright. Below
+	// 26 we leave the hint unset and let SDL auto-select OpenSL ES.
+	if (android_get_device_api_level() >= 26) {
+		SDL_SetHint(SDL_HINT_AUDIODRIVER, "aaudio");
+	}
 
 	// 2. Suppress ImGui's per-frame SDL_GetDisplayUsableBounds JNI path.
 	//    ImGui_ImplSDL2_UpdateMonitors runs on the SSB64 GFX coroutine

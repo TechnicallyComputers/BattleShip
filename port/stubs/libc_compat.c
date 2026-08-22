@@ -2,10 +2,9 @@
  * libc_compat.c — Compatibility wrappers for IDO compiler built-ins and
  * BSD libc functions used by the decomp.
  *
- * The original N64 code was compiled with the SGI IDO 7.1 compiler, which
- * provides __sinf/__cosf as compiler built-ins and links against a BSD-
- * flavored libc.  On modern toolchains (MSVC, GCC, Clang) these symbols
- * don't exist, so we provide thin wrappers to the standard equivalents.
+ * The original N64 code was compiled with the SGI IDO 7.1 compiler and
+ * linked against a BSD-flavored libc.  On modern toolchains (MSVC, GCC,
+ * Clang) some of those symbols don't exist, so this file fills the gaps.
  */
 
 #include <ssb_types.h>
@@ -20,32 +19,23 @@
 /* ========================================================================= */
 
 /*
- * IDO's __sinf and __cosf are single-precision math built-ins.
- * Declared in include/common.h as: f32 __sinf(f32); f32 __cosf(f32);
+ * __sinf and __cosf are provided by the original libultra sources
+ * (decomp/src/libultra/gu/sinf.c, cosf.c) — SGI's polynomial approximations
+ * with Cody-Waite argument reduction, compiled into ssb64_game so game
+ * physics matches N64 trig bit-for-bit instead of drifting with each host's
+ * libm. Their NaN branch references __libm_qnan_f, which on N64 was defined
+ * in MIPS assembly (gu/libm_vals.s, bit pattern 0x7F810000 — a quiet NaN
+ * under MIPS's inverted quiet-bit convention, but a *signaling* NaN on
+ * x86/ARM). Define it as the host's canonical quiet NaN instead: callers
+ * only ever propagate or x != x test it, so the payload is unobservable,
+ * and a signaling payload could trip FP-exception state on the host.
  *
- * Offline (SSB64_NETMENU=OFF): thin wrappers to system libm (JRickey release parity).
- * Netmenu: decomp N64 polynomial in decomp/src/libultra/gu/sinf.c + cosf.c defines
- * __sinf/__cosf; wrappers omitted to avoid duplicate symbols. See
- * docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md.
+ * Netmenu note: the fork reached the same conclusion independently for
+ * cross-ISA netplay determinism (docs/bugs/netplay_cross_isa_libm_trig_2026-06-04.md);
+ * upstream now applies it to every build, so no SSB64_NETMENU gate is needed.
  */
-#if !defined(SSB64_NETMENU)
 
-f32 __cosf(f32 angle)
-{
-	return cosf(angle);
-}
-
-f32 __sinf(f32 angle)
-{
-	return sinf(angle);
-}
-
-#endif /* !SSB64_NETMENU */
-
-#if defined(SSB64_NETMENU)
-/* PR/guint.h extern; MIPS libm_vals.s not compiled in the port build. */
-float __libm_qnan_f = (float)NAN;
-#endif
+f32 __libm_qnan_f = NAN;
 
 /* ========================================================================= */
 /*  BSD libc                                                                 */
