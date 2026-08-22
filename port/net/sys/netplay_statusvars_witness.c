@@ -465,7 +465,8 @@ static void syNetplayStatusVarsWitnessCheckIntegrity(const FTStruct *fp, FTStatu
     }
 }
 
-void syNetplayStatusVarsWitnessNoteAccess(const FTStruct *fp, FTStatusVarsOverlay overlay)
+void syNetplayStatusVarsWitnessNoteAccessFrom(const FTStruct *fp, FTStatusVarsOverlay overlay,
+                                             const void *caller)
 {
     FTStatusVarsOverlay expected;
     s32 player;
@@ -508,10 +509,16 @@ void syNetplayStatusVarsWitnessNoteAccess(const FTStruct *fp, FTStatusVarsOverla
 
     port_log(
         "SSB64 NetStatusVars: witness stomp tick=%u player=%d fkind=%d status_id=%d accessed=%s expected=%s "
-        "hit_lr=%d shuffle_tics=%d fp_lr=%d\n",
+        "hit_lr=%d shuffle_tics=%d fp_lr=%d caller=%p\n",
         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
         syNetplayStatusVarsWitnessOverlayName(overlay), syNetplayStatusVarsWitnessOverlayName(expected),
-        (int)fp->hit_lr, (int)fp->shuffle_tics, (int)fp->lr);
+        (int)fp->hit_lr, (int)fp->shuffle_tics, (int)fp->lr, caller);
+}
+
+/* Callers without a return address (MSVC, or explicit non-instrumented use). */
+void syNetplayStatusVarsWitnessNoteAccess(const FTStruct *fp, FTStatusVarsOverlay overlay)
+{
+    syNetplayStatusVarsWitnessNoteAccessFrom(fp, overlay, NULL);
 }
 
 /*
