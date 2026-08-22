@@ -24,9 +24,11 @@
  * production build can either raise minSdk or use libunwind directly.
  */
 #if defined(__ANDROID__) && __ANDROID_API__ < 33
+#define SSB64_HAVE_BACKTRACE_SYMBOLS 0
 static inline int backtrace(void * /*frames*/[], int /*max*/) { return 0; }
 static inline void backtrace_symbols_fd(void *const /*frames*/[], int /*n*/, int /*fd*/) {}
 #else
+#define SSB64_HAVE_BACKTRACE_SYMBOLS 1
 #include <execinfo.h>
 #endif
 #endif
@@ -65,6 +67,11 @@ std::atomic<bool>     sBacktraceDone{false};
 /* Forward declaration — definition below, shared between the crash-
  * context dumper and the legacy signal-info formatter. */
 size_t FormatHex(char *buf, uintptr_t value);
+#if !SSB64_HAVE_BACKTRACE_SYMBOLS
+/* Android < API 33 fallbacks — definitions below, next to the FP walker. */
+void WriteFrameAddrs(void *const *frames, int n);
+void WriteModuleBase();
+#endif
 
 /* Write a byte string to both stderr and the log file fd (if open).
  * Async-signal-safe: write(2) is in the POSIX signal-safe list. */
@@ -83,9 +90,14 @@ void DumpBacktraceBoth() {
     int n = backtrace(frames, kMaxFrames);
     const char msg[] = "SSB64: ---- main-thread backtrace ----\n";
     WriteBoth(msg, sizeof(msg) - 1);
+#if SSB64_HAVE_BACKTRACE_SYMBOLS
     backtrace_symbols_fd(frames, n, STDERR_FILENO);
     int log_fd = port_log_get_fd();
     if (log_fd >= 0) backtrace_symbols_fd(frames, n, log_fd);
+#else
+    WriteFrameAddrs(frames, n);
+    WriteModuleBase();
+#endif
     const char end[] = "SSB64: ---- end backtrace ----\n";
     WriteBoth(end, sizeof(end) - 1);
 }
@@ -273,6 +285,77 @@ int WalkFPChain(const CrashRegs &r, void **frames, int max_frames) {
     return n;
 }
 
+#if !SSB64_HAVE_BACKTRACE_SYMBOLS
+/*
+ * Android < API 33 has no <execinfo.h>, so backtrace_symbols_fd() above is a
+ * no-op stub — which silently discarded the FP walk's output. Every Android
+ * crash report in the field printed a header, a footer, and nothing between
+ * (soak 2026-08-22: SIGABRT at sim=152, "---- end backtrace ----" with zero
+ * frames). Raw addresses are still actionable once rebased against the
+ * module load base emitted below:
+ *
+ *   llvm-addr2line -Cfie <unstripped libssb64.so> <addr - base>
+ */
+size_t StrFind(const char *hay, const char *needle) {
+    for (size_t i = 0; hay[i] != '\0'; i++) {
+        size_t j = 0;
+        while (needle[j] != '\0' && hay[i + j] == needle[j]) j++;
+        if (needle[j] == '\0') return i;
+    }
+    return (size_t)-1;
+}
+
+void WriteFrameAddrs(void *const *frames, int n) {
+    char line[128];
+    for (int i = 0; i < n; i++) {
+        size_t pos = 0;
+        pos = AppendLabel(line, pos, "SSB64:   #");
+        if (i < 10) line[pos++] = ' ';
+        line[pos++] = (char)('0' + (i / 10) % 10);
+        line[pos++] = (char)('0' + (i % 10));
+        line[pos++] = ' ';
+        pos += FormatHex(line + pos, (uintptr_t)frames[i]);
+        line[pos++] = '\n';
+        WriteBoth(line, pos);
+    }
+}
+
+/* Emit libssb64.so's executable mapping so the frames above can be rebased
+ * (PIE + ASLR make absolute addresses meaningless on their own).
+ * open/read/write are async-signal-safe and nothing here allocates. */
+void WriteModuleBase() {
+    int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+
+    char buf[1024];
+    char line[256];
+    size_t len = 0;
+    ssize_t got;
+    bool done = false;
+
+    while (!done && (got = read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < got && !done; i++) {
+            char c = buf[i];
+            if (c != '\n') {
+                if (len < sizeof(line) - 1) line[len++] = c;
+                continue;
+            }
+            line[len] = '\0';
+            if ((StrFind(line, "libssb64.so") != (size_t)-1) &&
+                (StrFind(line, "r-xp") != (size_t)-1)) {
+                const char hdr[] = "SSB64: module ";
+                WriteBoth(hdr, sizeof(hdr) - 1);
+                WriteBoth(line, len);
+                WriteBoth("\n", 1);
+                done = true;
+            }
+            len = 0;
+        }
+    }
+    close(fd);
+}
+#endif /* !SSB64_HAVE_BACKTRACE_SYMBOLS */
+
 void DumpBacktraceFromContext(void *uc_v) {
     CrashRegs r = ExtractCrashRegs(uc_v);
     WriteCrashRegs(r);
@@ -286,9 +369,14 @@ void DumpBacktraceFromContext(void *uc_v) {
     if (r.valid) n = WalkFPChain(r, frames, kMaxFrames);
     if (n == 0) n = backtrace(frames, kMaxFrames);
 
+#if SSB64_HAVE_BACKTRACE_SYMBOLS
     backtrace_symbols_fd(frames, n, STDERR_FILENO);
     int log_fd = port_log_get_fd();
     if (log_fd >= 0) backtrace_symbols_fd(frames, n, log_fd);
+#else
+    WriteFrameAddrs(frames, n);
+    WriteModuleBase();
+#endif
 
     const char end[] = "SSB64: ---- end backtrace ----\n";
     WriteBoth(end, sizeof(end) - 1);
