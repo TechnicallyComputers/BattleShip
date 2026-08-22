@@ -1,4 +1,5 @@
 #include <sys/netinput.h>
+#include <sys/netsched_rbe.h>
 
 /*
  * NetInput implementation: ring buffers keyed by `tick % SYNETINPUT_HISTORY_LENGTH`.
@@ -6801,6 +6802,7 @@ sb32 syNetInputSetRemoteInputFromPacketEx(s32 player, u32 tick, u16 buttons, s8 
 		syNetInputStrictReadyCacheInvalidate();
 		return TRUE;
 	}
+	syNetRbeSchedNoteRemoteWireArrival(player, tick); /* arrival-age stamp (rbe sched shadow) */
 	syNetInputMakeFrame(&frame, tick, buttons, stick_x, stick_y, nSYNetInputSourceRemoteConfirmed, FALSE);
 	syNetInputFillRemoteConfirmedGap(player, tick);
 	if (syNetInputGetStoredFrame(sSYNetInputRemoteHistory, player, tick, &existing) != FALSE)
@@ -11090,6 +11092,9 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 
 		syNetInputMaybeLogDelaySyncDiag(tick);
 		syNetPeerEvaluateSharedCommitStep(tick, &shared);
+		/* retcomm-rbengine admission shadow (SSB64_NETPLAY_RBE_SCHED):
+		 * observes the verdict; tier 2 may veto predict-advance to R-hold. */
+		syNetRbeSchedShadowObserve(tick, &shared);
 		if (shared.advance == FALSE)
 		{
 			out->allow_full_input_publish = FALSE;

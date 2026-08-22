@@ -1,4 +1,5 @@
 #include <sys/netpeer.h>
+#include <sys/netsched_rbe.h>
 
 #include <ft/fighter.h>
 #include <gm/gmdef.h>
@@ -5694,6 +5695,7 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 				static u32 sLastZeroOnsetStallLogTick = ~(u32)0;
 
 				syNetPeerPumpIngressTransport("zero_onset_stall");
+				syNetRbeSchedNoteZeroOnsetHold(sim_tick); /* host policy — rbe shadow skips, not judges */
 				out->advance = FALSE;
 				out->hold_reason = 'R';
 				if (sim_tick != sLastZeroOnsetStallLogTick)

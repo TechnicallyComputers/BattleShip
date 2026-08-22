@@ -1,4 +1,5 @@
 #include <sys/netrollback.h>
+#include <sys/netsched_rbe.h>
 
 #include <sys/netrollback_episode.h>
 #include <sys/netinput.h>
@@ -1946,6 +1947,7 @@ void syNetRollbackStartVSSession(void)
 
 void syNetRollbackStopVSSession(void)
 {
+	syNetRbeSchedNoteSessionStop(); /* emit final rbe shadow scorecard */
 	sSYNetRollbackSessionActive = FALSE;
 	sSYNetRollbackResimDepth = 0;
 #ifdef PORT
@@ -10689,6 +10691,9 @@ static void syNetRollbackClearSymmetricNotifyAll(void)
 
 static void syNetRollbackEmitResimCompleteAfterFinish(u32 completed_mismatch)
 {
+	/* rbe sched shadow: one episode ≈ one mispredict ridden for ~depth ticks;
+	 * arms rbe cushion rebuild at the boundary. */
+	syNetRbeSchedNoteResimComplete(completed_mismatch, syNetInputGetTick());
 	syNetSyncLogRollbackWorldDetail("rollback_post", completed_mismatch);
 	syNetSyncLogFighterDetail("rollback_post", completed_mismatch);
 	ifCommonItemArrowPruneStaleInterfaces();

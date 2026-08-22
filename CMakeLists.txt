@@ -704,6 +704,12 @@ if(SSB64_NETMENU)
     set(RNET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(RNET_ENABLE_ICE OFF CACHE BOOL "" FORCE)
     add_subdirectory(recomp-net ${CMAKE_BINARY_DIR}/recomp-net)
+    # retcomm-rbengine: shared rollback host policy (admission scheduler,
+    # input hist, hash confirm). Shadow-only for now — the netpeer phase-lock
+    # gate stays authoritative; see docs/netplay_rbe_sched_integration_2026-08-21.md.
+    # Must come after recomp-net: its CMake reuses the existing recomp_net target.
+    set(RBE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(retcomm-rbengine ${CMAKE_BINARY_DIR}/retcomm-rbengine)
 endif()
 
 ################################################################################
@@ -874,7 +880,7 @@ if(SSB64_NETMENU)
         "${CMAKE_CURRENT_SOURCE_DIR}/torch/lib/n64graphics")
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ssb64NetmenuDeps.cmake")
     ssb64_netmenu_attach_curl(ssb64_game)
-    target_link_libraries(ssb64_game PRIVATE recomp_net)
+    target_link_libraries(ssb64_game PRIVATE recomp_net retcomm_rbengine)
     if(SSB64_NETPLAY_ICE)
         ssb64_target_link_libjuice(ssb64_game)
     endif()
@@ -1194,7 +1200,7 @@ add_dependencies(${PROJECT_NAME} ssb64_game)
 # OBJECT library usage requirements don't reach the final exe link; the shared
 # rollback core (input contract / episode FSM) is called from ssb64_game objects.
 if(SSB64_NETMENU)
-    target_link_libraries(${PROJECT_NAME} PRIVATE recomp_net)
+    target_link_libraries(${PROJECT_NAME} PRIVATE recomp_net retcomm_rbengine)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
