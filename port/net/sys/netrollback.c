@@ -83,6 +83,13 @@ static u32 sSYNetRollbackLoadFailCount;
 static sb32 sSYNetRollbackBattleSimHoldAfterLoadFail;
 static sb32 sSYNetRollbackLoadFailBattleExitPending;
 static sb32 sSYNetRollbackLoadFailSceneRetargeted;
+/* BATTLE_SIM_HOLD escape watchdog: the hold blocks the battle sim, so nothing
+ * inside the sim can end the match. Frames counted by PumpLoadFailBattleExit
+ * (the one thing scvsbattle still runs while held). */
+static u32 sSYNetRollbackBattleSimHoldLoadTick;
+static u32 sSYNetRollbackBattleSimHoldFrames;
+static sb32 sSYNetRollbackBattleSimHoldTeardownSent;
+#define SYNETROLLBACK_BATTLE_SIM_HOLD_TEARDOWN_FRAMES 120U /* ~2 s @ 60 Hz */
 static sb32 sSYNetRollbackResimAnchorProbeLastMismatch;
 static sb32 sSYNetRollbackResimAnchorProbeActive;
 static u32 sMismatchAsymLogsRemaining;
@@ -1496,6 +1503,9 @@ void syNetRollbackInit(void)
 	sSYNetRollbackBattleSimHoldAfterLoadFail = FALSE;
 	sSYNetRollbackLoadFailBattleExitPending = FALSE;
 	sSYNetRollbackLoadFailSceneRetargeted = FALSE;
+	sSYNetRollbackBattleSimHoldLoadTick = 0U;
+	sSYNetRollbackBattleSimHoldFrames = 0U;
+	sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
 	sMismatchAsymLogsRemaining = 16;
 	sSYNetRollbackForceMismatchPlayerSlot = -1;
 	sSYNetRollbackResimTicksPerFrame = 12U;
@@ -1823,6 +1833,9 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackBattleSimHoldAfterLoadFail = FALSE;
 	sSYNetRollbackLoadFailBattleExitPending = FALSE;
 	sSYNetRollbackLoadFailSceneRetargeted = FALSE;
+	sSYNetRollbackBattleSimHoldLoadTick = 0U;
+	sSYNetRollbackBattleSimHoldFrames = 0U;
+	sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
 	sMismatchAsymLogsRemaining = 16;
 	sSYNetRollbackResimPending = FALSE;
 	sSYNetRollbackAwaitLiveSimAfterResim = FALSE;
@@ -2745,6 +2758,9 @@ static void syNetRollbackClearBattleSimHoldAfterLoadFail(void)
 		sSYNetRollbackBattleSimHoldAfterLoadFail = FALSE;
 		sSYNetRollbackLoadFailBattleExitPending = FALSE;
 		sSYNetRollbackLoadFailSceneRetargeted = FALSE;
+		sSYNetRollbackBattleSimHoldLoadTick = 0U;
+		sSYNetRollbackBattleSimHoldFrames = 0U;
+		sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
 		port_log("SSB64 NetRollback: BATTLE_SIM_HOLD cleared\n");
 	}
 }
@@ -2793,16 +2809,40 @@ void syNetRollbackPumpLoadFailBattleExit(void)
 	extern void mnVSNetAutomatchAMAbortToCharacterSelect(const char *reason);
 #endif
 
-	if (sSYNetRollbackLoadFailBattleExitPending == FALSE)
-	{
-		return;
-	}
 	if (syNetRollbackIsBattleSimHoldActive() == FALSE)
 	{
+		sSYNetRollbackBattleSimHoldFrames = 0U;
 		return;
+	}
+	if (sSYNetRollbackLoadFailBattleExitPending == FALSE)
+	{
+		/* Hold armed with no escape pending (pre-existing arm path, or a clear
+		 * that raced the arm). Re-arm rather than sit frozen. */
+		port_log("SSB64 NetRollback: BATTLE_SIM_HOLD escape re-armed sim=%u\n", syNetInputGetTick());
+		syNetRollbackRequestLoadFailBattleExit();
 	}
 	if (syNetPeerIsVSSessionActive() != FALSE)
 	{
+		/*
+		 * The scene exit below only runs once VS is down. A load-fail hold is
+		 * terminal for this match (the deeper-load rescue already failed), so
+		 * bring the session down ourselves instead of waiting for the peer to
+		 * quit — which is what left soak 2026-08-21 frozen with a live peer.
+		 */
+		sSYNetRollbackBattleSimHoldFrames++;
+		if ((sSYNetRollbackBattleSimHoldTeardownSent == FALSE) &&
+		    (sSYNetRollbackBattleSimHoldFrames >= SYNETROLLBACK_BATTLE_SIM_HOLD_TEARDOWN_FRAMES))
+		{
+			sSYNetRollbackBattleSimHoldTeardownSent = TRUE;
+			port_log(
+			    "SSB64 NetRollback: BATTLE_SIM_HOLD escape watchdog sim=%u load_tick=%u frames=%u — "
+			    "tearing down VS so the battle can exit\n",
+			    syNetInputGetTick(),
+			    sSYNetRollbackBattleSimHoldLoadTick,
+			    (unsigned int)sSYNetRollbackBattleSimHoldFrames);
+			syNetRollbackStopVsSessionForLoadFail(sSYNetRollbackBattleSimHoldLoadTick,
+			                                      "battle_sim_hold_watchdog");
+		}
 		return;
 	}
 	sSYNetRollbackLoadFailBattleExitPending = FALSE;
@@ -2867,6 +2907,20 @@ static void syNetRollbackArmBattleSimHoldAfterLoadFail(u32 load_tick)
 		    load_tick);
 	}
 	sSYNetRollbackBattleSimHoldAfterLoadFail = TRUE;
+	sSYNetRollbackBattleSimHoldLoadTick = load_tick;
+	sSYNetRollbackBattleSimHoldFrames = 0U;
+	sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
+	/*
+	 * Arming the hold always arms the escape with it. The hold blocks the battle
+	 * sim, so no in-sim path can end the match afterwards — if the exit is not
+	 * requested here the match freezes for as long as the window is open.
+	 * Two of the five arm sites (both BeginResim load-fail paths) never requested
+	 * it, which is exactly the one that fires in practice: soak 2026-08-21 froze
+	 * at sim=8382 with 0 "load_fail battle exit" and 0 "BATTLE_SIM_HOLD cleared"
+	 * for the rest of the session. Callers that already request it are idempotent.
+	 * See docs/bugs/netplay_battle_sim_hold_no_escape_2026-08-21.md.
+	 */
+	syNetRollbackRequestLoadFailBattleExit();
 	port_log(
 	    "SSB64 NetRollback: BATTLE_SIM_HOLD armed sim=%u load_tick=%u reason=resim_load_fail fail_count=%u\n",
 	    sim_tick,
