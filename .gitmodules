@@ -16,7 +16,8 @@
 [submodule "recomp-net"]
 	path = recomp-net
 	url = https://github.com/TechnicallyComputers/recomp-net.git
-	branch = feat/rollback
+	branch = main
 [submodule "retcomm-rbengine"]
 	path = retcomm-rbengine
 	url = https://github.com/TechnicallyComputers/retcomm-rbengine.git
+	branch = feat/host-session-ops
