@@ -1,3 +1,9 @@
+/* dladdr / Dl_info live behind __USE_GNU; _GNU_SOURCE must precede the first libc header.
+ * Used only to name a stomp's caller in the witness log (netmenu diagnostics). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include <sys/netplay_statusvars_witness.h>
 
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -10,6 +16,43 @@
 
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Resolve a stomp's caller address to a symbol in-process. The witness runs on the normal
+ * sim path (not a signal handler), so dladdr is safe, and resolving inline beats post-hoc
+ * addr2line: the binary is PIE, so a raw caller= address is meaningless without the ASLR
+ * base, which the log did not carry — soak 2026-08-22 produced three distinct caller
+ * addresses that could not be matched against build/BattleShip.
+ */
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#define SSB64_WITNESS_HAVE_DLADDR 1
+#else
+#define SSB64_WITNESS_HAVE_DLADDR 0
+#endif
+
+static const char *syNetplayStatusVarsWitnessCallerName(const void *caller, unsigned long *out_off)
+{
+    *out_off = 0UL;
+    if (caller == NULL)
+    {
+        return "?";
+    }
+#if SSB64_WITNESS_HAVE_DLADDR
+    {
+        Dl_info info;
+
+        memset(&info, 0, sizeof(info));
+        if ((dladdr((void *)(uintptr_t)caller, &info) != 0) && (info.dli_sname != NULL) &&
+            (info.dli_saddr != NULL))
+        {
+            *out_off = (unsigned long)((const char *)caller - (const char *)info.dli_saddr);
+            return info.dli_sname;
+        }
+    }
+#endif
+    return "?";
+}
 
 extern void port_log(const char *fmt, ...);
 extern u32 syNetInputGetTick(void);
@@ -470,6 +513,7 @@ void syNetplayStatusVarsWitnessNoteAccessFrom(const FTStruct *fp, FTStatusVarsOv
 {
     FTStatusVarsOverlay expected;
     s32 player;
+    unsigned long caller_off = 0UL;
 
     if (fp == NULL)
     {
@@ -509,10 +553,11 @@ void syNetplayStatusVarsWitnessNoteAccessFrom(const FTStruct *fp, FTStatusVarsOv
 
     port_log(
         "SSB64 NetStatusVars: witness stomp tick=%u player=%d fkind=%d status_id=%d accessed=%s expected=%s "
-        "hit_lr=%d shuffle_tics=%d fp_lr=%d caller=%p\n",
+        "hit_lr=%d shuffle_tics=%d fp_lr=%d caller=%s+0x%lx (%p)\n",
         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->fkind, (int)fp->status_id,
         syNetplayStatusVarsWitnessOverlayName(overlay), syNetplayStatusVarsWitnessOverlayName(expected),
-        (int)fp->hit_lr, (int)fp->shuffle_tics, (int)fp->lr, caller);
+        (int)fp->hit_lr, (int)fp->shuffle_tics, (int)fp->lr,
+        syNetplayStatusVarsWitnessCallerName(caller, &caller_off), caller_off, caller);
 }
 
 /* Callers without a return address (MSVC, or explicit non-instrumented use). */

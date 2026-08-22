@@ -74,15 +74,26 @@ the tree, but the witness cannot distinguish them because it never recorded a ca
 `caller=%p`. The original `…NoteAccess()` remains as a NULL-caller wrapper (MSVC keeps it;
 the builtin is GCC/Clang only). Diagnostics only, `PORT && SSB64_NETMENU`.
 
-Combined with the module-base dump added for the Android crash handler
-([android_crash_backtrace_stubbed](android_crash_backtrace_stubbed_2026-08-22.md)), a
-`caller=` address rebases to a symbol with:
+**Follow-up the same day:** a raw address proved useless in practice. The binary is PIE
+and the log carried no ASLR base, so the three distinct `caller=` addresses from the first
+instrumented soak (`0x55c121849be5` ×78, `0x55c121849c64` ×2, `0x55c12186a309` ×6) could
+not be matched against `build/BattleShip` — neither by low-12-bit page offset nor by exact
+inter-address deltas.
 
-```bash
-llvm-addr2line -Cfie <unstripped binary> $((0xCALLER - 0xMODULE_BASE))
-```
+The witness now resolves the caller **in-process** with `dladdr()` and logs
+`caller=<symbol>+0x<off> (<addr>)`. The witness runs on the normal sim path, not in a
+signal handler, so `dladdr` is safe there. The build already links
+`-Wl,-export-dynamic` (CMakeLists.txt:1373) with ~82k entries in `.dynsym`, so decomp and
+port functions resolve by name with no post-processing.
 
-On Linux the address resolves directly against the unstripped `BattleShip` binary.
+`_GNU_SOURCE` is defined at the top of the witness TU because glibc hides `dladdr` /
+`Dl_info` behind `__USE_GNU`, and the feature macro must precede the first libc header.
+
+Caveat worth knowing when reading the output: `ftStatusVarsNoteAccess()` and the
+`ftStatusVars*()` accessors are both `static inline`, so `__builtin_return_address(0)`
+yields the return address of the *enclosing real function* — i.e. the log names the
+**caller of the function that touched the overlay**, one level above the access itself.
+That is still enough to identify the writer.
 
 ## Next step
 
