@@ -57,9 +57,13 @@ could recover the entire stack and the report would still be blank.
 
 1. **`WriteFrameAddrs()`** — prints each recovered frame as `#NN 0x…` using the
    existing async-signal-safe `FormatHex` / `WriteBoth`.
-2. **`WriteModuleBase()`** — reads `/proc/self/maps` (open/read/write are
-   async-signal-safe, no allocation, fixed buffers) and prints `libssb64.so`'s
-   `r-xp` mapping, so PIE/ASLR addresses can be rebased.
+2. **`WriteModuleBase()` / `WriteMapsLinesForAddrs()`** — reads
+   `/proc/self/maps` (open/read/write are async-signal-safe, no allocation,
+   fixed buffers) and prints every mapping that **contains** one of the frame
+   addresses, plus the mapping containing the handler's own text so the game
+   module is listed even when every frame is in libc (an `abort()` stack is
+   exactly that). Matching is by address, never by library name — see the
+   follow-up below.
 3. Both crash dumpers (`DumpBacktraceFromContext`, `DumpBacktraceBoth`) call
    these instead of the stub when symbols are unavailable.
 
@@ -79,6 +83,22 @@ llvm-addr2line -Cfie <unstripped libssb64.so> $((0xFRAME - 0xMODULE_BASE))
   the same library; `StrFind` negative and end-of-string cases pass.
 - Linux netmenu + offline builds unchanged (they keep the real
   `backtrace_symbols_fd` path).
+
+## Follow-up (same day): first cut matched nothing
+
+The initial version keyed the maps scan on the string `libssb64.so`. The
+Android target renames its output — `set_target_properties(... OUTPUT_NAME
+"main")` in CMakeLists, so SDLActivity's default `libmain.so` loader name
+applies and `getLibraries()` returns `{"SDL2", "main"}`. The scan therefore
+matched no line and printed no module at all: the next crash
+(2026-08-22, SIGABRT at sim=235) captured 14 frames and remained
+unsymbolizable.
+
+Rewritten to match by **address containment** (`ParseMapsRange` + range test),
+which cannot be broken by a rename and additionally covers libc / SDL /
+libultraship frames. Host unit tests cover the parser against real
+Android-shaped rows, the actual crash frame addresses, malformed rows
+(`[heap]`, empty, missing dash, leading dash), and exclusive-`hi` boundaries.
 
 ## Note
 

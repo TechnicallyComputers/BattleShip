@@ -69,8 +69,9 @@ std::atomic<bool>     sBacktraceDone{false};
 size_t FormatHex(char *buf, uintptr_t value);
 #if !SSB64_HAVE_BACKTRACE_SYMBOLS
 /* Android < API 33 fallbacks — definitions below, next to the FP walker. */
+constexpr int kCrashMaxFrames = 64;
 void WriteFrameAddrs(void *const *frames, int n);
-void WriteModuleBase();
+void WriteModuleBase(void *const *frames, int n);
 #endif
 
 /* Write a byte string to both stderr and the log file fd (if open).
@@ -96,7 +97,7 @@ void DumpBacktraceBoth() {
     if (log_fd >= 0) backtrace_symbols_fd(frames, n, log_fd);
 #else
     WriteFrameAddrs(frames, n);
-    WriteModuleBase();
+    WriteModuleBase(frames, n);
 #endif
     const char end[] = "SSB64: ---- end backtrace ----\n";
     WriteBoth(end, sizeof(end) - 1);
@@ -323,7 +324,44 @@ void WriteFrameAddrs(void *const *frames, int n) {
 /* Emit libssb64.so's executable mapping so the frames above can be rebased
  * (PIE + ASLR make absolute addresses meaningless on their own).
  * open/read/write are async-signal-safe and nothing here allocates. */
-void WriteModuleBase() {
+/* Parse a /proc/self/maps line's "LO-HI " address range. */
+bool ParseMapsRange(const char *line, uintptr_t *lo, uintptr_t *hi) {
+    auto hexval = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    size_t i = 0;
+    int d = hexval(line[0]);
+    if (d < 0) return false;
+    uintptr_t v = 0;
+    for (; (d = hexval(line[i])) >= 0; i++) v = (v << 4) | (uintptr_t)d;
+    *lo = v;
+    if (line[i] != '-') return false;
+    i++;
+    if (hexval(line[i]) < 0) return false;
+    v = 0;
+    for (; (d = hexval(line[i])) >= 0; i++) v = (v << 4) | (uintptr_t)d;
+    *hi = v;
+    return true;
+}
+
+/*
+ * Print every /proc/self/maps entry that contains one of `addrs`, so the raw
+ * frame addresses above can be rebased for llvm-addr2line.
+ *
+ * Matched by ADDRESS, not by library name: the Android target renames its
+ * output to libmain.so (CMakeLists OUTPUT_NAME "main", so SDLActivity's
+ * default loader name applies), which is why the first cut of this — keyed on
+ * "libssb64.so" — silently matched nothing and printed no module line at all
+ * (soak 2026-08-22). Address matching also covers libc / SDL / libultraship
+ * frames for free.
+ *
+ * open/read/write are async-signal-safe; fixed buffers, no allocation.
+ */
+void WriteMapsLinesForAddrs(const uintptr_t *addrs, int n) {
+    if (n <= 0) return;
     int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
     if (fd < 0) return;
 
@@ -331,29 +369,52 @@ void WriteModuleBase() {
     char line[256];
     size_t len = 0;
     ssize_t got;
-    bool done = false;
+    bool wrote_hdr = false;
 
-    while (!done && (got = read(fd, buf, sizeof(buf))) > 0) {
-        for (ssize_t i = 0; i < got && !done; i++) {
+    while ((got = read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < got; i++) {
             char c = buf[i];
             if (c != '\n') {
                 if (len < sizeof(line) - 1) line[len++] = c;
                 continue;
             }
             line[len] = '\0';
-            if ((StrFind(line, "libssb64.so") != (size_t)-1) &&
-                (StrFind(line, "r-xp") != (size_t)-1)) {
-                const char hdr[] = "SSB64: module ";
-                WriteBoth(hdr, sizeof(hdr) - 1);
-                WriteBoth(line, len);
-                WriteBoth("\n", 1);
-                done = true;
+            uintptr_t lo = 0;
+            uintptr_t hi = 0;
+            if (ParseMapsRange(line, &lo, &hi)) {
+                for (int f = 0; f < n; f++) {
+                    if (addrs[f] >= lo && addrs[f] < hi) {
+                        if (!wrote_hdr) {
+                            const char hdr[] = "SSB64: ---- modules (rebase frames against these) ----\n";
+                            WriteBoth(hdr, sizeof(hdr) - 1);
+                            wrote_hdr = true;
+                        }
+                        const char pfx[] = "SSB64: ";
+                        WriteBoth(pfx, sizeof(pfx) - 1);
+                        WriteBoth(line, len);
+                        WriteBoth("\n", 1);
+                        break;
+                    }
+                }
             }
             len = 0;
         }
     }
     close(fd);
 }
+
+void WriteModuleBase(void *const *frames, int n) {
+    uintptr_t addrs[kCrashMaxFrames + 1];
+    int count = 0;
+    /* Our own text, so the game module is always listed even if every frame
+     * landed in libc (an abort() stack does exactly that). */
+    addrs[count++] = (uintptr_t)(void *)&WriteMapsLinesForAddrs;
+    for (int i = 0; i < n && count < (int)(sizeof(addrs) / sizeof(addrs[0])); i++) {
+        addrs[count++] = (uintptr_t)frames[i];
+    }
+    WriteMapsLinesForAddrs(addrs, count);
+}
+
 #endif /* !SSB64_HAVE_BACKTRACE_SYMBOLS */
 
 void DumpBacktraceFromContext(void *uc_v) {
@@ -375,7 +436,7 @@ void DumpBacktraceFromContext(void *uc_v) {
     if (log_fd >= 0) backtrace_symbols_fd(frames, n, log_fd);
 #else
     WriteFrameAddrs(frames, n);
-    WriteModuleBase();
+    WriteModuleBase(frames, n);
 #endif
 
     const char end[] = "SSB64: ---- end backtrace ----\n";
