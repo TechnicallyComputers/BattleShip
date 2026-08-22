@@ -1218,6 +1218,7 @@ static void syNetRollbackAlignResimLoadTickToWireBaseline(void);
 static u32 syNetRollbackGetPeerDivergeResyncTicks(void);
 static u32 syNetRollbackReanchorMismatchTick(u32 mismatch_tick, u32 frontier);
 static u32 syNetRollbackLoadTickMinBound(u32 sim_tick);
+static u32 syNetRollbackLoadTickRingMinBound(u32 sim_tick);
 static u32 syNetRollbackResolveStateMismatchLoadTick(u32 validation_tick, u32 min_load,
 						     sb32 apply_episode_floor);
 static u32 syNetRollbackFindEarliestLoadSafeTickInSpan(u32 min_tick, u32 max_tick);
@@ -6006,11 +6007,27 @@ static u32 syNetRollbackReanchorMismatchTick(u32 mismatch_tick, u32 frontier)
 	return mismatch_tick;
 }
 
-static u32 syNetRollbackLoadTickMinBound(u32 sim_tick)
+/*
+ * Ring-capacity load floor only — no episode floor.
+ *
+ * The episode floor (EpisodeResolvedThrough - 1, applied by
+ * syNetRollbackLoadTickMinBound below) exists to stop a NEW episode opening
+ * behind a completed light episode. It must not bind the RESCUE paths that
+ * run after a load has already failed: there, the failed tick is itself the
+ * floor, so FindLatestLoadSafe/Valid(failed - 1, floor) can only ever return
+ * ~0 and the walkback breaks before its first retry — turning a recoverable
+ * load-fidelity failure into a terminal BATTLE_SIM_HOLD.
+ *
+ * Same trap, same reasoning as the FC input-agree onset path
+ * (apply_episode_floor=FALSE in syNetRollbackResolveStateMismatchLoadTick).
+ * Walking below resolved_through is safe here because the resim re-derives
+ * every tick forward from the deeper load; the alternative is a dead match.
+ * See docs/bugs/netplay_light_frontier_load_fail_walkback_floor_2026-08-21.md.
+ */
+static u32 syNetRollbackLoadTickRingMinBound(u32 sim_tick)
 {
 	u32 min_load;
 	u32 ring_cap;
-	u32 episode_floor;
 
 	min_load = 0U;
 	ring_cap = syNetRbSnapshotRingCapacity();
@@ -6018,6 +6035,15 @@ static u32 syNetRollbackLoadTickMinBound(u32 sim_tick)
 	{
 		min_load = sim_tick - (ring_cap - 2U);
 	}
+	return min_load;
+}
+
+static u32 syNetRollbackLoadTickMinBound(u32 sim_tick)
+{
+	u32 min_load;
+	u32 episode_floor;
+
+	min_load = syNetRollbackLoadTickRingMinBound(sim_tick);
 	if (sSYNetRollbackEpisodeResolvedThrough > 1U)
 	{
 		episode_floor = sSYNetRollbackEpisodeResolvedThrough - 1U;
@@ -13149,7 +13175,10 @@ static sb32 syNetRollbackTryRestartResimAtDeeperLoad(u32 deeper_load_tick)
 			u32 next_load;
 
 			before_load = deeper_load_tick;
-			min_load = syNetRollbackLoadTickMinBound(syNetInputGetTick());
+			/* Rescue path (load already failed): ring floor only — the episode
+			 * floor would pin min_load at the failed tick and strand the walk.
+			 * See syNetRollbackLoadTickRingMinBound. */
+			min_load = syNetRollbackLoadTickRingMinBound(syNetInputGetTick());
 			next_load = syNetRbSnapshotFindLatestLoadSafeTickAtOrBefore(before_load - 1U, min_load);
 			if (next_load == ~(u32)0)
 			{
@@ -14241,7 +14270,10 @@ static u32 syNetRollbackResolveDeeperLoadForFidelity(u32 failed_load_tick)
 	{
 		return 0U;
 	}
-	min_load = syNetRollbackLoadTickMinBound(syNetInputGetTick());
+	/* Rescue path (load already failed): ring floor only — the episode floor
+	 * pins min_load at failed_load_tick and every Find below returns ~0.
+	 * See syNetRollbackLoadTickRingMinBound. */
+	min_load = syNetRollbackLoadTickRingMinBound(syNetInputGetTick());
 	deeper_load = failed_load_tick - 1U;
 	(void)syNetRbSnapshotResolveLoadAnchorAvoidingFragile(&deeper_load,
 	                                                      min_load,
@@ -14266,6 +14298,7 @@ static sb32 syNetRollbackTryLoadPostTickWithFidelityWalkback(u32 *io_load_tick, 
 {
 	u32 walk_attempts;
 	u32 min_load;
+	u32 episode_min_load;
 	u32 before_load;
 	u32 deeper;
 
@@ -14282,7 +14315,17 @@ static sb32 syNetRollbackTryLoadPostTickWithFidelityWalkback(u32 *io_load_tick, 
 	{
 		return FALSE;
 	}
-	min_load = syNetRollbackLoadTickMinBound(syNetInputGetTick());
+	/*
+	 * Rescue floor: ring capacity only. The load already failed, so the episode
+	 * floor (resolved_through - 1) would pin min_load at the failed tick itself
+	 * and every Find below returns ~0 — the walkback would break before its
+	 * first retry and the caller would arm a terminal BATTLE_SIM_HOLD.
+	 * Soak 2026-08-21: light finish invalidated the exclusive frontier, the next
+	 * deferred GGPO correction hit LOAD_HASH_DRIFT class=snapshot_fidelity at the
+	 * frontier tick, and 0 RESIM_LOAD_FIDELITY_RETRY fired across 8375 ticks.
+	 */
+	min_load = syNetRollbackLoadTickRingMinBound(syNetInputGetTick());
+	episode_min_load = syNetRollbackLoadTickMinBound(syNetInputGetTick());
 	walk_attempts = 0U;
 	while (walk_attempts < SYNETROLLBACK_LOAD_TICK_REWIND_MAX)
 	{
@@ -14307,11 +14350,12 @@ static sb32 syNetRollbackTryLoadPostTickWithFidelityWalkback(u32 *io_load_tick, 
 			*io_mismatch_tick = *io_load_tick + 1U;
 		}
 		port_log(
-		    "SSB64 NetRollback: RESIM_LOAD_FIDELITY_RETRY failed=%u deeper=%u mismatch=%u attempt=%u\n",
+		    "SSB64 NetRollback: RESIM_LOAD_FIDELITY_RETRY failed=%u deeper=%u mismatch=%u attempt=%u%s\n",
 		    before_load,
 		    *io_load_tick,
 		    *io_mismatch_tick,
-		    walk_attempts + 1U);
+		    walk_attempts + 1U,
+		    (*io_load_tick < episode_min_load) ? " (below episode floor — rescue)" : "");
 		if (syNetRollbackLoadPostTick(*io_load_tick) != FALSE)
 		{
 			return TRUE;
@@ -16063,12 +16107,32 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 	if (syNetRollbackTryLoadPostTickWithFidelityWalkback(&load_tick, &mismatch_tick) == FALSE)
 	{
 #ifdef PORT
+		u32 rescue_load;
+
 		sSYNetRollbackBeginResimInitialLoad = FALSE;
 		port_log(
 		    "SSB64 NetRollback: load post tick %u failed (need earlier snapshots; ring=%u scan=%u)\n",
 		    load_tick,
 		    (unsigned int)syNetRbSnapshotRingCapacity(),
 		    (unsigned int)SYNETROLLBACK_SCAN_WINDOW);
+		/*
+		 * Last resort before the terminal hold: restart this episode from the
+		 * newest loadable snapshot strictly below the failed tick. The drift
+		 * path deliberately defers session stop here ("caller may walk back");
+		 * without this the caller never did, and one poisoned frontier killed
+		 * the match (soak 2026-08-21, BATTLE_SIM_HOLD sim=8382 load_tick=8381).
+		 */
+		rescue_load = syNetRollbackResolveDeeperLoadForFidelity(load_tick);
+		if ((rescue_load != 0U) && (rescue_load < load_tick) &&
+		    (syNetRollbackTryRestartResimAtDeeperLoad(rescue_load) != FALSE))
+		{
+			port_log(
+			    "SSB64 NetRollback: RESIM_LOAD_FAIL_RESCUE failed=%u restarted_at=%u "
+			    "(deeper load instead of BATTLE_SIM_HOLD)\n",
+			    load_tick,
+			    rescue_load);
+			return TRUE;
+		}
 		sSYNetRollbackLoadFailCount++;
 		syNetRollbackArmBattleSimHoldAfterLoadFail(load_tick);
 		syNetRollbackResetCorrectionEpisode();
