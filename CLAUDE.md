@@ -18,6 +18,7 @@ Detailed reference material lives under `docs/`. Read the file that matches the 
 | Linux menu rendering bug family (CSS/pause/HUD sprites, upstream delta) | `docs/linux_menu_rendering_fixes_2026-05-22.md` |
 | Netplay: sim tick authority vs `hr` / VI / admission bias | `docs/netplay_timebase_authority.md` |
 | Netplay rollback boundary + decomp gating pattern | `docs/netplay_rollback_refactor_contracts.md` |
+| Netplay: retcomm-rbengine admission-scheduler shadow (`SSB64_NETPLAY_RBE_SCHED`) | `docs/netplay_rbe_sched_integration_2026-08-21.md` |
 | FTStatusVars union overlays, witness, stomp diagnosis | `docs/refactor/ftstatusvars_overlay_map_2026-06-02.md` |
 | Android port status + offline/netplay APK CI | `docs/android_port_status_2026-05-01.md` |
 | Android orientation/landscape lock + surface geometry (SDL overrides manifest; BLAST resize abort) | `docs/android_orientation_landscape_lock.md` |
