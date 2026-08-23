@@ -160,3 +160,61 @@ throw.
 
 So the fix belongs in **when the release edge is evaluated relative to the replayed status
 timeline**, not in overlay ownership. The union stomps were noise from the instrument.
+
+
+## Narrowed further: the victim drops out, and its gate was uninstrumented
+
+Deeper trace of the same tick-1220 grab. The divergence is on the **victim**, not the
+grabber, and on the victim's *own* peer:
+
+| p0 (victim) | Android (grabber's peer) | Linux (victim's own peer) |
+|---|---|---|
+| 1223 | 171 CapturePulled | 171 CapturePulled |
+| 1224 | 171 CapturePulled | *(no state)* |
+| 1225 | **172 CaptureWait** | **10 Wait** — fell out |
+| 1234 | 186 ThrownCommon | whiff |
+
+The grabber's `167 CatchPull -> 166 Catch` fallback is a *consequence*: the victim left
+the hold, so the coupling collapsed.
+
+`ftCommonCapturePulledProcPhysics` gates that transition on exactly one flag:
+
+```c
+if ((fp->status_id == nFTCommonStatusCapturePulled) &&
+    (fp->status_vars.common.capture.is_goto_pulled_wait != FALSE))
+    ftCommonCaptureWaitSetStatus(fighter_gobj);   /* 171 -> 172 */
+```
+
+Of that flag's four accesses, **only one used the accessor**:
+
+| site | access | witness sees it |
+|---|---|---|
+| `ftcommoncatch2.c:33` write TRUE | `ftStatusVarsCapture()` | yes |
+| `ftcommoncapturepulled.c:57` read | raw union | **no** |
+| `ftcommoncapturepulled.c:168` write FALSE | raw union | **no** |
+| `ftcommoncapturepulled.c:183` write FALSE | raw union | **no** |
+
+So the witness was structurally blind to the field that decides whether a grab holds —
+which is why it reported only diagnostic noise. All three raw accesses are now migrated to
+`ftStatusVarsCapture()` per CLAUDE.md directive 6 (step C1, accessors). Behaviour is
+identical; the difference is that a stomp on `capture.is_goto_pulled_wait` is now visible.
+
+### Hypotheses eliminated (with evidence)
+
+- **Input edge derivation during replay** — `syNetInputRollbackPrepareForResim()` already
+  rewinds `sSYNetInputSlots[player].last_published` to `resim_start_tick - 1`, so
+  `pressed`/`released` chain correctly through replay. Not the bug.
+- **Coupled-pointer scrub polarity** — `syNetRbSnapClearCoupledGObjPointers…` scrubs
+  `catch_gobj` when `is_catch_or_capture == FALSE` and `capture_gobj` when it is TRUE.
+  That looks inverted but matches vanilla's validity model: `ftMainProcPhysicsMapCapture`
+  treats *(capture_gobj, FALSE)* as the victim and *(catch_gobj, TRUE)* as the grabber, so
+  both scrubs clear genuinely stale links. Not the bug.
+- **guard/catch union stomps** — the grab diagnostic's own reads (see Correction above).
+
+### Next
+
+Re-soak with `SSB64_NETPLAY_STATUSVARS_WITNESS=1` and land a grab. If
+`capture.is_goto_pulled_wait` is being stomped, the witness will now name the writer via
+`caller=`. If no stomp appears, the flag is being lost in snapshot save/restore rather than
+aliased, and the next place to look is the `capture` overlay's coverage in
+`netrollbacksnapshot.c`.
