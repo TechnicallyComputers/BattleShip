@@ -370,6 +370,25 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h, (u32)ftStatusVarsCatchWait(fp)->throw_wait);
 	}
 	/*
+	 * Victim side of the same grab. capture.is_goto_pulled_wait is the sole gate on
+	 * CapturePulled -> CaptureWait (ftCommonCapturePulledProcPhysics), i.e. whether a grab
+	 * holds at all, and it was folded nowhere — the only "Capture" fold here is CaptureYoshi.
+	 *
+	 * Soak 2026-08-22 @2340-2355: both peers ran the SAME resim (load=2339 mismatch=2340
+	 * target=2355) from a matching pre-state, with byte-identical published inputs on every
+	 * replayed tick and identical map/kin hashes throughout — yet the grabber ended at 170
+	 * ThrowB on the owner and 166 Catch on the predicting peer, figh diverging 2347-2353.
+	 * Matching figh at 2340 proved nothing because the deciding flag was hash-blind, exactly
+	 * the failure shape the DamageFlyN comment above describes ("counter skew stayed
+	 * hash-blind until status change"). Folding it makes the skew visible at the tick it
+	 * happens so rollback corrects it, rather than letting it silently decide the grab.
+	 * See docs/bugs/netplay_capture_goto_pulled_wait_hash_blind_2026-08-22.md.
+	 */
+	if ((fp->status_id == nFTCommonStatusCapturePulled) || (fp->status_id == nFTCommonStatusCaptureWait))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (u32)(ftStatusVarsCapture(fp)->is_goto_pulled_wait != FALSE));
+	}
+	/*
 	 * Soak1 3078154319 @795: LandingLight interrupt allow was hash-blind; scrub-poisoned
 	 * light reload skipped Turn/Walk until anim-end → status_total_tics skew on Turn.
 	 * See docs/bugs/netplay_landing_allow_interrupt_statusvars_scrub_fc_2026-07-28.md.
