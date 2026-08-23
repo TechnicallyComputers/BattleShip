@@ -8,6 +8,7 @@ extern "C" void syNetReconnectNotifyNetworkChange(void);
 #if defined(__ANDROID__)
 
 #include <atomic>
+#include <cstdlib>
 #include <jni.h>
 
 #include <SDL2/SDL.h>
@@ -174,8 +175,38 @@ extern "C" void port_android_network_bind_context(JNIEnv *env, jobject activity)
 	env->GetJavaVM(&sPortAndroidJvm);
 }
 
+/*
+ * SSB64_NETPLAY_ANDROID_NETMON=0 skips installing the ConnectivityManager
+ * NetworkCallback. Attribution aid, not a fix: the Android SIGABRT reproduced at
+ * intro tick 152 has no frame in libmain.so at all — all 14 frames map to
+ * framework.jar -> JIT'd Java -> libandroid_runtime -> libart -> libbase
+ * (LOG(FATAL)) -> libc abort, i.e. an ART abort raised on a thread running Java
+ * framework code. This callback is the only Android JNI surface armed during a
+ * match, so toggling it off is the cheapest way to confirm or clear it.
+ * See docs/bugs/android_intro_art_abort_2026-08-22.md.
+ */
+static bool port_android_network_monitor_enabled(void)
+{
+	static int cached = -1;
+
+	if (cached < 0)
+	{
+		const char *env = std::getenv("SSB64_NETPLAY_ANDROID_NETMON");
+		cached = ((env != nullptr) && (env[0] != '\0') && (std::atoi(env) == 0)) ? 0 : 1;
+		if (cached == 0)
+		{
+			port_log("SSB64 AndroidNet: ConnectivityManager monitor disabled (SSB64_NETPLAY_ANDROID_NETMON=0)\n");
+		}
+	}
+	return cached != 0;
+}
+
 extern "C" void port_android_network_try_arm_monitoring(void)
 {
+	if (port_android_network_monitor_enabled() == false)
+	{
+		return;
+	}
 	if (sPortAndroidMonitorInstalled.load(std::memory_order_acquire) != 0)
 	{
 		return;
