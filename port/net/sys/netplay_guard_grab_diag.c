@@ -88,6 +88,8 @@ static void syNetplayGuardGrabDiagLogCore(GObj *fighter_gobj, const char *event,
 	sb32 vs_active;
 	sb32 resim;
 	sb32 anomaly;
+	int guard_release_lag;
+	int guard_is_release;
 
 	if (syNetplayGuardGrabDiagShouldLog(FALSE) == FALSE)
 	{
@@ -103,6 +105,27 @@ static void syNetplayGuardGrabDiagLogCore(GObj *fighter_gobj, const char *event,
 		return;
 	}
 
+	/*
+	 * guard.release_lag / .is_release are only meaningful while the guard overlay is live.
+	 * Reading them unconditionally made this diagnostic the dominant witness "stomp" source
+	 * (soak 2026-08-22: 368 of 408 stomps came from here, drowning any real writer) and
+	 * printed aliased bytes from whatever overlay was actually live — the same tick showed
+	 * release_lag=178 on one peer and -2 on the other for an idle Wait fighter. Reads cannot
+	 * corrupt state, but they can mislead a reader and they bury the signal. Report -1 when
+	 * the overlay is not live instead.
+	 */
+	if ((fp->is_shield != FALSE) ||
+	    ((fp->status_id >= nFTCommonStatusGuardStart) && (fp->status_id <= nFTCommonStatusGuardEnd)))
+	{
+		guard_release_lag = (int)ftStatusVarsGuard(fp)->release_lag;
+		guard_is_release = (int)(ftStatusVarsGuard(fp)->is_release != FALSE);
+	}
+	else
+	{
+		guard_release_lag = -1;
+		guard_is_release = -1;
+	}
+
 	scene = gSCManagerSceneData.scene_curr;
 	rollback = syNetplayRollbackSemanticsActive();
 	vs_active = syNetPeerIsVSSessionActive();
@@ -113,8 +136,7 @@ static void syNetplayGuardGrabDiagLogCore(GObj *fighter_gobj, const char *event,
 	    "SSB64 GuardGrabDiag: event=%s tick=%u scene=%u player=%d status=%d is_shield=%d release_lag=%d "
 	    "is_release=%d shield_hp=%d hold=0x%04X tap=0x%04X rel=0x%04X rb=%d vs=%d resim=%d anomaly=%d %s\n",
 	    event, (unsigned int)syNetInputGetTick(), (unsigned int)scene, (int)fp->player, (int)fp->status_id,
-	    (int)(fp->is_shield != FALSE), (int)ftStatusVarsGuard(fp)->release_lag,
-	    (int)(ftStatusVarsGuard(fp)->is_release != FALSE), (int)fp->shield_health,
+	    (int)(fp->is_shield != FALSE), guard_release_lag, guard_is_release, (int)fp->shield_health,
 	    (unsigned int)fp->input.pl.button_hold, (unsigned int)fp->input.pl.button_tap,
 	    (unsigned int)fp->input.pl.button_release, (int)(rollback != FALSE), (int)(vs_active != FALSE),
 	    (int)(resim != FALSE), (int)(anomaly != FALSE), (detail != NULL) ? detail : "");

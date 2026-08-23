@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-22
 **Build:** netmenu (`SSB64_NETMENU=ON`)
-**Status:** ROOT CAUSE NARROWED — instrumentation landed, stomping writer not yet named
+**Status:** ROOT CAUSE IDENTIFIED — the guard-overlay stomps were a false lead; see "Correction"
 **Soak:** Android guest ↔ Linux host, ~3590 ticks, D=2, `SSB64_NETPLAY_STATUSVARS_WITNESS=1`
 **Related:** [FTStatusVars overlay map](../refactor/ftstatusvars_overlay_map_2026-06-02.md), CLAUDE.md directive 6
 
@@ -107,3 +107,56 @@ after which the fix follows directive 6: migrate that call site to the correct a
 
 - netmenu + offline Debug builds compile and link clean.
 - Offline is unaffected: the whole path is `#if defined(PORT) && defined(SSB64_NETMENU)`.
+
+
+---
+
+## Correction (2026-08-22, instrumented soak)
+
+`dladdr` resolution named the callers, and **the guard-overlay stomps are not the bug**:
+
+| accessed ← expected | caller | count |
+|---|---|---|
+| guard ← squat / turn / landing | `ftCommonCatchCheckInterruptCommon` | 356 |
+| guard ← catchmain | `ftMainProcUpdateInterrupt` | 32 |
+| guard ← catchmain | `ftCommonCatchCheckInterruptCommon` | 12 |
+| guard ← throwf / catchwait | `ftMainProcUpdateInterrupt` | 4 |
+| guard ← catchmain | `syNetplayGuardGrabDiagLogGuardDropCatch` | 2 |
+
+368 of 408 trace back to `syNetplayGuardGrabDiagLogCore()` — **this diagnostic's own
+`ftStatusVarsGuard(fp)->release_lag` / `->is_release` reads**, which ran unconditionally
+for every logged event. They are *reads*, so they corrupt nothing; they merely flooded the
+witness and printed aliased bytes (the same idle Wait fighter showed `release_lag=178` on
+Linux and `-2` on Android). Fixed: the diag now reports `-1` unless the guard overlay is
+actually live.
+
+## Actual mechanism: the grab-cancel edge lands in the wrong status during resim
+
+Soak 2026-08-22, p1's grab at tick 1218/1220:
+
+| | Android (input owner) | Linux (predicting peer) |
+|---|---|---|
+| 1220–1222 | 166 Catch | 166 Catch |
+| 1223 | 167 CatchPull | 167 CatchPull |
+| 1225 | **168 CatchWait** | **166 Catch** (aborted) |
+| 1234 | 170 ThrowB | whiff |
+
+The `GuardGrabDiag` R/Z **release** edge (`rel=0xA010`) arrives at tick 1226 on both peers:
+
+```
+android  event=r_edge tick=1226 player=1 status=168 rel=0xA010 resim=0   <- live, CatchWait
+linux    event=r_edge tick=1226 player=1 status=166 rel=0xA010 resim=1   <- resim, Catch
+```
+
+Releasing Z during **Catch** cancels the grab; during **CatchWait** it does not. The
+predicting peer replays p1 one grab-step behind, so the same release edge cancels a grab
+that had already connected.
+
+Corroborating asymmetry: every p1 `r_edge` up to tick 998 is logged `resim=1` on Linux and
+`resim=0` on Android — the predicting peer re-simulates the grab owner's input edges
+repeatedly, the owner runs them once. Both glitches also mispredicted the grabber's
+**stick** while predicting the grab **button** correctly, and stick direction selects the
+throw.
+
+So the fix belongs in **when the release edge is evaluated relative to the replayed status
+timeline**, not in overlay ownership. The union stomps were noise from the instrument.
