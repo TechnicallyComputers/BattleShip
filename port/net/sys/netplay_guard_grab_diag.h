@@ -24,6 +24,17 @@ void syNetplayGuardGrabDiagLogGuardOn(struct GObj *fighter_gobj, const char *sit
 /* Log netplay GuardOff/GuardSetOff catch assist (rollback-active only). */
 void syNetplayGuardGrabDiagLogGuardDropCatch(struct GObj *fighter_gobj, sb32 success, s32 status_id);
 
+/*
+ * Log the CatchPull -> CatchWait anim-end edge, on EVERY pass including resim replay.
+ * ftCommonCatchPullProcUpdate gates the whole grab on ftAnimEndCheckSetStatus, i.e. purely
+ * on gobj->anim_frame <= 0, and only then sets the victim's capture.is_goto_pulled_wait.
+ * Accepted-tick logs cannot show replayed ticks, so a predicting peer evaluating that edge
+ * one frame differently is invisible — which is exactly the surviving grab failure.
+ * See docs/bugs/netplay_capture_goto_pulled_wait_hash_blind_2026-08-22.md.
+ */
+void syNetplayGuardGrabDiagLogCatchPullAnimEnd(struct GObj *fighter_gobj, sb32 anim_end,
+                                               f32 anim_frame, struct GObj *catch_gobj);
+
 #ifdef __cplusplus
 }
 #endif

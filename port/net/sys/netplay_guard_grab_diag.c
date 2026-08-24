@@ -249,6 +249,44 @@ void syNetplayGuardGrabDiagLogGuardOn(GObj *fighter_gobj, const char *site)
 	syNetplayGuardGrabDiagLogCore(fighter_gobj, "guard_on", (site != NULL) ? site : "?");
 }
 
+void syNetplayGuardGrabDiagLogCatchPullAnimEnd(GObj *fighter_gobj, sb32 anim_end, f32 anim_frame,
+                                               GObj *catch_gobj)
+{
+	FTStruct *fp;
+	FTStruct *victim_fp;
+	int victim_flag;
+
+	if (syNetplayGuardGrabDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan))
+	{
+		return;
+	}
+	victim_fp = (catch_gobj != NULL) ? ftGetStruct(catch_gobj) : NULL;
+	victim_flag = (victim_fp != NULL) ? (int)(ftStatusVarsCapture(victim_fp)->is_goto_pulled_wait != FALSE) : -1;
+
+	/*
+	 * Deliberately NOT routed through syNetplayGuardGrabDiagShouldLog(): that dedups repeats,
+	 * and the point here is to see this edge on every pass including resim replay.
+	 */
+	port_log(
+	    "SSB64 GuardGrabDiag: event=catchpull_animend tick=%u player=%d status=%d anim_frame=%.4f "
+	    "anim_end=%d catch_gobj=%d victim_player=%d victim_status=%d goto_pulled_wait=%d resim=%d\n",
+	    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id, (double)anim_frame,
+	    (int)(anim_end != FALSE), (catch_gobj != NULL) ? 1 : 0,
+	    (victim_fp != NULL) ? (int)victim_fp->player : -1,
+	    (victim_fp != NULL) ? (int)victim_fp->status_id : -1, victim_flag,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
+
 void syNetplayGuardGrabDiagLogGuardDropCatch(GObj *fighter_gobj, sb32 success, s32 status_id)
 {
 	FTStruct *fp;
@@ -305,6 +343,16 @@ void syNetplayGuardGrabDiagLogGuardOn(GObj *fighter_gobj, const char *site)
 	(void)fighter_gobj;
 	(void)site;
 }
+
+void syNetplayGuardGrabDiagLogCatchPullAnimEnd(GObj *fighter_gobj, sb32 anim_end, f32 anim_frame,
+                                               GObj *catch_gobj)
+{
+	(void)fighter_gobj;
+	(void)anim_end;
+	(void)anim_frame;
+	(void)catch_gobj;
+}
+
 
 void syNetplayGuardGrabDiagLogGuardDropCatch(GObj *fighter_gobj, sb32 success, s32 status_id)
 {
