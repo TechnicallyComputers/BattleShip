@@ -1,3 +1,9 @@
+/* dladdr / Dl_info are behind __USE_GNU; the feature macro must precede the first
+ * libc header. Used only to name the caller of a grab-range SetStatus. */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include <sys/netplay_guard_grab_diag.h>
 
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -249,6 +255,77 @@ void syNetplayGuardGrabDiagLogGuardOn(GObj *fighter_gobj, const char *site)
 	syNetplayGuardGrabDiagLogCore(fighter_gobj, "guard_on", (site != NULL) ? site : "?");
 }
 
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
+
+/*
+ * Grab-range SetStatus trace.
+ *
+ * Soak 2026-08-25 narrowed the surviving grab failure to a status transition, not the
+ * anim-end edge: both peers enter 167 CatchPull at the same tick with matching figh, then
+ * the predicting peer is back at 166 Catch on the very next tick, so
+ * ftCommonCatchPullProcUpdate never runs. Something calls SetStatus on the grabber during
+ * replay that does not happen on the input owner; nothing logged says who.
+ *
+ * Caller resolved in-process with dladdr (normal sim path, not a signal handler) because
+ * the binary is PIE and a raw return address cannot be rebased from the log alone.
+ */
+static const char *syNetplayGuardGrabDiagCallerName(const void *caller, unsigned long *out_off)
+{
+	*out_off = 0UL;
+	if (caller == NULL)
+	{
+		return "?";
+	}
+#if !defined(_WIN32)
+	{
+		Dl_info info;
+
+		memset(&info, 0, sizeof(info));
+		if ((dladdr((void *)(uintptr_t)caller, &info) != 0) && (info.dli_sname != NULL) &&
+		    (info.dli_saddr != NULL))
+		{
+			*out_off = (unsigned long)((const char *)caller - (const char *)info.dli_saddr);
+			return info.dli_sname;
+		}
+	}
+#endif
+	return "?";
+}
+
+void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32 to_status,
+                                        const void *caller)
+{
+	FTStruct *fp;
+	unsigned long off = 0UL;
+
+	if (syNetplayGuardGrabDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if (fighter_gobj == NULL)
+	{
+		return;
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan))
+	{
+		return;
+	}
+	/* Only transitions touching the grab/capture band, either side. */
+	if (((from_status < 166) || (from_status > 172)) && ((to_status < 166) || (to_status > 172)))
+	{
+		return;
+	}
+	/* Not through ShouldLog(): its dedup would hide the repeated replay passes. */
+	port_log(
+	    "SSB64 GuardGrabDiag: event=grab_setstatus tick=%u player=%d from=%d to=%d caller=%s+0x%lx resim=%d\n",
+	    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)from_status, (int)to_status,
+	    syNetplayGuardGrabDiagCallerName(caller, &off), off,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
 void syNetplayGuardGrabDiagLogCatchPullAnimEnd(GObj *fighter_gobj, sb32 anim_end, f32 anim_frame,
                                                GObj *catch_gobj)
 {
@@ -342,6 +419,15 @@ void syNetplayGuardGrabDiagLogGuardOn(GObj *fighter_gobj, const char *site)
 {
 	(void)fighter_gobj;
 	(void)site;
+}
+
+void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32 to_status,
+                                        const void *caller)
+{
+	(void)fighter_gobj;
+	(void)from_status;
+	(void)to_status;
+	(void)caller;
 }
 
 void syNetplayGuardGrabDiagLogCatchPullAnimEnd(GObj *fighter_gobj, sb32 anim_end, f32 anim_frame,

@@ -35,6 +35,13 @@ void syNetplayGuardGrabDiagLogGuardDropCatch(struct GObj *fighter_gobj, sb32 suc
 void syNetplayGuardGrabDiagLogCatchPullAnimEnd(struct GObj *fighter_gobj, sb32 anim_end,
                                                f32 anim_frame, struct GObj *catch_gobj);
 
+/*
+ * Log any ftMainSetStatus whose from/to status touches the grab band (166..172), with the
+ * caller resolved to a symbol. Fires on replayed passes too.
+ */
+void syNetplayGuardGrabDiagLogSetStatus(struct GObj *fighter_gobj, s32 from_status, s32 to_status,
+                                        const void *caller);
+
 #ifdef __cplusplus
 }
 #endif
