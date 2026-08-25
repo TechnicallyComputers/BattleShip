@@ -16228,6 +16228,16 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 		    (sSYNetRollbackFcStateRecoveryActive == FALSE))
 		{
 			u32 floor_load;
+			u32 pre_floor_load;
+			u32 pre_floor_mismatch;
+
+			/*
+			 * Remember what the fidelity walkback settled on. The clamp below can push load
+			 * back onto a tick that already failed to load, and if that happens the deeper
+			 * anchor is the only one known to work.
+			 */
+			pre_floor_load = load_tick;
+			pre_floor_mismatch = mismatch_tick;
 
 			floor_load = frontier - 1U;
 			port_log(
@@ -16244,16 +16254,55 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 			sSYNetRollbackExecutingEpisode.mismatch_tick = mismatch_tick;
 			if (syNetRollbackLoadPostTick(load_tick) == FALSE)
 			{
-				sSYNetRollbackBeginResimInitialLoad = FALSE;
-				port_log(
-				    "SSB64 NetRollback: FRONTIER_BEGIN_FLOOR load failed load_tick=%u\n",
-				    load_tick);
-				sSYNetRollbackLoadFailCount++;
-				syNetRollbackArmBattleSimHoldAfterLoadFail(load_tick);
-				syNetRollbackResetCorrectionEpisode();
-				return FALSE;
+				/*
+				 * Floor load failed. Soak 2026-08-25 deadlocked exactly here: the fidelity
+				 * walkback rescued load 1039 -> 1038, this clamp forced it back to 1039
+				 * (frontier 1040), and 1039 failed again on the same
+				 * LOAD_HASH_DRIFT reason=fighter_mismatch — three attempts, then a terminal
+				 * BATTLE_SIM_HOLD and a ~6 s freeze. Two floors fighting: the rescue says go
+				 * deeper, the frontier says never below the frontier, neither yields.
+				 *
+				 * Prefer the deeper anchor over a dead match. Opening behind the shared
+				 * frontier is what this clamp exists to prevent, so this is a real relaxation
+				 * — accepted only on the already-failed path, where the alternative is a hold
+				 * that ends the session anyway. Replay re-derives every tick from the deeper
+				 * load, and a resulting mismatch is detectable/healable by the FC layer,
+				 * whereas the hold is not recoverable.
+				 * See docs/bugs/netplay_frontier_floor_vs_rescue_deadlock_2026-08-25.md.
+				 */
+				if ((pre_floor_load < load_tick) &&
+				    (syNetRollbackLoadPostTick(pre_floor_load) != FALSE))
+				{
+					port_log(
+					    "SSB64 NetRollback: FRONTIER_BEGIN_FLOOR_YIELD floor_load=%u failed; "
+					    "keeping rescue load=%u mismatch=%u frontier=%u (below frontier by %u)\n",
+					    load_tick,
+					    pre_floor_load,
+					    pre_floor_mismatch,
+					    frontier,
+					    frontier - pre_floor_mismatch);
+					load_tick = pre_floor_load;
+					mismatch_tick = pre_floor_mismatch;
+					sSYNetRollbackExecutingEpisode.load_tick = load_tick;
+					sSYNetRollbackExecutingEpisode.mismatch_tick = mismatch_tick;
+					syNetInputSetTick(load_tick);
+				}
+				else
+				{
+					sSYNetRollbackBeginResimInitialLoad = FALSE;
+					port_log(
+					    "SSB64 NetRollback: FRONTIER_BEGIN_FLOOR load failed load_tick=%u\n",
+					    load_tick);
+					sSYNetRollbackLoadFailCount++;
+					syNetRollbackArmBattleSimHoldAfterLoadFail(load_tick);
+					syNetRollbackResetCorrectionEpisode();
+					return FALSE;
+				}
 			}
-			syNetInputSetTick(load_tick);
+			else
+			{
+				syNetInputSetTick(load_tick);
+			}
 		}
 	}
 #endif
