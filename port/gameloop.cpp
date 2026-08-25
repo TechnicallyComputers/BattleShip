@@ -33,6 +33,10 @@ int syNetPeerIsVSSessionActive(void);
 void syNetPeerEndVSSessionLocally(void);
 unsigned int syNetPeerGetVsContractViHz(void);
 void syNetRollbackApplyPortSimPacing(unsigned int refresh_hz);
+#if defined(SSB64_NETMENU)
+/* Load-fail BATTLE_SIM_HOLD escape; no-op when no hold is armed. */
+void syNetRollbackPumpLoadFailBattleExit(void);
+#endif
 #ifdef PORT
 int syNetPeerShouldPumpBattleGateOnHostFrame(void);
 void syNetPeerPumpBattleGateOnHostFrame(void);
@@ -1220,6 +1224,17 @@ void PortPushFrame(void)
 	portNetReconnectDrawOverlay();
 	/* ConnectivityManager JNI must run on SDL_main (not the game coroutine fiber). */
 	port_android_network_drain();
+#endif
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Unstarvable escape for a load-fail BATTLE_SIM_HOLD. The pump also runs from
+	 * scvsbattle's hold branch, but that branch sits behind several early-returns and has
+	 * twice been bypassed — soak 2026-08-25 froze ~6 s with the hold armed while the
+	 * seal-wait defer returned first, so the watchdog never ticked. A hold is terminal for
+	 * the match, so drive the escape from the frame loop where nothing can gate it out.
+	 * No-ops when no hold is armed. See docs/bugs/netplay_battle_sim_hold_no_escape_2026-08-22.md.
+	 */
+	syNetRollbackPumpLoadFailBattleExit();
 #endif
 	/* TCC mod hook: GamePostUpdateEvent fires once per frame AFTER game
 	 * logic + GFX submission. Most common subscription point — game state

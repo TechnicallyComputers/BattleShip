@@ -102,3 +102,57 @@ last resort should end the match, not freeze it.
   `BATTLE_SIM_HOLD escape watchdog` → `resim_load_fail — tear down` →
   `load_fail battle exit` → `BATTLE_SIM_HOLD cleared`, and land back at CSS /
   results rather than a frozen battle.
+
+
+---
+
+## Follow-up (2026-08-25): the escape was starved, not broken
+
+The watchdog above never ran. Soak 2026-08-25 armed a hold
+(`FRONTIER_BEGIN_FLOOR load failed load_tick=1039`, `fail_count=3`) during a grab
+(p0 `167 CatchPull`, p1 `171 CapturePulled`) and froze for ~6 s until the player
+killed the app — yet the log shows **zero** `battle update frozen`,
+`escape watchdog`, and `BATTLE_SIM_HOLD cleared` lines.
+
+Cause: `syNetRollbackPumpLoadFailBattleExit()` — which owns the watchdog — is
+called only from `scvsbattle`'s hold branch, and that branch sits *after* the
+seal-wait defer:
+
+```c
+if (VS active && syNetRollbackShouldDeferInterfaceDuringResimWait())
+{
+    ...; syNetPeerUpdate(); return;               /* returns first */
+}
+if (syNetRollbackIsBattleSimHoldActive())
+{
+    ...; syNetRollbackPumpLoadFailBattleExit();   /* never reached */
+}
+```
+
+With a hold armed *and* the episode in seal-wait, the defer branch returns every
+frame and the escape never ticks. Two fixes:
+
+1. **Ordering** — the hold check now precedes the seal-wait defer. A load-fail
+   hold is terminal for the match, so it outranks presentation deferral.
+2. **Unstarvable driver** — `PortPushFrame` also calls the pump each frame
+   (netmenu-gated, no-op when no hold is armed). This escape has now been starved
+   twice by control flow it does not own; driving it from the frame loop removes
+   the class of failure rather than one instance.
+
+## Related: the rescue and the frontier floor deadlock each other
+
+The same soak shows the walkback rescue from
+[the walkback-floor fix](netplay_light_frontier_load_fail_walkback_floor_2026-08-21.md)
+working, then being undone:
+
+```
+RESIM_LOAD_FIDELITY_RETRY failed=1039 deeper=1038 mismatch=1039 attempt=1 (below episode floor — rescue)
+FRONTIER_BEGIN_FLOOR mismatch=1039->1040 load=1038->1039 frontier=1040 target=1041
+FRONTIER_BEGIN_FLOOR load failed load_tick=1039
+BATTLE_SIM_HOLD armed sim=1041 load_tick=1039 reason=resim_load_fail fail_count=3
+```
+
+The rescue walks to 1038; `FRONTIER_BEGIN_FLOOR` clamps back to 1039 because the
+shared frontier is 1040; 1039 fails again (`LOAD_HASH_DRIFT … reason=fighter_mismatch`).
+A genuine deadlock between two floors, tracked separately — the escape work here
+only ensures it ends the match cleanly instead of hanging.
