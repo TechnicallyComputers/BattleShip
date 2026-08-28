@@ -83,6 +83,7 @@ jobs:
           # in the `&&` branch and the empty default in `||`.
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}.dmg
           if-no-files-found: error
+          retention-days: 5
 
   build-macos-netplay:
     runs-on: macos-14
@@ -113,6 +114,7 @@ jobs:
           name: BattleShip-macos-netplay-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay.dmg
           if-no-files-found: error
+          retention-days: 5
 
   build-linux-netplay:
     runs-on: ubuntu-22.04
@@ -161,6 +163,7 @@ jobs:
           name: BattleShip-linux-netplay-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-x86_64.AppImage
           if-no-files-found: error
+          retention-days: 5
 
   build-linux:
     # Build on jammy (glibc 2.35) so the AppImage runs everywhere we
@@ -250,6 +253,7 @@ jobs:
           name: BattleShip-linux-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-x86_64.AppImage
           if-no-files-found: error
+          retention-days: 5
 
   build-android:
     # US-only — the Android pipeline (Gradle asset staging, touch overlay,
@@ -349,6 +353,7 @@ jobs:
           name: BattleShip-android
           path: dist/BattleShip-android.apk
           if-no-files-found: error
+          retention-days: 5
 
   build-android-netplay:
     # Sibling of build-android — one APK per job (SSB64_NETMENU=ON via Gradle).
@@ -426,6 +431,7 @@ jobs:
           name: BattleShip-android-netplay
           path: dist/BattleShip-android-netplay.apk
           if-no-files-found: error
+          retention-days: 5
 
   build-windows:
     runs-on: windows-2022
@@ -476,6 +482,7 @@ jobs:
           name: BattleShip-windows-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-windows.zip
           if-no-files-found: error
+          retention-days: 5
 
   build-windows-netplay:
     runs-on: windows-2022
@@ -512,6 +519,7 @@ jobs:
           name: BattleShip-windows-netplay-${{ matrix.version }}
           path: dist/BattleShip${{ matrix.version == 'jp' && '-JP' || '' }}-Netplay-windows.zip
           if-no-files-found: error
+          retention-days: 5
 
   release:
     name: Publish GitHub Release (Alpha)

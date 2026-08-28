@@ -52,6 +52,7 @@ jobs:
           name: BattleShip-macos-netplay
           path: dist/BattleShip-Netplay.dmg
           if-no-files-found: error
+          retention-days: 5
 
   build-linux-netplay:
     runs-on: ubuntu-22.04
@@ -95,6 +96,7 @@ jobs:
           name: BattleShip-linux-netplay
           path: dist/BattleShip-Netplay-x86_64.AppImage
           if-no-files-found: error
+          retention-days: 5
 
   build-android-netplay:
     runs-on: ubuntu-22.04
@@ -168,6 +170,7 @@ jobs:
           name: BattleShip-android-netplay
           path: dist/BattleShip-android-netplay.apk
           if-no-files-found: error
+          retention-days: 5
 
   build-windows-netplay:
     runs-on: windows-2022
@@ -198,6 +201,7 @@ jobs:
           name: BattleShip-windows-netplay
           path: dist/BattleShip-Netplay-windows.zip
           if-no-files-found: error
+          retention-days: 5
 
   release:
     name: Publish GitHub Release (Beta)

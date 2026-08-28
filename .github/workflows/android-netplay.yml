@@ -87,4 +87,4 @@ jobs:
           name: BattleShip-android-netplay-pr
           path: android/app/build/outputs/apk/release/app-release*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 5
