@@ -42,6 +42,14 @@ void syNetplayGuardGrabDiagLogCatchPullAnimEnd(struct GObj *fighter_gobj, sb32 a
 void syNetplayGuardGrabDiagLogSetStatus(struct GObj *fighter_gobj, s32 from_status, s32 to_status,
                                         const void *caller);
 
+/*
+ * Log ftMainProcSearchCatch's two gates on every pass, replay included: whether
+ * is_catchstatus is set at all, and whether the collision search found a target. Only
+ * emitted while is_catchstatus is TRUE, so it is bounded to grab windows.
+ */
+void syNetplayGuardGrabDiagLogSearchCatch(struct GObj *fighter_gobj, sb32 is_catchstatus,
+                                          struct GObj *search_gobj);
+
 #ifdef __cplusplus
 }
 #endif

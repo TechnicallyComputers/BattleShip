@@ -294,6 +294,47 @@ static const char *syNetplayGuardGrabDiagCallerName(const void *caller, unsigned
 	return "?";
 }
 
+void syNetplayGuardGrabDiagLogSearchCatch(GObj *fighter_gobj, sb32 is_catchstatus, GObj *search_gobj)
+{
+	FTStruct *fp;
+	FTStruct *target_fp;
+
+	if (syNetplayGuardGrabDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((fighter_gobj == NULL) || (is_catchstatus == FALSE))
+	{
+		return; /* bounded to grab windows */
+	}
+	fp = ftGetStruct(fighter_gobj);
+	if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan))
+	{
+		return;
+	}
+	target_fp = (search_gobj != NULL) ? ftGetStruct(search_gobj) : NULL;
+
+	/*
+	 * ftMainProcSearchCatch gates the grab connect on exactly two things:
+	 *   if (fp->is_catchstatus)          -> run ftMainSearchFighterCatch
+	 *       if (fp->search_gobj != NULL) -> proc_catch + proc_capture   (the 166->167 connect)
+	 * The predicting peer replays the connect tick from a matching snapshot and does not
+	 * reconnect, while the input owner does. Both gate inputs are snapshot-covered
+	 * (is_catchstatus saved/restored/hashed, search_gobj saved/restored), so this separates
+	 * "flag lost" from "search found nothing". Not routed through ShouldLog(): its dedup
+	 * would hide the repeated replay passes that matter.
+	 * See docs/bugs/netplay_grab_correction_treadmill_2026-08-26.md.
+	 */
+	port_log(
+	    "SSB64 GuardGrabDiag: event=search_catch tick=%u player=%d status=%d is_catchstatus=%d "
+	    "search=%d search_status=%d resim=%d\n",
+	    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id,
+	    (int)(is_catchstatus != FALSE),
+	    (target_fp != NULL) ? (int)target_fp->player : -1,
+	    (target_fp != NULL) ? (int)target_fp->status_id : -1,
+	    (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
 void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32 to_status,
                                         const void *caller)
 {
@@ -419,6 +460,13 @@ void syNetplayGuardGrabDiagLogGuardOn(GObj *fighter_gobj, const char *site)
 {
 	(void)fighter_gobj;
 	(void)site;
+}
+
+void syNetplayGuardGrabDiagLogSearchCatch(GObj *fighter_gobj, sb32 is_catchstatus, GObj *search_gobj)
+{
+	(void)fighter_gobj;
+	(void)is_catchstatus;
+	(void)search_gobj;
 }
 
 void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32 to_status,
