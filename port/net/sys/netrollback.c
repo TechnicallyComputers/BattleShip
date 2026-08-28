@@ -290,10 +290,6 @@ static u32 sSYNetRollbackPeerResolvedThrough;
 static u32 sSYNetRollbackEpisodeExtensions;
 /* After episode complete: stick REPLACE through this sim tick coalesces into deferred (no ep spam). */
 static u32 sSYNetRollbackStickAbsorbUntilSim;
-#if defined(SSB64_NETMENU)
-/* Slide the absorb window while corrections keep merging (definition below). */
-static void syNetRollbackStickAbsorbExtendOnMerge(const char *tag);
-#endif
 static s32 sSYNetRollbackStickAbsorbPlayer;
 #if defined(SSB64_NETMENU)
 /* Hard polarity: allow Begin for this slot only when a single slot is dirty. */
@@ -316,12 +312,6 @@ static u32 sSYNetRollbackStickAbsorbArmedFromSim;
  * joysticks. See docs/bugs/netplay_light_input_episodes_2026-07-27.md.
  */
 #define SYNETROLLBACK_LIGHT_EPISODE_ABSORB_WINDOW 2U
-/*
- * Ceiling for the sliding absorb extension below. The 2-tick base window is deliberately
- * short ("merge-only") because long fixed windows just add correction latency; this caps
- * how far a *sustained* correction stream may push it before a Begin is forced anyway.
- */
-#define SYNETROLLBACK_LIGHT_EPISODE_ABSORB_MAX 12U
 /*
  * Light episodes that would invent hold_last past the contiguous wire frontier
  * (target > wire_ready exclusive) SoftLip-fork vs the owner's LOCAL stick ramp.
@@ -4111,7 +4101,6 @@ static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick
 #if defined(SSB64_NETMENU)
 			syNetRollbackStickAbsorbClampDeferredTarget();
 			syNetRollbackAlignDeferredTargetToWireReady("MERGE_WIDEN");
-			syNetRollbackStickAbsorbExtendOnMerge("MERGE_WIDEN");
 #endif
 			return;
 		}
@@ -4123,7 +4112,6 @@ static void syNetRollbackQueueDeferredInputCorrectionEx(s32 player, u32 sim_tick
 #if defined(SSB64_NETMENU)
 		syNetRollbackStickAbsorbClampDeferredTarget();
 		syNetRollbackAlignDeferredTargetToWireReady("MERGE_DEEPEN");
-		syNetRollbackStickAbsorbExtendOnMerge("MERGE_DEEPEN");
 #endif
 		return;
 	}
@@ -5185,68 +5173,6 @@ static sb32 syNetRollbackSymmetricLocalAuthorityDeferredPending(void)
 
 /* Hold live sim below mismatch tick until deferred GGPO/symmetric resim loads snapshot (figatree freeze). */
 #if defined(SSB64_NETMENU)
-/*
- * Sliding absorb window.
- *
- * The absorb window is armed once at episode completion and sized to a flat 2 ticks for
- * light input episodes. That folds a same-burst REPLACE pair into one span, but a
- * *sustained* per-tick correction stream outruns it: each correction lands after the
- * window has expired, so each one opens its own episode.
- *
- * Soak 2026-08-26 (grab at tick 495): the predicting peer ran 20 resims to the input
- * owner's 1, four of them span-1 episodes stacked over the grab. Each reloaded a snapshot
- * from before ftCommonCatchPullProcCatch connected, so the 166->167 transition was
- * repeatedly reverted by snapshot restore -- the grab_setstatus trace shows the status
- * back at 166 with no 167->166 SetStatus call anywhere. The grab could never advance to
- * CatchWait.
- *
- * Extending the window on every merge turns that stream into one Begin, while an isolated
- * correction still Begins after the same 2 ticks as before -- so the latency the flat
- * window was protecting is unchanged for the common case. Capped at
- * SYNETROLLBACK_LIGHT_EPISODE_ABSORB_MAX past the arm point so a pathological stream
- * cannot defer a correction indefinitely.
- * See docs/bugs/netplay_grab_correction_treadmill_2026-08-26.md.
- */
-static void syNetRollbackStickAbsorbExtendOnMerge(const char *tag)
-{
-	u32 sim_tick;
-	u32 extended;
-	u32 ceiling;
-
-	if (syNetRollbackLightInputEpisodesEnabled() == FALSE)
-	{
-		return;
-	}
-	if ((sSYNetRollbackStickAbsorbUntilSim == 0U) || (sSYNetRollbackStickAbsorbArmedFromSim == 0U))
-	{
-		return;
-	}
-	sim_tick = syNetInputGetTick();
-	if (sim_tick > sSYNetRollbackStickAbsorbUntilSim)
-	{
-		return; /* window already expired — this correction owns its own Begin */
-	}
-	ceiling = sSYNetRollbackStickAbsorbArmedFromSim + SYNETROLLBACK_LIGHT_EPISODE_ABSORB_MAX;
-	extended = sim_tick + SYNETROLLBACK_LIGHT_EPISODE_ABSORB_WINDOW;
-	if (extended > ceiling)
-	{
-		extended = ceiling;
-	}
-	if (extended <= sSYNetRollbackStickAbsorbUntilSim)
-	{
-		return;
-	}
-	port_log(
-	    "SSB64 NetRollback: STICK_ABSORB_SLIDE tag=%s sim=%u until=%u->%u armed_from=%u ceiling=%u\n",
-	    (tag != NULL) ? tag : "?",
-	    sim_tick,
-	    sSYNetRollbackStickAbsorbUntilSim,
-	    extended,
-	    sSYNetRollbackStickAbsorbArmedFromSim,
-	    ceiling);
-	sSYNetRollbackStickAbsorbUntilSim = extended;
-}
-
 sb32 syNetRollbackStickAbsorbWindowActive(void)
 {
 	if (sSYNetRollbackStickAbsorbUntilSim == 0U)
