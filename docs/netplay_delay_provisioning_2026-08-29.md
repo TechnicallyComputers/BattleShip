@@ -27,7 +27,7 @@ mid-grab state.
 
 | RTT (ms) | D | | RTT (ms) | D |
 |---|---|---|---|---|
-| 0–40 | 3 | | 201–240 | 9 |
+| 0–40 | 4 | | 201–240 | 9 |
 | 41–80 | 5 | | 241–280 | 10 |
 | 81–120 | 6 | | 281–320 | 11 |
 | 121–160 | 7 | | 321+ | 12 |
@@ -35,7 +35,7 @@ mid-grab state.
 
 Previous table for comparison: `<60 → 2`, `<100 → 2`, `<150 → 3`, `<200 → 5`, `<280 → 7`,
 `else 8`. Every band moved up, most sharply at the low end where nearly every match sits
-(23 ms went from D=2 to D=3).
+(23 ms went from D=2 to D=4 — see the revision below).
 
 `SYNETSESSION_PARAMS_ROLLBACK_D_MAX` raised 10 → 12 so the top two bands are not clamped
 away. `PREDICTION_MAX` stays at 7 deliberately — higher D means *less* prediction runway is
@@ -75,3 +75,46 @@ already logs `would_delay_change`, so a table-only soak still shows what the con
 - push-frame deficit — target the owner's ~3.5% on both peers.
 - resim count, `load_fail_hold`, admission `pct_R` — all should fall together.
 - `would_delay_change` lines — what rbe's controller still wants at the new baseline.
+
+
+---
+
+## Revision (2026-08-29, second soak): LAN band 3 → 4
+
+The D=3 soak was a large win — deficit 7.8%/3.5% → **1.7%/0.8%**, deep speculation
+(`predict_depth >= 4`) confined entirely to the intro window (ticks 4–390) with **none** in
+~7,500 ticks of gameplay, 21 fighter mismatches in 7857 ticks with a single 2-tick
+sustained run, zero crashes, zero holds, and grabs 14/1 identical on both peers.
+
+But two independent signals said the LAN band was still one notch short:
+
+| | predicting peer | input owner |
+|---|---|---|
+| `pcap FREEZE` (prediction-cap) | **502** | 0 |
+| rbe `would_delay` proposals | **247**, all `3 -> 4` | 0 |
+
+So `0–40 ms` is now **D=4**.
+
+### Why only one line appeared in the log
+
+`syNetRbeSchedOpsRequestDelayChange()` deduped on the proposed *value*. All 247 proposals
+asked for the same 4, so it printed once and the volume survived only in the session-end
+scorecard — which is how a first read of that log concluded the controller "wanted
+essentially nothing". It now also logs every 50th repeat: repetition is the promotion
+signal, so it has to be visible inline.
+
+### Still true: the arrival controller is dormant
+
+Those 247 came from `np_adapt_delay_on_pcap_enter` (freeze-driven), **not** rbe's §57
+arrival-driven controller, which still early-returns outside REAL-DELAY mode. Note the log
+says `rbe: auto delay ON` on both peers regardless — that message is emitted during the
+enable check, *before* the real-delay guard returns, so it reports ON while doing nothing.
+Do not read it as evidence the controller is running.
+
+### Decision point after the next soak
+
+- `pcap FREEZE` collapses at D=4 → the static table is sufficient; promoting auto-D is
+  optional.
+- Freezes persist → that is the argument for wiring the real controller, and the safety
+  precondition already holds: `rbe_invent_on_hold = 0` across ~16k admits over two full
+  sessions, i.e. rbe was never more aggressive than the live gate.

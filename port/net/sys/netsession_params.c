@@ -172,7 +172,13 @@ static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
 {
 	if (rtt_ms <= 40U)
 	{
-		return 3U;
+		/*
+		 * 4, not 3: at D=3 on a 25 ms link the predicting peer still took 502 prediction-cap
+		 * freezes and rbe's controller asked for 3 -> 4 on 247 separate admits, while the
+		 * input owner took zero of either. Two independent signals agreeing that the LAN
+		 * band was one notch short (soak 2026-08-29).
+		 */
+		return 4U;
 	}
 	if (rtt_ms <= 80U)
 	{

@@ -219,7 +219,13 @@ static int syNetRbeSchedOpsRequestDelayChange(void *ctx, int new_delay)
 	 * controller keeps re-proposing, which is the promotion signal we
 	 * soak for (tier 3: route into the host delay-ramp protocol). */
 	sWouldDelayChanges++;
-	if (new_delay != sWouldDelayLast)
+	/*
+	 * Log on a value change AND every 50th repeat. Deduping on value alone hid the
+	 * volume: soak 2026-08-29 emitted a single "3 -> 4" line for 247 proposals, because
+	 * every one asked for the same value, and the count only survived in the scorecard.
+	 * Repetition IS the promotion signal here, so it has to be visible inline.
+	 */
+	if ((new_delay != sWouldDelayLast) || ((sWouldDelayChanges % 50U) == 0U))
 	{
 		port_log("SSB64 NetSchedRbe: would_delay_change %d -> %d (n=%u)\n",
 		         (int)syNetPeerGetCommittedInputDelay(), new_delay, (unsigned int)sWouldDelayChanges);
