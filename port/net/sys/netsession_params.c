@@ -7,6 +7,7 @@
 #include "netpeer.h"
 #include "netrollback.h"
 #include "netrollbacksnapshot.h"
+#include "netsched_rbe.h"
 
 extern int atoi(const char *s);
 extern void port_log(const char *fmt, ...);
@@ -15,6 +16,12 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_DELAY_MIN 1U
 #define SYNETSESSION_PARAMS_DELAY_MAX 32U
 #define SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT 1U
+/*
+ * Ceiling headroom granted when rbe tier 3 owns D. The legacy +1 exists for the old
+ * env-gated adaptive path and is far too tight for a controller expected to climb bands
+ * on a link that degrades mid-match; 4 covers roughly two RTT bands of the table above.
+ */
+#define SYNETSESSION_PARAMS_RBE_ADAPTIVE_HEADROOM 4U
 #define SYNETSESSION_PARAMS_PHASE_LOCK_MAX 16U
 #define SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS 2U
 #define SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN 4U
@@ -214,21 +221,33 @@ static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
 static u32 syNetSessionParamsComputeNegotiatedDelayCeil(u32 d_ticks, u32 headroom_field)
 {
 	u32 ceil_d;
+	u32 headroom;
 
+	headroom = 0U;
 	if (syNetSessionParamsAdaptiveDelayEnvEnabled() != FALSE)
 	{
-		if (headroom_field > 0U)
+		headroom = (headroom_field > 0U) ? headroom_field : SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT;
+	}
+	/*
+	 * rbe tier 3 owns D, so it needs somewhere to move. Soak 2026-08-29 shows what happens
+	 * without this: the band table negotiated D=4 and the ceiling was computed as 4, so
+	 * every controller proposal clamped to the value already committed and was refused --
+	 * would_delay=1, adaptive_d_applied=0, an authority that could not act. The headroom
+	 * is granted by the tier itself rather than by SSB64_NETPLAY_ADAPTIVE_DELAY, because
+	 * requiring a second, separate env var to make the first one do anything is a trap.
+	 */
+	if (syNetRbeSchedTier() >= 3)
+	{
+		if (headroom < SYNETSESSION_PARAMS_RBE_ADAPTIVE_HEADROOM)
 		{
-			ceil_d = d_ticks + headroom_field;
-		}
-		else
-		{
-			ceil_d = d_ticks + SYNETSESSION_PARAMS_ADAPTIVE_HEADROOM_DEFAULT;
+			headroom = SYNETSESSION_PARAMS_RBE_ADAPTIVE_HEADROOM;
 		}
 	}
-	else
+	ceil_d = d_ticks + headroom;
+	/* Rollback sessions cap D at ROLLBACK_D_MAX; the ceiling must not promise past it. */
+	if ((syNetSessionParamsRollbackEnabled() != FALSE) && (ceil_d > SYNETSESSION_PARAMS_ROLLBACK_D_MAX))
 	{
-		ceil_d = d_ticks;
+		ceil_d = SYNETSESSION_PARAMS_ROLLBACK_D_MAX;
 	}
 	if (ceil_d > SYNETSESSION_PARAMS_DELAY_MAX)
 	{

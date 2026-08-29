@@ -229,12 +229,26 @@ static int syNetRbeSchedOpsRequestDelayChange(void *ctx, int new_delay)
 		 * change desyncs immediately. It refuses redundant/unsafe proposals itself, so
 		 * the controller is free to re-propose every tick; hysteresis lives in rbe.
 		 */
-		if (new_delay > 0)
+		sb32 queued;
+
+		queued = (new_delay > 0) ? syNetPeerRequestAdaptiveInputDelay((u32)new_delay, "rbe_sched") : FALSE;
+		if (queued != FALSE)
 		{
-			if (syNetPeerRequestAdaptiveInputDelay((u32)new_delay, "rbe_sched") != FALSE)
-			{
-				sAdaptiveDelayApplied++;
-			}
+			sAdaptiveDelayApplied++;
+		}
+		/*
+		 * Log refusals too, on the same change-or-every-50th cadence. The first cut of
+		 * this returned before the shadow logging below, so the 2026-08-29 soak recorded
+		 * would_delay=1 with no line saying what was proposed or why it did not land --
+		 * exactly the question the log existed to answer.
+		 */
+		if ((new_delay != sWouldDelayLast) || ((sWouldDelayChanges % 50U) == 0U))
+		{
+			port_log("SSB64 NetSchedRbe: adaptive_delay %s D=%d -> %d ceil=%u (n=%u applied=%u)\n",
+			         (queued != FALSE) ? "queued" : "refused", (int)syNetPeerGetCommittedInputDelay(),
+			         new_delay, (unsigned int)syNetPeerGetInputDelayCeil(),
+			         (unsigned int)sWouldDelayChanges, (unsigned int)sAdaptiveDelayApplied);
+			sWouldDelayLast = new_delay;
 		}
 		return 0;
 	}

@@ -188,3 +188,64 @@ thing to read in the next soak.
   at the same `eff_tick`. They must, or D has forked.
 - `pcap FREEZE` counts should fall relative to the D=4 static baseline. If they do not, the
   controller is not the answer to freezes and the cause is upstream of D.
+
+---
+
+## Soak review (tier 3, first authority run)
+
+Tier 3 confirmed active on both peers. Health for the window it ran was the best measured
+so far:
+
+| | prior soak (D=4 static) | this soak (tier 3) |
+|---|---|---|
+| `pcap FREEZE` | 502 | **1** |
+| ticks at `predict_depth=0` | ~60% | **175/181 linux, 173/173 android** |
+| `rb_applied` / `rb_load_fail` | nonzero | **0 / 0** |
+| desyncs, hash mismatches, `BATTLE_SIM_HOLD`, rescues | — | **0** |
+
+D negotiated to 4 from `rtt_ms=17` as intended (`host_compute`, echoed by `guest_recv`).
+The `automatch_config` / `vs_start` lines showing `D=2 source=auto_pending` are the
+pre-negotiation default and are not the contract.
+
+**But the window is ~3 seconds.** Sim ticks reached 194 (linux) / 188 (android) and the
+match never left the fighter intro, so this validates nothing about behaviour under load.
+With `predict_depth` pinned at 0 there was no pressure for the controller to answer.
+
+### The controller could not have acted anyway: ceil == D
+
+`would_delay=1, adaptive_d_applied=0`, and the reason is structural, not a lack of demand:
+
+```
+SSB64 NetSession: apply tag=host_compute ... D=4 phase_lock=6 ... ceil=4
+```
+
+`syNetSessionParamsComputeNegotiatedDelayCeil()` returned `d_ticks` unchanged, because it
+only adds headroom when the *separate* legacy `SSB64_NETPLAY_ADAPTIVE_DELAY` env var is
+set — and even then only +1. So `syNetPeerRequestAdaptiveInputDelay()` clamped every
+proposal to `ceil=4`, found it equal to the committed D, and refused it as redundant.
+Tier 3 was authority in name only.
+
+Fixed two ways:
+
+- **The tier grants its own headroom.** `SYNETSESSION_PARAMS_RBE_ADAPTIVE_HEADROOM` (4,
+  ~two RTT bands) applies whenever tier >= 3, independent of the legacy env var. Requiring
+  a second env var to make the first one do anything is a trap, not a safety feature. The
+  ceiling is additionally clamped to `ROLLBACK_D_MAX` in rollback sessions so it cannot
+  promise past what D itself is allowed to reach.
+- **Refusals are now logged.** The first cut returned before the shadow logging, so the
+  soak recorded `would_delay=1` with nothing saying what was proposed or why it did not
+  land. Tier 3 now emits `adaptive_delay queued|refused D=x -> y ceil=z` on the same
+  change-or-every-50th cadence.
+
+### Unrelated: the Android abort ended the run
+
+Android died at tick 188 with `CRASH SIGABRT fault_addr=0x2b6a000025d4`. Every frame in the
+backtrace is system code — `libc` (abort/raise) under `libbase` fatal logging, under
+`libart`, under `libandroid_runtime`, entered from a JIT-compiled Java frame. There is no
+`libmain.so` frame anywhere, and no surface/resize event near the crash.
+
+That is an ART-side abort, not a native fault in the sim, and it is not attributable to
+tier 3 — no D change was ever applied, so the contract never moved. The fatal reason is
+printed by libbase's `LOG(FATAL)` **to logcat**, which this capture does not include, so
+the next Android run needs a concurrent `adb logcat` to identify it. The debug APK runs
+with CheckJNI enabled, which makes a JNI check abort the leading candidate.
