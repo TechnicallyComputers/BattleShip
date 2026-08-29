@@ -110,6 +110,9 @@ static u32 sCmpVetoApplied;          /* tier 2 only */
 static u32 sWouldDelayChanges;
 static int sWouldDelayLast = -1;
 static u32 sAdaptiveDelayApplied = 0U;
+/* The consumption mapping the bridge installs. BattleShip is ZERO-DELAY until the
+ * REAL-DELAY milestone; see docs/netplay_delay_provisioning_2026-08-29.md. */
+static int sRbeRealDelayForced = 0;
 static u32 sZeroOnsetHoldTick = ~(u32)0;
 static u32 sLastObservedTick = ~(u32)0;
 static int sLastObservedFrame = -1;
@@ -279,7 +282,15 @@ static int syNetRbeSchedOpsRequestDelayChange(void *ctx, int new_delay)
  */
 sb32 syNetRbeSchedAdaptiveDelayActive(void)
 {
-	return ((syNetRbeSchedTier() >= 3) && (rbe_sched_real_delay_enabled() != 0)) ? TRUE : FALSE;
+	/*
+	 * sRbeRealDelayForced, not rbe_sched_real_delay_enabled(): rbe defaults to REAL-DELAY
+	 * and BattleShip only forces ZERO-DELAY at bind, which happens AFTER session params
+	 * negotiate. Querying rbe directly therefore reported "adaptive active" during
+	 * negotiation and handed out ceil=8 for a controller that would never propose --
+	 * exactly the unused promise this gate exists to prevent. This static reflects the
+	 * mapping the bridge actually installs, and is correct from process start.
+	 */
+	return ((syNetRbeSchedTier() >= 3) && (sRbeRealDelayForced != 0)) ? TRUE : FALSE;
 }
 
 static uint32_t syNetRbeSchedOpsArrivalAgeMs(void *ctx, int slot, uint32_t wire)
@@ -357,6 +368,7 @@ static void syNetRbeSchedBind(void)
 	/* BattleShip live VS consumes wire = sim + D (rbe "legacy" mapping).
 	 * REAL-DELAY is the step-6 milestone, not a shadow decision. */
 	rbe_sched_set_real_delay(0);
+	sRbeRealDelayForced = 0;
 	rbe_sched_bind(&br); /* also resets rbe session state */
 
 	sBridgeDelay = (int)syNetPeerGetCommittedInputDelay();
