@@ -118,3 +118,73 @@ Do not read it as evidence the controller is running.
 - Freezes persist → that is the argument for wiring the real controller, and the safety
   precondition already holds: `rbe_invent_on_hold = 0` across ~16k admits over two full
   sessions, i.e. rbe was never more aggressive than the live gate.
+
+---
+
+## Implemented (2026-08-29): adaptive D at tier 3
+
+The static band table stays as the *starting point* — it exists so a session opens at a
+sane D and does not have to hitch its way there. The controller owns everything after
+that. Three pieces, one per repo.
+
+### 1. rbengine: `RbeSchedBridge.auto_delay_in_zero_delay`
+
+`np_auto_delay_tick()` used to refuse any session where real-delay was off:
+
+```c
+if (!rbe_sched_real_delay_enabled())
+    return; /* D is not a latency budget in legacy zero-delay mode */
+```
+
+That reasoning is sound for the mapping rbe historically meant by ZERO-DELAY, but it is
+not true of BattleShip. Here consumption is `wire = sim + D`, so D still buys the arrival
+cushion — it is just spent a tick earlier than under REAL-DELAY. The guard now also checks
+a host opt-in flag (`retcomm-rbengine` `00d1663`), defaulting to 0, so MotK and psxrecomp
+are unaffected.
+
+### 2. netpeer: `syNetPeerRequestAdaptiveInputDelay(target, tag)`
+
+D cannot be assigned mid-match. Because `wire = sim + D`, if the two peers switch on
+different ticks then every subsequent wire lookup disagrees and the session desyncs on the
+spot. `syNetPeerApplyAutoNegotiatedDelayContract()` *does* assign it directly and is a
+session-setup path only — it must never be called from a controller.
+
+The new API follows the auto-runway bump instead (`netpeer.c`, `auto_runway`):
+
+1. clamp to contract, then to `[floor, ceil]`;
+2. pick `eff_tick = now + syNetPeerDelaySyncCommitLeadTicks()`;
+3. stage `sSYNetPeerDelaySyncPending{,EffectiveTick,Valid}`;
+4. `syNetPeerSendInputDelaySyncPacket(proposed, eff_tick)`.
+
+Both peers then apply at the same sim tick. Guards: host-only (guests follow DELAY_SYNC),
+VS-active, nothing already in flight (neither a pending delay-sync nor a host ramp), a real
+value change, and `SYNETPEER_ADAPTIVE_DELAY_MIN_SPACING_TICKS` (120) between changes so a
+misbehaving controller cannot churn the contract. It returns TRUE only when it actually
+queued something, so the caller needs no hysteresis of its own.
+
+### 3. Bridge: tier 3
+
+`SSB64_NETPLAY_RBE_SCHED` gains a tier:
+
+| tier | behaviour |
+|---|---|
+| 0 | off |
+| 1 | shadow only |
+| 2 | shadow + conservative predict-veto |
+| 3 | **+ adaptive D (authority)** |
+
+Tier 3 binds `auto_delay_in_zero_delay = 1` and routes
+`syNetRbeSchedOpsRequestDelayChange` into the netpeer API. Tiers 1–2 are untouched, so the
+soaked shadow baseline stays comparable. The session scorecard gained
+`adaptive_d_applied=` next to `would_delay=` — the gap between those two numbers is the
+refusal rate (redundant proposals, in-flight changes, spacing floor), which is the first
+thing to read in the next soak.
+
+### What to watch
+
+- `adaptive_d_applied` should be **small** relative to `would_delay`. A large value means
+  the controller is oscillating and the spacing floor needs raising.
+- `adaptive_delay queued D=x->y` lines in the peer log should pair up across the two peers
+  at the same `eff_tick`. They must, or D has forked.
+- `pcap FREEZE` counts should fall relative to the D=4 static baseline. If they do not, the
+  controller is not the answer to freezes and the cause is upstream of D.

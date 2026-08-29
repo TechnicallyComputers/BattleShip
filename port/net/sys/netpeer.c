@@ -424,6 +424,8 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_INPUT_DELAY_SYNC_BYTES (4 + 2 + 2 + 4 + 4 + 4 + 4)
 /* Default local sim ticks before applying queued `INPUT_DELAY_SYNC` / host ramp commits (`SSB64_NETPLAY_DELAY_SYNC_COMMIT_LEAD_TICKS`). */
 #define SYNETPEER_DELAY_SYNC_COMMIT_LEAD_TICKS_DEFAULT 2U
+/* Minimum sim ticks between adaptive delay changes (contract-churn floor). */
+#define SYNETPEER_ADAPTIVE_DELAY_MIN_SPACING_TICKS 120U
 /* SYNETPEER_FRAME_COMMIT_* sized above with SYNETPEER_PACKET_RECV_MAX. */
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_LEGACY (56)
 #define SYNETPEER_ROLLBACK_BASELINE_BYTES_V1 (68)
@@ -3783,6 +3785,82 @@ static void syNetPeerMaybeAutoRunwayDelayBump(u32 tick_now)
 	    (unsigned int)frontier_sim, (unsigned int)tick_now);
 }
 #endif
+
+/*
+ * Host-side entry for an adaptive controller to move committed D mid-match.
+ *
+ * D maps sim -> wire (wire = sim + D), so it can never be set directly while a match runs:
+ * if the peers switch on different ticks every subsequent wire lookup disagrees and the
+ * session desyncs instantly. syNetPeerApplyAutoNegotiatedDelayContract() does set it
+ * directly and is a session-setup path only.
+ *
+ * This queues the change the same way the auto-runway bump does: clamp to contract, pick an
+ * effective tick a commit-lead ahead, stage it locally, and tell the peer, so both apply at
+ * the same sim tick. Host-only; guests follow INPUT_DELAY_SYNC.
+ *
+ * Returns TRUE when a change was queued. Callers own their own hysteresis -- this refuses
+ * only what is unsafe or redundant, not what is merely frequent.
+ * See docs/netplay_delay_provisioning_2026-08-29.md.
+ */
+sb32 syNetPeerRequestAdaptiveInputDelay(u32 target, const char *tag)
+{
+#if defined(PORT) && defined(SSB64_NETMENU)
+	static u32 sLastQueuedSimTick = ~(u32)0;
+	u32 tick_now;
+	u32 proposed;
+	u32 eff_tick;
+
+	if ((sSYNetPeerIsActive == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return FALSE;
+	}
+	if (sSYNetPeerBootstrapIsHost == FALSE)
+	{
+		return FALSE; /* guests follow DELAY_SYNC */
+	}
+	/* Never stack a second change on top of one still in flight. */
+	if ((sSYNetPeerDelaySyncPendingValid != FALSE) || (sSYNetPeerHostDelayRampPendingValid != FALSE))
+	{
+		return FALSE;
+	}
+	proposed = syNetPeerClampInputDelayToContract(target);
+	if (proposed < sSYNetPeerInputDelayFloor)
+	{
+		proposed = sSYNetPeerInputDelayFloor;
+	}
+	if (proposed > sSYNetPeerInputDelayCeil)
+	{
+		proposed = sSYNetPeerInputDelayCeil;
+	}
+	if (proposed == sSYNetPeerInputDelay)
+	{
+		return FALSE;
+	}
+	tick_now = syNetInputGetTick();
+	/* Floor on spacing so a misbehaving controller cannot churn the contract. */
+	if ((sLastQueuedSimTick != ~(u32)0) && (tick_now >= sLastQueuedSimTick) &&
+	    ((tick_now - sLastQueuedSimTick) < SYNETPEER_ADAPTIVE_DELAY_MIN_SPACING_TICKS))
+	{
+		return FALSE;
+	}
+	eff_tick = syNetPeerSaturatingAddU32(tick_now, syNetPeerDelaySyncCommitLeadTicks());
+	sSYNetPeerDelaySyncPending = proposed;
+	sSYNetPeerDelaySyncEffectiveTick = eff_tick;
+	sSYNetPeerDelaySyncPendingValid = TRUE;
+	syNetPeerSendInputDelaySyncPacket(proposed, eff_tick);
+	sLastQueuedSimTick = tick_now;
+	port_log(
+	    "SSB64 NetPeer: adaptive_delay queued D=%u->%u eff_tick=%u sim=%u floor=%u ceil=%u tag=%s\n",
+	    (unsigned int)sSYNetPeerInputDelay, (unsigned int)proposed, (unsigned int)eff_tick,
+	    (unsigned int)tick_now, (unsigned int)sSYNetPeerInputDelayFloor,
+	    (unsigned int)sSYNetPeerInputDelayCeil, (tag != NULL) ? tag : "?");
+	return TRUE;
+#else
+	(void)target;
+	(void)tag;
+	return FALSE;
+#endif
+}
 
 void syNetPeerSendControlPacket(u16 packet_type)
 {

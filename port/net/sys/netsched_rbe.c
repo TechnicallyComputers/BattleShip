@@ -66,14 +66,16 @@ int syNetRbeSchedTier(void)
 	{
 		sTierCache = 0;
 	}
-	if (sTierCache > 2)
+	if (sTierCache > 3)
 	{
-		sTierCache = 2;
+		sTierCache = 3;
 	}
 	if (sTierCache > 0)
 	{
 		port_log("SSB64 NetSchedRbe: enabled tier=%d (%s)\n", sTierCache,
-		         (sTierCache >= 2) ? "shadow + conservative predict-veto" : "shadow only");
+		         (sTierCache >= 3)   ? "shadow + predict-veto + adaptive D (authority)"
+		         : (sTierCache >= 2) ? "shadow + conservative predict-veto"
+		                             : "shadow only");
 	}
 	return sTierCache;
 }
@@ -107,6 +109,7 @@ static u32 sCmpRbeInventOnHold;      /* actual R-stalled, rbe would invent */
 static u32 sCmpVetoApplied;          /* tier 2 only */
 static u32 sWouldDelayChanges;
 static int sWouldDelayLast = -1;
+static u32 sAdaptiveDelayApplied = 0U;
 static u32 sZeroOnsetHoldTick = ~(u32)0;
 static u32 sLastObservedTick = ~(u32)0;
 static int sLastObservedFrame = -1;
@@ -215,10 +218,29 @@ static int syNetRbeSchedOpsCommittedDelay(void *ctx)
 static int syNetRbeSchedOpsRequestDelayChange(void *ctx, int new_delay)
 {
 	(void)ctx;
-	/* Shadow: observe the controller, never move the live contract. The
-	 * controller keeps re-proposing, which is the promotion signal we
-	 * soak for (tier 3: route into the host delay-ramp protocol). */
 	sWouldDelayChanges++;
+
+	if (syNetRbeSchedTier() >= 3)
+	{
+		/*
+		 * Authority. syNetPeerRequestAdaptiveInputDelay is host-only and queues through
+		 * the DELAY_SYNC commit-lead protocol so both peers switch D on the same sim
+		 * tick -- mandatory, because consumption is wire = sim + D and an unsynchronised
+		 * change desyncs immediately. It refuses redundant/unsafe proposals itself, so
+		 * the controller is free to re-propose every tick; hysteresis lives in rbe.
+		 */
+		if (new_delay > 0)
+		{
+			if (syNetPeerRequestAdaptiveInputDelay((u32)new_delay, "rbe_sched") != FALSE)
+			{
+				sAdaptiveDelayApplied++;
+			}
+		}
+		return 0;
+	}
+
+	/* Tiers 1-2: observe the controller, never move the live contract. The controller
+	 * keeps re-proposing, which is the promotion signal we soaked for. */
 	/*
 	 * Log on a value change AND every 50th repeat. Deduping on value alone hid the
 	 * volume: soak 2026-08-29 emitted a single "3 -> 4" line for 247 proposals, because
@@ -309,6 +331,13 @@ static void syNetRbeSchedBind(void)
 	/* BattleShip live VS consumes wire = sim + D (rbe "legacy" mapping).
 	 * REAL-DELAY is the step-6 milestone, not a shadow decision. */
 	rbe_sched_set_real_delay(0);
+	/*
+	 * The rbe auto-D controller normally refuses zero-delay mode, where D is only a wire
+	 * label offset. Under BattleShip's wire = sim + D, D still buys the cushion -- just
+	 * spent a tick earlier -- so the arrival-driven controller is meaningful here. Opt in
+	 * at tier 3 only, so tiers 1-2 stay bit-identical to the soaked shadow baseline.
+	 */
+	br.auto_delay_in_zero_delay = (syNetRbeSchedTier() >= 3) ? 1 : 0;
 	rbe_sched_bind(&br); /* also resets rbe session state */
 
 	sBridgeDelay = (int)syNetPeerGetCommittedInputDelay();
@@ -328,6 +357,7 @@ static void syNetRbeSchedBind(void)
 	sCmpVetoApplied = 0U;
 	sWouldDelayChanges = 0U;
 	sWouldDelayLast = -1;
+	sAdaptiveDelayApplied = 0U;
 	sZeroOnsetHoldTick = ~(u32)0;
 	sLastObservedTick = ~(u32)0;
 	sLastObservedFrame = -1;
@@ -349,12 +379,12 @@ static void syNetRbeSchedEmitSummary(const char *tag)
 
 	port_log("SSB64 NetSchedRbe: %s attempts=%u agree(hit=%u invent=%u stall=%u) "
 	         "rbe_wait_on_predict=%u rbe_stricter_on_confirmed=%u rbe_invent_on_hold=%u "
-	         "veto=%u would_delay=%u skipped(host_hold=%u zero_onset=%u)\n",
+	         "veto=%u would_delay=%u adaptive_d_applied=%u skipped(host_hold=%u zero_onset=%u)\n",
 	         tag, (unsigned int)sCmpAttempts, (unsigned int)sCmpAgreeHit, (unsigned int)sCmpAgreeInvent,
 	         (unsigned int)sCmpAgreeStall, (unsigned int)sCmpRbeWaitOnPredict,
 	         (unsigned int)sCmpRbeStricterConfirmed, (unsigned int)sCmpRbeInventOnHold,
 	         (unsigned int)sCmpVetoApplied, (unsigned int)sWouldDelayChanges,
-	         (unsigned int)sCmpSkippedHostHold, (unsigned int)sCmpSkippedZeroOnset);
+	         (unsigned int)sAdaptiveDelayApplied, (unsigned int)sCmpSkippedHostHold, (unsigned int)sCmpSkippedZeroOnset);
 	for (i = 0; i < SYNETSCHED_RBE_REASONS; i++)
 	{
 		if (sWaitReason[i][0] != '\0')

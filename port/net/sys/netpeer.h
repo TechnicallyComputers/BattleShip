@@ -228,6 +228,12 @@ extern u32 syNetPeerGetPhaseLockPredictionWindowTicksFromEnv(void);
 extern u32 syNetPeerGetInputDelayCeil(void);
 extern sb32 syNetPeerSessionParamsNegotiationSatisfied(void);
 extern void syNetPeerApplyAutoNegotiatedDelayContract(u32 delay, u32 delay_ceil, const char *tag);
+/*
+ * Host-only: queue a mid-match committed-D change through the DELAY_SYNC commit-lead
+ * protocol so both peers switch on the same sim tick. Returns TRUE if queued. Never set
+ * D directly while a match runs -- wire = sim + D, so an unsynchronised change desyncs.
+ */
+extern sb32 syNetPeerRequestAdaptiveInputDelay(u32 target, const char *tag);
 /* Training lab / bisect: set floor=0 and committed D without online min-1 bump. */
 extern void syNetPeerCommitLabInputDelay(u32 delay, const char *tag);
 extern void syNetPeerApplyAutoNegotiatedSkewLeadMax(u32 lead_max_ticks);
