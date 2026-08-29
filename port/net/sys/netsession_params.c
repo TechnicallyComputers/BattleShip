@@ -19,7 +19,7 @@ extern void port_log(const char *fmt, ...);
 #define SYNETSESSION_PARAMS_PREDICTION_MARGIN_TICKS 2U
 #define SYNETSESSION_PARAMS_PREDICTION_RUNWAY_MIN 4U
 #define SYNETSESSION_PARAMS_ROLLBACK_D_MIN 2U
-#define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 10U
+#define SYNETSESSION_PARAMS_ROLLBACK_D_MAX 12U
 #define SYNETSESSION_PARAMS_PREDICTION_MAX 7U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MIN 48U
 #define SYNETSESSION_PARAMS_SNAPSHOT_FRAMES_MAX 128U
@@ -153,29 +153,56 @@ sb32 syNetSessionParamsAdaptiveDelayEnvEnabled(void)
  * Feel cost is paid in D; prediction/resim covers the rest via phase_lock.
  * Prior table was 2/3/5/7/9/10 — retuned after rollback/resim hardening.
  */
+/*
+ * Committed wire delay D from measured RTT, in 40 ms bands.
+ *
+ * The previous table (2 below 100 ms, 3 to 150, 5 to 200, 7 to 280, else 8) under-
+ * provisioned D badly at the low end, which is where nearly every match sits. Soak
+ * 2026-08-29 negotiated D=2 from rtt_ms=23 and then spent ~40% of the match at
+ * predict_depth 5-6 on the peer that ran ahead: 21 resims, 18 R-stalls and a 7.8%
+ * push-frame deficit versus 3.5% on the peer that never speculated. 85-91% of that
+ * deficit was resim replay, load-fail holds and admission stalls -- all of it downstream
+ * of D being too small to cover the link.
+ *
+ * D is a real cushion, not a cost: raising it trades a few frames of input delay for
+ * removing the speculation that causes rollback churn, hitching, and the mispredict
+ * storms that corrupt mid-grab state.
+ */
 static u32 syNetSessionParamsDelayFromRttMs(u32 rtt_ms)
 {
-	if (rtt_ms < 60U)
-	{
-		return 2U;
-	}
-	if (rtt_ms < 100U)
-	{
-		return 2U;
-	}
-	if (rtt_ms < 150U)
+	if (rtt_ms <= 40U)
 	{
 		return 3U;
 	}
-	if (rtt_ms < 200U)
+	if (rtt_ms <= 80U)
 	{
 		return 5U;
 	}
-	if (rtt_ms < 280U)
+	if (rtt_ms <= 120U)
+	{
+		return 6U;
+	}
+	if (rtt_ms <= 160U)
 	{
 		return 7U;
 	}
-	return 8U;
+	if (rtt_ms <= 200U)
+	{
+		return 8U;
+	}
+	if (rtt_ms <= 240U)
+	{
+		return 9U;
+	}
+	if (rtt_ms <= 280U)
+	{
+		return 10U;
+	}
+	if (rtt_ms <= 320U)
+	{
+		return 11U;
+	}
+	return 12U;
 }
 
 static u32 syNetSessionParamsComputeNegotiatedDelayCeil(u32 d_ticks, u32 headroom_field)
