@@ -31,6 +31,10 @@ struct SYNetPeerSharedCommitStep;
 /* 0 off / 1 shadow / 2 conservative veto (env SSB64_NETPLAY_RBE_SCHED). */
 extern int syNetRbeSchedTier(void);
 
+/* TRUE when tier 3 is on AND the consumption mapping makes D a latency budget
+ * (REAL-DELAY). Under ZERO-DELAY the adaptive path is plumbed but inert. */
+extern sb32 syNetRbeSchedAdaptiveDelayActive(void);
+
 /* FuncRead wire admission: observe (and at tier >= 2 possibly veto) the
  * authoritative verdict. Called once per VS pass right after
  * syNetPeerEvaluateSharedCommitStep; dedupes internally. */

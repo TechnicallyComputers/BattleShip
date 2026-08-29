@@ -73,7 +73,7 @@ int syNetRbeSchedTier(void)
 	if (sTierCache > 0)
 	{
 		port_log("SSB64 NetSchedRbe: enabled tier=%d (%s)\n", sTierCache,
-		         (sTierCache >= 3)   ? "shadow + predict-veto + adaptive D (authority)"
+		         (sTierCache >= 3)   ? "shadow + predict-veto + adaptive D (inert until REAL-DELAY)"
 		         : (sTierCache >= 2) ? "shadow + conservative predict-veto"
 		                             : "shadow only");
 	}
@@ -270,6 +270,18 @@ static int syNetRbeSchedOpsRequestDelayChange(void *ctx, int new_delay)
 	return 0;
 }
 
+/*
+ * TRUE only when a delay proposal could actually be honoured. Tier 3 routes rbe's
+ * proposals into the live contract, but rbe's arrival-driven controller refuses to run
+ * under ZERO-DELAY consumption -- correctly, as the 2026-08-29 soak measured: raising D
+ * when wire = sim + D moves demand and supply together, buys cushion 0.00 at every value,
+ * and only adds input lag. So the path is plumbed and inert until the REAL-DELAY flip.
+ */
+sb32 syNetRbeSchedAdaptiveDelayActive(void)
+{
+	return ((syNetRbeSchedTier() >= 3) && (rbe_sched_real_delay_enabled() != 0)) ? TRUE : FALSE;
+}
+
 static uint32_t syNetRbeSchedOpsArrivalAgeMs(void *ctx, int slot, uint32_t wire)
 {
 	(void)ctx;
@@ -345,13 +357,6 @@ static void syNetRbeSchedBind(void)
 	/* BattleShip live VS consumes wire = sim + D (rbe "legacy" mapping).
 	 * REAL-DELAY is the step-6 milestone, not a shadow decision. */
 	rbe_sched_set_real_delay(0);
-	/*
-	 * The rbe auto-D controller normally refuses zero-delay mode, where D is only a wire
-	 * label offset. Under BattleShip's wire = sim + D, D still buys the cushion -- just
-	 * spent a tick earlier -- so the arrival-driven controller is meaningful here. Opt in
-	 * at tier 3 only, so tiers 1-2 stay bit-identical to the soaked shadow baseline.
-	 */
-	br.auto_delay_in_zero_delay = (syNetRbeSchedTier() >= 3) ? 1 : 0;
 	rbe_sched_bind(&br); /* also resets rbe session state */
 
 	sBridgeDelay = (int)syNetPeerGetCommittedInputDelay();

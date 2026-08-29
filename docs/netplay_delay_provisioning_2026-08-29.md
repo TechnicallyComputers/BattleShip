@@ -249,3 +249,82 @@ tier 3 — no D change was ever applied, so the contract never moved. The fatal 
 printed by libbase's `LOG(FATAL)` **to logcat**, which this capture does not include, so
 the next Android run needs a concurrent `adb logcat` to identify it. The debug APK runs
 with CheckJNI enabled, which makes a JNI check abort the leading candidate.
+
+---
+
+## Result: adaptive D cannot work under ZERO-DELAY. Reverted.
+
+The next soak reached real gameplay (1500 ticks) and the controller ran. It worked
+mechanically and was wrong in substance.
+
+### What it did
+
+D ratcheted monotonically to the ceiling, +1 every ~192 ticks (~3 s), and never once
+proposed a decrease:
+
+```
+adaptive_delay queued D=4->5 eff_tick=192 sim=190 floor=4 ceil=8
+adaptive_delay queued D=5->6 eff_tick=368 sim=366
+adaptive_delay queued D=6->7 eff_tick=560 sim=558
+adaptive_delay queued D=7->8 eff_tick=752 sim=750
+adaptive_delay refused D=8 -> 9 ceil=8
+```
+
+The guest applied each change at the matching tick (`delay_sync_diag` D=5 at sim_read=193,
+D=6 at 372, D=7 at 560, D=8 at 752), with no desync. **The commit-lead mechanism is
+correct and is now validated infrastructure** — that was the genuinely hard part, and it
+survives this revert.
+
+### Why it is wrong
+
+Raising D under `wire = sim + D` buys nothing, because *both* peers label their inputs
+`sim + D`. Increasing D raises the tick you demand and the tick the peer produces by the
+same amount. Measured across the D epochs of one run:
+
+| D | avg `remote_lead` | avg `cushion` | ticks at `predict_depth>0` |
+|---|---|---|---|
+| 4 | 3.67 | **0.00** | **0.5%** |
+| 5 | 5.60 | **0.00** | 5.1% |
+| 6 | 5.20 | **0.00** | 5.2% |
+| 7 | 6.20 | **0.00** | 1.6% |
+| 8 | 7.65 | **0.00** | 2.3% |
+
+`cushion` is 0.00 at every value. `remote_lead` rises only because it tracks D. Prediction
+pressure was *lowest at the starting D=4* and worse at every raised value. Invents ran at a
+flat structural rate throughout (8–11 per 3 s at D=4, 2–7 at D=8) rather than being
+episodic pressure D could relieve. The single delivered effect of the climb was **+4 frames
+(~67 ms) of input latency** — the "very slow" the player reported.
+
+The ratchet is not a tuning error either. Under this mapping the raise bar
+(`miss>20‰ && late_n>0`) is structurally satisfied and the lower bar (`miss<1‰`) is
+structurally unreachable, so the controller can only climb.
+
+### The earlier justification was wrong
+
+The opt-in was argued on: *"under wire = sim + D, D still buys the cushion, just spent a
+tick earlier."* That is false. rbe's original guard — `D is not a latency budget in legacy
+zero-delay mode` — was load-bearing, and the measurement above is now recorded directly
+above it in `rbe_sched.c` so it is not removed again on the same plausible-sounding
+argument.
+
+### What changed
+
+- `retcomm-rbengine` `c1565c8` reverts the opt-in and restores the unconditional guard.
+- The bridge no longer requests it. Tier 3 now reads
+  `shadow + predict-veto + adaptive D (inert until REAL-DELAY)`.
+- `syNetRbeSchedAdaptiveDelayActive()` is TRUE only when tier >= 3 **and** the mapping is
+  REAL-DELAY. The tier-3 ceiling headroom is gated on it, so it stops being an unused
+  promise.
+- `syNetPeerRequestAdaptiveInputDelay()` **stays**. It is correct, proven in the field, and
+  is exactly the mechanism the REAL-DELAY milestone needs.
+
+### The actual path to adaptive D
+
+The REAL-DELAY flip (step 6). There, tick T consumes wire T, D is a genuine latency budget,
+and rbe's arrival statistics measure what they claim to. Until then the static RTT band
+table is the right provisioning, and this run supports it: at the table's D=4 the session
+sat at `predict_depth=0` on 99.5% of ticks with zero freezes and zero rollbacks applied.
+
+One gap to close first: rbe logs nothing about its per-eval decision inputs
+(`miss_per_mille`, `late_n`, `lead_avg`), which is why this took a full soak to diagnose.
+Add that telemetry before the flip, not after.

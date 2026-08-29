@@ -235,8 +235,12 @@ static u32 syNetSessionParamsComputeNegotiatedDelayCeil(u32 d_ticks, u32 headroo
 	 * would_delay=1, adaptive_d_applied=0, an authority that could not act. The headroom
 	 * is granted by the tier itself rather than by SSB64_NETPLAY_ADAPTIVE_DELAY, because
 	 * requiring a second, separate env var to make the first one do anything is a trap.
+	 *
+	 * Gated on the adaptive path being able to act at all: under ZERO-DELAY consumption
+	 * rbe declines to propose, so headroom would only be an unused promise. See
+	 * docs/netplay_delay_provisioning_2026-08-29.md.
 	 */
-	if (syNetRbeSchedTier() >= 3)
+	if (syNetRbeSchedAdaptiveDelayActive() != FALSE)
 	{
 		if (headroom < SYNETSESSION_PARAMS_RBE_ADAPTIVE_HEADROOM)
 		{
