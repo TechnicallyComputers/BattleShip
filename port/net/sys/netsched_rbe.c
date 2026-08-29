@@ -73,8 +73,8 @@ int syNetRbeSchedTier(void)
 	if (sTierCache > 0)
 	{
 		port_log("SSB64 NetSchedRbe: enabled tier=%d (%s)\n", sTierCache,
-		         (sTierCache >= 3)   ? "shadow + predict-veto + adaptive D (inert until REAL-DELAY)"
-		         : (sTierCache >= 2) ? "shadow + conservative predict-veto"
+		         (sTierCache >= 3)   ? "shadow; predict-veto + adaptive D inert until REAL-DELAY"
+		         : (sTierCache >= 2) ? "shadow; predict-veto inert until REAL-DELAY"
 		                             : "shadow only");
 	}
 	return sTierCache;
@@ -661,10 +661,27 @@ void syNetRbeSchedShadowObserve(u32 sim_tick, struct SYNetPeerSharedCommitStep *
 		}
 	}
 
-	/* Tier 2: conservative veto — convert this prediction advance into an
-	 * R-hold. Strictly more conservative than the authoritative verdict;
-	 * the strict-R stall watchdog / abort path applies unchanged. */
-	if ((tier >= 2) && (actual_predicted != 0) && ((rbe_pre_stall != 0) || (rbe_miss_stall != 0)))
+	/*
+	 * Tier 2: conservative veto — convert this prediction advance into an R-hold.
+	 *
+	 * REAL-DELAY only, and that gate is the whole point. rbe's stall verdicts assume a
+	 * consumption mapping where an arrival cushion exists, so a stall means "the row is
+	 * genuinely late, waiting is cheap". Under ZERO-DELAY (wire = sim + D) tick T demands
+	 * the newest row the peer has produced, so gap=1 is the STEADY STATE rather than an
+	 * anomaly, rbe's gap1 micro-grace fires on almost every tick, and vetoing each one
+	 * drops a live sim advance.
+	 *
+	 * Measured, soak 2026-08-29: 645 vetoes against 1552 admits (42%), of which
+	 * gap1_grace was 592. Sim ticks 926 against 1579 pushes -- the 653 lost advances are
+	 * the vetoes almost exactly -- with tick_ema=33 ms, i.e. the sim ran at 30 Hz under a
+	 * ~120 Hz render loop. That is the "very slow" the player reported, and it is a
+	 * scheduler policy mismatch, not a frame-time problem.
+	 *
+	 * Same root cause as the auto-D revert: rbe's policy is calibrated for REAL-DELAY.
+	 * See docs/netplay_delay_provisioning_2026-08-29.md.
+	 */
+	if ((tier >= 2) && (sRbeRealDelayForced != 0) && (actual_predicted != 0) &&
+	    ((rbe_pre_stall != 0) || (rbe_miss_stall != 0)))
 	{
 		shared->advance = FALSE;
 		shared->uses_prediction = FALSE;
