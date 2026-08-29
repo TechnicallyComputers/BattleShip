@@ -47,6 +47,17 @@ void syNetplayGuardGrabDiagLogSetStatus(struct GObj *fighter_gobj, s32 from_stat
  * is_catchstatus is set at all, and whether the collision search found a target. Only
  * emitted while is_catchstatus is TRUE, so it is bounded to grab windows.
  */
+/*
+ * Grab-connect forensics for ftMainSearchFighterCatch. LogCatchGates reports every
+ * candidate-rejection gate in one line (read only, no control-flow coupling);
+ * LogCatchCollide reports the geometric overlap test that actually accepts. Together they
+ * say which of the seven gates differs between the live pass and the resim of the same
+ * tick. See docs/bugs/netplay_grab_correction_treadmill_2026-08-26.md.
+ */
+void syNetplayGuardGrabDiagLogCatchGates(struct GObj *this_gobj, struct GObj *other_gobj);
+void syNetplayGuardGrabDiagLogCatchCollide(struct GObj *this_gobj, struct GObj *other_gobj, s32 coll_i, s32 dmg_j,
+                                           sb32 is_grabbable, s32 dmg_hitstatus, sb32 collide);
+
 void syNetplayGuardGrabDiagLogSearchCatch(struct GObj *fighter_gobj, sb32 is_catchstatus,
                                           struct GObj *search_gobj);
 

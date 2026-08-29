@@ -294,6 +294,106 @@ static const char *syNetplayGuardGrabDiagCallerName(const void *caller, unsigned
 	return "?";
 }
 
+static u32 syNetplayGuardGrabDiagF32Bits(f32 v)
+{
+	u32 bits;
+
+	memcpy(&bits, &v, sizeof(bits));
+	return bits;
+}
+
+void syNetplayGuardGrabDiagLogCatchGates(GObj *this_gobj, GObj *other_gobj)
+{
+	FTStruct *fp;
+	FTStruct *other_fp;
+	s32 i;
+	s32 states[4];
+	s32 air_ok[4];
+
+	if (syNetplayGuardGrabDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((this_gobj == NULL) || (other_gobj == NULL) || (this_gobj == other_gobj))
+	{
+		return;
+	}
+	fp = ftGetStruct(this_gobj);
+	other_fp = ftGetStruct(other_gobj);
+	if ((fp == NULL) || (other_fp == NULL) || (fp->pkind != nFTPlayerKindMan))
+	{
+		return;
+	}
+	/*
+	 * Read-only mirror of every gate ftMainSearchFighterCatch applies before it reaches the
+	 * overlap test, so the decomp keeps its original control flow. attack_state == Off on
+	 * all four colls is the one that silently kills the search with no other symptom.
+	 */
+	for (i = 0; i < 4; i++)
+	{
+		states[i] = (s32)fp->attack_colls[i].attack_state;
+		air_ok[i] = (other_fp->ga == nMPKineticsAir) ? (s32)(fp->attack_colls[i].is_hit_air != FALSE)
+		                                             : (s32)(fp->attack_colls[i].is_hit_ground != FALSE);
+	}
+	port_log("SSB64 GuardGrabDiag: event=catch_gates tick=%u player=%d other=%d ghost=%d boss=%d "
+	         "immune=%d hitstat=%d/%d/%d ga=%d atk_state=%d,%d,%d,%d air_ok=%d,%d,%d,%d resim=%d\n",
+	         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)other_fp->player,
+	         (int)(other_fp->is_ghost != FALSE), (int)(other_fp->fkind == nFTKindBoss),
+	         (int)((other_fp->capture_immune_mask & fp->catch_mask) != 0),
+	         (int)other_fp->special_hitstatus, (int)other_fp->star_hitstatus, (int)other_fp->hitstatus,
+	         (int)other_fp->ga, states[0], states[1], states[2], states[3], air_ok[0], air_ok[1], air_ok[2],
+	         air_ok[3], (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
+void syNetplayGuardGrabDiagLogCatchCollide(GObj *this_gobj, GObj *other_gobj, s32 coll_i, s32 dmg_j,
+                                           sb32 is_grabbable, s32 dmg_hitstatus, sb32 collide)
+{
+	FTStruct *fp;
+	FTStruct *other_fp;
+	FTAttackColl *ac;
+	Vec3f *other_pos;
+
+	if (syNetplayGuardGrabDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	if ((this_gobj == NULL) || (other_gobj == NULL))
+	{
+		return;
+	}
+	fp = ftGetStruct(this_gobj);
+	other_fp = ftGetStruct(other_gobj);
+	if ((fp == NULL) || (other_fp == NULL) || (fp->pkind != nFTPlayerKindMan))
+	{
+		return;
+	}
+	if ((coll_i < 0) || (coll_i >= 4))
+	{
+		return;
+	}
+	ac = &fp->attack_colls[coll_i];
+	/* p_translate points at the target's TopN translation -- its world position, which is
+	 * what the overlap test is ultimately measured against. */
+	other_pos = other_fp->coll_data.p_translate;
+	/*
+	 * The accept. If the gates all pass and this still reports collide=0 during resim while
+	 * the live pass reported 1 at the same tick, the divergence is geometric -- hitbox or
+	 * hurtbox position restored wrong -- not a flag or a status. Raw f32 bits so a
+	 * one-ulp restore error is visible rather than rounded away by %f.
+	 */
+	port_log("SSB64 GuardGrabDiag: event=catch_collide tick=%u player=%d other=%d i=%d j=%d "
+	         "grabbable=%d dmg_hitstat=%d collide=%d atk_pos=0x%08X,0x%08X,0x%08X size=0x%08X "
+	         "other_pos=0x%08X,0x%08X,0x%08X resim=%d\n",
+	         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)other_fp->player, (int)coll_i,
+	         (int)dmg_j, (int)(is_grabbable != FALSE), (int)dmg_hitstatus, (int)(collide != FALSE),
+	         syNetplayGuardGrabDiagF32Bits(ac->pos_curr.x), syNetplayGuardGrabDiagF32Bits(ac->pos_curr.y),
+	         syNetplayGuardGrabDiagF32Bits(ac->pos_curr.z), syNetplayGuardGrabDiagF32Bits(ac->size),
+	         (other_pos != NULL) ? syNetplayGuardGrabDiagF32Bits(other_pos->x) : 0U,
+	         (other_pos != NULL) ? syNetplayGuardGrabDiagF32Bits(other_pos->y) : 0U,
+	         (other_pos != NULL) ? syNetplayGuardGrabDiagF32Bits(other_pos->z) : 0U,
+	         (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
 void syNetplayGuardGrabDiagLogSearchCatch(GObj *fighter_gobj, sb32 is_catchstatus, GObj *search_gobj)
 {
 	FTStruct *fp;
@@ -467,6 +567,24 @@ void syNetplayGuardGrabDiagLogSearchCatch(GObj *fighter_gobj, sb32 is_catchstatu
 	(void)fighter_gobj;
 	(void)is_catchstatus;
 	(void)search_gobj;
+}
+
+void syNetplayGuardGrabDiagLogCatchGates(GObj *this_gobj, GObj *other_gobj)
+{
+	(void)this_gobj;
+	(void)other_gobj;
+}
+
+void syNetplayGuardGrabDiagLogCatchCollide(GObj *this_gobj, GObj *other_gobj, s32 coll_i, s32 dmg_j,
+                                           sb32 is_grabbable, s32 dmg_hitstatus, sb32 collide)
+{
+	(void)this_gobj;
+	(void)other_gobj;
+	(void)coll_i;
+	(void)dmg_j;
+	(void)is_grabbable;
+	(void)dmg_hitstatus;
+	(void)collide;
 }
 
 void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32 to_status,
