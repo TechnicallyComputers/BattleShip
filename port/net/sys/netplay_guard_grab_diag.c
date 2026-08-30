@@ -25,6 +25,7 @@
 
 extern void port_log(const char *fmt, ...);
 extern char *getenv(const char *name);
+extern int atoi(const char *s);
 
 static sb32 s_syNetplayGuardGrabDiagEnvCache = -999;
 static u32 s_syNetplayGuardGrabDiagLogCount;
@@ -454,17 +455,71 @@ void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32
 	{
 		return;
 	}
-	/* Only transitions touching the grab/capture band, either side. */
-	if (((from_status < 166) || (from_status > 172)) && ((to_status < 166) || (to_status > 172)))
 	{
-		return;
+		/*
+		 * Band filter. Default: the grab/capture band (166-172), the original client of
+		 * this trace. SSB64_NETPLAY_SETSTATUS_TRACE widens it: "min-max" additionally
+		 * traces transitions touching that inclusive band; "all" traces every transition.
+		 * Added for the 2026-08-31 fork: p1's Kirby up-B (12 -> 256) executed at tick 747
+		 * on the input owner but only at 751 on the predicting peer, whose resim loaded
+		 * exactly at 746/747 -- the grab bug's class, on a different transition. The
+		 * trace answers whether the resim pass replays the transition and names the
+		 * caller, exactly as it did for the grab.
+		 */
+		static s32 s_band_min = -2;
+		static s32 s_band_max = -2;
+		sb32 in_grab_band;
+		sb32 in_env_band;
+
+		if (s_band_min == -2)
+		{
+			const char *e = getenv("SSB64_NETPLAY_SETSTATUS_TRACE");
+
+			s_band_min = -1;
+			s_band_max = -1;
+			if ((e != NULL) && (e[0] != '\0'))
+			{
+				if ((e[0] == 'a') || (e[0] == 'A'))
+				{
+					s_band_min = 0;
+					s_band_max = 0x7FFFFFFF;
+				}
+				else
+				{
+					s_band_min = atoi(e);
+					{
+						const char *dash = e;
+
+						while ((*dash != '\0') && (*dash != '-'))
+						{
+							dash++;
+						}
+						s_band_max = (*dash == '-') ? atoi(dash + 1) : s_band_min;
+					}
+				}
+			}
+		}
+		in_grab_band = (((from_status >= 166) && (from_status <= 172)) ||
+		                ((to_status >= 166) && (to_status <= 172)))
+		                   ? TRUE
+		                   : FALSE;
+		in_env_band = ((s_band_min >= 0) &&
+		               (((from_status >= s_band_min) && (from_status <= s_band_max)) ||
+		                ((to_status >= s_band_min) && (to_status <= s_band_max))))
+		                  ? TRUE
+		                  : FALSE;
+		if ((in_grab_band == FALSE) && (in_env_band == FALSE))
+		{
+			return;
+		}
+		/* Not through ShouldLog(): its dedup would hide the repeated replay passes. */
+		port_log(
+		    "SSB64 GuardGrabDiag: event=%s tick=%u player=%d from=%d to=%d caller=%s+0x%lx resim=%d\n",
+		    (in_grab_band != FALSE) ? "grab_setstatus" : "setstatus",
+		    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)from_status, (int)to_status,
+		    syNetplayGuardGrabDiagCallerName(caller, &off), off,
+		    (int)(syNetRollbackIsResimulating() != FALSE));
 	}
-	/* Not through ShouldLog(): its dedup would hide the repeated replay passes. */
-	port_log(
-	    "SSB64 GuardGrabDiag: event=grab_setstatus tick=%u player=%d from=%d to=%d caller=%s+0x%lx resim=%d\n",
-	    (unsigned int)syNetInputGetTick(), (int)fp->player, (int)from_status, (int)to_status,
-	    syNetplayGuardGrabDiagCallerName(caller, &off), off,
-	    (int)(syNetRollbackIsResimulating() != FALSE));
 }
 
 void syNetplayGuardGrabDiagLogCatchPullAnimEnd(GObj *fighter_gobj, sb32 anim_end, f32 anim_frame,
