@@ -2282,9 +2282,23 @@ static void mmRunPoll(const MmJob *job)
 		}
 #endif
 #ifdef PORT
-		if (MM_VERBOSE(job->verbose))
 		{
-			port_log("SSB64 Matchmaking: still queued\n");
+			/*
+			 * Unconditional but rate-limited. Soak 2026-08-30: the guest waited ~25 s in
+			 * an unpaired queue (a forfeit-widened skill gap server-side) and its log was
+			 * SILENT after "queued" -- indistinguishable from a dead matchmaker, reported
+			 * as "just wasn't discovering each other". A once-per-~15-polls heartbeat with
+			 * the running count makes a long-but-alive queue wait self-evident.
+			 */
+			static u32 sStillQueuedPolls = 0U;
+
+			sStillQueuedPolls++;
+			if (MM_VERBOSE(job->verbose) || ((sStillQueuedPolls % 15U) == 1U))
+			{
+				port_log("SSB64 Matchmaking: still queued (poll %u, ticket=%.8s)\n",
+				         (unsigned int)sStillQueuedPolls,
+				         (job->ticket_id[0] != '\0') ? job->ticket_id : "?");
+			}
 		}
 #endif
 	}
