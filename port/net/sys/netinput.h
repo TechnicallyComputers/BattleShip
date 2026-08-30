@@ -170,6 +170,10 @@ extern void syNetInputSetSessionBundleRedundancyOverride(s32 redundancy);
 extern void syNetInputClearSessionTransportOverrides(void);
 #endif
 extern u32 syNetInputGetTick(void); /* Monotonic sim index: advanced once per completed `scVSBattleFuncUpdate` (atomic with sim). */
+/* Live-wedge escape accounting (netrollback.c): last tick the commit gate refused via
+ * ShouldBlockLiveBattleAdvance, ~0 = never. Observation only -- no probing. */
+extern void syNetInputNoteLiveAdvanceBlocked(u32 tick);
+extern u32 syNetInputGetLastLiveAdvanceBlockedTick(void);
 extern void syNetInputSetTick(u32 tick);   /* Rollback resim rewinds this before synthetic `FuncRead` passes. */
 extern sb32 syNetInputRollbackSimAdvanceAllowed(u32 next_sim_tick); /* Pure rollback cap: next_tick <= remote_sim + D + phase_lock. */
 extern void syNetInputAdvanceAuthoritativeSimTick(void); /* Call once after each full VS battle sim step (not from FuncRead). */

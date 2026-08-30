@@ -3,6 +3,7 @@
 
 #include <sys/netrollback_episode.h>
 #include <sys/netinput.h>
+#include <sys/netreconnect.h>
 #include <sys/netinput_timeline.h>
 #include <sys/netpeer.h>
 #include <sys/netreplay.h>
@@ -90,6 +91,20 @@ static u32 sSYNetRollbackBattleSimHoldLoadTick;
 static u32 sSYNetRollbackBattleSimHoldFrames;
 static sb32 sSYNetRollbackBattleSimHoldTeardownSent;
 #define SYNETROLLBACK_BATTLE_SIM_HOLD_TEARDOWN_FRAMES 120U /* ~2 s @ 60 Hz */
+/*
+ * Live-wedge escape: the cap branch of ShouldBlockLiveBattleAdvance had no watchdog at
+ * all — soak 2026-08-30 wedged both peers at tick 3851 (FC validation never passed, the
+ * live cap never rose) with inputs flowing and frames pumping for ~15 s until manual
+ * shutdown, BATTLE_SIM_HOLD never armed. Track the LIVE FRONTIER (highest tick reached
+ * outside resim — resim episodes rewind syNetInputGetTick, so a naive tick-unchanged
+ * counter resets on every failed recovery episode and never fires) plus proof the commit
+ * gate actually refused a tick at/past it, and after the threshold escalate into the
+ * proven BATTLE_SIM_HOLD escape (emergency restore → watchdog → VS teardown → clean
+ * exit). See docs/bugs/netplay_live_cap_wedge_escape_2026-08-30.md.
+ */
+static u32 sSYNetRollbackLiveWedgeFrontierTick;
+static u32 sSYNetRollbackLiveWedgeFrames;
+#define SYNETROLLBACK_LIVE_WEDGE_ESCAPE_FRAMES_DEFAULT 600U /* ~10 s @ 60 Hz */
 static sb32 sSYNetRollbackResimAnchorProbeLastMismatch;
 static sb32 sSYNetRollbackResimAnchorProbeActive;
 static u32 sMismatchAsymLogsRemaining;
@@ -1504,6 +1519,8 @@ void syNetRollbackInit(void)
 	sSYNetRollbackLoadFailBattleExitPending = FALSE;
 	sSYNetRollbackLoadFailSceneRetargeted = FALSE;
 	sSYNetRollbackBattleSimHoldLoadTick = 0U;
+	sSYNetRollbackLiveWedgeFrontierTick = 0U;
+	sSYNetRollbackLiveWedgeFrames = 0U;
 	sSYNetRollbackBattleSimHoldFrames = 0U;
 	sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
 	sMismatchAsymLogsRemaining = 16;
@@ -1834,6 +1851,8 @@ void syNetRollbackStartVSSession(void)
 	sSYNetRollbackLoadFailBattleExitPending = FALSE;
 	sSYNetRollbackLoadFailSceneRetargeted = FALSE;
 	sSYNetRollbackBattleSimHoldLoadTick = 0U;
+	sSYNetRollbackLiveWedgeFrontierTick = 0U;
+	sSYNetRollbackLiveWedgeFrames = 0U;
 	sSYNetRollbackBattleSimHoldFrames = 0U;
 	sSYNetRollbackBattleSimHoldTeardownSent = FALSE;
 	sMismatchAsymLogsRemaining = 16;
@@ -2803,6 +2822,87 @@ void syNetRollbackOnPeerLoadFailAbort(u32 load_tick)
 	    load_tick);
 }
 
+static u32 syNetRollbackLiveWedgeEscapeFrames(void)
+{
+	static s32 s_cached = -1;
+
+	if (s_cached < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_LIVE_WEDGE_ESCAPE_FRAMES");
+
+		s_cached = ((e != NULL) && (e[0] != '\0')) ? atoi(e)
+		                                            : (s32)SYNETROLLBACK_LIVE_WEDGE_ESCAPE_FRAMES_DEFAULT;
+		if (s_cached < 0)
+		{
+			s_cached = 0;
+		}
+	}
+	return (u32)s_cached;
+}
+
+static void syNetRollbackPumpLiveWedgeEscape(void)
+{
+	u32 threshold;
+	u32 blocked_tick;
+	u32 tick;
+
+	threshold = syNetRollbackLiveWedgeEscapeFrames();
+	if (threshold == 0U)
+	{
+		return; /* env-disabled */
+	}
+	if ((syNetPeerIsVSSessionActive() == FALSE) || (syNetRollbackIsActive() == FALSE) ||
+	    (syNetReconnectHoldActive() != FALSE))
+	{
+		sSYNetRollbackLiveWedgeFrames = 0U;
+		return;
+	}
+	/*
+	 * Sample the frontier only outside resim: episode replays rewind the authoritative
+	 * tick, and a wedge that churns failed recovery episodes must keep counting through
+	 * them (that is exactly what the 2026-08-30 wedge looked like).
+	 */
+	if (syNetRollbackIsResimulating() == FALSE)
+	{
+		tick = syNetInputGetTick();
+		if (tick > sSYNetRollbackLiveWedgeFrontierTick)
+		{
+			sSYNetRollbackLiveWedgeFrontierTick = tick;
+			sSYNetRollbackLiveWedgeFrames = 0U;
+			return;
+		}
+	}
+	/*
+	 * Only count frames with evidence: the commit gate must have refused a tick at or
+	 * past the frontier. A frozen tick with no refusal (menus, results, pauses — the
+	 * gate is not even consulted there) is not a wedge.
+	 */
+	blocked_tick = syNetInputGetLastLiveAdvanceBlockedTick();
+	if ((blocked_tick == ~(u32)0) || (blocked_tick < sSYNetRollbackLiveWedgeFrontierTick))
+	{
+		sSYNetRollbackLiveWedgeFrames = 0U;
+		return;
+	}
+	sSYNetRollbackLiveWedgeFrames++;
+	if (sSYNetRollbackLiveWedgeFrames < threshold)
+	{
+		return;
+	}
+	{
+		u32 cap = ~(u32)0;
+		u32 cap_source = 0U;
+
+		(void)syNetRollbackGetLiveSimCap(&cap, &cap_source);
+		port_log(
+		    "SSB64 NetRollback: LIVE_WEDGE_ESCAPE frontier=%u blocked_tick=%u frames=%u cap=%u cap_source=%u — "
+		    "no live advance for ~%us with the commit gate refusing; escalating into BATTLE_SIM_HOLD escape\n",
+		    sSYNetRollbackLiveWedgeFrontierTick, blocked_tick, (unsigned int)sSYNetRollbackLiveWedgeFrames,
+		    cap, cap_source, (unsigned int)(sSYNetRollbackLiveWedgeFrames / 60U));
+	}
+	sSYNetRollbackLiveWedgeFrames = 0U;
+	syNetRollbackArmBattleSimHoldAfterLoadFail(sSYNetRollbackLiveWedgeFrontierTick);
+}
+
 void syNetRollbackPumpLoadFailBattleExit(void)
 {
 #if defined(SSB64_NETMENU)
@@ -2812,6 +2912,7 @@ void syNetRollbackPumpLoadFailBattleExit(void)
 	if (syNetRollbackIsBattleSimHoldActive() == FALSE)
 	{
 		sSYNetRollbackBattleSimHoldFrames = 0U;
+		syNetRollbackPumpLiveWedgeEscape();
 		return;
 	}
 	if (sSYNetRollbackLoadFailBattleExitPending == FALSE)

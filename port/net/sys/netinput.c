@@ -10982,6 +10982,19 @@ static void syNetInputMaybeIngressExtraPumpsOnStall(void)
 	}
 }
 
+/* Last tick the commit gate refused via ShouldBlockLiveBattleAdvance; ~0 = never. */
+static u32 sSYNetInputLastLiveAdvanceBlockedTick = ~(u32)0;
+
+void syNetInputNoteLiveAdvanceBlocked(u32 tick)
+{
+	sSYNetInputLastLiveAdvanceBlockedTick = tick;
+}
+
+u32 syNetInputGetLastLiveAdvanceBlockedTick(void)
+{
+	return sSYNetInputLastLiveAdvanceBlockedTick;
+}
+
 static SYNetTickCommitVerdict sSYNetTickCommitFuncReadVerdict;
 static u32 sSYNetTickCommitFuncReadVerdictTick = ~(u32)0U;
 
@@ -11013,6 +11026,10 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 	{
 		static u32 sLastHoldBlockedTickCommitLogTick = ~(u32)0;
 
+		/* Observed (never probed) by the live-wedge escape in netrollback.c: records that
+		 * the commit gate really refused this tick, so a frozen sim in a menu or results
+		 * screen -- where this gate is simply not consulted -- can never count as a wedge. */
+		syNetInputNoteLiveAdvanceBlocked(tick);
 		if (tick != sLastHoldBlockedTickCommitLogTick)
 		{
 			port_log(
