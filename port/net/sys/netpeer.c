@@ -554,6 +554,9 @@ static sb32 sSYNetPeerBootstrapIngressWarmupLoggedDone;
  * join. See SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES.
  */
 static u32 sSYNetPeerBootstrapIngressContractWaitFrames;
+/* Highest inbound frontier seen while waiting. If this never moves, the frontier does not
+ * climb pre-execution and gating on it is the wrong mechanism -- see the fallback log. */
+static u32 sSYNetPeerBootstrapIngressContractWaitHrMax;
 static sb32 sSYNetPeerBootstrapIngressContractLoggedFallback;
 static int sSYNetPeerBootstrapContractGateEnv = -999;
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -8621,6 +8624,7 @@ static void syNetPeerResetBootstrapIngressSymmetryState(void)
 	sSYNetPeerBootstrapIngressWarmupLoggedStart = FALSE;
 	sSYNetPeerBootstrapIngressWarmupLoggedDone = FALSE;
 	sSYNetPeerBootstrapIngressContractWaitFrames = 0U;
+	sSYNetPeerBootstrapIngressContractWaitHrMax = 0U;
 	sSYNetPeerBootstrapIngressContractLoggedFallback = FALSE;
 	sSYNetPeerBootstrapContractGateEnv = -999;
 #if defined(PORT) && defined(SSB64_NETMENU)
@@ -8629,11 +8633,16 @@ static void syNetPeerResetBootstrapIngressSymmetryState(void)
 }
 
 /*
- * Bound on the contract wait, in gate evaluations (~frames). Generous, because the normal
- * case resolves in a handful of frames once the peer is producing rows; it exists purely so
- * a peer that never reaches the frontier still starts instead of hanging.
+ * Bound on the contract wait, in gate evaluations (~frames).
+ *
+ * Deliberately SHORT. The frontier cannot be assumed to climb while execution is held:
+ * neither peer's sim is advancing, so new wire rows only appear from warmup sends, and
+ * soak 2026-08-30 observed highest_remote pinned at 0 across 120 held frames on the guest
+ * and hr topping out at exactly D (2) on the host. If waiting for hr >= D cannot be
+ * satisfied pre-execution, this bound is the entire cost of finding that out, so it buys
+ * half a second rather than three.
  */
-#define SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES 180U
+#define SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES 30U
 
 static sb32 syNetPeerBootstrapContractGateEnvEnabled(void)
 {
@@ -8715,6 +8724,10 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 			if ((negotiated == FALSE) || (hr_now < need))
 			{
 				sSYNetPeerBootstrapIngressContractWaitFrames++;
+				if (hr_now > sSYNetPeerBootstrapIngressContractWaitHrMax)
+				{
+					sSYNetPeerBootstrapIngressContractWaitHrMax = hr_now;
+				}
 				if (sSYNetPeerBootstrapIngressContractWaitFrames < SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES)
 				{
 					return FALSE;
@@ -8722,10 +8735,16 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 				if (sSYNetPeerBootstrapIngressContractLoggedFallback == FALSE)
 				{
 					sSYNetPeerBootstrapIngressContractLoggedFallback = TRUE;
-					port_log("SSB64 NetPeer: bootstrap_contract_gate fallback role=%s hr=%u need=%u "
-					         "negotiated=%d waited=%u (releasing under contract)\n",
+					/*
+					 * hr_max is the diagnosis. If it equals the hr at entry, the frontier
+					 * never moved while held and this gate cannot work as designed -- the
+					 * start must then be coordinated on peer readiness, not on wire rows.
+					 */
+					port_log("SSB64 NetPeer: bootstrap_contract_gate fallback role=%s hr=%u hr_max=%u "
+					         "need=%u negotiated=%d waited=%u (releasing under contract)\n",
 					         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
-					         (unsigned int)hr_now, (unsigned int)need, (int)(negotiated != FALSE),
+					         (unsigned int)hr_now, (unsigned int)sSYNetPeerBootstrapIngressContractWaitHrMax,
+					         (unsigned int)need, (int)(negotiated != FALSE),
 					         (unsigned int)sSYNetPeerBootstrapIngressContractWaitFrames);
 				}
 			}

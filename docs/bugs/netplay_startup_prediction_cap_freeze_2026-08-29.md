@@ -107,3 +107,39 @@ The startup freezes remain confined to the first ~390 ticks, which is why the pl
 reported the session as completely smooth — the window lands in the intro rather than in
 play.
 
+---
+
+## Open risk in the fix itself: can `hr` climb before execution?
+
+The gate now waits for the negotiated `D`, but there is an unproven assumption underneath
+it: that the inbound frontier can reach `D` **while execution is still held**. The evidence
+argues both ways.
+
+Against:
+
+- Held peers do not advance their sim, so no new wire rows are produced by play.
+- `execution hold role=client ... highest_remote=0` across 120 held frames.
+- The host's warmup topped out at exactly `hr=2` — with `D=2` at the time.
+
+For:
+
+- That `hr=2` matched `D=2` exactly, which suggests the warmup bundle spans `0..D` rather
+  than stopping at 2 for its own reasons. With `D=4` negotiated *before* the check (which
+  the ordering now guarantees, since `syNetPeerSessionParamsNegotiationSatisfied()` is
+  already an execution gate), the same behaviour would give `hr=4` and the gate passes.
+
+If the pessimistic reading holds, gating on wire rows is the wrong mechanism entirely and
+the start has to be coordinated on **peer readiness** instead — the `peer_ready` /
+`start_sent` / `start_recv` handshake already carried in the execution-hold line.
+
+So the bound is deliberately short (**30 frames, ~0.5 s**, down from 180): if the wait
+cannot be satisfied, that half second is the whole cost of learning it. The fallback line
+now reports `hr_max=`, which is the actual diagnosis:
+
+- `hr_max` reaching `need` → the gate works; freezes should drop.
+- `hr_max` stuck at its entry value → the frontier never moves while held; abandon this
+  approach and coordinate on peer readiness.
+
+Either way the next soak answers it definitively, and neither outcome costs more than half
+a second of startup.
+
