@@ -20802,9 +20802,18 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 		/*
 		 * Do not clear is_effect_attach while another cutter shell still lives — sibling ejects
 		 * mid-SpecialHi/Landing must leave the flag set so Landing→Wait StopEffect can run.
+		 *
+		 * For an owner still mid-move (in cutter scope, not Landing) the flag also stays set
+		 * with NO shells alive: it is the restored truth that a blade should exist at this
+		 * tick, and the reconcile mint branch reads it to re-create the Draw shell. Clearing
+		 * it here was what made a wrongful mid-move eject permanent -- the mint frame had
+		 * already been replayed, so nothing else could ever bring the blade back. Landing and
+		 * out-of-scope owners keep the full clear (Landing reminted by ACMD; Wait teardown).
 		 */
 		if ((owner_fp->is_effect_attach != FALSE) &&
-		    (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(owner_fp, gobj) == FALSE))
+		    (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(owner_fp, gobj) == FALSE) &&
+		    ((syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) == FALSE) ||
+		     (owner_fp->status_id == nFTKirbyStatusSpecialHiLanding)))
 		{
 			owner_fp->is_effect_attach = FALSE;
 		}
@@ -20972,6 +20981,36 @@ static void syNetRbSnapReconcileKirbyFinalCutterBladeEffects(const SYNetRbSnapsh
 		}
 		if (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(fp, NULL) == FALSE)
 		{
+			/*
+			 * No live blade. is_effect_attach is the restored truth for whether one should
+			 * exist at this tick (captured in the fighter blob, deliberately excluded from
+			 * the sync fold). If it is set, the blade was destroyed after its mint frame had
+			 * already been replayed -- the flag2 path in ftKirbySpecialHiUpdateEffect can
+			 * never run again this move -- so re-create the carried Draw shell here. This is
+			 * presentation-only: the blade is excluded from the rollback fold, so a mint on
+			 * one peer cannot diverge sync state. motion_vars.flags are folded and are NOT
+			 * touched. Attach stays FALSE if the mint fails; the pass runs every forward
+			 * frame and on every load, so it retries. Transient Up/Down slash shells for the
+			 * already-replayed window are not reconstructed -- only the carried blade, which
+			 * is the player-visible loss. See
+			 * docs/bugs/netplay_kirby_final_cutter_blade_2026-08-30.md.
+			 */
+			if (fp->is_effect_attach != FALSE)
+			{
+				if (efManagerKirbyCutterDrawMakeEffect(fighter_gobj) != NULL)
+				{
+					if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+					{
+						port_log("SSB64 NetRbSnapshot: effect_remint reason=kirby_finalcutter "
+						         "tick=%u player=%d status=%d\n",
+						         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id);
+					}
+				}
+				else
+				{
+					fp->is_effect_attach = FALSE;
+				}
+			}
 			continue;
 		}
 		if (fp->is_effect_attach == FALSE)
@@ -39710,6 +39749,32 @@ static void syNetRbSnapEjectAllNonCanonicalEffectsForVerify(const SYNetRbSnapsho
 				}
 			}
 			if (efDisplayIsInfrastructureGObj(gobj) != FALSE)
+			{
+				continue;
+			}
+			/*
+			 * Honor the same verify protects as syNetRbSnapEjectHiddenCosmeticEffectShellForVerify.
+			 * The Kirby Final Cutter blade is the load-bearing case: it is excluded from capture
+			 * (no respawn class), so it can never be in the canonical set, and this pass was
+			 * ejecting it mid-SpecialHi with an in-scope owner -- soak 2026-08-30 tick 1475,
+			 * player 1 status 256, no restore possible afterwards because the mint frame had
+			 * already been replayed. The other three shells are protected for symmetry with the
+			 * hidden-cosmetic path (Ness hold-only respawn=NONE shells share the not-canonical
+			 * exposure). See docs/bugs/netplay_kirby_final_cutter_blade_2026-08-30.md.
+			 */
+			if (syNetRbSnapVerifyProtectYoshiEggLayShell(slot, gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapVerifyProtectCaptainFalconKickShell(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapVerifyProtectKirbyFinalCutterBlade(gobj, ep) != FALSE)
+			{
+				continue;
+			}
+			if (syNetRbSnapVerifyProtectNessPKWaveShell(gobj, ep) != FALSE)
 			{
 				continue;
 			}

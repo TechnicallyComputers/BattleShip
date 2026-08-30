@@ -76,3 +76,44 @@ Interim, much smaller: `ftKirbySpecialHiUpdateEffect` only re-creates the blade 
 rollback landing after those frames can never re-mint. Re-arming the flag when the fighter
 is in `KirbyFinalCutterScope` with no live blade would recover the visual without touching
 the snapshot layer. This treats the symptom, so prefer the respawn class if scope allows.
+
+---
+
+## Fix (2026-08-30): protect + re-mint
+
+The mid-move eject's exact source was found: `syNetRbSnapEjectAllNonCanonicalEffectsForVerify`
+ejects every live effect not in the slot's canonical set, and — unlike
+`syNetRbSnapEjectHiddenCosmeticEffectShellForVerify` — consulted **none** of the verify
+protects. The blade can never be canonical (it is excluded from capture), so every
+verify-only repair pass killed it regardless of owner scope. That is also why the bug was
+intermittent: the pass runs only when the verify repair stage is armed.
+
+Three port-side changes (`netrollbacksnapshot.c`, no decomp edits):
+
+1. **Protect** — the non-canonical verify eject now honors the same four protects as the
+   hidden-cosmetic path (Yoshi egg lay shell, Captain kick flame, Kirby cutter blade, Ness
+   PK wave). The blade is the load-bearing case; Ness hold-only `respawn=NONE` shells
+   shared the not-canonical exposure.
+2. **Evidence preserved** — the blade eject no longer clears `is_effect_attach` for an
+   owner still mid-move (in cutter scope, non-Landing). The restored flag is the truth for
+   "a blade should exist at this tick"; clearing it made any wrongful eject permanent.
+   Landing and out-of-scope owners keep the full clear.
+3. **Re-mint** — the reconcile pass (runs on every load and every forward frame) now
+   re-creates the carried Draw shell via `efManagerKirbyCutterDrawMakeEffect()` when the
+   owner is in scope (non-Landing), `is_effect_attach` is set, and no blade lives.
+
+Sync safety: the blade is excluded from the rollback fold and `is_effect_attach` is
+excluded from the fighter hash, so a mint on one peer cannot diverge sync state.
+`motion_vars.flags` (which are folded) are not touched — that is why the mint calls the
+effect factory directly instead of re-arming `flag2`. Transient Up/Down slash shells for an
+already-replayed window are not reconstructed; only the carried blade, which is the
+player-visible loss.
+
+**Expected next soak:** any `effect_eject reason=kirby_finalcutter_blade` with an in-scope
+status should be followed by `effect_remint reason=kirby_finalcutter` within a frame — and
+with the protect in place, the mid-move ejects themselves should mostly disappear.
+
+The full respawn-class migration (capture the blade like the Captain punch flame) remains
+the end-state if this compensating pair ever proves insufficient, but the protect closes
+the actual hole and the re-mint covers every other eject source.
+

@@ -8679,7 +8679,19 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 	{
 		return TRUE;
 	}
-	if (sSYNetPeerStartupMatchDelayPendingValid != FALSE)
+	/*
+	 * Guest-only bypass. On the guest this flag is set by RECEIVING the session-params
+	 * packet, so inbound evidence already exists and skipping the warmup wait is harmless.
+	 * On the host it is set locally at host_compute -- before the guest has seen anything
+	 * -- and letting it short-circuit here is why the host started ~16 ticks early: it
+	 * bypassed the entire ingress gate while the guest waited a round-trip for params.
+	 * Soak 2026-08-30: host took all 252 startup pcap freezes, guest 0, and the host
+	 * never evaluated the warmup branch at all. The host now waits for real inbound
+	 * evidence like the guest; the warmup sender keeps transmitting while this gate is
+	 * unsatisfied, so both frontiers climb and both peers release together.
+	 * See docs/bugs/netplay_startup_prediction_cap_freeze_2026-08-29.md.
+	 */
+	if ((sSYNetPeerStartupMatchDelayPendingValid != FALSE) && (sSYNetPeerBootstrapIsHost == FALSE))
 	{
 		return TRUE;
 	}
@@ -8823,7 +8835,10 @@ static void syNetPeerMaybeSendBootstrapWarmupInput(void)
 	{
 		return;
 	}
-	if (sSYNetPeerStartupMatchDelayPendingValid != FALSE)
+	/* Guest-only, matching the gate above: the host's gate no longer bypasses on this
+	 * flag, so the host must keep sending warmup while it is pending or it would sit in
+	 * an unsatisfied gate with no outbound traffic feeding the guest's frontier. */
+	if ((sSYNetPeerStartupMatchDelayPendingValid != FALSE) && (sSYNetPeerBootstrapIsHost == FALSE))
 	{
 		return;
 	}

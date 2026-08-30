@@ -190,3 +190,29 @@ Do not re-approach this through the wire frontier. The candidates are:
    carried in the execution-hold line — the signal that actually means "the other side is
    running", which is what the start needs to agree on.
 
+---
+
+## Fix (2026-08-30): the host bypass is removed
+
+Candidate 1 from the list above, scoped precisely to the measured offender. The
+`sSYNetPeerStartupMatchDelayPendingValid` early-return in both
+`syNetPeerBootstrapIngressSymmetrySatisfied()` and
+`syNetPeerMaybeSendBootstrapWarmupInput()` is now **guest-only**:
+
+- On the **guest** the flag is set by *receiving* the session-params packet, so inbound
+  evidence already exists and the bypass keeps its protective purpose unchanged.
+- On the **host** it was set locally at `host_compute` — before the guest had seen
+  anything — and short-circuited the entire ingress gate. The host now waits for real
+  inbound evidence like the guest, and its warmup sender keeps transmitting while the gate
+  is unsatisfied (it no longer early-returns on the flag), so both peers' frontiers climb
+  from each other's warmup and both release together.
+
+No deadlock is possible: the gate needs any inbound evidence (`hr > 0` / staged / ingress
+seen), which the peer's warmup supplies; the align pump that clears the flag and queues the
+startup DELAY_SYNC runs independently of execution readiness.
+
+**Expected next soak:** the guest's tick-1 `remote_sim` should drop from ~16 to low single
+digits, the host's early lead should stay within `P=6`, and the ~250 startup `pcap FREEZE`
+events should collapse. `bootstrap_ingress_warmup complete` should now log on **both**
+peers.
+
