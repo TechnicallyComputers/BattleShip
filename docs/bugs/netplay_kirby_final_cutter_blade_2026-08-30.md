@@ -117,3 +117,46 @@ The full respawn-class migration (capture the blade like the Captain punch flame
 the end-state if this compensating pair ever proves insufficient, but the protect closes
 the actual hole and the re-mint covers every other eject source.
 
+---
+
+## Soak 2026-08-30 (dual Kirby): the re-mint is refuted. Reverted.
+
+The vanish fix held — the player confirms the blade stopped disappearing, and 36–38
+`effect_remint` events per peer show the recovery working in the simple case. But a match
+with **both** players as Kirby, both mid-Final-Cutter (p0 status 256, p1 status 257),
+wedged permanently at tick 3851: inputs flowing, frames pumping, sim blocked in
+`tick_commit blocked (load_fail_hold)` until manual shutdown, identically on both peers.
+
+The log shows the mechanism:
+
+- Ejects **continued despite the verify protect** — so a second, still-unidentified pass
+  destroys blades in the dual-Kirby case (in-scope owners, status 256/257, always
+  `gobj_id=1011`).
+- Eject and remint chased each other **across players**: `eject player=0` followed by
+  `remint player=1` at 3769/3784/3795/3803. With two blades and two Kirbys, owner
+  attribution (joint user_data resolution) goes ambiguous, so one player's eject leaves
+  the other "owning nothing" with attach set → remint → next pass ejects again.
+- `fc_recovery=1` resim episodes repeated with the same `mismatch_tick=3835` and never
+  converged; the frame-commit seed diff shows player 1's whole skeleton and
+  `anim_frame` (live 26.0 vs blob 11.0) diverged from the ring.
+
+The design error: **hash-excluded is not replay-safe.** The remint runs inside load/verify
+passes and creates GObj allocations the ring's forward pass never recorded, and the
+attach-preservation kept `is_effect_attach` TRUE on paths the original pass did not take —
+and that flag feeds real sim control flow in `ftKirbySpecialHiUpdateEffect` (StopEffect vs
+force-clear vs mint) even though it is excluded from the fold. Injected state → replay can
+never match the ring → frame-commit never validates → permanent hold.
+
+**Reverted:** the reconcile re-mint and the eject's attach-preservation.
+**Kept:** the non-canonical verify protect (edit 1) — it fixes the original single-Kirby
+vanish at its measured source and injects nothing.
+**Added:** `caller=` (dladdr) + `resim=` on the blade-eject log, so the next dual-Kirby
+soak names the unprotected eject path instead of leaving it to inference. If that path can
+be protected the same way, the vanish stays fixed in the dual case too — by *not
+destroying* the blade, never by re-creating it.
+
+Also noted for follow-up: the wedge exposed that a permanent `load_fail_hold` has no
+working escape (`BATTLE_SIM_HOLD` never armed, no watchdog fired for ~15 s until manual
+shutdown). Whatever holds live advance indefinitely should eventually trip the existing
+hold-escape machinery; that gap is pre-existing and independent of the blade.
+

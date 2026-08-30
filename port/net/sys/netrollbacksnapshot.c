@@ -1,3 +1,8 @@
+/* dladdr / Dl_info are behind __USE_GNU; the feature macro must precede the first
+ * libc header (same pattern as netplay_guard_grab_diag.c). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <sys/netrollbacksnapshot.h>
 
 #include <sys/netsync.h>
@@ -20779,6 +20784,34 @@ static void syNetRbSnapClearEffectDObjUserDataTree(DObj *dobj)
  * recycle (soak2 P2 stuck blade post-SpecialHiLanding). See
  * docs/bugs/netplay_kirby_finalcutter_orphan_blade_2026-07-10.md.
  */
+#if defined(SSB64_NETMENU)
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
+static const char *syNetRbSnapKirbyBladeEjectCallerName(const void *caller, unsigned long *out_off)
+{
+	*out_off = 0UL;
+	if (caller == NULL)
+	{
+		return "?";
+	}
+#if !defined(_WIN32)
+	{
+		Dl_info info;
+
+		memset(&info, 0, sizeof(info));
+		if ((dladdr((void *)(uintptr_t)caller, &info) != 0) && (info.dli_sname != NULL) &&
+		    (info.dli_saddr != NULL))
+		{
+			*out_off = (unsigned long)((const char *)caller - (const char *)info.dli_saddr);
+			return info.dli_sname;
+		}
+	}
+#endif
+	return "?";
+}
+#endif
+
 static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct *owner_fp)
 {
 	EFStruct *ep;
@@ -20803,28 +20836,39 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 		 * Do not clear is_effect_attach while another cutter shell still lives — sibling ejects
 		 * mid-SpecialHi/Landing must leave the flag set so Landing→Wait StopEffect can run.
 		 *
-		 * For an owner still mid-move (in cutter scope, not Landing) the flag also stays set
-		 * with NO shells alive: it is the restored truth that a blade should exist at this
-		 * tick, and the reconcile mint branch reads it to re-create the Draw shell. Clearing
-		 * it here was what made a wrongful mid-move eject permanent -- the mint frame had
-		 * already been replayed, so nothing else could ever bring the blade back. Landing and
-		 * out-of-scope owners keep the full clear (Landing reminted by ACMD; Wait teardown).
+		 * 2026-08-30: a variant briefly kept the flag set for in-scope owners with no shells
+		 * so a reconcile mint could re-create the blade. Reverted with the mint (see the
+		 * reconcile pass) — is_effect_attach feeds sim control flow in
+		 * ftKirbySpecialHiUpdateEffect even though it is hash-excluded, and preserving it on
+		 * a path the original forward pass did not take forked replay state.
 		 */
 		if ((owner_fp->is_effect_attach != FALSE) &&
-		    (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(owner_fp, gobj) == FALSE) &&
-		    ((syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) == FALSE) ||
-		     (owner_fp->status_id == nFTKirbyStatusSpecialHiLanding)))
+		    (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(owner_fp, gobj) == FALSE))
 		{
 			owner_fp->is_effect_attach = FALSE;
 		}
 	}
 	if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 	{
+		/*
+		 * caller= names the pass that decided to destroy the blade. The 2026-08-30 dual-
+		 * Kirby soak showed in-scope ejects continuing from a path that is NOT the
+		 * protected non-canonical verify pass, and the log could not say which -- this
+		 * answers it. dladdr resolves to the nearest exported symbol; most of these passes
+		 * are static, so the name may be a neighboring global -- name+offset is still a
+		 * stable per-path fingerprint, which is all the triage needs.
+		 */
+		unsigned long caller_off;
+		const char *caller_name;
+
+		caller_name = syNetRbSnapKirbyBladeEjectCallerName(__builtin_return_address(0), &caller_off);
 		port_log("SSB64 NetRbSnapshot: effect_eject reason=kirby_finalcutter_blade tick=%u gobj_id=%u "
-		         "obj_kind=%u player=%d status=%d\n",
+		         "obj_kind=%u player=%d status=%d resim=%d caller=%s+0x%lx raw=%p\n",
 		         (unsigned int)syNetInputGetTick(), (unsigned int)gobj->id, (unsigned int)gobj->obj_kind,
 		         (owner_fp != NULL) ? (int)owner_fp->player : -1,
-		         (owner_fp != NULL) ? (int)owner_fp->status_id : -1);
+		         (owner_fp != NULL) ? (int)owner_fp->status_id : -1,
+		         (int)(syNetRollbackIsResimulating() != FALSE), caller_name, caller_off,
+		         __builtin_return_address(0));
 	}
 	if (ep != NULL)
 	{
@@ -20982,35 +21026,19 @@ static void syNetRbSnapReconcileKirbyFinalCutterBladeEffects(const SYNetRbSnapsh
 		if (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(fp, NULL) == FALSE)
 		{
 			/*
-			 * No live blade. is_effect_attach is the restored truth for whether one should
-			 * exist at this tick (captured in the fighter blob, deliberately excluded from
-			 * the sync fold). If it is set, the blade was destroyed after its mint frame had
-			 * already been replayed -- the flag2 path in ftKirbySpecialHiUpdateEffect can
-			 * never run again this move -- so re-create the carried Draw shell here. This is
-			 * presentation-only: the blade is excluded from the rollback fold, so a mint on
-			 * one peer cannot diverge sync state. motion_vars.flags are folded and are NOT
-			 * touched. Attach stays FALSE if the mint fails; the pass runs every forward
-			 * frame and on every load, so it retries. Transient Up/Down slash shells for the
-			 * already-replayed window are not reconstructed -- only the carried blade, which
-			 * is the player-visible loss. See
-			 * docs/bugs/netplay_kirby_final_cutter_blade_2026-08-30.md.
+			 * No live blade: nothing to re-arm, and DO NOT re-create one here. A remint was
+			 * tried on 2026-08-30 ("presentation-only, the blade is excluded from the fold")
+			 * and the dual-Kirby soak the same day refuted it: with both players mid-cutter,
+			 * blade->owner attribution goes ambiguous, eject and remint chased each other
+			 * across players (eject p0 -> remint p1, every few ticks for ~100 ticks), and
+			 * minting inside load/verify passes injected GObj allocations the ring's forward
+			 * pass never recorded -- frame-commit could then never validate, fc_recovery
+			 * episodes repeated with the same mismatch tick, and the session wedged
+			 * permanently in load_fail_hold at tick 3851. Hash-excluded is NOT replay-safe.
+			 * The verify-protect in EjectAllNonCanonicalEffectsForVerify is the correct fix
+			 * for the original vanish; residual eject paths lose the blade cosmetically,
+			 * which is strictly better than wedging the match.
 			 */
-			if (fp->is_effect_attach != FALSE)
-			{
-				if (efManagerKirbyCutterDrawMakeEffect(fighter_gobj) != NULL)
-				{
-					if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
-					{
-						port_log("SSB64 NetRbSnapshot: effect_remint reason=kirby_finalcutter "
-						         "tick=%u player=%d status=%d\n",
-						         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id);
-					}
-				}
-				else
-				{
-					fp->is_effect_attach = FALSE;
-				}
-			}
 			continue;
 		}
 		if (fp->is_effect_attach == FALSE)
