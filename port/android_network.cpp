@@ -3,7 +3,10 @@
 #if (defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE))
 extern "C" int syNetReconnectMidMatchEligible(void);
 extern "C" void syNetReconnectNotifyNetworkChange(void);
+extern "C" void syNetReconnectNotifyAppBackground(void);
+extern "C" void syNetReconnectNotifyAppForeground(void);
 #endif
+extern "C" void port_watchdog_set_connect_phase_pause(int paused);
 
 #if defined(__ANDROID__)
 
@@ -17,6 +20,49 @@ extern "C" void syNetReconnectNotifyNetworkChange(void);
 #include "port_log.h"
 
 static std::atomic<int> sPortAndroidNetworkPending;
+/*
+ * App lifecycle. SDL delivers SDL_APP_WILLENTERBACKGROUND / SDL_APP_DIDENTERFOREGROUND on
+ * the Android activity thread via event watches (the queue may never be pumped again once
+ * backgrounded — SDL's default BLOCK_ON_PAUSE freezes the loop). The watch therefore does
+ * only two things directly, both thread-safe: quiet the hang watchdog (atomic store) and
+ * flag the transition. The netreconnect notify runs from the main-thread drain — which for
+ * a background may never come; the peer then converges through the netpeer silence
+ * detector instead. sPortAndroidLifecycleState: 0 = foreground, 1 = background.
+ */
+static std::atomic<int> sPortAndroidLifecycleState;
+static std::atomic<int> sPortAndroidLifecycleChanged;
+static std::atomic<int> sPortAndroidLifecycleWatchInstalled;
+
+static int PortAndroidLifecycleEventWatch(void *userdata, SDL_Event *event)
+{
+	(void)userdata;
+	switch (event->type)
+	{
+	case SDL_APP_WILLENTERBACKGROUND:
+		port_watchdog_set_connect_phase_pause(1);
+		sPortAndroidLifecycleState.store(1, std::memory_order_release);
+		sPortAndroidLifecycleChanged.store(1, std::memory_order_release);
+		break;
+	case SDL_APP_DIDENTERFOREGROUND:
+		port_watchdog_set_connect_phase_pause(0);
+		sPortAndroidLifecycleState.store(0, std::memory_order_release);
+		sPortAndroidLifecycleChanged.store(1, std::memory_order_release);
+		break;
+	default:
+		break;
+	}
+	return 1;
+}
+
+static void port_android_lifecycle_ensure_watch(void)
+{
+	int expected = 0;
+
+	if (sPortAndroidLifecycleWatchInstalled.compare_exchange_strong(expected, 1))
+	{
+		SDL_AddEventWatch(PortAndroidLifecycleEventWatch, nullptr);
+	}
+}
 static JavaVM *sPortAndroidJvm;
 static jobject sPortAndroidActivityGlobal;
 static std::atomic<int> sPortAndroidMonitorInstalled;
@@ -159,6 +205,9 @@ static void port_android_network_run_uninstall_on_main(JNIEnv *env)
 
 extern "C" void port_android_network_bind_context(JNIEnv *env, jobject activity)
 {
+	/* Also here, not just install(): the Java NetworkMonitor.bindContext JNI entry calls
+	 * this directly, and the lifecycle watch must be armed on every path into the port. */
+	port_android_lifecycle_ensure_watch();
 	if (env == nullptr)
 	{
 		return;
@@ -258,6 +307,23 @@ extern "C" void port_android_network_drain(void)
 	port_android_network_drain_main_thread_jni();
 
 #if defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
+	/*
+	 * Lifecycle first, and before the eligibility early-return: the latest state wins.
+	 * If the loop blocked before a background could drain, the wake-up drain sees
+	 * changed=1 with state already back at foreground and only the foreground notify
+	 * runs — the missed background was covered by the peer's silence detector.
+	 */
+	if (sPortAndroidLifecycleChanged.exchange(0, std::memory_order_acq_rel) != 0)
+	{
+		if (sPortAndroidLifecycleState.load(std::memory_order_acquire) != 0)
+		{
+			syNetReconnectNotifyAppBackground();
+		}
+		else
+		{
+			syNetReconnectNotifyAppForeground();
+		}
+	}
 	if (syNetReconnectMidMatchEligible() == 0)
 	{
 		sPortAndroidNetworkPending.store(0, std::memory_order_release);
@@ -272,6 +338,7 @@ extern "C" void port_android_network_drain(void)
 
 extern "C" void port_android_network_install(JNIEnv *env, jobject activity)
 {
+	port_android_lifecycle_ensure_watch();
 	port_android_network_bind_context(env, activity);
 }
 

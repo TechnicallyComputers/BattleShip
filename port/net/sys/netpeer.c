@@ -986,6 +986,14 @@ static sb32 sSYNetPeerBarrierEscapeApplied;
 static sb32 sSYNetPeerBarrierRequeueApplied;
 
 static u64 syNetPeerNowUnixMs(void);
+/*
+ * Link watch: wall ms of the last valid inbound session packet. Feeds the peer-silence
+ * detector -- the reconnect module's only other mid-match trigger is mmIceIsFailed(),
+ * which a peer that simply goes quiet (Android app minimized, network dropped mid-transit)
+ * never trips on LAN. 0 = nothing received yet this session.
+ */
+static u64 sSYNetPeerLastInboundUnixMs;
+static void syNetPeerNoteInboundForLinkWatch(void);
 static void syNetPeerWriteU64(u8 **cursor, u64 value);
 static u64 syNetPeerReadU64(const u8 **cursor);
 static void syNetPeerResetClockAlignState(void);
@@ -1767,6 +1775,11 @@ sb32 syNetPeerOpenSocket(void)
 /*--------------------------------------------------------------------
  * Wall-clock ms for barrier deadlines + TIME_PING/TIME_PONG samples.
  *-------------------------------------------------------------------*/
+static void syNetPeerNoteInboundForLinkWatch(void)
+{
+	sSYNetPeerLastInboundUnixMs = syNetPeerNowUnixMs();
+}
+
 static u64 syNetPeerNowUnixMs(void)
 {
 	return syNetPeerOsWallClockUnixMs();
@@ -3208,6 +3221,7 @@ static void syNetPeerHandleInputDelaySyncPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	delay_wire = syNetPeerClampInputDelayToContract(delay_wire);
 	(void)effective_tick;
 	{
@@ -3397,6 +3411,7 @@ static void syNetPeerHandleSessionParamsPacket(const u8 *buffer, s32 size, u16 e
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	if (expected_type == SYNETPEER_PACKET_SESSION_PARAMS)
 	{
 		if (sSYNetPeerBootstrapIsHost != FALSE)
@@ -5994,6 +6009,7 @@ static void syNetPeerHandleBattleExecSyncPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	port_log(
 	    "SSB64 NetPeer: battle_exec_sync recv role=%s agreed_tick=%u peer_push=%u vi_phase=%u sim=%u host_sent=%d host_echo=%d client_got=%d client_echo=%d\n",
 	    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
@@ -7391,6 +7407,7 @@ void syNetPeerStartVSSession(void)
 	sSYNetPeerGlobalCommitGen = 0U;
 	sSYNetPeerPacketsSent = 0;
 	sSYNetPeerPacketsReceived = 0;
+	sSYNetPeerLastInboundUnixMs = 0U;
 	sSYNetPeerPacketsDropped = 0;
 	sSYNetPeerFramesStaged = 0;
 	sSYNetPeerLateFrames = 0;
@@ -9597,6 +9614,7 @@ void syNetPeerHandlePacket(const u8 *buffer, s32 size)
 		}
 #endif
 		sSYNetPeerPacketsReceived++;
+		syNetPeerNoteInboundForLinkWatch();
 #if defined(PORT)
 		if (SYNETPEER_WIRE_HAS_CONNECT_STATUS(wire_version) != FALSE)
 		{
@@ -10950,6 +10968,7 @@ static void syNetPeerHandleFrameCommitPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	sSYNetPeerFrameCommitDiag.fc_recv++;
 	sSYNetPeerFrameCommitPeerEver = TRUE;
 	sSYNetPeerFrameCommitValidationsSincePeer = 0U;
@@ -11343,6 +11362,7 @@ static void syNetPeerHandleSnapAgreePacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	sSYNetPeerFrameCommitDiag.snap_agree_recv++;
 	/* Always retain peer hashes for REPLACE-time TryConfirm (pending is consumed on complete). */
 	syNetPeerSnapAgreeStorePeerLast(snap_tick, peer_figh, peer_world, peer_item, peer_rng, peer_wpn);
@@ -11743,9 +11763,11 @@ static void syNetPeerHandleRollbackSyncPacket(const u8 *buffer, s32 size)
 	if (syNetRollbackAcceptPeerSymmetricRollbackNotify((s32)slot, mismatch_tick, target_tick, flags) == FALSE)
 	{
 		sSYNetPeerPacketsReceived++;
+		syNetPeerNoteInboundForLinkWatch();
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	port_log(
 	    "SSB64 NetPeer: ROLLBACK_SYNC_RECV slot=%d mismatch_tick=%u target_tick=%u load_tick=%u epoch=%u resolved=%u flags=0x%02X wire=%u\n",
 	    (int)slot,
@@ -11841,6 +11863,7 @@ static void syNetPeerHandleRollbackBaselinePacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	port_log(
 	    "SSB64 NetPeer: RESIM_BASELINE_RECV load_tick=%u figh=0x%08X world=0x%08X item=0x%08X rng=0x%08X map=0x%08X cam=0x%08X fighter_slots=%d\n",
 	    load_tick,
@@ -11939,6 +11962,7 @@ static void syNetPeerHandleResimPostPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	syNetRollbackOnPeerResimPostDigest(epoch_id, load_tick, mismatch_tick, target_tick, figh, world, item, rng,
 					   input_digest);
 }
@@ -12102,6 +12126,7 @@ static void syNetPeerHandleEpisodeSealRowsPacket(const u8 *buffer, s32 size)
 		return;
 	}
 	sSYNetPeerPacketsReceived++;
+	syNetPeerNoteInboundForLinkWatch();
 	if (syNetRollbackEpisodeApplyPeerSealRowsChunk(epoch_id, mismatch_tick, target_tick, (s32)slot_u8, row_begin,
 						       frames, row_count) != FALSE)
 	{
@@ -13269,6 +13294,41 @@ void syNetPeerUpdateBattleGate(void)
 			    (mmIceIsFailed() != FALSE))
 			{
 				syNetReconnectNotifyTransportBad();
+			}
+			/*
+			 * Peer-silence detector. mmIceIsFailed() is the only other mid-match trigger,
+			 * and a peer that just stops sending (app minimized, cable pulled, network
+			 * switching mid-transit) never trips it on LAN -- the session then stalls at
+			 * the prediction cap with no pause UI and no reconnect attempt. Silence feeds
+			 * the same debounced entry as ICE failure: NotifyTransportBad needs
+			 * DETECT_FRAMES (30) consecutive calls, so time-to-hold is silence_ms + ~0.5s.
+			 * HOLD retransmits (both directions, every 30 frames) refresh the inbound
+			 * clock during a hold, and HoldActive gates the check, so an active hold
+			 * never re-triggers itself. SSB64_NETPLAY_RECONNECT_SILENCE_MS overrides the
+			 * threshold; 0 disables.
+			 */
+			if ((syNetReconnectHoldActive() == FALSE) && (syNetReconnectMidMatchEligible() != FALSE) &&
+			    (sSYNetPeerLastInboundUnixMs != 0U))
+			{
+				static s32 s_silence_ms_env = -1;
+				u64 now_ms;
+
+				if (s_silence_ms_env < 0)
+				{
+					const char *e = getenv("SSB64_NETPLAY_RECONNECT_SILENCE_MS");
+
+					s_silence_ms_env = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 1000;
+					if (s_silence_ms_env < 0)
+					{
+						s_silence_ms_env = 0;
+					}
+				}
+				now_ms = syNetPeerNowUnixMs();
+				if ((s_silence_ms_env > 0) && (now_ms > sSYNetPeerLastInboundUnixMs) &&
+				    ((now_ms - sSYNetPeerLastInboundUnixMs) >= (u64)s_silence_ms_env))
+				{
+					syNetReconnectNotifyTransportBad();
+				}
 			}
 		}
 		syNetReconnectUpdate();

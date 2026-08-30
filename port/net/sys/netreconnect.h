@@ -31,6 +31,9 @@ extern void syNetReconnectOnForfeitIngress(u32 sim_tick, u8 forfeiting_slot, u8 
 extern void syNetReconnectNotifyTransportBad(void);
 extern void syNetReconnectNotifyNetworkChange(void);
 extern void syNetReconnectNotifyPeerDisconnect(u8 slot);
+/* App lifecycle, drained on the main thread. Background = graceful immediate hold. */
+extern void syNetReconnectNotifyAppBackground(void);
+extern void syNetReconnectNotifyAppForeground(void);
 
 extern sb32 syNetReconnectExportPeerDisconnect(s32 slot);
 extern void syNetReconnectDrawOverlayCpp(void);
@@ -52,6 +55,8 @@ extern void syNetReconnectDrawOverlayCpp(void);
 #define syNetReconnectNotifyTransportBad() ((void)0)
 #define syNetReconnectNotifyNetworkChange() ((void)0)
 #define syNetReconnectNotifyPeerDisconnect(S) ((void)(S))
+#define syNetReconnectNotifyAppBackground() ((void)0)
+#define syNetReconnectNotifyAppForeground() ((void)0)
 #define syNetReconnectExportPeerDisconnect(S) 0
 #define syNetReconnectDrawOverlayCpp() ((void)0)
 

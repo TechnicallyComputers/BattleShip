@@ -216,3 +216,28 @@ digits, the host's early lead should stay within `P=6`, and the ~250 startup `pc
 events should collapse. `bootstrap_ingress_warmup complete` should now log on **both**
 peers.
 
+---
+
+## Soak 2026-08-30 (symmetric gate): gate confirmed, lead has a different origin
+
+The host-bypass fix works as designed — `bootstrap_ingress_warmup complete` now logs on
+**both** peers (the host never logged it before), so both pass the same warmup barrier.
+But the freezes are unchanged (252, all below wire ~393) and the guest's tick 1 still sees
+`remote_sim=16`.
+
+This soak also finally shows why: the exec-sync ordering proves the guest **latched before
+the host** (the guest echoes the host's proposal, so its latch is ½RTT *earlier*), and both
+release their gates together — yet the guest's first sim tick still lands ~270 ms after the
+host's. The remaining lead is therefore not start coordination at all: it is the guest's
+own first frames running slow (Android JIT/shader warmup at battle start). The host
+free-runs from its anchor, the guest cannot keep 60 Hz for the first fraction of a second,
+and the live prediction cap then bleeds the offset away as the freeze sawtooth over ~6.5 s.
+
+No further start-alignment change can remove that — the guest is genuinely not executing
+frames. The startup window sits in the fighter intro, play feels smooth (player-confirmed
+across several soaks), and steady state after tick ~500 is clean. **Closing this as fixed
+where fixable**: the structural asymmetries (contract gate misreading, host gate bypass)
+are gone; the residual is device warmup, and the correct lever for it, if it ever matters,
+is a tighter early-session prediction cap (host waits more, host feels lag during intro),
+not another release-ordering change.
+

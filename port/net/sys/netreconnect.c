@@ -576,6 +576,48 @@ void syNetReconnectNotifyNetworkChange(void)
 	sSYNetReconnectNetworkDebounceCooldown = 120U;
 }
 
+/*
+ * App lifecycle (drained on the main thread by port_android_network_drain — never call
+ * from the SDL event-watch thread). Background begins the hold IMMEDIATELY, skipping the
+ * transport-bad debounce: the local loop is about to block, so this frame is the only
+ * chance to get the graceful HOLD packet out before we go silent. If the loop blocks
+ * before the drain runs, the peer still converges through its own silence detector — this
+ * path is the fast lane, not the guarantee. Watchdog quieting happens in the event watch
+ * itself (thread-safe atomic), not here.
+ */
+void syNetReconnectNotifyAppBackground(void)
+{
+	if (syNetReconnectEnabled() == FALSE)
+	{
+		return;
+	}
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		return;
+	}
+	if (syNetReconnectMidMatchEligible() == FALSE)
+	{
+		return;
+	}
+	port_log("SSB64 Reconnect: app background — beginning hold\n");
+	syNetReconnectBeginHold((u8)sSYNetPeerLocalPlayer, TRUE);
+}
+
+void syNetReconnectNotifyAppForeground(void)
+{
+	if (syNetReconnectEnabled() == FALSE)
+	{
+		return;
+	}
+	/* Fresh debounce so a stale pre-background streak cannot instantly re-trigger. The
+	 * hold state machine itself (ICE recycle → READY/ACK) resumes ticking on its own. */
+	sSYNetReconnectDetectBadFrames = 0U;
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		port_log("SSB64 Reconnect: app foreground — hold active, resuming recycle\n");
+	}
+}
+
 void syNetReconnectNotifyPeerDisconnect(u8 slot)
 {
 	if (syNetReconnectMidMatchEligible() == FALSE)
