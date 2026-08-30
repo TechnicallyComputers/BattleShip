@@ -143,3 +143,50 @@ now reports `hr_max=`, which is the actual diagnosis:
 Either way the next soak answers it definitively, and neither outcome costs more than half
 a second of startup.
 
+---
+
+## Soak 2026-08-30 (bound=30): mechanism disproved, real cause found
+
+The fallback fired on the guest with the diagnosis it was built to give:
+
+```
+bootstrap_contract_gate fallback role=client hr=2 hr_max=2 need=0 negotiated=0 waited=30
+```
+
+- `hr_max=2` — the frontier never moved across the whole wait. Held peers do not advance
+  their sim, so no new wire rows appear. **Gating on wire rows cannot work pre-execution.**
+- `negotiated=0` — params were not negotiated during the wait either, so the ordering
+  assumption was also wrong.
+- The **host logged neither line**, yet took all 252 freezes.
+
+That last point is the real finding. `syNetPeerBootstrapIngressSymmetrySatisfied()` returns
+TRUE early on:
+
+```c
+if (sSYNetPeerStartupMatchDelayPendingValid != FALSE) return TRUE;
+```
+
+The host sets that flag the instant it computes params (`syNetSessionParamsApplyNegotiated`
+/ `host_compute`), *before* the guest has received them. So the host bypasses the entire
+ingress/warmup gate and starts immediately, while the guest only sets the same flag on
+`guest_recv` — a round trip later. **That bypass is the ~16-tick start lead**, and the
+contract gate lives inside the block the flag skips, so it could never affect the host.
+
+Freeze counts confirm the asymmetry is host-side: host 252, guest 0.
+
+The contract gate is now **default off** (`SSB64_NETPLAY_BOOTSTRAP_CONTRACT_GATE=1` to
+re-enable). It is kept because its instrumentation is what disproved the mechanism, but on
+by default it only cost the guest 30 idle frames.
+
+### Next
+
+Do not re-approach this through the wire frontier. The candidates are:
+
+1. Make `sSYNetPeerStartupMatchDelayPendingValid` stop short-circuiting the ingress gate, so
+   both peers pass the same barrier. Needs care: that early return presumably exists to stop
+   the startup delay-sync alignment from deadlocking against execution readiness, so verify
+   `syNetPeerPumpStartupDelayAlign` still runs while execution is held.
+2. Coordinate the start on the `peer_ready` / `start_sent` / `start_recv` handshake already
+   carried in the execution-hold line — the signal that actually means "the other side is
+   running", which is what the start needs to agree on.
+

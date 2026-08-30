@@ -8650,8 +8650,17 @@ static sb32 syNetPeerBootstrapContractGateEnvEnabled(void)
 	{
 		const char *e;
 
+		/*
+		 * Default OFF. Soak 2026-08-30 proved this gate cannot do its job: the fallback
+		 * fired with hr_max=2 (the frontier never moves while execution is held) and
+		 * negotiated=0, and the host never reaches this code at all -- it exits
+		 * syNetPeerBootstrapIngressSymmetrySatisfied() early on
+		 * sSYNetPeerStartupMatchDelayPendingValid, which the host sets the moment it
+		 * computes params. Left in place, opt-in, because the instrument is what proved
+		 * the mechanism wrong; on by default it only cost the guest 30 idle frames.
+		 */
 		e = getenv("SSB64_NETPLAY_BOOTSTRAP_CONTRACT_GATE");
-		sSYNetPeerBootstrapContractGateEnv = ((e == NULL) || (e[0] == '\0') || (atoi(e) != 0)) ? 1 : 0;
+		sSYNetPeerBootstrapContractGateEnv = ((e != NULL) && (e[0] != '\0') && (atoi(e) != 0)) ? 1 : 0;
 	}
 	return (sSYNetPeerBootstrapContractGateEnv != 0) ? TRUE : FALSE;
 }
