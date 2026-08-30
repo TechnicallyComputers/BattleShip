@@ -3,6 +3,11 @@
  * Compare host/guest at the same sim_tick; first differing step index pinpoints the
  * asymmetric consumer (Whispy wind, effect manager, item rolls, …).
  */
+/* dladdr / Dl_info are behind __USE_GNU; the feature macro must precede the first
+ * libc header (same pattern as netplay_guard_grab_diag.c). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <common.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +20,8 @@
 #include <sys/netrollback.h>
 #include <sys/netsync.h>
 #include <sys/utils.h>
+
+static const char *syNetSyncRngSiteName(u32 site, unsigned long *out_off);
 
 extern void port_log(const char *fmt, ...);
 
@@ -300,12 +307,15 @@ void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 	{
 		if (syNetSyncRngStepSiteEnabled() != FALSE)
 		{
+			unsigned long site_off;
+			const char *site_name = syNetSyncRngSiteName(site, &site_off);
+
 			port_log(
-			    "SSB64 NetSync: rng_step sim_tick=%u step=%u seed_after=0x%08X site=0x%08X\n",
+			    "SSB64 NetSync: rng_step sim_tick=%u step=%u seed_after=0x%08X site=0x%08X site_name=%s+0x%lx\n",
 			    tick,
 			    step_idx,
 			    (unsigned int)(u32)seed_after,
-			    site);
+			    site, site_name, site_off);
 		}
 		else
 		{
@@ -315,6 +325,39 @@ void syNetSyncRngTraceAfterGameSeedStep(s32 seed_after, u32 caller_site)
 			         (unsigned int)(u32)seed_after);
 		}
 	}
+}
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
+/*
+ * Resolve a recorded RNG call-site address to a symbol name in-process. Sites are raw
+ * (truncated) return addresses in a PIE binary, so raw values cannot be compared across
+ * peers or rebased from the log alone -- the 2026-08-30 cseed/rng fork investigation
+ * stalled exactly here, with the asymmetric consumer visible only as site=0x96004080 on
+ * one ISA and site=0x7BE0DC38 on the other. dladdr gives the nearest exported symbol;
+ * static callers resolve to a neighboring global, and name+offset is still a stable
+ * per-path fingerprint. Truncated-to-u32 sites are rebased into the plausible text
+ * segment by borrowing the high bits of a live text address.
+ */
+static const char *syNetSyncRngSiteName(u32 site, unsigned long *out_off)
+{
+	*out_off = 0UL;
+#if !defined(_WIN32)
+	{
+		uintptr_t base_hi = ((uintptr_t)(void *)&syNetSyncRngSiteName) & ~(uintptr_t)0xFFFFFFFFULL;
+		void *addr = (void *)(base_hi | (uintptr_t)site);
+		Dl_info info;
+
+		memset(&info, 0, sizeof(info));
+		if ((dladdr(addr, &info) != 0) && (info.dli_sname != NULL) && (info.dli_saddr != NULL))
+		{
+			*out_off = (unsigned long)((const char *)addr - (const char *)info.dli_saddr);
+			return info.dli_sname;
+		}
+	}
+#endif
+	return "?";
 }
 
 static void syNetSyncLogRngHashWalkDumpSteps(const SYNetSyncRngStep *steps, u32 step_count, sb32 truncated)
@@ -330,10 +373,14 @@ static void syNetSyncLogRngHashWalkDumpSteps(const SYNetSyncRngStep *steps, u32 
 	for (idx = 0U; idx < dump_count; idx++)
 	{
 		/* Sites are always recorded in the ring; emit them on every walk dump. */
-		port_log("SSB64 NetSync: rng_hash_walk step=%u seed_after=0x%08X site=0x%08X\n",
+		unsigned long site_off;
+		const char *site_name = syNetSyncRngSiteName(steps[idx].site, &site_off);
+
+		port_log("SSB64 NetSync: rng_hash_walk step=%u seed_after=0x%08X site=0x%08X site_name=%s+0x%lx\n",
 		         idx,
 		         steps[idx].seed_after,
-		         steps[idx].site);
+		         steps[idx].site,
+		         site_name, site_off);
 	}
 	if (truncated != FALSE)
 	{
