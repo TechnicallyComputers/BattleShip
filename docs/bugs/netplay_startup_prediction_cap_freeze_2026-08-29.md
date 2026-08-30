@@ -77,3 +77,33 @@ Properties:
   this fix addresses contribution 2 and, indirectly, much of 1. If freezes persist, the
   remaining work is the anchor itself — deriving the decouple anchor from the agreed
   exec-sync point rather than each peer's local latch instant.
+
+---
+
+## Soak 2026-08-30: the gate released on a stale contract
+
+The fix did not engage, and the instrumentation added with it said exactly why:
+
+```
+bootstrap_ingress_warmup complete role=host outbound=1 hr=2 staged=2 ingress_seen=1 sim=0 contract_wait=0 D=2
+```
+
+`D=2` is the automatch bootstrap default (`automatch_config` / `vs_start`,
+`source=auto_pending`). Session params negotiate `D=4` slightly later, so
+`syNetPeerGetCommittedInputDelay()` at warmup time returns a contract the match will not
+run. The gate compared `hr=2 >= need=2`, passed instantly, and gated on nothing.
+
+Confirmed by the outcome: **255 freezes, all below wire 393** — statistically identical to
+the 251 below wire 394 before the change — and all 255 report `D=4`, the negotiated value.
+
+Fixed by requiring session params to be negotiated first and comparing against that delay.
+The bound and the env escape hatch are unchanged, and the fallback line now also reports
+`negotiated=`.
+
+Otherwise this run was clean over ~145 s of play: tick/push 98.4% (host) and 99.3%
+(guest), zero desyncs, zero hash mismatches, zero `BATTLE_SIM_HOLD`, zero rescues, and
+after tick 1000 the lead stayed at mean 0.16-1.75 with max 3 and no deep prediction at all.
+The startup freezes remain confined to the first ~390 ticks, which is why the player
+reported the session as completely smooth — the window lands in the intro rather than in
+play.
+

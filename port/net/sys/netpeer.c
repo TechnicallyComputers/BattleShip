@@ -8701,9 +8701,18 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 		if ((ingress_ok != FALSE) && (syNetPeerBootstrapContractGateEnvEnabled() != FALSE))
 		{
 			u32 hr_now = syNetPeerGetHighestRemoteTick();
-			u32 need = syNetPeerGetCommittedInputDelay();
+			sb32 negotiated = syNetSessionParamsAreNegotiated();
+			/*
+			 * Must be the NEGOTIATED delay. Before session params are applied,
+			 * syNetPeerGetCommittedInputDelay() still returns the automatch bootstrap
+			 * default, and soak 2026-08-30 shows the cost of trusting it: the gate logged
+			 * "contract_wait=0 D=2", released instantly on hr=2, and the freeze count was
+			 * unchanged at 255 -- every one of which reported D=4. Gating on a stale
+			 * contract is the same as not gating at all.
+			 */
+			u32 need = (negotiated != FALSE) ? syNetPeerGetCommittedInputDelay() : 0U;
 
-			if (hr_now < need)
+			if ((negotiated == FALSE) || (hr_now < need))
 			{
 				sSYNetPeerBootstrapIngressContractWaitFrames++;
 				if (sSYNetPeerBootstrapIngressContractWaitFrames < SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES)
@@ -8714,9 +8723,9 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 				{
 					sSYNetPeerBootstrapIngressContractLoggedFallback = TRUE;
 					port_log("SSB64 NetPeer: bootstrap_contract_gate fallback role=%s hr=%u need=%u "
-					         "waited=%u (releasing under contract)\n",
+					         "negotiated=%d waited=%u (releasing under contract)\n",
 					         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
-					         (unsigned int)hr_now, (unsigned int)need,
+					         (unsigned int)hr_now, (unsigned int)need, (int)(negotiated != FALSE),
 					         (unsigned int)sSYNetPeerBootstrapIngressContractWaitFrames);
 				}
 			}
