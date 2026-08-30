@@ -80,3 +80,28 @@ guarantee, and a wake-up drain applies only the latest state.
 3. Airplane-mode toggle on Android mid-match: same flow via network-change/silence.
 4. Stay minimized past 30 s: host logs `forfeit applied`, match ends cleanly.
 5. Android logcat should NOT show hang-watchdog backtraces during background.
+
+---
+
+## First live firing (soak 2026-08-30): detector right, overlay fatal
+
+The silence path worked end-to-end for the first time: Android entered
+`hold pending/active tick=4088` locally, Linux followed via its own detection at 4093
+(after correctly ignoring the peer HOLD on the strict tick check), both began the ICE
+recycle — **and both then crashed identically** (`SIGSEGV fault_addr=0x318`, Linux
+symbolized as `ImGui::PushFont+0x100`).
+
+The overlay drew via `GameOverlay::TextDraw` directly from `PortPushFrame` — outside the
+ImGui frame, where PushFont/SetCursorPos dereference a null current window. The code had
+simply never executed before this feature made mid-match reconnect reachable.
+`first_run.cpp` documents the same crash class for early notifications.
+
+Fixed: the overlay is now a `GuiWindow` registered with the LUS Gui (drawn inside the GUI
+frame), rendering with the default font — no `PushFont` on the path at all. Same visual:
+centered shadowed "Reconnecting... (Ns)" countdown while the hold is active.
+
+Also observed for later: the strict `sim_tick == local` HOLD-ingress check made Linux
+discard Android's HOLD (peer=4088 vs local=4093) and rely on its own detection. It
+converged anyway; if future soaks show holds failing to pair, that check is the place to
+loosen (accept within the prediction window).
+

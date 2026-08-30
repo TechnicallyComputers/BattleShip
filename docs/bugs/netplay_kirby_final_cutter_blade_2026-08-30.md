@@ -160,3 +160,43 @@ working escape (`BATTLE_SIM_HOLD` never armed, no watchdog fired for ~15 s until
 shutdown). Whatever holds live advance indefinitely should eventually trip the existing
 hold-escape machinery; that gap is pre-existing and independent of the blade.
 
+---
+
+## Soak 2026-08-30 (caller attribution): the second eject path is named
+
+The `caller=` instrumentation answered the question in one soak:
+
+```
+29x resim=0 caller=syNetRbSnapForceClearKirbyFinalCutterBlades+0x121   (linux)
+25x resim=0 caller=syNetRbSnapForceClearKirbyFinalCutterBlades+0x20c   (android)
+```
+
+The mid-move ejects come from the **decomp side**: the `PORT && SSB64_NETMENU` force-clear
+calls in `ftKirbySpecialHiUpdateEffect` (ftkirbyspecialhi.c). The failing sequence:
+
+1. A rollback heal restores `is_effect_attach = FALSE` from a blob captured before the
+   blade's mint frame — correct sim state for that tick.
+2. The blade shells themselves are NOT restored or destroyed by the load (they are
+   excluded from the snapshot), so pre-rollback shells live on.
+3. The update-effect path sees attach FALSE with shells live → force-clear, no re-mint
+   (that branch exists precisely to tear down orphans). If the replay window has already
+   passed the ACMD mint frame, nothing recreates the blade → vanish mid-animation.
+
+**It is no longer only cosmetic.** The same soak shows `RESIM_BASELINE` exchanges where
+the peers' fighter hashes disagree while world/rng/map agree (tick 4080: figh
+`0x2F4B4A90` vs `0x85099290`, everything else identical) — a fighter-only cross-peer
+divergence, consistent with shell-existence differing between peers and driving divergent
+force-clears of fighter-attached pointers. The user-observed "divergent heal" resim is
+this: fighter-hash baselines disagreeing across peers, downstream of untracked shells.
+
+## Conclusion: do the respawn-class migration
+
+Compensating machinery has now been tried in both directions (re-mint: wedged the match;
+protect-only: leaves the decomp's own force-clear path stranding blades and lets shell
+state fork the fighter hash). The end-state named at the top of this doc is the actual
+fix: give the blade a real snapshot respawn class so shells are captured, restored, and
+destroyed in lockstep with the fighter state that governs them — attach flag and shells
+can then never disagree, on one peer or between peers. That is a deliberate milestone
+(capture predicate exists; needs blob fields for the joint attach and a slot-driven mint
+like Captain punch), not a same-day patch — two of those have already been refuted here.
+

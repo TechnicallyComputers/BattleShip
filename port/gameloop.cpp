@@ -95,9 +95,82 @@ unsigned int syNetReconnectGraceFramesRemaining(void);
 #endif
 
 #if defined(PORT) && defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
-static void portNetReconnectDrawOverlay(void)
+/*
+ * Reconnect status overlay.
+ *
+ * This MUST draw from inside LUS's ImGui frame. The first version called
+ * GameOverlay::TextDraw directly from PortPushFrame — outside NewFrame/Render, where
+ * PushFont/SetCursorPos dereference a null current window — and it had simply never
+ * executed before the peer-silence detector made mid-match reconnect reachable: the first
+ * real hold crashed BOTH peers identically (SIGSEGV fault_addr=0x318, ImGui::PushFont,
+ * soak 2026-08-30). first_run.cpp documents the same crash class for early notifications.
+ *
+ * A GuiWindow registered with the Gui draws in the right phase. Draw() is overridden
+ * directly (no GuiWindow::Begin wrapper, no visibility CVar coupling) and uses the
+ * DEFAULT font — no PushFont anywhere on this path.
+ */
+class PortNetReconnectOverlayWindow final : public Ship::GuiWindow
 {
-	if ((syNetReconnectOverlayEnabled() == 0) || (syNetReconnectHoldActive() == 0))
+  public:
+	using GuiWindow::GuiWindow;
+
+	void Draw() override
+	{
+		if ((syNetReconnectOverlayEnabled() == 0) || (syNetReconnectHoldActive() == 0))
+		{
+			return;
+		}
+		const ImGuiViewport *viewport = ImGui::GetMainViewport();
+		char text[64];
+		const u32 grace = syNetReconnectGraceFramesRemaining();
+
+		if (grace > 0U)
+		{
+			snprintf(text, sizeof(text), "Reconnecting... (%us)", (unsigned int)((grace + 59U) / 60U));
+		}
+		else
+		{
+			snprintf(text, sizeof(text), "Reconnecting...");
+		}
+		ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
+		ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
+		if (ImGui::Begin("NetReconnectOverlay", nullptr,
+		                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+		                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs))
+		{
+			const ImVec2 sz = ImGui::CalcTextSize(text);
+			const float cx = (viewport->Size.x - sz.x) * 0.5f;
+			const float cy = (viewport->Size.y - sz.y) * 0.5f;
+
+			/* Drop shadow + text, default font only. */
+			ImGui::SetCursorPos(ImVec2(cx + 1.0f, cy + 1.0f));
+			ImGui::TextColored(ImVec4(0.f, 0.f, 0.f, 1.f), "%s", text);
+			ImGui::SetCursorPos(ImVec2(cx, cy));
+			ImGui::TextColored(ImVec4(1.f, 1.f, 1.f, 1.f), "%s", text);
+		}
+		ImGui::End();
+	}
+
+	void DrawElement() override
+	{
+	}
+
+  protected:
+	void InitElement() override
+	{
+	}
+	void UpdateElement() override
+	{
+	}
+};
+
+/* Register once, as soon as the Gui exists; safe to call every frame. */
+static void portNetReconnectOverlayEnsureRegistered(void)
+{
+	static bool sRegistered = false;
+
+	if (sRegistered)
 	{
 		return;
 	}
@@ -111,24 +184,11 @@ static void portNetReconnectDrawOverlay(void)
 	{
 		return;
 	}
-	auto overlay = window->GetGui()->GetGameOverlay();
-	if (!overlay)
-	{
-		return;
-	}
-	const u32 grace = syNetReconnectGraceFramesRemaining();
-	const ImVec2 display = ImGui::GetIO().DisplaySize;
-	const float cx = display.x * 0.5f;
-	const float cy = display.y * 0.5f;
-	if (grace > 0U)
-	{
-		const u32 secs = (grace + 59U) / 60U;
-		overlay->TextDraw(cx, cy, true, ImVec4(1.f, 1.f, 1.f, 1.f), "Reconnecting... (%us)", (unsigned int)secs);
-	}
-	else
-	{
-		overlay->TextDraw(cx, cy, true, ImVec4(1.f, 1.f, 1.f, 1.f), "Reconnecting...");
-	}
+	auto overlay_window = std::make_shared<PortNetReconnectOverlayWindow>("gOpenWindows.NetReconnectOverlay",
+	                                                                     "NetReconnectOverlay");
+	window->GetGui()->AddGuiWindow(overlay_window);
+	overlay_window->Show();
+	sRegistered = true;
 }
 #endif
 
@@ -1221,7 +1281,7 @@ void PortPushFrame(void)
 	port_drain_pending_display_list();
 
 #if defined(PORT) && defined(SSB64_NETMENU) && defined(SSB64_NETPLAY_ICE)
-	portNetReconnectDrawOverlay();
+	portNetReconnectOverlayEnsureRegistered();
 	/* ConnectivityManager JNI must run on SDL_main (not the game coroutine fiber). */
 	port_android_network_drain();
 #endif
