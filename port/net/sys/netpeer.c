@@ -548,6 +548,14 @@ static int sSYNetPeerBootstrapIngressSymEnv = -999;
 static sb32 sSYNetPeerBootstrapIngressWarmupOutboundSent;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedStart;
 static sb32 sSYNetPeerBootstrapIngressWarmupLoggedDone;
+/*
+ * Frames spent waiting for the inbound frontier to cover D before execution is declared
+ * ready. Bounded: the wait can only ever delay the leading peer's start, never block a
+ * join. See SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES.
+ */
+static u32 sSYNetPeerBootstrapIngressContractWaitFrames;
+static sb32 sSYNetPeerBootstrapIngressContractLoggedFallback;
+static int sSYNetPeerBootstrapContractGateEnv = -999;
 #if defined(PORT) && defined(SSB64_NETMENU)
 /* First inbound remote INPUT (including wire tick 0) — hr alone cannot signal D=0 bootstrap. */
 static sb32 sSYNetPeerRemoteIngressSeen;
@@ -8612,9 +8620,31 @@ static void syNetPeerResetBootstrapIngressSymmetryState(void)
 	sSYNetPeerBootstrapIngressWarmupOutboundSent = FALSE;
 	sSYNetPeerBootstrapIngressWarmupLoggedStart = FALSE;
 	sSYNetPeerBootstrapIngressWarmupLoggedDone = FALSE;
+	sSYNetPeerBootstrapIngressContractWaitFrames = 0U;
+	sSYNetPeerBootstrapIngressContractLoggedFallback = FALSE;
+	sSYNetPeerBootstrapContractGateEnv = -999;
 #if defined(PORT) && defined(SSB64_NETMENU)
 	sSYNetPeerRemoteIngressSeen = FALSE;
 #endif
+}
+
+/*
+ * Bound on the contract wait, in gate evaluations (~frames). Generous, because the normal
+ * case resolves in a handful of frames once the peer is producing rows; it exists purely so
+ * a peer that never reaches the frontier still starts instead of hanging.
+ */
+#define SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES 180U
+
+static sb32 syNetPeerBootstrapContractGateEnvEnabled(void)
+{
+	if (sSYNetPeerBootstrapContractGateEnv == -999)
+	{
+		const char *e;
+
+		e = getenv("SSB64_NETPLAY_BOOTSTRAP_CONTRACT_GATE");
+		sSYNetPeerBootstrapContractGateEnv = ((e == NULL) || (e[0] == '\0') || (atoi(e) != 0)) ? 1 : 0;
+	}
+	return (sSYNetPeerBootstrapContractGateEnv != 0) ? TRUE : FALSE;
 }
 
 sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
@@ -8647,6 +8677,50 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 #else
 		ingress_ok = (syNetPeerGetHighestRemoteTick() > 0U) ? TRUE : FALSE;
 #endif
+		/*
+		 * Cover the delay contract, not merely "something arrived".
+		 *
+		 * The old condition released as soon as any inbound evidence existed (hr > 0), and
+		 * soak 2026-08-29 shows what that costs: the host released at hr=2 with D=4, so
+		 * tick 0 already owed 2 ticks of prediction and it never held a cushion. Combined
+		 * with the guest starting later -- at the guest's tick 1 it already saw the host at
+		 * tick 16 -- the host sat pinned at lead 8, past the P=6 prediction cap, and hard
+		 * pcap-froze 251 times over the first ~390 ticks. After convergence the same
+		 * session ran ~80 seconds with lead <= 3 and zero freezes, so all of the startup
+		 * hitching is this window.
+		 *
+		 * Waiting here is self-resolving: syNetPeerMaybeSendBootstrapWarmupInput keeps
+		 * sending INPUT-shaped warmup frames precisely while this gate is unsatisfied, so
+		 * both peers' frontiers climb and both release together. The wait is bounded
+		 * anyway, so the worst case is the current behaviour a few frames later -- it can
+		 * delay a start, never block a join, and never affects tick identity (that is
+		 * agreed separately by exec sync).
+		 *
+		 * See docs/bugs/netplay_startup_prediction_cap_freeze_2026-08-29.md.
+		 */
+		if ((ingress_ok != FALSE) && (syNetPeerBootstrapContractGateEnvEnabled() != FALSE))
+		{
+			u32 hr_now = syNetPeerGetHighestRemoteTick();
+			u32 need = syNetPeerGetCommittedInputDelay();
+
+			if (hr_now < need)
+			{
+				sSYNetPeerBootstrapIngressContractWaitFrames++;
+				if (sSYNetPeerBootstrapIngressContractWaitFrames < SYNETPEER_BOOTSTRAP_CONTRACT_WAIT_MAX_FRAMES)
+				{
+					return FALSE;
+				}
+				if (sSYNetPeerBootstrapIngressContractLoggedFallback == FALSE)
+				{
+					sSYNetPeerBootstrapIngressContractLoggedFallback = TRUE;
+					port_log("SSB64 NetPeer: bootstrap_contract_gate fallback role=%s hr=%u need=%u "
+					         "waited=%u (releasing under contract)\n",
+					         (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
+					         (unsigned int)hr_now, (unsigned int)need,
+					         (unsigned int)sSYNetPeerBootstrapIngressContractWaitFrames);
+				}
+			}
+		}
 		if (ingress_ok != FALSE)
 		{
 			if (sSYNetPeerBootstrapIngressWarmupLoggedDone == FALSE)
@@ -8654,7 +8728,7 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 				sSYNetPeerBootstrapIngressWarmupLoggedDone = TRUE;
 				port_log(
 				    "SSB64 NetPeer: bootstrap_ingress_warmup complete role=%s outbound=1 hr=%u staged=%u "
-				    "ingress_seen=%d sim=%u\n",
+				    "ingress_seen=%d sim=%u contract_wait=%u D=%u\n",
 				    (sSYNetPeerBootstrapIsHost != FALSE) ? "host" : "client",
 				    (unsigned int)syNetPeerGetHighestRemoteTick(),
 				    (unsigned int)sSYNetPeerFramesStaged,
@@ -8663,7 +8737,9 @@ sb32 syNetPeerBootstrapIngressSymmetrySatisfied(void)
 #else
 				    0,
 #endif
-				    (unsigned int)syNetInputGetTick());
+				    (unsigned int)syNetInputGetTick(),
+				    (unsigned int)sSYNetPeerBootstrapIngressContractWaitFrames,
+				    (unsigned int)syNetPeerGetCommittedInputDelay());
 			}
 			return TRUE;
 		}
