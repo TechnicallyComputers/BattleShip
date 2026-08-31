@@ -194,10 +194,13 @@ void syNetFighterPhaseNoteRollbackLoad(void)
 	sDsLoadGeneration++;
 }
 
+static u8 sDsFlagsAtTick[SYNETFIGHTER_DS_SLOTS]; /* bit0: seen resim=0, bit1: seen resim=1 */
+
 static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
 {
 	u32 tick;
 	s32 slot;
+	u8 flag;
 
 	if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan) || (fp->is_control_disable != FALSE))
 	{
@@ -207,31 +210,41 @@ static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
 	{
 		return;
 	}
-	if (syNetRollbackIsResimulating() != FALSE)
-	{
-		return; /* replay legitimately revisits ticks (and episodes may overlap) */
-	}
 	slot = fp->player;
 	if ((slot < 0) || (slot >= SYNETFIGHTER_DS_SLOTS))
 	{
 		return;
 	}
+	/*
+	 * v3: count EVERY execution -- resim and live -- per (load generation, tick).
+	 * Within one generation a tick's fighter update must run exactly once, whatever the
+	 * flag: a load (gen bump) is the only thing that legitimizes re-execution. v1 counted
+	 * correct GGPO re-execution (fixed by generations); v2 excluded resim=1 entirely and
+	 * went silent while the drift continued at +1 per episode on BOTH players -- the
+	 * signature of the resim walk executing the target tick flagged, then live re-running
+	 * it unflagged, same generation, no load between. v3's flags field records which
+	 * combination fired so the log names that case directly (flags=3 = one of each).
+	 */
+	flag = (syNetRollbackIsResimulating() != FALSE) ? 2U : 1U;
 	tick = syNetInputGetTick();
 	if ((sDsLastTick[slot] != tick) || (sDsSlotGeneration[slot] != sDsLoadGeneration))
 	{
 		sDsLastTick[slot] = tick;
 		sDsSlotGeneration[slot] = sDsLoadGeneration;
 		sDsCountAtTick[slot] = 1U;
+		sDsFlagsAtTick[slot] = flag;
 		return;
 	}
 	sDsCountAtTick[slot]++;
+	sDsFlagsAtTick[slot] |= flag;
 	if (sDsCountAtTick[slot] == 2U)
 	{
 		port_log("SSB64 NetFighterPhase: DOUBLE_STEP player=%d tick=%u status=%d total_tics=%u "
-		         "rollback_active=%d gen=%u frame=%d\n",
+		         "rollback_active=%d gen=%u flags=%u frame=%d\n",
 		         (int)fp->player, (unsigned int)tick, (int)fp->status_id,
 		         (unsigned int)fp->status_total_tics, (int)syNetRollbackIsActive(),
-		         (unsigned int)sDsLoadGeneration, port_get_frame_count());
+		         (unsigned int)sDsLoadGeneration, (unsigned int)sDsFlagsAtTick[slot],
+		         port_get_frame_count());
 	}
 }
 

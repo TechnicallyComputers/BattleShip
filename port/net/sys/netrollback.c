@@ -16268,7 +16268,6 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 #endif
 #ifdef PORT
 	sSYNetRollbackBeginResimInitialLoad = TRUE;
-	syNetFighterPhaseNoteRollbackLoad();
 	port_log(
 	    "SSB64 NetRollback: resim initial load tick=%u mismatch_tick=%u target_tick=%u fc_recovery=%d episode_valid=%d\n",
 	    load_tick,

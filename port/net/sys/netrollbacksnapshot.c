@@ -10,6 +10,7 @@
 #include <sys/netplay_fox_firefox_gate.h>
 #include <sys/netplay_ness_pkthunder_gate.h>
 #include <sys/netplay_pikachu_quickattack_gate.h>
+#include <sys/netfighterphase.h>
 #include <sys/netplay_statusvars_bank.h>
 #include <sys/netplay_statusvars_witness.h>
 #if defined(PORT)
@@ -42988,6 +42989,13 @@ sb32 syNetRbSnapshotSaveMarked(u32 completed_sim_tick, sb32 is_load_safe)
 
 sb32 syNetRbSnapshotLoad(u32 completed_sim_tick)
 {
+	/*
+	 * Double-step witness generation: EVERY snapshot load voids the per-slot execution
+	 * counts, including mid-episode extension reloads that never pass the "resim initial
+	 * load" site -- bumping only there would make the all-execution (v3) witness flag
+	 * legitimate extension re-replays. This is the one chokepoint every load passes.
+	 */
+	syNetFighterPhaseNoteRollbackLoad();
 #ifdef PORT
 	SYNetRbSnapshotSlot *slot;
 

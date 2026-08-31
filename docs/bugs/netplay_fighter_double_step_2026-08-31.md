@@ -70,3 +70,28 @@ these paths — that would need its own decision since pool eviction is sim beha
 Also validated this soak: the peer-silence forfeit attributed the RIGHT player
 (forfeiter=1, the vanished peer; result posted 204).
 
+---
+
+## v2 soak: silent witness, +1 drift on BOTH players — the model inverts on schedule
+
+v2 (load-generation-aware, live-only) recorded **zero** hits, and the FC diverge at 1075
+shows the drift shrunk to exactly **+1 `status_total_tics` on both players**
+(13v12 / 18v17). Pre-committed conclusion applies: the extra stepping is not an unexplained
+live re-run — it is one whole tick executed twice per episode, split across the resim flag.
+The precise suspect: **the resim walk executes the target tick at `resim=1`, then
+`POST_RESIM_LIVE` hands the same tick to live, which runs it again at `resim=0` — same
+generation, no load between.** +1 per episode, both fighters, invisible to a witness that
+only counts one side of the flag.
+
+v3 counts every execution per (load generation, tick), with a flags field recording which
+combination fired: `flags=3` (one flagged + one unflagged) is the walk-overruns-target
+case named directly; `flags=2` twice would be an in-walk repeat; `flags=1` twice an
+unexplained live repeat. The generation bump moved from the initial-load log site to
+`syNetRbSnapshotLoad` itself — the chokepoint every load (including mid-episode extension
+reloads) passes, so legitimate extension re-replays stay unflagged.
+
+Blade status same soak: eject contexts fully converged — 32 `force_clear_sim` + 1
+out-of-scope, zero snapshot-machinery kills of in-scope blades, 57 refusals holding the
+sweeps off. The blade layer is now behaving; the ±1 double-step is the remaining Kirby
+sync driver.
+
