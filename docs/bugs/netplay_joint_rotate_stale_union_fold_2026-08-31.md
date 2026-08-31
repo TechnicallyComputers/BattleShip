@@ -52,3 +52,25 @@ the decomp object headers in some TUs.
 The residual Kirby FC diverges — full-only, joints-only, one joint, healing every time —
 should stop. Real pose forks still fold through translate, the anim hash, and live-rotate
 joints.
+
+---
+
+## IMPORTANT: this change requires BOTH peers rebuilt
+
+The fix alters snapshot semantics, not just hashing:
+
+- capture stores zeros for non-live joint rotates,
+- apply skips writing that placeholder back.
+
+A match between a fixed peer and an unfixed peer therefore has genuinely different
+post-load state and **will desync by construction**.
+
+The 2026-08-31 verification soak was exactly that mixed match: Linux logged `j1r` as zeros
+in all 16 dumps (fix active), Android logged live values in all 15 — including the same
+constant `[1.5734, 0.0016, 0]` seen in the pre-fix soak (fix absent). Every joints-column
+difference in that soak is explained by the version skew, and no conclusion about the
+fix's effectiveness can be drawn from it.
+
+**Rebuild and redeploy the Android APK at 50d65f62 or later before the next soak.** The
+`blob_j1_raw` line is the check: both peers must show the same zero/non-zero pattern.
+

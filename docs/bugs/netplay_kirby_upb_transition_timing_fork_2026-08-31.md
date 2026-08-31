@@ -77,3 +77,26 @@ the banner). Result:
 250–280 window, so the 581 entry-timing offset has no trace. `all` costs a handful of
 lines per transition and covers every future band without guessing.
 
+---
+
+## Captured on BOTH peers (2026-08-31) — but under version skew
+
+The armed trace finally caught the fork symmetrically:
+
+| | Android live | Linux live | both peers' resim |
+|---|---|---|---|
+| `256 -> 259` (AirHiFall) | **1445** | 1446 | 1446 |
+| `259 -> 257` (ProcMap landing) | **1446** | 1447 | 1447 |
+
+Android's live sim ran the apex transition one tick early; both peers' resims agree on the
+later timing, and the resulting state fork is visible in the blob dumps at 1447 (p1
+`vel_air.y` -188.57 vs 0.0, `tics` 0 vs 1 — one peer already landed).
+
+**Caveat that blocks conclusions:** that soak was a mixed-version match (see the joint
+rotate doc — Android lacked the snapshot-semantics fix), so the post-load states genuinely
+differed by construction. Re-capture with matched builds before treating the 1-tick
+transition offset as an independent bug; it may be a symptom of the skew.
+
+Also confirmed unrelated: all 250 `pcap FREEZE` events sat below wire 393 — the known
+startup convergence window (device warmup), not the Kirby path.
+
