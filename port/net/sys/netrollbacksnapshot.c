@@ -1494,6 +1494,8 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
  * owner-in-scope blade during verify/resim stages.
  */
 static const char *sSYNetRbBladeEjectContext = "unattributed";
+/* Slot being applied by the in-flight syNetRbSnapshotLoad; NULL outside loads. */
+static const SYNetRbSnapshotSlot *sSYNetRbSnapActiveLoadSlot = NULL;
 static sb32 syNetRbSnapLiveEffectIsFoxReflector(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapFighterInKirbyFinalCutterScope(const FTStruct *fp);
@@ -20915,6 +20917,51 @@ static const char *syNetRbSnapKirbyBladeEjectCallerName(const void *caller, unsi
 }
 #endif
 
+/*
+ * Whether the in-scope blade refusal applies for this owner right now. During a load the
+ * ACTIVE SLOT is the authority: if it lists no userdata-joint effect blob for the owner's
+ * player, the loaded tick predates the blade's mint and a live leftover MUST be culled --
+ * refusing there was the 2026-08-31 overreach: capture of tick 907 correctly folded no
+ * effects (up-B tics=0, pre-mint), the load kept the leftover blade alive, LOAD_HASH_DRIFT
+ * flagged eff 0x811C9DC5/0x8D6A8DD8, and the replay ran with a blade five ticks early --
+ * forking p1's light state from the peer. Outside loads (no active slot) the refusal
+ * stands: forward sweeps stay barred from live in-scope blades.
+ */
+static sb32 syNetRbSnapEffectBlobIsUserdataJoint(const SYNetRbSnapEffectBlob *blob);
+static s32 syNetRbSnapUserdataJointPlayerFromEffectBlob(const SYNetRbSnapEffectBlob *blob);
+static s32 syNetRbSnapPlayerForFighterGobjId(const SYNetRbSnapshotSlot *slot, u32 fighter_gobj_id);
+
+static sb32 syNetRbSnapBladeEjectRefusalHoldsForOwner(const FTStruct *owner_fp)
+{
+	const SYNetRbSnapshotSlot *slot = sSYNetRbSnapActiveLoadSlot;
+	s32 ei;
+
+	if (slot == NULL)
+	{
+		return TRUE;
+	}
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob = &slot->effects[ei];
+		s32 blob_player;
+
+		if ((blob->is_valid == FALSE) || (syNetRbSnapEffectBlobIsUserdataJoint(blob) == FALSE))
+		{
+			continue;
+		}
+		blob_player = syNetRbSnapUserdataJointPlayerFromEffectBlob(blob);
+		if (blob_player < 0)
+		{
+			blob_player = syNetRbSnapPlayerForFighterGobjId(slot, blob->fighter_gobj_id);
+		}
+		if (blob_player == (s32)owner_fp->player)
+		{
+			return TRUE; /* slot lists a shell for this owner: canonical, keep refusing */
+		}
+	}
+	return FALSE; /* slot says no shell for this owner at this tick: allow the cull */
+}
+
 static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct *owner_fp)
 {
 	EFStruct *ep;
@@ -20946,7 +20993,8 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 	 * unaffected; the slot ensure/apply owns the in-scope shell set everywhere.
 	 */
 	if ((owner_fp != NULL) && (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
-	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0))
+	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0) &&
+	    (syNetRbSnapBladeEjectRefusalHoldsForOwner(owner_fp) != FALSE))
 	{
 		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 		{
@@ -43033,6 +43081,9 @@ sb32 syNetRbSnapshotLoad(u32 completed_sim_tick)
 	 * legitimate extension re-replays. This is the one chokepoint every load passes.
 	 */
 	syNetFighterPhaseNoteRollbackLoad();
+	/* Published for slot-aware decisions during the load (e.g. the blade eject refusal):
+	 * while non-NULL, the slot IS the authority on which shells exist. Cleared on return. */
+	sSYNetRbSnapActiveLoadSlot = NULL;
 #ifdef PORT
 	SYNetRbSnapshotSlot *slot;
 
@@ -43048,8 +43099,10 @@ sb32 syNetRbSnapshotLoad(u32 completed_sim_tick)
 		return FALSE;
 	}
 	slot = syNetRbSnapshotSlotForTick(completed_sim_tick);
+	sSYNetRbSnapActiveLoadSlot = slot;
 	if ((slot->is_valid == FALSE) || (slot->tick != completed_sim_tick))
 	{
+		sSYNetRbSnapActiveLoadSlot = NULL;
 		return FALSE;
 	}
 
@@ -43062,6 +43115,7 @@ sb32 syNetRbSnapshotLoad(u32 completed_sim_tick)
 #if defined(SSB64_NETMENU)
 	sSYNetRbSnapDeferNetplayCatchUpDuringApply = FALSE;
 #endif
+	sSYNetRbSnapActiveLoadSlot = NULL;
 	return TRUE;
 #else
 	(void)completed_sim_tick;

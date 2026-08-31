@@ -121,3 +121,35 @@ the two lines names the forked field exactly, the way the rng walk names rng for
 Next soak: `grep blob_light_dump` both logs at the first diverge, diff the two player-1
 lines, and the differing column is the bug's address.
 
+---
+
+## blob_light_dump soak: the chain is closed
+
+The dumps did their job in one session:
+
+1. `baseline_universe` dumps at tick 953 are **byte-identical across peers** — the
+   universes agreed; the fork forms between 953 and the validation at 961, in a dual
+   up-B window.
+2. Android's `LOAD_HASH_DRIFT tick=907` is **eff-only** (`0x811C9DC5/0x8D6A8DD8`) with
+   `class=snapshot_fidelity`: capture of 907 correctly folded NO effects — p1 had just
+   entered up-B (`tics=0`), pre-mint — but the load-verify of that blob found a blade.
+   The leftover live blade from ticks 908+ survived the load.
+3. What kept it alive: **the stage-wide eject refusal** from the churn fix. During a load
+   to a pre-mint tick, the slot listing no blade IS the authority — ejecting the leftover
+   is the slot speaking, not reconciliation guesswork. The refusal blocked exactly that
+   cull, the replay ran with a blade five ticks early, and the blade's presence forked
+   p1's light state (is_effect_attach/force-clear inputs) from the peer without that
+   history — the cross-peer LIGHT-hash ring fork observed at 2350 in the prior soak.
+
+**Fix:** the refusal is now slot-aware. `syNetRbSnapshotLoad` publishes its slot for the
+duration of the apply; the refusal consults it — if the active slot lists a userdata-joint
+shell for the owner it keeps refusing (canonical), if it lists none the cull proceeds
+(pre-mint tick), and outside loads (no active slot) the refusal stands as before (forward
+sweeps stay barred).
+
+The double-step-titled saga thus ends somewhere else entirely: readout artifact on top of
+a blade-lifecycle/load-ordering interaction, introduced by one week-old overreach and
+found by four generations of falsified witnesses plus one cross-peer dump. The witnesses
+stay in the build — they are cheap, silent when healthy, and the next anomaly of this
+family will name itself.
+
