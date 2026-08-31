@@ -13406,6 +13406,32 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 						         reason, tick, (int)slot_index, jline);
 					}
 				}
+				/*
+				 * Raw components for j0 (TopN) and j1 (2026-08-31): the per-joint hashes
+				 * isolated the residual cross-peer ring fork to j1 ALONE on one player --
+				 * a single mid-skeleton joint, not the scatter cross-ISA trig noise would
+				 * produce. Raw bits decide epsilon-vs-structural and name the component;
+				 * j1 is inside the subtree the resim_complete transform rebuilds walk.
+				 */
+				if (blob->joint_is_valid[1] != FALSE)
+				{
+					port_log("SSB64 NetRbSnapshot: blob_j1_raw tag=%s tick=%u player=%d "
+					         "j0t=0x%08X,0x%08X,0x%08X j0r=0x%08X,0x%08X,0x%08X "
+					         "j1t=0x%08X,0x%08X,0x%08X j1r=0x%08X,0x%08X,0x%08X\n",
+					         reason, tick, (int)slot_index,
+					         syNetRbSnapF32DiagBits(blob->joint_translate[0].x),
+					         syNetRbSnapF32DiagBits(blob->joint_translate[0].y),
+					         syNetRbSnapF32DiagBits(blob->joint_translate[0].z),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[0].x),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[0].y),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[0].z),
+					         syNetRbSnapF32DiagBits(blob->joint_translate[1].x),
+					         syNetRbSnapF32DiagBits(blob->joint_translate[1].y),
+					         syNetRbSnapF32DiagBits(blob->joint_translate[1].z),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[1].x),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[1].y),
+					         syNetRbSnapF32DiagBits(blob->joint_rotate[1].z));
+				}
 			}
 		}
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_id", (u32)fp->status_id,

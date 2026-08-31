@@ -205,3 +205,23 @@ they add nothing sync-authoritative over the anim fold — applied symmetrically
 specific joint (17/TopN — blade-adjacent) dominates, the blade attach machinery goes back
 under the lens.
 
+---
+
+## blob_joint_dump soak: the fork is JOINT 1, alone
+
+Cross-peer diff of the baseline dumps at tick 473: **only `j1` differs, player 0 only**
+(0x7F77879D vs 0xD9C4BF9D); every other joint hash and every scalar identical, and
+linux's own baseline-vs-load_drift dumps at the same tick match (blob stable
+post-capture). This kills the scattered-trig-epsilon hypothesis: cross-ISA float noise
+would scatter across many joints and both players. One specific joint forking is
+mechanistic.
+
+j1 sits directly under TopN (joint 0) — inside the subtree the resim-side transform
+rebuilds (`ftParamsUpdateFighterPartsTransformAll(fp->joints[TopN])` at
+`resim_complete_*` / verify-residual call sites) walk on the resimming peer only.
+
+`blob_j1_raw` added: raw f32 bits of j0/j1 translate+rotate at every dump site. The next
+occurrence shows which component and whether the delta is epsilon (boundary-straddling
+quantization) or structural (a rebuild writing a different value than the incremental
+anim update) — and that names the fix.
+
