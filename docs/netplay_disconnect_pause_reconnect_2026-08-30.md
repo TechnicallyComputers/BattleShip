@@ -135,3 +135,42 @@ is active. Android's frozen ring held an invalid blob for tick 1800, which "dive
 against the healthy peer and armed a recovery with nothing to recover from. The
 post-resume window revalidates normally.
 
+---
+
+## Third firing (grace expiry): forfeit fired — at the wrong player
+
+Android minimized past the 30 s grace. The hold, the countdown, and the forfeit all ran —
+and the **surviving** Linux player was forfeited (`forfeit applied forfeiter=0 winner=1`),
+with the wrong result posted to matchmaking. Cause: the silence detector fed
+`syNetReconnectNotifyTransportBad()`, which attributes the disconnect to the LOCAL slot —
+correct for a local network change or local ICE failure, exactly backwards for a peer that
+stopped sending. Grace expiry forfeits the attributed slot, so attribution is the verdict.
+
+Fixed: the netpeer silence detector now calls `syNetReconnectNotifyPeerSilent()` — same
+debounce, REMOTE slot attributed. `NotifyTransportBad` (local ICE failure) and
+`NotifyNetworkChange` (local network change) keep local attribution, which is right for
+them.
+
+Ratings note: the two crash/minimize forfeits posted so far (one each direction) have the
+two players at mirrored 1674/1326 — pure noise. Reset when convenient:
+`sqlite3 /opt/battleship-server/battleship.db "UPDATE players SET mu=1500, phi=350, rating_display=1500;"`
+
+Also observed working: after the forfeit, the sim froze at the live cap (peer inputs gone)
+and the **LIVE_WEDGE_ESCAPE fired its first live shot** — 600 frames of refused advance,
+escalation into BATTLE_SIM_HOLD, VS teardown, clean battle exit. The escape functioned
+exactly as designed, here as the cleanup path for a match the forfeit had already decided.
+
+## The remaining Android blocker: Activity death during minimize
+
+Both minimize tests ended with the app exiting one frame after `app foreground`
+(`WindowIsRunning=0`): SDL delivers the queued quit from the OS destroying the
+backgrounded Activity, `GfxWindowBackendSDL2::HandleSingleEvent` maps `SDL_QUIT` to
+`Close()`, and the resume becomes a shutdown. No reconnect design survives process death.
+
+Making minimize survivable on Android is its own deliberate feature pass:
+`SDL_HINT_ANDROID_BLOCK_ON_PAUSE=0` so the loop keeps running in background (heartbeats
+flow, the graceful hold drains, ICE can recycle while hidden) plus render suppression
+while backgrounded (the lifecycle state atomic in android_network.cpp is already the right
+signal) so no GL touches a dead EGL surface. Needs on-device validation; not bolted on
+here.
+

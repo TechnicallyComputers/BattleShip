@@ -542,6 +542,39 @@ void syNetReconnectOnForfeitIngress(u32 sim_tick, u8 forfeiting_slot, u8 winner_
 	syNetReconnectApplyForfeit(forfeiting_slot, winner_slot);
 }
 
+/*
+ * Peer-silence entry: same debounce as NotifyTransportBad but the disconnect is
+ * attributed to the REMOTE slot. NotifyTransportBad blames the local player, which is
+ * right for a local network change or local ICE failure -- and exactly backwards for a
+ * peer that stopped sending. Soak 2026-08-30: Android minimized past the grace window and
+ * the surviving Linux player was forfeited as the "disconnector", with the wrong result
+ * posted to matchmaking. Grace expiry forfeits sSYNetReconnectDisconnectSlot, so the
+ * attribution IS the verdict.
+ */
+void syNetReconnectNotifyPeerSilent(void)
+{
+	if (syNetReconnectEnabled() == FALSE)
+	{
+		return;
+	}
+	if (syNetReconnectMidMatchEligible() == FALSE)
+	{
+		sSYNetReconnectDetectBadFrames = 0U;
+		return;
+	}
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		return;
+	}
+	sSYNetReconnectDetectBadFrames++;
+	if (sSYNetReconnectDetectBadFrames < syNetReconnectDetectLimit())
+	{
+		return;
+	}
+	sSYNetReconnectDetectBadFrames = 0U;
+	syNetReconnectBeginHold((u8)sSYNetPeerRemotePlayer, TRUE);
+}
+
 void syNetReconnectNotifyTransportBad(void)
 {
 	if (syNetReconnectEnabled() == FALSE)

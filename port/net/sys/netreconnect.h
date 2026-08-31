@@ -29,6 +29,9 @@ extern void syNetReconnectOnAckIngress(u32 sim_tick, u32 epoch);
 extern void syNetReconnectOnForfeitIngress(u32 sim_tick, u8 forfeiting_slot, u8 winner_slot);
 
 extern void syNetReconnectNotifyTransportBad(void);
+/* Peer went silent: same debounce, but the REMOTE slot is the disconnector (grace
+ * expiry forfeits the attributed slot -- blaming local forfeited the survivor). */
+extern void syNetReconnectNotifyPeerSilent(void);
 extern void syNetReconnectNotifyNetworkChange(void);
 extern void syNetReconnectNotifyPeerDisconnect(u8 slot);
 /* App lifecycle, drained on the main thread. Background = graceful immediate hold. */
@@ -53,6 +56,7 @@ extern void syNetReconnectDrawOverlayCpp(void);
 #define syNetReconnectShutdown() ((void)0)
 #define syNetReconnectUpdate() ((void)0)
 #define syNetReconnectNotifyTransportBad() ((void)0)
+#define syNetReconnectNotifyPeerSilent() ((void)0)
 #define syNetReconnectNotifyNetworkChange() ((void)0)
 #define syNetReconnectNotifyPeerDisconnect(S) ((void)(S))
 #define syNetReconnectNotifyAppBackground() ((void)0)

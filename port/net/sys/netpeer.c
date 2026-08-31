@@ -13327,7 +13327,9 @@ void syNetPeerUpdateBattleGate(void)
 				if ((s_silence_ms_env > 0) && (now_ms > sSYNetPeerLastInboundUnixMs) &&
 				    ((now_ms - sSYNetPeerLastInboundUnixMs) >= (u64)s_silence_ms_env))
 				{
-					syNetReconnectNotifyTransportBad();
+					/* PeerSilent, not TransportBad: silence is the PEER's absence, and
+					 * the attributed slot is who the grace-expiry forfeit blames. */
+					syNetReconnectNotifyPeerSilent();
 				}
 			}
 		}
