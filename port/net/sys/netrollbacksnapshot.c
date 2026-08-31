@@ -13353,6 +13353,8 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 			 */
 			{
 				u32 jsum = 2166136261U;
+				u32 jtsum = 2166136261U; /* translate only */
+				u32 jrsum = 2166136261U; /* rotate only */
 				s32 ji;
 
 				for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
@@ -13361,6 +13363,12 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 					{
 						continue;
 					}
+					jtsum = syNetRbSnapFnvAccumulateU32(jtsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].x));
+					jtsum = syNetRbSnapFnvAccumulateU32(jtsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].y));
+					jtsum = syNetRbSnapFnvAccumulateU32(jtsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].z));
+					jrsum = syNetRbSnapFnvAccumulateU32(jrsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].x));
+					jrsum = syNetRbSnapFnvAccumulateU32(jrsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].y));
+					jrsum = syNetRbSnapFnvAccumulateU32(jrsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].z));
 					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].x));
 					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].y));
 					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].z));
@@ -13377,6 +13385,11 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_x),
 				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_z),
 				         (unsigned int)(blob->is_shield != FALSE), jsum);
+				/* Split sums: with matched builds a residual joints-only fork still appeared
+				 * (2026-08-31 @653). jt vs jr says whether the survivor is translate (real
+				 * pose/attach state) or rotate (another non-live-member class). */
+				port_log("SSB64 NetRbSnapshot: blob_joint_split tag=%s tick=%u player=%d jt=0x%08X jr=0x%08X\n",
+				         reason, tick, (int)slot_index, jtsum, jrsum);
 				/*
 				 * Per-joint subhashes (2026-08-31): the joints checksum was the only
 				 * differing column at 1464/1626 with anim identical -- skeletons posed
