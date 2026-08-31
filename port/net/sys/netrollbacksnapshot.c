@@ -13331,6 +13331,39 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 			         syNetRbSnapHashF32ForFold(blob->coll.pos_prev.z),
 			         (unsigned int)blob->tap_stick_x, (unsigned int)blob->tap_stick_y,
 			         (unsigned int)blob->hold_stick_x, (unsigned int)blob->hold_stick_y);
+			/*
+			 * Companion full-fold dump (2026-08-31): the 1950/1958 diverges had light AND
+			 * anim identical cross-peer with FULL differing -- the fork lives in the
+			 * full-only fields. Scalars listed individually; all joint transforms folded to
+			 * one checksum so a joint fork is distinguishable from a scalar fork.
+			 */
+			{
+				u32 jsum = 2166136261U;
+				s32 ji;
+
+				for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+				{
+					if (blob->joint_is_valid[ji] == FALSE)
+					{
+						continue;
+					}
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].x));
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].y));
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].z));
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].x));
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].y));
+					jsum = syNetRbSnapFnvAccumulateU32(jsum, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].z));
+				}
+				port_log("SSB64 NetRbSnapshot: blob_full_dump tag=%s tick=%u player=%d hitstat=%d inv=%u "
+				         "hitstun=%u shield=%d jumps=%u matk=%u vjx=0x%08X vjz=0x%08X is_shield=%u joints=0x%08X\n",
+				         reason, tick, (int)slot_index, (int)blob->hitstatus,
+				         (unsigned int)blob->invincible_tics, (unsigned int)(blob->is_hitstun != FALSE),
+				         (int)blob->shield_health, (unsigned int)blob->jumps_used,
+				         (unsigned int)blob->motion_attack_id,
+				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_x),
+				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_z),
+				         (unsigned int)(blob->is_shield != FALSE), jsum);
+			}
 		}
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_id", (u32)fp->status_id,
 		                              (u32)blob->status_id);

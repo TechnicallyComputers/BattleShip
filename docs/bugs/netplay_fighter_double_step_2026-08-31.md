@@ -153,3 +153,30 @@ found by four generations of falsified witnesses plus one cross-peer dump. The w
 stay in the build — they are cheap, silent when healthy, and the next anomaly of this
 family will name itself.
 
+---
+
+## Slot-aware refusal validated; the residual fork is FULL-only
+
+Verification soak: **zero `LOAD_HASH_DRIFT`** (was 6+/soak) — pre-mint loads cull leftovers
+again, the churn stayed dead, and the session ran 1965 ticks. Two diverges remain
+(1951/1959, healed), and the dumps narrow them another level:
+
+- `blob_light_dump` lines **byte-identical cross-peer** at both diverges (all ~25 light
+  scalars agree: positions, velocities, counters, stick latch).
+- Header hashes: **anim identical, light identical, `blob_fhash_full` differs — player 0
+  only** (0x6BB24F4C vs 0x71C3774C @1950; 0xE28C8272 vs 0x3602FA72 @1958).
+
+The fork lives in the full-fold's extras: {hitstatus, invincible_tics, is_hitstun,
+is_shield, shield_health, jumps_used, motion_attack_id, vel_jostle_x/z, joint transforms}.
+Dual-up-B window again, so vel_jostle (fighter push-apart, computed from the other
+fighter each tick) and hit/invincibility state are prime suspects.
+
+New `blob_full_dump` companion line: the 10 full-only scalars individually + all joint
+transforms folded to one checksum, so the next diverge distinguishes scalar-vs-joint and
+names the field.
+
+Note on the reported "crash": both logs end in clean shutdown with no CRASH/backtrace and
+no wedge — whatever was seen on screen (likely the desync kick or a frozen final frame),
+the processes exited normally. If it reproduces as a real crash, capture logcat on Android
+alongside.
+
