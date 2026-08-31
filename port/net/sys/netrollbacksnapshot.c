@@ -18396,6 +18396,28 @@ static sb32 syNetRbSnapLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
  * Public quake predicate for the sync-hash layer: netsync folds effect_vars.quake.priority only
  * when the union member is authoritative, matching how the snapshot layer classifies quakes.
  */
+/*
+ * Exported for the netsync eff fold: an owner-in-scope Kirby Final Cutter blade shell.
+ * The fold must treat these like the Ness PK wave -- owner identity + status_total_tics,
+ * never raw anim_frame, which advances 0/1/2 times per tick cross-ISA on presentation
+ * shells (see the PK-wave comment in syNetSyncFoldSingleEffectGObj).
+ */
+sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const GObj *gobj, const EFStruct *ep)
+{
+	FTStruct *owner_fp;
+
+	if ((ep == NULL) || (ep->fighter_gobj == NULL))
+	{
+		return FALSE;
+	}
+	owner_fp = ftGetStruct(ep->fighter_gobj);
+	if ((owner_fp == NULL) || (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) == FALSE))
+	{
+		return FALSE;
+	}
+	return syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep);
+}
+
 sb32 syNetRbSnapshotLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)
 {
 	return syNetRbSnapLiveEffectIsQuake(gobj, ep);
@@ -21056,34 +21078,22 @@ static void syNetRbSnapReconcileKirbyFinalCutterBladeEffects(const SYNetRbSnapsh
 		{
 			continue;
 		}
-		if (syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(fp, NULL) == FALSE)
-		{
-			/*
-			 * No live blade: nothing to re-arm, and DO NOT re-create one here. A remint was
-			 * tried on 2026-08-30 ("presentation-only, the blade is excluded from the fold")
-			 * and the dual-Kirby soak the same day refuted it: with both players mid-cutter,
-			 * blade->owner attribution goes ambiguous, eject and remint chased each other
-			 * across players (eject p0 -> remint p1, every few ticks for ~100 ticks), and
-			 * minting inside load/verify passes injected GObj allocations the ring's forward
-			 * pass never recorded -- frame-commit could then never validate, fc_recovery
-			 * episodes repeated with the same mismatch tick, and the session wedged
-			 * permanently in load_fail_hold at tick 3851. Hash-excluded is NOT replay-safe.
-			 * The verify-protect in EjectAllNonCanonicalEffectsForVerify is the correct fix
-			 * for the original vanish; residual eject paths lose the blade cosmetically,
-			 * which is strictly better than wedging the match.
-			 */
-			continue;
-		}
-		if (fp->is_effect_attach == FALSE)
-		{
-			fp->is_effect_attach = TRUE;
-			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
-			{
-				port_log("SSB64 NetRbSnapshot: effect_attach_restore reason=kirby_finalcutter "
-				         "tick=%u player=%d status=%d\n",
-				         (unsigned int)syNetInputGetTick(), (int)fp->player, (int)fp->status_id);
-			}
-		}
+		/*
+		 * 2026-08-31 Kirby-audit: the attach re-arm that lived here is retired. It wrote
+		 * fp->is_effect_attach = TRUE outside the snapshot whenever an in-scope Kirby
+		 * owned a live blade with the flag clear -- a repair that matched reality in the
+		 * compensation era (wrongful ejects stripped the flag under live shells) but
+		 * fights the fighter blob now that shells are slot-canonical: a legitimately
+		 * captured attach=FALSE-with-shell-alive window (between force-clear and the ACMD
+		 * re-mint) would be restored faithfully and then "repaired" into divergence, on
+		 * whichever peer happened to run this pass -- it executes on every load AND every
+		 * forward frame. The attach/eject ping-pong at ticks 1795-1805 of the dual-Kirby
+		 * soak was this line trading blows with the decomp force-clear. The flag's only
+		 * authority is the fighter blob; the earlier remint experiment (see git history
+		 * at this site) was refuted the same way for the same reason: state the snapshot
+		 * owns must not be patched from outside it.
+		 */
+		(void)fp;
 	}
 }
 

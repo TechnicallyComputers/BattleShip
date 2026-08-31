@@ -403,7 +403,10 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h,
 		                              (u32)(ftStatusVarsFallSpecial(fp)->is_allow_interrupt != FALSE));
 	}
-	if ((fp->fkind == nFTKindKirby) && (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
+	/* Kirby-audit 2026-08-31: cover NKirby too -- every snapshot-side scope accepts both
+	 * kinds, and a one-sided fold means an NKirby stone would hash-diverge silently. */
+	if (((fp->fkind == nFTKindKirby) || (fp->fkind == nFTKindNKirby)) &&
+	    (fp->status_id >= nFTKirbyStatusSpecialLwStart) &&
 	    (fp->status_id <= nFTKirbyStatusSpecialAirLwEnd))
 	{
 		h = syNetSyncFnvAccumulateU32(h, (u32)fp->status_vars.kirby.speciallw.duration);
@@ -3862,6 +3865,25 @@ sb32 syNetSyncFoldSingleEffectGObj(struct GObj *gobj, u32 *fold_out)
 	if (ep->proc_update == efManagerVelAddDestroyAnimEnd)
 	{
 		ness_shock_effect = TRUE;
+	}
+	/*
+	 * Kirby Final Cutter blade shells (slot-respawnable since the 2026-08-31 migration,
+	 * so they reach this fold for the first time). Same treatment as the Ness PK wave:
+	 * the shells are presentation whose anim_frame advances 0/1/2 times per tick
+	 * cross-ISA, and their DObj translate is joint-derived. Fold the owner's status
+	 * identity instead -- existence + ownership is what the partition must witness.
+	 */
+	if (syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(gobj, ep) != FALSE)
+	{
+		FTStruct *fp_blade = ftGetStruct(ep->fighter_gobj);
+
+		if (fp_blade != NULL)
+		{
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_blade->status_id);
+			fold = syNetSyncFnvAccumulateU32(fold, (u32)fp_blade->status_total_tics);
+		}
+		*fold_out = fold;
+		return TRUE;
 	}
 	/*
 	 * effect_vars is a union; effect_vars.quake.priority is only the live member for genuine

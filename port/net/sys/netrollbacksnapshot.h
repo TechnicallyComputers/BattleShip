@@ -131,6 +131,9 @@ extern void syNetRbSnapSynctestRecoverCameraIfInterestYanked(void);
 #endif
 /* Quake predicate for the sync-hash layer: gates folding effect_vars.quake.priority to genuine quakes. */
 extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const struct EFStruct *ep);
+/* Owner-in-scope Kirby Final Cutter blade shell (netsync eff fold: fold owner identity,
+ * never raw anim_frame -- presentation anim advances 0/1/2 per tick cross-ISA). */
+extern sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const struct GObj *gobj, const struct EFStruct *ep);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern void syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects(void);
