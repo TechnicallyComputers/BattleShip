@@ -9171,7 +9171,18 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 		{
 			blob->joint_is_valid[ji] = TRUE;
 			blob->joint_translate[ji] = fp->joints[ji]->translate.vec.f;
-			blob->joint_rotate[ji] = fp->joints[ji]->rotate.vec.f;
+			/* Store zeros when dobj->rotate is not the live rotation (vec-supplied): both
+			 * peers then agree, and apply skips it symmetrically below. */
+			if (syNetRbSnapshotDObjRotateIsLive(fp->joints[ji]) != FALSE)
+			{
+				blob->joint_rotate[ji] = fp->joints[ji]->rotate.vec.f;
+			}
+			else
+			{
+				blob->joint_rotate[ji].x = 0.0F;
+				blob->joint_rotate[ji].y = 0.0F;
+				blob->joint_rotate[ji].z = 0.0F;
+			}
 			blob->joint_scale[ji] = fp->joints[ji]->scale.vec.f;
 			syNetRbSnapCaptureDObjAnim(&blob->joint_anim[ji], fp->joints[ji]);
 			blob->joint_dobj_flags[ji] = fp->joints[ji]->flags;
@@ -9289,7 +9300,10 @@ static void syNetRbSnapRestoreFighterJointPoseFromBlob(FTStruct *fp, const SYNet
 			continue;
 		}
 		joint->translate.vec.f = blob->joint_translate[ji];
-		joint->rotate.vec.f = blob->joint_rotate[ji];
+		if (syNetRbSnapshotDObjRotateIsLive(joint) != FALSE)
+		{
+			joint->rotate.vec.f = blob->joint_rotate[ji];
+		}
 		joint->scale.vec.f = blob->joint_scale[ji];
 #if defined(SSB64_NETMENU)
 		syNetplayQuantizeVec3f(&joint->translate.vec.f);
@@ -18568,6 +18582,41 @@ sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const GObj *gobj, const 
 		return FALSE;
 	}
 	return syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep);
+}
+
+/*
+ * Whether a DObj's own `rotate` field is the live rotation, i.e. safe to hash.
+ *
+ * gcDrawDObj (objdisplay.c) walks dobj->vec->kinds: a kind of 2 supplies a GCRotate out of
+ * dobj->vec->data, and the DObj's own `rotate` member is then unused for drawing -- stale
+ * bytes that need not agree across peers or ISAs. Soak 2026-08-31 caught exactly that:
+ * fighter joint 1 forked cross-peer (linux j1r=[0, pi/2, 0], android a CONSTANT
+ * [1.5734, 0.0016, 0] for 250+ ticks) while every child joint, every scalar, and the anim
+ * hash matched -- a stale union member, not a pose difference. Same class as the quake
+ * effect_vars.priority fold (docs/bugs/netplay_effect_quake_priority_union_fold_2026-07-02.md):
+ * fold the field only where it is authoritative.
+ */
+sb32 syNetRbSnapshotDObjRotateIsLive(const void *dobj_ptr)
+{
+	const DObj *dobj = (const DObj *)dobj_ptr;
+	s32 i;
+
+	if (dobj == NULL)
+	{
+		return FALSE;
+	}
+	if (dobj->vec == NULL)
+	{
+		return TRUE; /* no override table: dobj->rotate is what draws */
+	}
+	for (i = 0; i < (s32)ARRAY_COUNT(dobj->vec->kinds); i++)
+	{
+		if (dobj->vec->kinds[i] == 2U)
+		{
+			return FALSE; /* vec supplies the rotation; dobj->rotate is stale */
+		}
+	}
+	return TRUE;
 }
 
 sb32 syNetRbSnapshotLiveEffectIsQuake(const GObj *gobj, const EFStruct *ep)

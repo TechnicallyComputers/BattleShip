@@ -481,12 +481,19 @@ static u32 syNetSyncFoldFighterSlotFullContribution(const FTStruct *fp)
 			   solely from gcPlayDObjAnimJoint quantizing the output pose in-sim via
 			   syNetplayQuantizeDObjAnimPose. The AObj interpolation node state folded by the anim hash is
 			   likewise canonicalized in-sim by syNetplayQuantizeDObjAObjChain. */
-			contribution =
-			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.x));
-			contribution =
-			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.y));
-			contribution =
-			    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.z));
+			/* Only when dobj->rotate is the live rotation: a vec-supplied rotate (kinds[]==2)
+			 * leaves this member stale, and hashing it forked the ring on joint 1 alone
+			 * while the pose itself matched (soak 2026-08-31). Symmetric with the blob
+			 * capture, which stores zeros in the same case. */
+			if (syNetRbSnapshotDObjRotateIsLive(fp->joints[ji]) != FALSE)
+			{
+				contribution =
+				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.x));
+				contribution =
+				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.y));
+				contribution =
+				    syNetSyncFnvAccumulateU32(contribution, syNetSyncHashF32(fp->joints[ji]->rotate.vec.f.z));
+			}
 		}
 	}
 	return contribution;

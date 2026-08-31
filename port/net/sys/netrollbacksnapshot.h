@@ -131,6 +131,11 @@ extern void syNetRbSnapSynctestRecoverCameraIfInterestYanked(void);
 #endif
 /* Quake predicate for the sync-hash layer: gates folding effect_vars.quake.priority to genuine quakes. */
 extern sb32 syNetRbSnapshotLiveEffectIsQuake(const struct GObj *gobj, const struct EFStruct *ep);
+/* TRUE when a DObj's own rotate member is the live rotation (no vec-supplied override).
+ * Hash/capture joint rotate only when this holds -- otherwise it is stale union bytes.
+ * Takes void* because this header is included ahead of the decomp object headers in some
+ * TUs, so `struct DObj` here would be a distinct incomplete tag; callers pass DObj *. */
+extern sb32 syNetRbSnapshotDObjRotateIsLive(const void *dobj_ptr);
 /* Owner-in-scope Kirby Final Cutter blade shell (netsync eff fold: fold owner identity,
  * never raw anim_frame -- presentation anim advances 0/1/2 per tick cross-ISA). */
 extern sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const struct GObj *gobj, const struct EFStruct *ep);
