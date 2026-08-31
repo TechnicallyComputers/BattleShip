@@ -54,6 +54,11 @@ static int PortAndroidLifecycleEventWatch(void *userdata, SDL_Event *event)
 	return 1;
 }
 
+extern "C" int port_android_app_backgrounded(void)
+{
+	return sPortAndroidLifecycleState.load(std::memory_order_acquire);
+}
+
 static void port_android_lifecycle_ensure_watch(void)
 {
 	int expected = 0;
@@ -344,6 +349,11 @@ extern "C" void port_android_network_install(JNIEnv *env, jobject activity)
 
 #elif defined(__linux__)
 
+extern "C" int port_android_app_backgrounded(void)
+{
+	return 0; /* desktop: the loop never blocks on minimize */
+}
+
 #include <cstdlib>
 #include <atomic>
 #include <chrono>
@@ -432,6 +442,10 @@ extern "C" void port_android_network_install(void *ctx)
 
 #else
 
+extern "C" int port_android_app_backgrounded(void)
+{
+	return 0;
+}
 extern "C" void port_android_network_bind_context(void *ctx)
 {
 	(void)ctx;

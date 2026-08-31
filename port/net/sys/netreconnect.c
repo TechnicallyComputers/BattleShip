@@ -293,8 +293,20 @@ sb32 syNetReconnectHoldActive(void)
 	       (sSYNetReconnectPhase == SY_NET_RECONNECT_READY_PENDING);
 }
 
+extern int port_android_app_backgrounded(void);
+
 sb32 syNetReconnectBlocksUnpause(void)
 {
+	/*
+	 * With SDL_ANDROID_BLOCK_ON_PAUSE=0 the sim keeps running while the app is
+	 * backgrounded, so a reconnect hold can complete (READY/ACK) with the player still
+	 * away -- and the match must not resume against an absent player. Keep the pause
+	 * blocked until the app is foregrounded; the hold machinery itself is unaffected.
+	 */
+	if (port_android_app_backgrounded() != 0)
+	{
+		return TRUE;
+	}
 	if (syNetReconnectHoldActive() != FALSE)
 	{
 		return TRUE;

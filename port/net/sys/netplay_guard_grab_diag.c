@@ -498,6 +498,13 @@ void syNetplayGuardGrabDiagLogSetStatus(GObj *fighter_gobj, s32 from_status, s32
 					}
 				}
 			}
+			/*
+			 * Banner even when unset: soak 2026-08-31 spent a capture cycle on "why did
+			 * one peer log zero setstatus lines" with no way to tell from the log whether
+			 * the band was armed there. One line settles binary version AND env delivery.
+			 */
+			port_log("SSB64 GuardGrabDiag: setstatus trace band=%d..%d (%s)\n", s_band_min, s_band_max,
+			         (s_band_min >= 0) ? "armed" : "grab band only; SSB64_NETPLAY_SETSTATUS_TRACE unset");
 		}
 		in_grab_band = (((from_status >= 166) && (from_status <= 172)) ||
 		                ((to_status >= 166) && (to_status <= 172)))

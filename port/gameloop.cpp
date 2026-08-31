@@ -625,6 +625,17 @@ extern "C" void port_drain_pending_display_list(void)
 	Gfx *dl = sPendingDisplayList;
 	sPendingDisplayList = nullptr;
 
+	/*
+	 * Backgrounded (Android, SDL_ANDROID_BLOCK_ON_PAUSE=0): the loop keeps running so the
+	 * session stays alive, but the EGL surface is torn down -- drop the DL instead of
+	 * walking it into GL. Task-completion signaling is decoupled from the GPU work (see
+	 * port_submit_display_list), so the scheduler never notices. sDLSubmitsThisFrame
+	 * stays 0, and the idle branch paces the frame without presenting.
+	 */
+	if (port_android_app_backgrounded() != 0) {
+		return;
+	}
+
 	gbi_trace_begin_frame();
 
 	/* Enhanced framerate mode: render this tick's DL as `subframes` paced
@@ -1383,11 +1394,13 @@ void PortPushFrame(void)
 			auto window = context
 				? std::dynamic_pointer_cast<Fast::Fast3dWindow>(context->GetWindow())
 				: nullptr;
-			if (window) {
+			if (window && (port_android_app_backgrounded() == 0)) {
 				/* Held frame: present k paced subframes of the cached
 				 * framebuffer so the tick still occupies one VI period at
 				 * the interpolated render rate. k == 1 when the feature is
-				 * off (single present, old behavior). */
+				 * off (single present, old behavior). Skipped while the app
+				 * is backgrounded -- the sleep fallback below paces the
+				 * frame with no GL touched. */
 				int idleSubframes = portInterpActiveSubframes();
 				for (int sub = 0; sub < idleSubframes; sub++) {
 					idlePresented = window->PresentCurrentFramebuffer();

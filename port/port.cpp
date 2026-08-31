@@ -1324,6 +1324,22 @@ static void portAndroidJniWarmupEarly(void)
 	 */
 	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 	SDL_SetHint(SDL_HINT_DISPLAY_USABLE_BOUNDS, "0,0,1920,1080");
+	/*
+	 * Keep the native loop running while the app is backgrounded (SDL default blocks it).
+	 * A blocked loop goes network-silent: the peer holds after ~1.5 s, the ICE recycle
+	 * cannot progress on this side, and both minimize soaks (2026-08-30) ended with the
+	 * OS destroying the frozen Activity and the queued SDL_QUIT closing the window one
+	 * frame after resume. With the loop alive, heartbeats and INPUT keep flowing, the
+	 * graceful reconnect hold drains reliably, and short minimizes never even register
+	 * as disconnects. Rendering is suppressed while backgrounded (gameloop.cpp gates the
+	 * DL drain and idle presents on port_android_app_backgrounded) so no GL touches the
+	 * torn-down EGL surface; SDLActivity preserves the GL context across pause. Audio
+	 * deliberately NOT paused: pausing the device risks the cooperative audio coroutine
+	 * blocking on an undrained queue, which would stall the sim and recreate the exact
+	 * silence this removes. Raw hint strings so this compiles against any SDL2 rev.
+	 */
+	SDL_SetHint("SDL_ANDROID_BLOCK_ON_PAUSE", "0");
+	SDL_SetHint("SDL_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO", "0");
 	(void)SDL_getenv("__ssb64_jni_warmup__");
 }
 

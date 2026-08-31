@@ -174,3 +174,45 @@ while backgrounded (the lifecycle state atomic in android_network.cpp is already
 signal) so no GL touches a dead EGL surface. Needs on-device validation; not bolted on
 here.
 
+---
+
+## Implemented (2026-08-31): survive minimize — the loop keeps running
+
+`SDL_ANDROID_BLOCK_ON_PAUSE=0` (set in port.cpp's early Android hint block, before window
+creation; raw hint strings so any SDL2 rev compiles). The native loop now keeps running
+while backgrounded, which changes the whole shape of the feature:
+
+- Heartbeats and INPUT keep flowing — a short minimize never even registers as a
+  disconnect on the peer.
+- The graceful hold (lifecycle background notify) drains reliably every time, because
+  frames keep pumping.
+- The ICE recycle can complete *while hidden*.
+- The OS is far less likely to destroy a live Activity than a frozen one — the
+  queued-SDL_QUIT-on-resume death both minimize soaks hit should largely disappear.
+
+Three guards make it safe:
+
+1. **No GL while backgrounded.** `port_drain_pending_display_list` drops the DL before
+   touching Fast3D (task-completion signaling is decoupled, the scheduler never notices),
+   and the idle-present path skips `PresentCurrentFramebuffer`, falling through to its
+   sleep pacing so the frame still occupies one VI period. Gate:
+   `port_android_app_backgrounded()` (the lifecycle-watch atomic; 0 on desktop).
+2. **No resume against an absent player.** With the sim alive, a hold can complete
+   READY/ACK while the player is still away — `syNetReconnectBlocksUnpause()` now also
+   blocks while backgrounded, so the match stays paused until the app is foregrounded.
+3. **Audio deliberately not paused** (`SDL_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO=0`):
+   pausing the device risks the cooperative audio coroutine blocking on an undrained
+   queue, stalling the sim and recreating the exact silence this removes. Brief background
+   audio is the cheaper cost.
+
+**Needs on-device validation** (Linux/offline/mingw builds are clean; Android compiles via
+CI): minimize mid-match — expect the peer to keep playing against an idle-but-paused
+opponent (hold), no silence detection, no SDL_QUIT on resume, unpause only after
+foreground. Also watch logcat for any GL/EGL errors while hidden — if a driver objects to
+something outside the two gated paths, that's the next seam.
+
+Also: the SetStatus trace now prints a one-line banner at first transition
+(`setstatus trace band=.. (armed|unset)`), because the 2026-08-31 capture lost a cycle to
+"why did one peer log zero lines" with no way to tell binary-version from env-delivery.
+Check the banner on BOTH peers next run before trusting a silent log.
+
