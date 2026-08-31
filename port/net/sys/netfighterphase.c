@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern int port_get_frame_count(void);
+
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
 extern void port_log(const char *fmt, ...);
@@ -162,6 +164,62 @@ void syNetFighterPhaseTraceGcRunAllBegin(void)
 	s_capture_tick = syNetInputGetTick();
 }
 
+/*
+ * Double-step witness (always on in netmenu VS, independent of the trace env).
+ *
+ * ftMainProcUpdateInterrupt increments status_total_tics once per authoritative tick when
+ * control is enabled; this hook runs at its very top, so counting invocations here counts
+ * exactly what the increment counts. Soaks 2026-08-31 showed a fighter's live state
+ * coherently +2 then +3 ticks ahead of its own ring blob -- status_total_tics, the stick
+ * latch counters, vel_air, and joint anims all together -- with every status transition
+ * matching across peers and passes: the fighter is being STEPPED extra times relative to
+ * the ring, outside any transition. This names the event at the instant it happens:
+ * a second non-resim update of the same (player, authoritative tick).
+ */
+#define SYNETFIGHTER_DS_SLOTS 4
+static u32 sDsLastTick[SYNETFIGHTER_DS_SLOTS];
+static u32 sDsCountAtTick[SYNETFIGHTER_DS_SLOTS];
+
+static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
+{
+	u32 tick;
+	s32 slot;
+
+	if ((fp == NULL) || (fp->pkind != nFTPlayerKindMan) || (fp->is_control_disable != FALSE))
+	{
+		return;
+	}
+	if (syNetPeerIsVSSessionActive() == FALSE)
+	{
+		return;
+	}
+	if (syNetRollbackIsResimulating() != FALSE)
+	{
+		return; /* replay legitimately revisits ticks (and episodes may overlap) */
+	}
+	slot = fp->player;
+	if ((slot < 0) || (slot >= SYNETFIGHTER_DS_SLOTS))
+	{
+		return;
+	}
+	tick = syNetInputGetTick();
+	if (sDsLastTick[slot] != tick)
+	{
+		sDsLastTick[slot] = tick;
+		sDsCountAtTick[slot] = 1U;
+		return;
+	}
+	sDsCountAtTick[slot]++;
+	if (sDsCountAtTick[slot] == 2U)
+	{
+		port_log("SSB64 NetFighterPhase: DOUBLE_STEP player=%d tick=%u status=%d total_tics=%u "
+		         "rollback_active=%d frame=%d\n",
+		         (int)fp->player, (unsigned int)tick, (int)fp->status_id,
+		         (unsigned int)fp->status_total_tics, (int)syNetRollbackIsActive(),
+		         port_get_frame_count());
+	}
+}
+
 void syNetFighterPhaseOnInterruptVeryStart(GObj *fighter_gobj)
 {
 	FTStruct *fp;
@@ -170,6 +228,7 @@ void syNetFighterPhaseOnInterruptVeryStart(GObj *fighter_gobj)
 	u32 hh;
 	SYNetFighterPhaseSlotTrace *t;
 
+	syNetFighterPhaseDoubleStepWitness(ftGetStruct(fighter_gobj));
 	if (syNetFighterPhaseShouldTrace() == FALSE)
 	{
 		return;
