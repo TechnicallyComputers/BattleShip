@@ -1485,6 +1485,14 @@ static void syNetRbSnapEjectItemGObjForRollback(GObj *item_gobj)
 static void syNetRbSnapEjectKirbyInhaleWindEffectGObj(GObj *gobj, FTStruct *owner_fp);
 static void syNetRbSnapEjectFoxReflectorEffectGObj(GObj *gobj, FTStruct *owner_fp);
 static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct *owner_fp);
+/*
+ * Which pass decided to destroy a blade. dladdr attribution proved useless on optimized
+ * builds (soak 2026-08-31: 26 ejects logged caller=? after inlining), so the deciders tag
+ * themselves. Also gates the verify-stage refusal below: only "force_clear_sim" (the
+ * decomp-driven teardown, which resim must replay faithfully) may destroy an
+ * owner-in-scope blade during verify/resim stages.
+ */
+static const char *sSYNetRbBladeEjectContext = "unattributed";
 static sb32 syNetRbSnapLiveEffectIsFoxReflector(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapFighterInKirbyFinalCutterScope(const FTStruct *fp);
@@ -1557,7 +1565,9 @@ static void syNetRbSnapEjectGObj(GObj *gobj)
 	/* Final Cutter NoEject joint blades: clear DObj attach + optional xf before GObj recycle. */
 	if (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE)
 	{
+		sSYNetRbBladeEjectContext = "generic_eject";
 		syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(gobj, NULL);
+		sSYNetRbBladeEjectContext = "unattributed";
 		return;
 	}
 #endif
@@ -20884,6 +20894,31 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 			owner_fp = ftGetStruct(ep->fighter_gobj);
 		}
 	}
+	/*
+	 * Verify-stage refusal (2026-08-31): blades are slot-canonical now, and the soak that
+	 * followed the migration showed verify/load machinery destroying freshly minted
+	 * in-scope blades within the same repair pass (mint -> eject ~25 lines apart, 26 of
+	 * 37 ejects from inlined callers dladdr could not name), churning the visible blade
+	 * and feeding the resim storm. Only the sim's own teardown ("force_clear_sim", the
+	 * decomp-driven force-clear that resim must replay faithfully) may destroy an
+	 * owner-in-scope blade while a verify stage or resim is active. Everything else is
+	 * reconciliation guesswork by passes that predate the migration -- refuse, log the
+	 * context, and let the slot ensure/apply own the shell set.
+	 */
+	if ((owner_fp != NULL) && (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
+	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0) &&
+	    ((s_syNetRbSnapRepairStageVerifyOnly != FALSE) || (syNetRollbackIsResimulating() != FALSE)))
+	{
+		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
+		{
+			port_log("SSB64 NetRbSnapshot: effect_eject_refused reason=kirby_finalcutter_blade tick=%u "
+			         "gobj_id=%u player=%d status=%d ctx=%s resim=%d\n",
+			         (unsigned int)syNetInputGetTick(), (unsigned int)gobj->id,
+			         (int)owner_fp->player, (int)owner_fp->status_id, sSYNetRbBladeEjectContext,
+			         (int)(syNetRollbackIsResimulating() != FALSE));
+		}
+		return;
+	}
 	if (owner_fp != NULL)
 	{
 		syNetRbSnapClearFighterEffectPointerIfMatch(owner_fp, gobj);
@@ -20918,12 +20953,12 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 
 		caller_name = syNetRbSnapKirbyBladeEjectCallerName(__builtin_return_address(0), &caller_off);
 		port_log("SSB64 NetRbSnapshot: effect_eject reason=kirby_finalcutter_blade tick=%u gobj_id=%u "
-		         "obj_kind=%u player=%d status=%d resim=%d caller=%s+0x%lx raw=%p\n",
+		         "obj_kind=%u player=%d status=%d resim=%d ctx=%s caller=%s+0x%lx raw=%p\n",
 		         (unsigned int)syNetInputGetTick(), (unsigned int)gobj->id, (unsigned int)gobj->obj_kind,
 		         (owner_fp != NULL) ? (int)owner_fp->player : -1,
 		         (owner_fp != NULL) ? (int)owner_fp->status_id : -1,
-		         (int)(syNetRollbackIsResimulating() != FALSE), caller_name, caller_off,
-		         __builtin_return_address(0));
+		         (int)(syNetRollbackIsResimulating() != FALSE), sSYNetRbBladeEjectContext, caller_name,
+		         caller_off, __builtin_return_address(0));
 	}
 	if (ep != NULL)
 	{
@@ -21055,7 +21090,9 @@ static void syNetRbSnapReconcileKirbyFinalCutterBladeEffects(const SYNetRbSnapsh
 			fp = syNetRbSnapResolveKirbyFinalCutterBladeOwner(gobj, ep, NULL);
 			if ((fp == NULL) || (syNetRbSnapFighterInKirbyFinalCutterScope(fp) == FALSE))
 			{
+				sSYNetRbBladeEjectContext = "reconcile_out_of_scope";
 				syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(gobj, fp);
+				sSYNetRbBladeEjectContext = "unattributed";
 			}
 		}
 	}
@@ -21171,7 +21208,9 @@ void syNetRbSnapForceClearKirbyFinalCutterBlades(GObj *fighter_gobj)
 			}
 			if (owned != FALSE)
 			{
+				sSYNetRbBladeEjectContext = "force_clear_sim";
 				syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(gobj, fp);
+				sSYNetRbBladeEjectContext = "unattributed";
 			}
 		}
 	}
@@ -24884,8 +24923,10 @@ static void syNetRbSnapEjectHiddenCosmeticEffectShellForVerify(const SYNetRbSnap
 	 */
 	if (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE)
 	{
+		sSYNetRbBladeEjectContext = "verify_hidden_cosmetic";
 		syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(gobj,
 		    syNetRbSnapResolveKirbyFinalCutterBladeOwner(gobj, ep, NULL));
+		sSYNetRbBladeEjectContext = "unattributed";
 		return;
 	}
 #endif

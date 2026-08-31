@@ -232,3 +232,35 @@ no attach/shell ping-pong, and — the real test — no figh/world fork in dual-
 windows. If the eff partition throws NEW transient diverges, that is the design working
 (divergence surfaced and healed) unless it flaps repeatedly on one tick.
 
+---
+
+## Post-migration soak (dropping animation, resim storm): verify machinery vs the slot
+
+The migration worked mechanically (42 mints from slot blobs on the predicting peer) but a
+mint→eject churn appeared: freshly minted in-scope blades destroyed within the same repair
+pass, ~25 log lines after their mint, 26 of 37 ejects from callers dladdr printed as `?+0x0`
+— the deployed build is optimized and the generic eject paths are inlined, so runtime
+symbolization is structurally useless there. The churn dropped the visible blade and fed
+the resim storm.
+
+Also in this soak, and distinct: figh-only FC diverges (1165/1173) with the eff partition
+CLEAN, where the setstatus trace (armed, `all`) shows **every transition matching across
+peers and across live/resim** — while `status_total_tics`, `hold_stick` latch counters,
+`vel_air`, and position are all coherently **+2 ticks ahead of the ring blob**. That is not
+transition timing: the fighter was stepped two extra times relative to the ring. A
+double-step source somewhere in the resim/frontier machinery — new class, needs its own
+capture; the blade churn's 89-episode storm is the likely amplifier, so the churn fix
+comes first.
+
+Two changes:
+
+1. **Context tags replace dladdr for eject attribution.** Every decider sets
+   `sSYNetRbBladeEjectContext` ("generic_eject", "reconcile_out_of_scope",
+   "force_clear_sim", "verify_hidden_cosmetic") around its call; the eject log prints
+   `ctx=`. Works identically in optimized builds.
+2. **Verify-stage refusal.** An owner-in-scope blade may only be destroyed during a
+   verify stage or resim by `force_clear_sim` — the decomp-driven teardown that resim
+   must replay faithfully. Every other context is pre-migration reconciliation guesswork;
+   the eject executor refuses it (`effect_eject_refused` log), and the slot ensure/apply
+   owns the shell set.
+
