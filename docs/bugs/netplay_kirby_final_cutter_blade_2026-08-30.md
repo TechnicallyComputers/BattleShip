@@ -264,3 +264,29 @@ Two changes:
    the eject executor refuses it (`effect_eject_refused` log), and the slot ensure/apply
    owns the shell set.
 
+---
+
+## Stress soak 2026-09-01 (up-B spam + ledge grabs): one blade lost, and we know why
+
+Blade accounting over 2013 ticks of deliberate abuse:
+
+| | linux | android |
+|---|---|---|
+| in-scope kills REFUSED (`generic_eject`) | 87 | 41 |
+| allowed, `force_clear_sim` (the sim's own teardown) | 3 | 2 |
+| allowed, other | 1 (`reconcile_out_of_scope`, status 10 -- out of scope, correct) | **1 (`generic_eject`, tick 392, player 1, status 256 -- IN SCOPE)** |
+| slot mints | 7 | 3 |
+
+128 attempted kills of in-scope blades were refused. Exactly ONE got through on an in-scope
+owner, and by design: the slot-aware refusal allows a cull when the ACTIVE LOAD SLOT lists
+no shell for that owner, i.e. the load target predates the blade's mint. That check is what
+fixed the pre-mint LOAD_HASH_DRIFT class.
+
+The residual visual cost is the tension that remains: the cull is slot-correct, but if the
+replay window that follows never re-crosses the ACMD mint frame, nothing re-creates the
+blade and it stays gone for the rest of that move. That is the "animation dropping" still
+seen -- now ~1 occurrence per 2000 ticks of up-B spam, against 37 ejects per session before
+the refusal existed.
+
+Closing it needs an ACMD-driven re-arm rather than another snapshot heuristic: the
+inference route (re-mint from the snapshot layer) already wedged a match on 2026-08-30.

@@ -62,3 +62,17 @@ and a different animal from the latch family above.
 Also worth noting for the hitching: resim volume is asymmetric (93 linux vs 38 android).
 The predicting peer does ~2.5x the replay work, which is where the felt cost lands.
 
+---
+
+## Stress soak: `shield_health` joins the family
+
+Both FC diverges (1454, 1574) are the same thing: player 0 `shield_health` 55 vs 54, one
+unit apart, with EVERY light scalar, every other full scalar, and the joints checksum
+identical on both players. Shield health is a per-tick derived counter (decay while held,
+regen otherwise) -- the same class as the tap_stick / hold_stick drift: one tick of
+accounting apart, not a state fork.
+
+`CliffDiag` was live this run (30/29 lines) and the peers agreed on EVERY cliff decision:
+`tap=0x0000 hold=0x0000 fires=0`, identical tick by tick. The ledge grabs happened; the
+ledge-attack fork did not reproduce. The instrument is confirmed working, so the next
+occurrence gets captured rather than inferred.
