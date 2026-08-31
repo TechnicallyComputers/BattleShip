@@ -30,3 +30,35 @@ Log `tap_stick_y` / `hold_stick_y` / `stick_prev.y` / raw `sy` per tick per pass
 replayed tick derives a different counter than the live pass did with the same history row,
 the derivation is reading something outside the snapshot -- and that source is the fix.
 Cheap to add next to the existing `STICK_SAMPLE` diag.
+
+---
+
+## Health snapshot after the fold fixes (soak 2026-09-01, up-B vs airborne opponent)
+
+Best sync health measured in this investigation:
+
+| metric | value |
+|---|---|
+| session length | 3097 ticks |
+| FC diverges | **1** (was 3 per ~1900 ticks) |
+| cross-peer forked ticks | p0 40/3060 (1.3%), p1 44/3054 (1.4%) |
+| of those, status-prediction mismatches | 39/40 and 43/44 |
+| fork episodes | p0 21, p1 17 — lengths 1-4 ticks, **all healed** |
+| episodes involving a Kirby special (status >= 256) | **20/21 and 16/17** |
+
+So the user's observation is exactly right and now quantified: **up-B entry is where the
+peers transiently disagree**, in ~1-4 tick prediction episodes that rollback resolves. The
+predicting peer has not yet seen the special start; it catches up within the lookforward
+window. That is normal GGPO, not a defect — but it is also why the up-B window is where
+every real bug in this investigation surfaced: it is the highest-churn prediction site in
+the match.
+
+The single FC diverge (@3095) is p1 X position off by **0.76 units**
+(-2784.13 vs -2783.37) with velocity, status, motion, hitstate and all light scalars
+identical; `joints` follows position. Sub-unit positional drift with matching velocity is
+an accumulated-integration difference, not a state fork — the smallest surviving class yet,
+and a different animal from the latch family above.
+
+Also worth noting for the hitching: resim volume is asymmetric (93 linux vs 38 android).
+The predicting peer does ~2.5x the replay work, which is where the felt cost lands.
+
