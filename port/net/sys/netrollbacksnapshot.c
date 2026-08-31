@@ -13292,6 +13292,43 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 			    blob_anim, light_ok, full_ok, anim_ok, (int)fp->status_id, (int)fp->motion_id);
 			syNetRbSnapLogFighterFieldDiffSecondLayer(reason, tick, slot_index, fp, blob, live_light, blob_light,
 			                                          live_full, blob_full);
+			/*
+			 * Cross-peer blob dump (2026-08-31). The live-vs-blob diff above is structurally
+			 * blind to the class that has driven the Kirby diverges: at validation 2351 both
+			 * peers' live-vs-blob dumps showed only the one-tick readout artifact, while the
+			 * header hashes revealed the actual fork -- the two RINGS disagreed on p1's LIGHT
+			 * hash (0x491C2DCE vs 0xB0665792) with anim identical. Dump the light-fold's
+			 * scalar inputs from the BLOB (one line, fixed order) so the two peers' logs can
+			 * be diffed offline field-by-field, the way the rng walk pins rng forks.
+			 */
+			port_log("SSB64 NetRbSnapshot: blob_light_dump tag=%s tick=%u player=%d st=%u mot=%u dmg=%u "
+			         "stock=%u lr=%d ga=%u vax=0x%08X vay=0x%08X vaz=0x%08X vgx=0x%08X vgz=0x%08X "
+			         "vdg=0x%08X hitlag=%u tics=%u topx=0x%08X topy=0x%08X topz=0x%08X ppx=0x%08X "
+			         "ppy=0x%08X ppz=0x%08X tapx=%u tapy=%u holdx=%u holdy=%u\n",
+			         reason, tick, (int)slot_index, (unsigned int)blob->status_id,
+			         (unsigned int)blob->motion_id, (unsigned int)blob->percent_damage,
+			         (unsigned int)blob->stock_count, (int)blob->lr, (unsigned int)(blob->ga != FALSE),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_air.x),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_air.y),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_air.z),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_ground.x),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_ground.z),
+			         syNetRbSnapHashF32ForFold(blob->physics.vel_damage_ground),
+			         (unsigned int)blob->hitlag_tics, (unsigned int)blob->status_total_tics,
+			         (blob->joint_is_valid[nFTPartsJointTopN] != FALSE)
+			             ? syNetRbSnapHashF32ForFold(blob->joint_translate[nFTPartsJointTopN].x)
+			             : 0U,
+			         (blob->joint_is_valid[nFTPartsJointTopN] != FALSE)
+			             ? syNetRbSnapHashF32ForFold(blob->joint_translate[nFTPartsJointTopN].y)
+			             : 0U,
+			         (blob->joint_is_valid[nFTPartsJointTopN] != FALSE)
+			             ? syNetRbSnapHashF32ForFold(blob->joint_translate[nFTPartsJointTopN].z)
+			             : 0U,
+			         syNetRbSnapHashF32ForFold(blob->coll.pos_prev.x),
+			         syNetRbSnapHashF32ForFold(blob->coll.pos_prev.y),
+			         syNetRbSnapHashF32ForFold(blob->coll.pos_prev.z),
+			         (unsigned int)blob->tap_stick_x, (unsigned int)blob->tap_stick_y,
+			         (unsigned int)blob->hold_stick_x, (unsigned int)blob->hold_stick_y);
 		}
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_id", (u32)fp->status_id,
 		                              (u32)blob->status_id);

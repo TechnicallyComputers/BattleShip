@@ -95,3 +95,29 @@ out-of-scope, zero snapshot-machinery kills of in-scope blades, 57 refusals hold
 sweeps off. The blade layer is now behaving; the ±1 double-step is the remaining Kirby
 sync driver.
 
+---
+
+## v3 soak: silent again — and the real fork finally surfaced in the ring hashes
+
+v3 (all executions, per load generation) recorded **zero** hits across a 2889-tick session
+with 2 diverges. Within any load generation, no fighter tick ran twice, flagged or not.
+**The double-step hypothesis is dead** — the accumulated evidence now reads differently:
+
+- The live-vs-blob "+N `status_total_tics`" that named this doc is (at least partly) a
+  READOUT ARTIFACT: the field-diff harness compares live state at validation-processing
+  time against the snap-tick blob — live has legitimately advanced, so every dump carries
+  a uniform one-tick offset (this soak: anim 13.0v12.0 on every joint, +1 on every
+  counter, both peers identical).
+- The genuine fork was in the header hashes all along: at validation 2351, the two peers'
+  RINGS disagree on **player 1's blob LIGHT hash** (0x491C2DCE vs 0xB0665792) with the
+  FULL hash following and the ANIM hash **identical**. Player 0's blobs match perfectly.
+  A narrow, non-skeletal field fork inside the light fold: status/physics/stick-latch/
+  TopN/hitlag territory.
+
+**New instrument:** `blob_light_dump` — one line at each diverge dumping the light-fold's
+scalar inputs from the BLOB (fixed order, fold-hashed floats). Cross-peer offline diff of
+the two lines names the forked field exactly, the way the rng walk names rng forks.
+
+Next soak: `grep blob_light_dump` both logs at the first diverge, diff the two player-1
+lines, and the differing column is the bug's address.
+
