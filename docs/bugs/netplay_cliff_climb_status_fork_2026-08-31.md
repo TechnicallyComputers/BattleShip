@@ -106,3 +106,13 @@ values on both sides of the fork and confirms which candidate is right before co
 - @6035: `figh` and `world` byte-identical, `eff` only — the blade partition, healed.
 - @4216: the `rng` partition also forked, downstream of the different action being taken.
 
+---
+
+## Next soak: no ledge attempt, no CliffDiag lines
+
+Zero `CliffDiag` output on either peer. The decomp diag is committed (`8512eac89`) and the
+pointer bump is in `8a8febbf`, so the check is: rebuild both clients at that pointer AND
+export `SSB64_NETPLAY_CLIFF_DIAG=1`. The line only prints when a fighter is actually in the
+cliff-wait status, so a run without a ledge grab produces nothing either way — the ledge
+repro is still required.
+
