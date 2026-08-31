@@ -7280,6 +7280,22 @@ void syNetRollbackOnPeerFrameCommitStateMismatch(u32 validation_tick, const SYNe
 	{
 		return;
 	}
+#if defined(SSB64_NETMENU)
+	/*
+	 * A reconnect hold means at least one side's sim is frozen or was just frozen; the
+	 * local ring can hold empty/stale blobs for the validation window (soak 2026-08-30:
+	 * Android compared its own invalid tick-1800 blob mid-minimize, "diverged" against a
+	 * healthy peer, and armed a recovery with nothing to recover from). Frame-commit
+	 * validation of that window is meaningless -- skip it; the post-resume window
+	 * revalidates normally.
+	 */
+	if (syNetReconnectHoldActive() != FALSE)
+	{
+		port_log("SSB64 NetRollback: FRAME_COMMIT_STATE compare skipped validation=%u (reconnect hold)\n",
+		         validation_tick);
+		return;
+	}
+#endif
 	if (syNetFrameCommitStateDigestsDiverge(local, peer) == FALSE)
 	{
 		return;

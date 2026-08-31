@@ -122,7 +122,18 @@ static sb32 mmIceRcInitGather(void)
 	}
 	(void)mmIceSetIceControlling(sMmIceRcHostRole);
 	mmIceSetCallbacks(mmIceRcOnLocalCandidate, mmIceRcOnGatheringDone, NULL);
-	mmIceSetCandidatePolicy(FALSE, FALSE, NULL, NULL);
+	/*
+	 * Host candidates ON, unfiltered. This was (FALSE, FALSE, ...) -- strip local host
+	 * candidates from signaling and refuse the peer's -- which on a LAN match removes
+	 * exactly the candidates that carry the connection: soak 2026-08-30, the first
+	 * mid-match recycle to run end-to-end, logged "omitted local host candidate(s)
+	 * from signaling SDP (no local LAN)" and failed with only reflexive/relay pairs.
+	 * Unlike the original bootstrap policy, no LAN host:port filters are pinned: the
+	 * peer may legitimately be on a NEW network (that is the reconnect feature's whole
+	 * point), so signal and accept whatever host candidates the fresh agents gather
+	 * and let ICE connectivity checks sort them out.
+	 */
+	mmIceSetCandidatePolicy(TRUE, TRUE, NULL, NULL);
 	if (mmIceStartGathering() == FALSE)
 	{
 		port_log("SSB64 ICE Reconnect: gathering start failed\n");

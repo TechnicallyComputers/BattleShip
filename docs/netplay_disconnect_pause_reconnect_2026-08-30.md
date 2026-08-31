@@ -105,3 +105,33 @@ discard Android's HOLD (peer=4088 vs local=4093) and rely on its own detection. 
 converged anyway; if future soaks show holds failing to pair, that check is the place to
 loosen (accept within the prediction window).
 
+---
+
+## Second live firing (minimize test): pause pipeline works; recycle had a LAN bug
+
+The whole front half of the feature worked: Android minimized -> both peers entered hold
+(Android via lifecycle/local detection at 1802, Linux via silence at 1804), the overlay
+drew with **no crash**, both began the ICE recycle, and Android's restore fired
+`app foreground — hold active, resuming recycle`.
+
+Two failures behind that:
+
+1. **Recycle candidate policy stripped LAN candidates.** `mmIceRcInitGather` called
+   `mmIceSetCandidatePolicy(FALSE, FALSE, NULL, NULL)` -- refuse the peer's host
+   candidates and omit ours from signaling. On a LAN match that removes exactly the
+   candidates that carry the connection; Linux logged "omitted local host candidate(s)
+   from signaling SDP (no local LAN)" and the recycle failed to reflexive/relay-only.
+   Fixed: `(TRUE, TRUE, NULL, NULL)` -- host candidates on, but **unfiltered** (no pinned
+   LAN host:port), because the peer may legitimately be on a new network; connectivity
+   checks pick the working pair.
+2. **The Android app exited one frame after foreground** (`WindowIsRunning=0` right after
+   the resume log). Whether the user closed it or Android destroyed the Activity in the
+   background, the process was gone -- no recycle can survive that; the 30 s forfeit is
+   the designed outcome. A cold-relaunch rejoin ("resume my held match on startup") would
+   be a separate feature.
+
+Also hardened: frame-commit cross-peer validation is now skipped while a reconnect hold
+is active. Android's frozen ring held an invalid blob for tick 1800, which "diverged"
+against the healthy peer and armed a recovery with nothing to recover from. The
+post-resume window revalidates normally.
+
