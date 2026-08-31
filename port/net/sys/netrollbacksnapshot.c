@@ -1487,6 +1487,15 @@ static void syNetRbSnapEjectFoxReflectorEffectGObj(GObj *gobj, FTStruct *owner_f
 static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct *owner_fp);
 static sb32 syNetRbSnapLiveEffectIsFoxReflector(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(const GObj *gobj, const EFStruct *ep);
+static sb32 syNetRbSnapFighterInKirbyFinalCutterScope(const FTStruct *fp);
+/*
+ * TRUE when a userdata-joint NoEject effect is slot-respawnable: the Captain punch flame,
+ * or (2026-08-31 migration) a Kirby Final Cutter blade with its owner mid-move. Shared by
+ * EffectHiddenFromRollback and LiveEffectExcludedFromRollbackHash so capture, fold, and
+ * verify stay symmetric -- the asymmetric compensation era ended a dual-Kirby match at
+ * tick 1801 (figh+world fork through force-clear paths reading divergent shell state).
+ */
+static sb32 syNetRbSnapJointFxSlotRespawnable(const GObj *gobj, const EFStruct *ep);
 static sb32 syNetRbSnapFighterOwnsLiveKirbyFinalCutterBlade(FTStruct *fp, GObj *exclude_gobj);
 static void syNetRbSnapPruneStaleFoxReflectors(const SYNetRbSnapshotSlot *slot);
 #endif
@@ -15346,6 +15355,31 @@ static sb32 syNetRbSnapEffectHiddenProcIdentityFromRollback(const GObj *gobj)
 	return FALSE;
 }
 
+static sb32 syNetRbSnapJointFxSlotRespawnable(const GObj *gobj, const EFStruct *ep)
+{
+	FTStruct *owner_fp;
+
+	if ((ep == NULL) || (ep->fighter_gobj == NULL))
+	{
+		return FALSE;
+	}
+	owner_fp = ftGetStruct(ep->fighter_gobj);
+	if (owner_fp == NULL)
+	{
+		return FALSE;
+	}
+	if (syNetRbSnapFighterInCaptainFalconPunchEffectScope(owner_fp) != FALSE)
+	{
+		return TRUE;
+	}
+	if ((syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
+	    (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static sb32 syNetRbSnapEffectHiddenFromRollback(const GObj *gobj, const EFStruct *ep)
 {
 #if defined(SSB64_NETMENU)
@@ -15399,8 +15433,7 @@ static sb32 syNetRbSnapEffectHiddenFromRollback(const GObj *gobj, const EFStruct
 	 * verify after prepare_verify while Kirby is SpecialNCopy).
 	 */
 	if ((syNetRbSnapLiveEffectIsUserdataJointAttach(gobj, ep) != FALSE) &&
-	    ((ep->fighter_gobj == NULL) ||
-	     (syNetRbSnapFighterInCaptainFalconPunchEffectScope(ftGetStruct(ep->fighter_gobj)) == FALSE)))
+	    (syNetRbSnapJointFxSlotRespawnable(gobj, ep) == FALSE))
 	{
 		return TRUE;
 	}
@@ -21174,7 +21207,7 @@ static GObj *syNetRbSnapFindLiveUserdataJointEffectForFighter(const GObj *fighte
 	return NULL;
 }
 
-static GObj *syNetRbSnapMakeUserdataJointEffectForFighter(GObj *fighter_gobj)
+static GObj *syNetRbSnapMakeUserdataJointEffectForFighter(GObj *fighter_gobj, const SYNetRbSnapEffectBlob *blob)
 {
 	FTStruct *fp;
 
@@ -21183,9 +21216,37 @@ static GObj *syNetRbSnapMakeUserdataJointEffectForFighter(GObj *fighter_gobj)
 		return NULL;
 	}
 	fp = ftGetStruct(fighter_gobj);
-	if ((fp != NULL) && (syNetRbSnapFighterInCaptainFalconPunchEffectScope(fp) != FALSE))
+	if (fp == NULL)
+	{
+		return NULL;
+	}
+	if (syNetRbSnapFighterInCaptainFalconPunchEffectScope(fp) != FALSE)
 	{
 		return efManagerCaptainFalconPunchMakeEffect(fighter_gobj);
+	}
+	/*
+	 * Kirby Final Cutter blade shells (2026-08-31 migration). The blob does not record
+	 * which of the four shells it was (EFStruct carries no effect-kind), but joint +
+	 * status recover it: Draw and Trail attach to joints[17], Up and Down to TopN (see
+	 * the efManagerKirbyCutter*MakeEffect family). joints[17] mints Draw -- the carried
+	 * blade, the player-visible one; a mid-life Trail streak collapsing to Draw is a
+	 * few-frame cosmetic approximation. TopN mints Down in AirHiFall and Up otherwise,
+	 * which is exactly how the ACMD schedules them. blob->quake_magnitude carries the
+	 * captured joint index (the USERDATA_JOINT capture packs it there).
+	 */
+	if (syNetRbSnapFighterInKirbyFinalCutterScope(fp) != FALSE)
+	{
+		s32 joint_idx = (blob != NULL) ? (s32)blob->quake_magnitude : SYNETRB_KIRBY_FINALCUTTER_DRAW_JOINT;
+
+		if (joint_idx == (s32)nFTPartsJointTopN)
+		{
+			if (fp->status_id == nFTKirbyStatusSpecialAirHiFall)
+			{
+				return efManagerKirbyCutterDownMakeEffect(fighter_gobj);
+			}
+			return efManagerKirbyCutterUpMakeEffect(fighter_gobj);
+		}
+		return efManagerKirbyCutterDrawMakeEffect(fighter_gobj);
 	}
 	return NULL;
 }
@@ -21248,8 +21309,7 @@ static sb32 syNetRbSnapLiveEffectExcludedFromRollbackHash(const GObj *gobj, cons
 	 * See docs/bugs/netplay_kirby_inhale_userdata_joint_eff_fold_2026-07-03.md.
 	 */
 	if ((syNetRbSnapLiveEffectIsUserdataJointAttach(gobj, ep) != FALSE) &&
-	    ((ep->fighter_gobj == NULL) ||
-	     (syNetRbSnapFighterInCaptainFalconPunchEffectScope(ftGetStruct(ep->fighter_gobj)) == FALSE)))
+	    (syNetRbSnapJointFxSlotRespawnable(gobj, ep) == FALSE))
 	{
 		return TRUE;
 	}
@@ -30316,7 +30376,7 @@ static GObj *syNetRbSnapTryRespawnEffectFromBlob(const SYNetRbSnapshotSlot *slot
 				    blob->gobj_id, blob->fighter_gobj_id, (unsigned int)fighter_gobj->id,
 				    (unsigned int)blob->quake_magnitude, syNetRbSnapUserdataJointPlayerFromEffectBlob(blob));
 			}
-			effect_gobj = syNetRbSnapMakeUserdataJointEffectForFighter(fighter_gobj);
+			effect_gobj = syNetRbSnapMakeUserdataJointEffectForFighter(fighter_gobj, blob);
 			if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 			{
 				port_log("SSB64 NetRbSnapshot: effect_respawn kind=USERDATA_JOINT result=%s new_gobj_id=%u\n",

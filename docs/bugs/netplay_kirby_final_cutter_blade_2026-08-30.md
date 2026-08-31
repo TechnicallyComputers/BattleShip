@@ -200,3 +200,35 @@ can then never disagree, on one peer or between peers. That is a deliberate mile
 (capture predicate exists; needs blob fields for the joint attach and a slot-driven mint
 like Captain punch), not a same-day patch — two of those have already been refuted here.
 
+---
+
+## 2026-08-31: the migration is in. Blades are snapshot state.
+
+The dual-Kirby soak (both players entering up-B at 1773/1774) ended the match at
+validation 1801 with fighter AND world hashes forked, force-clear churn running through
+every resim of the window (`effect_eject ... resim=1 caller=syNetRbSnapForceClearKirbyFinalCutterBlades`).
+That was the last argument for compensations. The end-state named at the top of this doc
+is now implemented:
+
+- **Capture + fold**: in-scope cutter blades are no longer excluded — a shared predicate
+  (`syNetRbSnapJointFxSlotRespawnable`) admits the Captain punch flame and owner-in-scope
+  cutter blades through BOTH symmetric filters (`EffectHiddenFromRollback`,
+  `LiveEffectExcludedFromRollbackHash`), so the shells are enumerated, captured as
+  `USERDATA_JOINT` blobs (fighter identity + joint index), folded into the eff hash, and
+  treated as canonical by every verify pass. Shell divergence is now VISIBLE and
+  healable instead of silently forking downstream fighter state.
+- **Restore + mint**: `syNetRbSnapMakeUserdataJointEffectForFighter` now takes the blob
+  and mints the right shell for a Kirby in cutter scope: joints[17] → Draw (the carried
+  blade); TopN → Down in AirHiFall, Up otherwise — matching how the ACMD schedules them.
+  A mid-life Trail streak re-minting as Draw is a few-frame cosmetic approximation.
+- **Out of scope unchanged**: post-Landing orphans and NULL-parent shells stay excluded
+  and keep the old teardown path; the reconcile/eject/protect machinery remains as belt-
+  and-suspenders until a green dual-Kirby soak justifies trimming it.
+
+**Validation soak**: dual-Kirby up-Bs, ideally overlapping, with the effect diag on.
+Expect: no mid-move `effect_eject` with an in-scope owner (shells now reconcile against
+the slot), `effect_respawn kind=USERDATA_JOINT` lines minting blades on rollback loads,
+no attach/shell ping-pong, and — the real test — no figh/world fork in dual-cutter
+windows. If the eff partition throws NEW transient diverges, that is the design working
+(divergence surfaced and healed) unless it flaps repeatedly on one tick.
+
