@@ -50,3 +50,30 @@ answers directly: does the resim pass of the activation tick log the transition
 (`resim=1`) at all? If yes, from which caller and at which replayed tick; if no, the
 activation's precondition state is what the snapshot is missing — compare the owner's
 live `caller=` against the predictor's silence the way `search_catch` pinned the grab.
+
+---
+
+## Capture run (2026-08-31, both banners armed): instrument validated; fork did not reproduce
+
+First run with the band trace live on both peers (`setstatus trace band=250..280 (armed)`
+on each — the previous silent-Linux mystery was a stale binary or env delivery, settled by
+the banner). Result:
+
+- **All 8 band transitions matched byte-for-byte across peers** — same tick, same
+  from/to, same caller (Android resolves real offsets, e.g.
+  `ftKirbySpecialHiSetStatus+0x44`, Linux `+0x0`). Three complete up-Bs, including the
+  `259 → 257` ProcMap landing edge, in perfect agreement. The up-B timing fork did not
+  reproduce this session.
+- One FC diverge at validation 581, and it is a **different class**: player 0 in the
+  guard band (status 154 — outside the traced 250–280 window), `status_total_tics` off
+  by exactly 1, joint deltas one anim frame apart, and — decisively — **input digests
+  DIFFER** at the fold (`inp_local=0x66AECF74 inp_peer=0x72065091`), with a
+  `FRAME_COMMIT_LATE_MINT` immediately preceding. That is input-skew territory, not the
+  identical-inputs replay-determinism class this doc tracks. Unresolved this session
+  only because Android quit right after the validation, before the next cycle could show
+  whether recovery healed it.
+
+**Next runs: use `SSB64_NETPLAY_SETSTATUS_TRACE=all`** — the guard band sat outside the
+250–280 window, so the 581 entry-timing offset has no trace. `all` costs a handful of
+lines per transition and covers every future band without guessing.
+
