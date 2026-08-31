@@ -60,3 +60,49 @@ must round-trip.
 Ledge-climb repro (hang and climb, both players, ideally while the other is mid-up-B) with
 the standard env. The trace already names the callers; add the entry conditions if the
 fork proves input-dependent rather than state-dependent.
+
+---
+
+## Reproduced, and the branch is named
+
+Second soak (matched builds, 6037 ticks — longest yet). The user drove ledge grab/climb
+during up-B and hit it twice. The joints-only false-positive class is **gone**: every
+diverge now carries real light-field differences.
+
+**The branch point, tick 4208 — same tick, same source status, different destination:**
+
+| | Linux (predicting) | Android (p1's OWNER) |
+|---|---|---|
+| live | `86 -> 87` `ftCommonCliffQuickProcUpdate` (climb) | `86 -> 92` `ftCommonCliffAttackQuick1SetStatus` (**attack**) |
+| its own resim | `86 -> 87` (climb) | `86 -> 87` (**climb**) |
+
+The owner's live took ATTACK; the owner's own resim of that tick took CLIMB. Android's
+input history for p1 across 4206-4210 is **identical every tick**:
+`btn=0x0000 sx=2 sy=84 pred=0`, no downgrade. Stick-up with no buttons means climb — so
+live acted on a button the authoritative record does not contain.
+
+**Why:** `ftCommonCliffAttackCheckInterruptCommon` branches on
+`fp->input.pl.button_tap & (mask_a|mask_b)` — a DERIVED edge latch, not raw input. The
+rollback apply deliberately restores `pl_button_hold` but **not** `pl_button_tap` /
+`pl_button_release`; the comment at that site records why (restoring stale blob taps caused
+an Android-only Kirby inhale fork at tick 524). So both restoring and not-restoring have
+produced forks — the latch's value on the first replayed tick after a load belongs to the
+pre-load frontier either way, and any status proc that reads it before
+`ftMainProcessInput` re-derives it for that tick sees the wrong edge.
+
+**Not fixed blind.** Candidate directions, in preference order:
+1. Re-derive tap/release at load from restored `button_hold` + the authoritative history
+   row for the loaded tick — deterministic, uses the record rather than either stale value.
+2. Restore tap/release but only for the first replayed tick, then let the normal
+   re-derivation take over.
+3. Make cliff (and peers of it) read a snapshot-covered input source.
+
+`SSB64_NETPLAY_CLIFF_DIAG=1` (decomp `8512eac89`) logs tap/hold/release, the A|B mask,
+whether it fires, and the resim flag at the decision — so the next repro shows the latch
+values on both sides of the fork and confirms which candidate is right before code moves.
+
+## Same soak, other classes
+
+- @6035: `figh` and `world` byte-identical, `eff` only — the blade partition, healed.
+- @4216: the `rng` partition also forked, downstream of the different action being taken.
+
