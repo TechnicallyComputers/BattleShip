@@ -179,6 +179,20 @@ void syNetFighterPhaseTraceGcRunAllBegin(void)
 #define SYNETFIGHTER_DS_SLOTS 4
 static u32 sDsLastTick[SYNETFIGHTER_DS_SLOTS];
 static u32 sDsCountAtTick[SYNETFIGHTER_DS_SLOTS];
+/*
+ * Rollback-load generation. A load DISCARDS live state, so re-running an already-run tick
+ * after a load is correct GGPO, not a double-step -- the first witness build counted
+ * exactly those boundaries (32 hits, all at "POST_RESIM_LIVE sim==target" frames, soak
+ * 2026-08-31) and said nothing about the real leak. Each load voids the per-slot counts;
+ * only a second unflagged execution within ONE generation is pathological.
+ */
+static u32 sDsLoadGeneration;
+static u32 sDsSlotGeneration[SYNETFIGHTER_DS_SLOTS];
+
+void syNetFighterPhaseNoteRollbackLoad(void)
+{
+	sDsLoadGeneration++;
+}
 
 static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
 {
@@ -203,9 +217,10 @@ static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
 		return;
 	}
 	tick = syNetInputGetTick();
-	if (sDsLastTick[slot] != tick)
+	if ((sDsLastTick[slot] != tick) || (sDsSlotGeneration[slot] != sDsLoadGeneration))
 	{
 		sDsLastTick[slot] = tick;
+		sDsSlotGeneration[slot] = sDsLoadGeneration;
 		sDsCountAtTick[slot] = 1U;
 		return;
 	}
@@ -213,10 +228,10 @@ static void syNetFighterPhaseDoubleStepWitness(FTStruct *fp)
 	if (sDsCountAtTick[slot] == 2U)
 	{
 		port_log("SSB64 NetFighterPhase: DOUBLE_STEP player=%d tick=%u status=%d total_tics=%u "
-		         "rollback_active=%d frame=%d\n",
+		         "rollback_active=%d gen=%u frame=%d\n",
 		         (int)fp->player, (unsigned int)tick, (int)fp->status_id,
 		         (unsigned int)fp->status_total_tics, (int)syNetRollbackIsActive(),
-		         port_get_frame_count());
+		         (unsigned int)sDsLoadGeneration, port_get_frame_count());
 	}
 }
 

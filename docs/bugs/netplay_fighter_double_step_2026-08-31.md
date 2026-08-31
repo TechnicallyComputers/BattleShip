@@ -40,3 +40,33 @@ surrounding lines (resim episode boundaries, load/verify stages, frontier rescue
 the caller. If diverges occur with NO witness line, the model is wrong — the extra
 stepping would then be inside resim passes (a tick replayed twice within one episode) and
 the witness gets extended there.
+
+---
+
+## First witness soak: all 70 hits at resim boundaries — witness refined
+
+Every `DOUBLE_STEP` (32 linux / 38 android) sat within 25 lines of a `POST_RESIM_LIVE
+sim==target` / `resim complete` — i.e. the correct GGPO re-execution of a tick whose
+original run was discarded by the rollback load. The v1 witness could not distinguish that
+from a real leak.
+
+v2 is load-generation-aware: `syNetFighterPhaseNoteRollbackLoad()` (called from the resim
+initial-load site) voids the per-slot counts, so a hit now means a tick ran twice at
+resim=0 **within one generation** — no load in between, no legitimate explanation. If the
+next drifted FC diverge arrives with v2 silent, the extra stepping is inside flagged resim
+(a tick replayed twice within one episode) and the witness extends there.
+
+## Same soak, blade attribution paid off
+
+`ctx=` names the remaining vanish: 34 live-forward `generic_eject` kills of in-scope
+blades (plus 18 correctly refused at verify). The zombie/dead sweeps run on forward frames
+too — outside the stage-limited first refusal. The refusal now covers ALL stages: only
+`force_clear_sim` may destroy an owner-in-scope blade, anywhere. Out-of-scope teardown and
+orphan sweeps unaffected. If blades still vanish with zero `effect_eject` lines, the
+remaining suspect is game-side effect-pool eviction (`efManagerMakeEffectForce` recycling
+the oldest shell under dual-up-B effect pressure), which routes through `gcEjectGObj`, not
+these paths — that would need its own decision since pool eviction is sim behavior.
+
+Also validated this soak: the peer-silence forfeit attributed the RIGHT player
+(forfeiter=1, the vanished peer; result posted 204).
+

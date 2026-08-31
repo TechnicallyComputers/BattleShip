@@ -20901,13 +20901,14 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 	 * 37 ejects from inlined callers dladdr could not name), churning the visible blade
 	 * and feeding the resim storm. Only the sim's own teardown ("force_clear_sim", the
 	 * decomp-driven force-clear that resim must replay faithfully) may destroy an
-	 * owner-in-scope blade while a verify stage or resim is active. Everything else is
-	 * reconciliation guesswork by passes that predate the migration -- refuse, log the
-	 * context, and let the slot ensure/apply own the shell set.
+	 * owner-in-scope blade -- in ANY stage. The stage-limited first cut (verify/resim
+	 * only) left 34 live-forward generic_eject kills in the next soak, which was the
+	 * blade still vanishing during dual up-Bs: the zombie/dead sweeps run on forward
+	 * frames too. Out-of-scope teardown, orphan sweeps, and the decomp's force-clear are
+	 * unaffected; the slot ensure/apply owns the in-scope shell set everywhere.
 	 */
 	if ((owner_fp != NULL) && (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
-	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0) &&
-	    ((s_syNetRbSnapRepairStageVerifyOnly != FALSE) || (syNetRollbackIsResimulating() != FALSE)))
+	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0))
 	{
 		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 		{

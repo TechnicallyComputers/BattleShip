@@ -11,6 +11,9 @@ struct GObj;
  */
 void syNetFighterPhaseTraceGcRunAllBegin(void);
 void syNetFighterPhaseOnInterruptVeryStart(struct GObj *fighter_gobj);
+/* Rollback load notification: voids the double-step witness counts (a load discards
+ * live state, so post-load re-execution of a tick is correct GGPO, not a double-step). */
+void syNetFighterPhaseNoteRollbackLoad(void);
 void syNetFighterPhaseOnInterruptAfterInputControl(struct GObj *fighter_gobj);
 void syNetFighterPhaseOnParamsEnd(struct GObj *fighter_gobj);
 void syNetFighterPhaseTraceEmitNetSyncLines(u32 validation_tick);
