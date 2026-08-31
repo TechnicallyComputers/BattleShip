@@ -180,3 +180,28 @@ no wedge — whatever was seen on screen (likely the desync kick or a frozen fin
 the processes exited normally. If it reproduces as a real crash, capture logcat on Android
 alongside.
 
+---
+
+## blob_full_dump soak: the column is `joints`
+
+Cross-peer diff at both diverges (1464 both players, 1626 p0): **every scalar matches** —
+hitstatus, invincible, hitstun, shield, jumps, motion_attack_id, vel_jostle — only the
+`joints` checksum differs. Combined with the identical anim hashes: the skeletons were
+posed differently under the same animation state, by the small per-joint deltas the
+live-vs-blob diffs have shown all along (e.g. j5_ry 0xBF16F500 vs 0xBF15B200).
+
+Working hypothesis, now testable: joint poses are DERIVED state — computed from anim
+frame/wait (already folded) through trig-heavy interpolation whose float paths differ
+cross-ISA. The fold quantizes, so epsilons normally vanish; a couple of times per soak an
+epsilon straddles a quantization boundary and the full hash forks. That would make this
+residual class a false-positive FC diverge on derived presentation state, not a sim fork —
+consistent with every occurrence healing cleanly and gameplay staying correct.
+
+`blob_joint_dump` added (per-joint subhashes, 8 per line): the next diverge names the
+joint indices. If they are scattered mid-skeleton joints with epsilon deltas, the fix is
+structural and deliberate: remove (or coarsen) raw joint transforms in the FULL fold —
+they add nothing sync-authoritative over the anim fold — applied symmetrically to
+`syNetRbSnapHashFighterBlobFull` and `syNetSyncHashFighterSlotFull`. If instead one
+specific joint (17/TopN — blade-adjacent) dominates, the blade attach machinery goes back
+under the lens.
+

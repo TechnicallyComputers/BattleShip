@@ -13363,6 +13363,49 @@ void syNetRbSnapshotLogFighterFieldDiffAtTick(u32 tick, const char *tag)
 				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_x),
 				         syNetRbSnapHashF32ForFold(blob->physics.vel_jostle_z),
 				         (unsigned int)(blob->is_shield != FALSE), jsum);
+				/*
+				 * Per-joint subhashes (2026-08-31): the joints checksum was the only
+				 * differing column at 1464/1626 with anim identical -- skeletons posed
+				 * differently under the same animation state. This line names WHICH joint;
+				 * joint 17 / TopN would be blade-adjacent, others point at the transform
+				 * rebuild set. Compact: 8 joints per line to stay under log-line limits.
+				 */
+				{
+					char jline[240];
+					int jn = 0;
+					int jw = 0;
+
+					jline[0] = '\0';
+					for (ji = 0; ji < FTPARTS_JOINT_NUM_MAX; ji++)
+					{
+						u32 jh = 2166136261U;
+
+						if (blob->joint_is_valid[ji] == FALSE)
+						{
+							continue;
+						}
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].x));
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].y));
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].z));
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].x));
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].y));
+						jh = syNetRbSnapFnvAccumulateU32(jh, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].z));
+						jw += snprintf(jline + jw, sizeof(jline) - (size_t)jw, "j%d=0x%08X ", (int)ji, jh);
+						jn++;
+						if ((jn % 8) == 0 || jw > (int)sizeof(jline) - 20)
+						{
+							port_log("SSB64 NetRbSnapshot: blob_joint_dump tag=%s tick=%u player=%d %s\n",
+							         reason, tick, (int)slot_index, jline);
+							jline[0] = '\0';
+							jw = 0;
+						}
+					}
+					if (jw > 0)
+					{
+						port_log("SSB64 NetRbSnapshot: blob_joint_dump tag=%s tick=%u player=%d %s\n",
+						         reason, tick, (int)slot_index, jline);
+					}
+				}
 			}
 		}
 		syNetRbSnapLogFieldDiffScalar(reason, tick, slot_index, "status_id", (u32)fp->status_id,
