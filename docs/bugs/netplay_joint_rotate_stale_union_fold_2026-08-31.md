@@ -74,3 +74,33 @@ fix's effectiveness can be drawn from it.
 **Rebuild and redeploy the Android APK at 50d65f62 or later before the next soak.** The
 `blob_j1_raw` line is the check: both peers must show the same zero/non-zero pattern.
 
+---
+
+## Second cut: TopN only — the liveness predicate was not enough
+
+The matched-build soak that followed showed the class surviving on the same joint: three
+diverges, all `blob_joint_split` **jr-only** (`jt` identical), all **j1**, **player 0**,
+light dumps byte-identical. Raw values:
+
+```
+linux    j1r = [1.5734, 0.0016, 0]     constant, whole session
+android  j1r = [0, pi/2, 0]            constant, whole session
+```
+
+— and the two peers had **swapped** which constant they held versus the previous soak. Two
+different永-constant values, never written, with translate, the anim hash, every other
+joint and the drawn pose in agreement. That is uninitialized memory differing by
+allocation history, not a vec-override case: `syNetRbSnapshotDObjRotateIsLive` returns TRUE
+for j1 (no `kinds[]==2`), so the first cut still folded it.
+
+**Fold rotate for TopN only.** `joints[TopN]->rotate.y == lr*90deg` (facing) is the
+documented reason rotate is folded at all; every other joint's pose is already covered by
+`joint_translate` plus the anim fold, both of which have agreed throughout. Applied to both
+`syNetRbSnapHashFighterBlobFull` and `syNetSyncFoldFighterJointContribution`.
+
+**Snapshot fidelity restored.** The first cut zeroed non-live rotates at capture and
+skipped the apply — a semantics change that made mixed builds desync by construction. That
+is reverted: capture and apply round-trip the real member again, and the fix now lives
+purely in the hash. Rebuilding both peers is still required (hash agreement), but a version
+skew can no longer corrupt restored state.
+

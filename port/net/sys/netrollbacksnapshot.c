@@ -9171,18 +9171,9 @@ static void syNetRbSnapCaptureFighter(SYNetRbSnapFighterBlob *blob, FTStruct *fp
 		{
 			blob->joint_is_valid[ji] = TRUE;
 			blob->joint_translate[ji] = fp->joints[ji]->translate.vec.f;
-			/* Store zeros when dobj->rotate is not the live rotation (vec-supplied): both
-			 * peers then agree, and apply skips it symmetrically below. */
-			if (syNetRbSnapshotDObjRotateIsLive(fp->joints[ji]) != FALSE)
-			{
-				blob->joint_rotate[ji] = fp->joints[ji]->rotate.vec.f;
-			}
-			else
-			{
-				blob->joint_rotate[ji].x = 0.0F;
-				blob->joint_rotate[ji].y = 0.0F;
-				blob->joint_rotate[ji].z = 0.0F;
-			}
+			/* Full fidelity: the 2026-08-31 fold fix lives in the HASH, not in what the
+			 * snapshot stores or restores. */
+			blob->joint_rotate[ji] = fp->joints[ji]->rotate.vec.f;
 			blob->joint_scale[ji] = fp->joints[ji]->scale.vec.f;
 			syNetRbSnapCaptureDObjAnim(&blob->joint_anim[ji], fp->joints[ji]);
 			blob->joint_dobj_flags[ji] = fp->joints[ji]->flags;
@@ -9300,10 +9291,7 @@ static void syNetRbSnapRestoreFighterJointPoseFromBlob(FTStruct *fp, const SYNet
 			continue;
 		}
 		joint->translate.vec.f = blob->joint_translate[ji];
-		if (syNetRbSnapshotDObjRotateIsLive(joint) != FALSE)
-		{
-			joint->rotate.vec.f = blob->joint_rotate[ji];
-		}
+		joint->rotate.vec.f = blob->joint_rotate[ji];
 		joint->scale.vec.f = blob->joint_scale[ji];
 #if defined(SSB64_NETMENU)
 		syNetplayQuantizeVec3f(&joint->translate.vec.f);
@@ -12571,12 +12559,25 @@ static u32 syNetRbSnapHashFighterBlobFull(const SYNetRbSnapFighterBlob *blob)
 		contribution =
 		    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_translate[ji].z));
 		/* Mirror the live fold (syNetSyncFoldFighterSlotFullContribution): joint rotate after translate. */
-		contribution =
-		    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].x));
-		contribution =
-		    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].y));
-		contribution =
-		    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].z));
+		/*
+		 * TopN only. Non-TopN joint rotate is authoritative nowhere: soak 2026-08-31 caught
+		 * j1 holding two DIFFERENT constants on the two peers for a full session (linux
+		 * [1.5734,0.0016,0] vs android [0,pi/2,0], and swapped between soaks) while
+		 * translate, the anim hash, every other joint, and the drawn pose all agreed --
+		 * uninitialized bytes that no code writes, differing by allocation history alone.
+		 * Only joints[TopN]->rotate.y is written by the sim (facing = lr*90deg), which is
+		 * the documented reason rotate is folded at all; other joints' pose is covered by
+		 * translate plus the anim fold. Mirrored in syNetSyncFoldFighterJointContribution.
+		 */
+		if (ji == (s32)nFTPartsJointTopN)
+		{
+			contribution =
+			    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].x));
+			contribution =
+			    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].y));
+			contribution =
+			    syNetRbSnapFnvAccumulateU32(contribution, syNetRbSnapHashF32ForFold(blob->joint_rotate[ji].z));
+		}
 	}
 	return contribution;
 }
