@@ -340,6 +340,10 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_AUTO_RUNWAY_DEFICIT_MIN_TICKS 3U
 #define SYNETPEER_AUTO_RUNWAY_DEFICIT_EMERGENCY_TICKS 6U
 #define SYNETPEER_AUTO_RUNWAY_SUSTAIN_SIM_TICKS 8U
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* Consecutive REAL-DELAY cushion-driven holds; bounds the damage of a mis-tuned C. */
+static u32 sSYNetPeerRealDelayCushionStalls;
+#endif
 /* Max sim - remote_sim_frontier while predicting without ring at wire_base (see EvaluateSharedCommitStep). */
 #define SYNETPEER_RUNWAY_PREDICT_MAX_SIM_DEFICIT_DEFAULT 2U
 /* Max expansion of prediction window when hr lags required_wire (replaces unbounded 2× phase_lock bump). */
@@ -5871,23 +5875,48 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			if (syNetSessionParamsRealDelayActive() != FALSE)
 			{
 				static s32 sRdPredWin = -1;
+				static s32 sRdStallMax = -1;
 				u32 c = syNetPeerRealDelayCushionTicks();
 
 				if (sRdPredWin < 0)
 				{
 					const char *e = getenv("SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW");
+					const char *m = getenv("SSB64_NETPLAY_REAL_DELAY_CUSHION_STALL_MAX");
 
 					sRdPredWin = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 1;
 					if (sRdPredWin < 0)
 					{
 						sRdPredWin = 0;
 					}
-					port_log("SSB64 NetPeer: real_delay predict_window=%d cushion=%u\n", sRdPredWin,
-					         (unsigned int)c);
+					sRdStallMax = ((m != NULL) && (m[0] != '\0')) ? atoi(m) : 2;
+					if (sRdStallMax < 0)
+					{
+						sRdStallMax = 0;
+					}
+					port_log("SSB64 NetPeer: real_delay D=%u cushion=%u predict_window=%d stall_max=%d\n",
+					         (unsigned int)syNetPeerGetInputDelay(), (unsigned int)c, sRdPredWin, sRdStallMax);
 				}
-				remote_sim_frontier = (remote_sim_frontier > c) ? (remote_sim_frontier - c) : 0U;
-				out->shared_confirmed_sim = remote_sim_frontier;
+				/*
+				 * Anchoring prediction at (frontier - C) is what makes C real, but a
+				 * mis-estimated C must never grind the sim: cap consecutive
+				 * cushion-driven holds, then admit against the true frontier. Worst
+				 * case is stall_max lost frames per drift event instead of a session
+				 * spent at 92% R-hold.
+				 */
+				if ((c > 0U) && (sSYNetPeerRealDelayCushionStalls < (u32)sRdStallMax))
+				{
+					remote_sim_frontier = (remote_sim_frontier > c) ? (remote_sim_frontier - c) : 0U;
+					out->shared_confirmed_sim = remote_sim_frontier;
+				}
 				effective_window = (u32)sRdPredWin;
+				if ((u64)sim_tick > ((u64)remote_sim_frontier + (u64)effective_window))
+				{
+					sSYNetPeerRealDelayCushionStalls++;
+				}
+				else
+				{
+					sSYNetPeerRealDelayCushionStalls = 0U;
+				}
 			}
 #endif
 #if defined(SSB64_NETMENU)
@@ -14051,11 +14080,17 @@ u32 syNetPeerRealDelayCushionTicks(void)
 			sCached = -2;
 		}
 	}
-	c = (sCached == -2) ? (d / 2U) : (u32)sCached;
-	if (c < 1U)
-	{
-		c = (sCached == 0) ? 0U : 1U;
-	}
+	/*
+	 * Transit-aware default. `hr` is the highest RECEIVED row, so it lags
+	 * S_peer + D by the one-way transit; real slack is D - C - transit. The
+	 * first attempt used D/2 and, at the negotiated D = 2 with ~1 tick of
+	 * transit, drove slack to zero: 92% R-hold on both peers before the intro
+	 * countdown. Reserve 2 ticks for transit + frame jitter, so a session only
+	 * spends margin it can actually afford; small D asks for none.
+	 *   D<=2 -> 0 (Phase 1 behaviour: fast, frontier-parked)
+	 *   D=4  -> 2      D=6 -> 4
+	 */
+	c = (sCached == -2) ? ((d >= 3U) ? (d - 2U) : 0U) : (u32)sCached;
 	if (c > (d - 1U))
 	{
 		c = d - 1U;

@@ -278,6 +278,27 @@ witness cushion series, never via resim/GGPO counts.
       widens by exactly the deficit we are trying to hold. Deadlock-free for
       any `C < D`: mutual stall needs `S_local > S_peer + (D−C)` **and**
       `S_peer > S_local + (D−C)`, whose sum is `0 > 2(D−C)`.
-      Remaining: soak-verify the C equilibrium; then tier-3 (adaptive D) soak;
+      **Second follow-up: C must be affordable, and its wait must be bounded.**
+      With the anchor live the next soak stalled 92% of frames on both peers
+      before the intro countdown. Cause: the algebra assumed `hr = S_peer + D`,
+      but `hr` is the highest *received* row, so it lags by the one-way
+      transit — real slack is `D − C − transit`. That session negotiated
+      **D = 2**; with C = D/2 = 1 and ~1 tick of transit, slack was 0 and
+      neither peer could advance (production is coupled to consumption, so the
+      stall was self-sustaining even though mutual *deadlock* is impossible).
+      Two corrections:
+      - **C is transit-aware and conservative**: default `D ≥ 3 ? D−2 : 0`,
+        reserving 2 ticks for transit + frame jitter. D ≤ 2 asks for no
+        margin at all (Phase 1 behaviour). D = 4 → C = 2, D = 6 → C = 4.
+      - **The cushion wait is bounded**: after
+        `SSB64_NETPLAY_REAL_DELAY_CUSHION_STALL_MAX` (default 2) consecutive
+        cushion-driven holds, admission falls back to the true frontier. A
+        mis-tuned C now costs at most N frames per drift event instead of a
+        whole session.
+      Corollary worth recording: **margin is bought with D, not with waiting.**
+      `C < D − transit` is a hard budget, so a LAN session at D = 2 has no
+      margin to hold; getting one means raising D (i.e. the Phase 3b adaptive
+      controller), not tightening admission.
+      Remaining: soak-verify the C equilibrium at D ≥ 4; then tier-3 soak;
       then re-derive the RTT→D bands from measured margin.
 
