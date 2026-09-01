@@ -326,3 +326,36 @@ ends sessions and three soaks ran unarmed.
 `effect_count=1` during dual-blade play (both gobjs carry class id 1011 —
 capture-side scoping vs the id-keyed dedup in `slot_effect_enforce` needs the
 trace to disambiguate).
+
+---
+
+## 2026-09-01 (later): the baseline was lying — capture omitted out-of-scope blades
+
+First soak with the trace armed answered the open question. FC@843 was
+figh-only with `eff` EQUAL; the setstatus trace showed the same transitions on
+both peers (one ran 825's `10→256` in a resim, the other live). The structural
+finding came from reading the capture path with that in hand:
+
+`syNetRbSnapJointFxSlotRespawnable` required **owner in cutter scope**, and
+`EffectHiddenFromRollback` classifies non-respawnable userdata-joint FX as
+hidden. So a live blade lingering across the owner's move-end (`257→10`, trail
+still fading — exactly this soak's t=819/825 transitions) was **silently
+omitted from every slot spanning that tick**. The slot is the baseline; a
+baseline missing a real live effect is the precondition for every enforce
+mis-kill and pre-mint cull in this file — and it answers the dual-blade
+`effect_count=1` mystery: the first Kirby to finish dropped his lingering
+blade from all slots.
+
+**Fix (three gates widened in lockstep — capture, fold, mint):**
+1. `JointFxSlotRespawnable`: a live blade is capturable regardless of owner
+   status. Owner scope remains the *eject-refusal* gate only.
+2. `LiveEffectIsKirbyCutterBladeInScope` (the eff-fold carve-out): scope
+   requirement removed — otherwise a now-captured out-of-scope blade would
+   fall into the generic fold and hash `anim_frame` (the cross-ISA hazard).
+   Fold stays the PK-wave treatment (owner status identity), deterministic
+   for any owner status.
+3. `MakeUserdataJointEffectForFighter`: blade branch keyed on `fkind`
+   (Kirby/NKirby) instead of cutter scope, so a load to a lingering-blade
+   tick can re-mint what the slot now correctly carries.
+
+Both-peers rebuild required (fold semantics changed).

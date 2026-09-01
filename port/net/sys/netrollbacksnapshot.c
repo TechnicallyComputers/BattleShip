@@ -15552,8 +15552,20 @@ static sb32 syNetRbSnapJointFxSlotRespawnable(const GObj *gobj, const EFStruct *
 	{
 		return TRUE;
 	}
-	if ((syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
-	    (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE))
+	/*
+	 * 2026-09-01: the owner-in-scope requirement is REMOVED for blades. It made
+	 * capture admission (and, via EffectHiddenFromRollback, the hash exclusion)
+	 * depend on the owner's status at the capture moment: a live blade lingering
+	 * across the move-end transition (owner 257 -> 10, trail still fading) was
+	 * classified Hidden and silently OMITTED from every slot spanning that tick.
+	 * The slot is the baseline; a baseline missing a real live effect is the
+	 * precondition for every enforce mis-kill and pre-mint cull this class has
+	 * produced — and it is the answer to the dual-blade effect_count=1 mystery
+	 * (the first Kirby to finish dropped his lingering blade from all slots).
+	 * A live blade is state; it rounds-trip whenever it exists. Owner scope
+	 * remains the EJECT-refusal gate, where it belongs.
+	 */
+	if (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE)
 	{
 		return TRUE;
 	}
@@ -18591,7 +18603,17 @@ sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const GObj *gobj, const 
 		return FALSE;
 	}
 	owner_fp = ftGetStruct(ep->fighter_gobj);
-	if ((owner_fp == NULL) || (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) == FALSE))
+	/*
+	 * 2026-09-01: owner-scope requirement removed, in lockstep with capture
+	 * admission (JointFxSlotRespawnable). A blade lingering past the owner's
+	 * move-end (owner in Wait, trail fading) is real state: it must round-trip
+	 * through slots AND fold identically on both peers. Leaving it scope-gated
+	 * here would drop it into the generic fold, which hashes anim_frame — the
+	 * cross-ISA 0/1/2-advance hazard this carve-out exists to avoid. The fold
+	 * stays the PK-wave treatment (owner status identity), deterministic for
+	 * any owner status.
+	 */
+	if (owner_fp == NULL)
 	{
 		return FALSE;
 	}
@@ -21526,7 +21548,17 @@ static GObj *syNetRbSnapMakeUserdataJointEffectForFighter(GObj *fighter_gobj, co
 	 * which is exactly how the ACMD schedules them. blob->quake_magnitude carries the
 	 * captured joint index (the USERDATA_JOINT capture packs it there).
 	 */
-	if (syNetRbSnapFighterInKirbyFinalCutterScope(fp) != FALSE)
+	/*
+	 * 2026-09-01: keyed on fkind instead of cutter scope, in lockstep with the
+	 * widened capture admission. A slot can now legitimately carry a blade whose
+	 * owner is out of cutter scope (lingering trail across move-end); a load to
+	 * such a tick must still be able to re-mint it, or the peer that never
+	 * rolled back keeps a blade the loading peer cannot reproduce — an eff fork
+	 * by construction. Out-of-scope TopN mints Up (the AirHiFall discriminator
+	 * only means anything in scope); joints[17] mints Draw as before — the
+	 * documented few-frame cosmetic approximation.
+	 */
+	if ((fp->fkind == nFTKindKirby) || (fp->fkind == nFTKindNKirby))
 	{
 		s32 joint_idx = (blob != NULL) ? (s32)blob->quake_magnitude : SYNETRB_KIRBY_FINALCUTTER_DRAW_JOINT;
 
