@@ -319,7 +319,30 @@ witness cushion series, never via resim/GGPO counts.
       sit one tick past the frontier and predict a single tick. Same soak:
       **1 and 0 resims** — against 134/294 in the ZERO-DELAY era and 33/20 at
       window 6. Shipping config: `C = 0`, `PREDICT_WINDOW = 1`.
-      Remaining: confirm full cadence at C = 0; then decide whether the
-      residual prediction depth is worth a tier-3 (adaptive D) soak at all,
-      given D no longer buys margin.
+- [x] **Phase 3e — the window is a jitter absorber; sized to 3.**
+      C = 0 baseline over ~3000 ticks was the most stable session recorded:
+      **1 FC diverge per peer**, 25/25 synctests, no drift on the follower,
+      and 377 of 406 resims were **span = 1**. Both residual diverges are the
+      Kirby blade `eff` class, not the flip.
+      Pacing was still poor: `pct_R` **15.4%** (leader) / 8.2% (follower) — a
+      visible hitch every ~7 frames. Key realisation: **when a row is on time
+      the ring path admits at depth 0 and the window is never consulted; the
+      window only engages while a row is late.** It is therefore a jitter
+      absorber, not a steady-state prediction depth, and sizing it to the
+      observed desktop-vs-phone arrival jitter (2–3 ticks) costs nothing in
+      steady state while removing those stalls. Default
+      `SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW` 1 → **3**.
+      Dial, for A/B: lower = fewer/shallower resims, more stalls; higher =
+      fewer stalls, slightly deeper corrections. 0 = never predict.
+
+      **Where the flip stands.** Shipping config: REAL-DELAY on, `C = 0`,
+      window 3, rbe in shadow (tier 2 opt-in). Versus the ZERO-DELAY era the
+      wins are: `ring` admits went 0% → 40–70% of ticks, resim spans collapsed
+      to 1, and genuine determinism diverges dropped to a single recurring
+      class (the blade). What the flip did **not** deliver is a held arrival
+      margin — see 3d; that goal is retired as unreachable under coupled
+      production.
+      Remaining: blade `eff` class (own investigation, `SSB64_NETPLAY_KIRBY_BLADE_TRACE`);
+      tier-3 adaptive D is deprioritised — D no longer buys margin, so its
+      only remaining role is covering genuinely bad networks.
 

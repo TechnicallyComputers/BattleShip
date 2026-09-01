@@ -5883,7 +5883,21 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 					const char *e = getenv("SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW");
 					const char *m = getenv("SSB64_NETPLAY_REAL_DELAY_CUSHION_STALL_MAX");
 
-					sRdPredWin = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 1;
+					/*
+					 * The window is a JITTER ABSORBER, not a steady-state depth.
+					 * When a row is on time the ring path admits at depth 0 and the
+					 * window is never consulted; it only engages while a row is late.
+					 * So sizing it for the observed inter-peer jitter costs nothing in
+					 * steady state but removes the corresponding stalls.
+					 *
+					 * Measured 2026-09-01 (window=1, ~3000 ticks): pct_R 15.4% on the
+					 * leading peer / 8.2% on the follower — a visible hitch every ~7
+					 * frames, which is the reported bad pacing. Desktop-vs-phone frame
+					 * timing gives 2-3 ticks of arrival jitter, and a window of 1 stalls
+					 * on all of it. 3 covers it; resim spans stay short (377 of 406
+					 * were span=1 even at window 1).
+					 */
+					sRdPredWin = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 3;
 					if (sRdPredWin < 0)
 					{
 						sRdPredWin = 0;
