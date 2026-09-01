@@ -195,11 +195,20 @@ static int syNetPeerGetStateDetailDiagLevel(void)
  */
 #define SYNETPEER_VERSION_LEGACY_CONNECT 4
 #define SYNETPEER_VERSION_DUAL_LOCAL_LEGACY 5
-/* 6/7 (pre auth-frontier) retired 2026-07-12; 8/9 append auth_wire_frontier to the INPUT header. */
-/* 9: REAL-DELAY flip capability (2026-09-01). Bumped so pre-flip builds refuse at the
- * packet layer instead of silently running a different consumption mapping. */
-#define SYNETPEER_VERSION 9
-#define SYNETPEER_VERSION_DUAL_LOCAL 9
+/* 6/7 (pre auth-frontier) retired 2026-07-12; 8/9 appended auth_wire_frontier to the INPUT header. */
+/*
+ * 10/11: REAL-DELAY flip capability (2026-09-01). Bumped as a PAIR — single-local and
+ * dual-local are companion values of one protocol generation, and the size<->version
+ * validation plus SYNETPEER_WIRE_HAS_SECONDARY_BUNDLE classify the INPUT layout by
+ * which of the two values a packet carries. (First attempt bumped only
+ * SYNETPEER_VERSION 8->9, colliding with DUAL_LOCAL 9: every single-local INPUT
+ * parsed as dual, mis-read past its payload, and dropped silently on both peers —
+ * soak 2026-09-01 frame-0 hang, dropped=8731/8739 with recv=2.)
+ * Pre-flip builds refuse at the packet layer instead of running a different
+ * consumption mapping.
+ */
+#define SYNETPEER_VERSION 10
+#define SYNETPEER_VERSION_DUAL_LOCAL 11
 #define SYNETPEER_MAX_PACKET_FRAMES 16
 #define SYNETPEER_FRAME_BYTES 8
 /* Per slot: last_confirmed u32, disconnect u8, symmetric rollback mismatch tick u24, resim target u24. */
