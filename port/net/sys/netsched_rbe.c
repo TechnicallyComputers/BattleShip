@@ -399,6 +399,21 @@ static void syNetRbeSchedBind(void)
 	 * NOT promote tiers 2/3 — sRbeRealDelayForced stays 0 until Phase 3.
 	 */
 	rbe_sched_set_real_delay((syNetSessionParamsRealDelayActive() != FALSE) ? 1 : 0);
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * Phase 3a: pace-to-target. Under the flip, default the timesync ahead
+	 * threshold to lead >= 1 so the leading seat keeps shaving until the
+	 * follower banks a one-tick margin instead of parking at the just-in-time
+	 * edge (gap1 storm). setenv without overwrite — an explicit
+	 * RBE_RB_TS_LEAD_TARGET in the environment or debug.env wins.
+	 */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		extern int setenv(const char *name, const char *value, int overwrite);
+
+		setenv("RBE_RB_TS_LEAD_TARGET", "1", 0);
+	}
+#endif
 	/*
 	 * Phase 3 gateway (2026-09-01): under a negotiated REAL-DELAY session the
 	 * tier-2 predict-veto and tier-3 adaptive-D gates unlock — waiting one frame

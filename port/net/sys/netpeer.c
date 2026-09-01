@@ -821,6 +821,13 @@ static void syNetPeerApplyHostDelayRampPending(void)
 		prev_d = sSYNetPeerInputDelay;
 		eff_tick = sSYNetPeerHostDelayRampEffectiveTick;
 		sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerHostDelayRampTarget);
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/* REAL-DELAY: a raise leaves consumption rows [E+D1,E+D2) unowned — fill + ship them. */
+		if ((syNetSessionParamsRealDelayActive() != FALSE) && (sSYNetPeerInputDelay > prev_d))
+		{
+			syNetInputFillDelayRaiseGapConsumptionRows(eff_tick, prev_d, sSYNetPeerInputDelay);
+		}
+#endif
 		syNetPeerMaybeLogDelaySyncDiagOnDelayMutation("ramp_commit", prev_d, sSYNetPeerInputDelay, eff_tick);
 		syNetPeerResetHostDelayRampPending();
 	}
@@ -843,6 +850,14 @@ static void syNetPeerApplyPendingInputDelaySync(void)
 		prev_d = sSYNetPeerInputDelay;
 		eff_tick = sSYNetPeerDelaySyncEffectiveTick;
 		sSYNetPeerInputDelay = syNetPeerClampInputDelayToContract(sSYNetPeerDelaySyncPending);
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/* REAL-DELAY: a raise leaves consumption rows [E+D1,E+D2) unowned — fill + ship them.
+		 * Lowering needs nothing: the colliding row is wire-locked to first-transmitted. */
+		if ((syNetSessionParamsRealDelayActive() != FALSE) && (sSYNetPeerInputDelay > prev_d))
+		{
+			syNetInputFillDelayRaiseGapConsumptionRows(eff_tick, prev_d, sSYNetPeerInputDelay);
+		}
+#endif
 		if ((sSYNetPeerStartupMatchDelayPendingValid != FALSE) &&
 		    (sSYNetPeerInputDelay == sSYNetPeerStartupMatchDelayTarget))
 		{
@@ -3810,15 +3825,9 @@ static void syNetPeerMaybeAutoRunwayDelayBump(u32 tick_now)
 	{
 		return;
 	}
-#if defined(PORT) && defined(SSB64_NETMENU)
-	/* REAL-DELAY (Phase 1): D is frozen for the session — a mid-battle change re-keys
-	 * sample->consumption staging and forks the gameplay ring against the wire fills.
-	 * Dynamic D under the flip is the Phase 3 (adaptive controller) milestone. */
-	if (syNetSessionParamsRealDelayActive() != FALSE)
-	{
-		return;
-	}
-#endif
+	/* REAL-DELAY Phase 3b: dynamic D is allowed again — single-step (+1) raises
+	 * commit through the same lead protocol; the raise-gap rows are filled and
+	 * shipped at apply time (syNetInputFillDelayRaiseGapConsumptionRows). */
 	eff_tick = syNetPeerSaturatingAddU32(tick_now, syNetPeerDelaySyncCommitLeadTicks());
 	sSYNetPeerDelaySyncPending = proposed;
 	sSYNetPeerDelaySyncEffectiveTick = eff_tick;
@@ -3890,10 +3899,26 @@ sb32 syNetPeerRequestAdaptiveInputDelay(u32 target, const char *tag)
 		return FALSE;
 	}
 #if defined(PORT) && defined(SSB64_NETMENU)
-	/* REAL-DELAY (Phase 1): D frozen for the session — see auto_runway guard above. */
+	/*
+	 * REAL-DELAY Phase 3b: dynamic D allowed, single-step only. The raise-gap
+	 * fill fabricates hold-last rows for [E+D1,E+D2); keeping |step| = 1 bounds
+	 * the fabricated span to one tick per change (adaptive proposals are
+	 * incremental anyway; spacing floor below rate-limits churn).
+	 */
 	if (syNetSessionParamsRealDelayActive() != FALSE)
 	{
-		return FALSE;
+		u32 cur = sSYNetPeerInputDelay;
+		u32 step_up = cur + 1U;
+		u32 step_dn = (cur > 0U) ? (cur - 1U) : 0U;
+
+		if ((proposed != step_up) && (proposed != step_dn))
+		{
+			proposed = (proposed > cur) ? step_up : step_dn;
+			if (proposed == cur)
+			{
+				return FALSE;
+			}
+		}
 	}
 #endif
 	eff_tick = syNetPeerSaturatingAddU32(tick_now, syNetPeerDelaySyncCommitLeadTicks());

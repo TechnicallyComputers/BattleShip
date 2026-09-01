@@ -365,6 +365,8 @@ extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
 #if defined(PORT) && defined(SSB64_NETMENU)
 /* Rewind button_tap/release edge-derivation baseline to the rollback load tick (see netinput.c). */
 extern void syNetInputReseedPublishEdgeBaselineAfterLoad(u32 load_tick);
+/* REAL-DELAY adaptive D: fabricate + stage the consumption rows a D raise leaves unowned (see netinput.c). */
+extern void syNetInputFillDelayRaiseGapConsumptionRows(u32 effective_tick, u32 d_old, u32 d_new);
 #endif
 /*
  * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`

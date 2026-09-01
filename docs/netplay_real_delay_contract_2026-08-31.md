@@ -209,12 +209,34 @@ witness cushion series, never via resim/GGPO counts.
       needs a dump extension, not a class.
       Remaining for Phase 2 closure: tier-2 A/B soak (below), RTT→D bands,
       DELAY_SYNC-under-flip design.
-- [ ] **Phase 3** — `sRbeRealDelayForced` now follows the negotiated flip
-      (2026-09-01), so tiers unlock ONLY in REAL-DELAY sessions and only when
-      `SSB64_NETPLAY_RBE_SCHED >= 2`. A/B: same build both peers, host
-      `SSB64_NETPLAY_REAL_DELAY=1`, both `SSB64_NETPLAY_RBE_SCHED=2` +
-      witness=1 — expect cushion held positive, predict/resims collapsing,
-      full sim rate (the ZERO-DELAY 30 Hz veto refutation does not apply:
-      Forced stays 0 in ZERO-DELAY sessions). Then tier 3 (adaptive D) and
-      re-derived RTT→D bands.
+- [x] **Phase 3 (2026-09-01)** — landed in four steps:
+      1. `sRbeRealDelayForced` follows the negotiated flip; tiers unlock only
+         in REAL-DELAY sessions (tier 1 auto-raises to 2 there).
+      2. First armed tier-2 soak: **zero resims, full match, both peers** —
+         at 34% stall duty (gap1_grace hard stalls; sim ~40 Hz; blade stutter
+         is those stalls made visible). Root: production is coupled to
+         consumption, so symmetric full-frame stalls converge to just-in-time
+         at heavy duty; the gap1 stalls also kept resetting the 8-admit
+         negative-lead streak, so rbe's one-sided timesync actuator
+         (`timesync_pace`) never engaged (=1 all match).
+      3. gap1 duty cap (default 12%, `SSB64_NETPLAY_RBE_GAP1_DUTY_PCT`):
+         over-budget gap1 ticks admit with 1-tick prediction (span-1
+         corrections, true row next frame); deeper gaps still veto. This also
+         unmasks the timesync streak. Plus rbe §114 pace-to-target
+         (`RBE_RB_TS_LEAD_TARGET`, bridge defaults it to 1 under the flip):
+         the ahead seat keeps shaving until the follower banks a margin,
+         instead of stopping at lead 0.
+      4. Adaptive D unfrozen under the flip, single-step (±1) only, through
+         the existing DELAY_SYNC commit-lead. A raise leaves consumption rows
+         `[E+D1, E+D2)` unowned (sample E−1 owned `E−1+D1`, sample E owns
+         `E+D2`) — local would read neutral while the peer predicted
+         hold-last → fork. Fix: the rows are *sender-authoritative*, so each
+         peer fabricates its own by holding the last pre-switch sample,
+         stages them (gameplay + send-lead), and ships them as ordinary wire
+         rows (`syNetInputFillDelayRaiseGapConsumptionRows`,
+         `DELAY_RAISE_GAP_FILL` log). Lowering needs nothing — the colliding
+         row is wire-locked to first-transmitted on both sides. Tier 3
+         (adaptive proposals) remains explicit opt-in: `SSB64_NETPLAY_RBE_SCHED=3`.
+      Remaining: soak-verify the tier-2 equilibrium (duty cap + pace-to-target);
+      then a tier-3 soak; then re-derive the RTT→D bands from measured cushion.
 

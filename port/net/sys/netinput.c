@@ -8667,6 +8667,69 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 
 #if defined(PORT) && defined(SSB64_NETMENU)
 /*
+ * REAL-DELAY adaptive D (Phase 3b): fill the consumption-row gap left by a D
+ * raise. Under the flip, the sample at tick t owns consumption row t+D. A
+ * commit-lead raise D1->D2 at effective tick E means sample E-1 owned
+ * (E-1)+D1 and sample E owns E+D2, leaving rows [E+D1, E+D2) UNOWNED: local
+ * consumption would fall to neutral while the peer's view of the same rows
+ * fell to hold-last prediction — a guaranteed fork. These rows are
+ * sender-authoritative data (they are OUR inputs), so each peer fabricates
+ * its own gap rows by holding its last pre-switch sample, stages them in the
+ * gameplay + send-lead rings, and ships them as ordinary authoritative wire
+ * rows. Lowering D needs nothing: the colliding row is wire-locked to the
+ * first-transmitted value on both sides.
+ */
+void syNetInputFillDelayRaiseGapConsumptionRows(u32 effective_tick, u32 d_old, u32 d_new)
+{
+	s32 player;
+	u32 row;
+	u32 gap_lo;
+	u32 gap_hi;
+	SYNetInputFrame donor;
+	SYNetInputFrame fill;
+
+	if ((d_new <= d_old) || (effective_tick == 0U) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	gap_lo = effective_tick + d_old;
+	gap_hi = effective_tick + d_new; /* exclusive */
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if (syNetInputIsLocalDelaySlot(player) == FALSE)
+		{
+			continue;
+		}
+		/* Donor: the last old-regime row; fall back to last published, then neutral. */
+		if ((syNetInputGetLocalGameplayFrame(player, gap_lo - 1U, &donor) == FALSE) &&
+		    (syNetInputGetPublishedFrame(player, &donor) == FALSE))
+		{
+			syNetInputMakeFrame(&donor, gap_lo - 1U, 0, 0, 0, nSYNetInputSourceLocal, FALSE);
+		}
+		for (row = gap_lo; row < gap_hi; row++)
+		{
+			fill = donor;
+			fill.tick = row;
+			fill.source = nSYNetInputSourceLocal;
+			fill.is_predicted = FALSE;
+			fill.is_valid = TRUE;
+			syNetInputStoreFrame(sSYNetInputLocalGameplayHistory, player, &fill);
+			syNetInputStoreFrame(sSYNetInputLocalDelayHistory, player, &fill);
+			if (row > sSYNetInputLocalGameplayLastTick[player])
+			{
+				sSYNetInputLocalGameplayLastTick[player] = row;
+			}
+		}
+		port_log(
+		    "SSB64 NetInput: DELAY_RAISE_GAP_FILL player=%d eff=%u rows=[%u,%u) btn=0x%04X sx=%d sy=%d\n",
+		    (int)player, (unsigned int)effective_tick, (unsigned int)gap_lo, (unsigned int)gap_hi,
+		    (unsigned int)donor.buttons, (int)donor.stick_x, (int)donor.stick_y);
+	}
+}
+#endif
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
  * Rewind the edge-derivation baseline to the snapshot load tick.
  *
  * `last_published` is a running latch: PublishFrame derives button_tap/release
