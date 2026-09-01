@@ -5733,6 +5733,18 @@ static u32 syNetPeerRollbackEffectivePredictionWindow(u32 sim_tick, u32 base_win
 	{
 		return base_window;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * REAL-DELAY: this widening exists to avoid ZERO-DELAY stalls when the ring
+	 * is structurally behind. Under the flip the deficit is exactly the cushion
+	 * we are trying to hold, so widening by it would spend the margin to avoid
+	 * ever waiting — the opposite of the intent. Keep the base window.
+	 */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		return base_window;
+	}
+#endif
 	required_wire = syNetPeerGetBaseRequiredWireTick(sim_tick);
 	hr = sSYNetPeerHighestRemoteTick;
 	if (hr >= required_wire)
@@ -5843,6 +5855,41 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
 			out->shared_confirmed_sim = remote_sim_frontier;
 			effective_window = syNetPeerRollbackEffectivePredictionWindow(sim_tick, prediction_window);
+#if defined(PORT) && defined(SSB64_NETMENU)
+			/*
+			 * REAL-DELAY: the ring demand (hr >= T + C) is only half the gate —
+			 * prediction admits off the frontier and ignored C entirely, so the sim
+			 * predicted straight through the margin (soak 2026-09-01: ring=0
+			 * predict=120 every window, pct_R 2.6%, cushion pinned negative).
+			 * Anchor prediction to the SAME margin point (hr - C) and speculate only
+			 * a short distance past it: with a real transit budget, rows arrive on
+			 * time and prediction should be a jitter fallback, not the default path.
+			 * Deadlock-free for any C < D: both peers stalling would require
+			 * S_local > S_peer + (D-C) and S_peer > S_local + (D-C) simultaneously.
+			 * SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW overrides (0 = never predict).
+			 */
+			if (syNetSessionParamsRealDelayActive() != FALSE)
+			{
+				static s32 sRdPredWin = -1;
+				u32 c = syNetPeerRealDelayCushionTicks();
+
+				if (sRdPredWin < 0)
+				{
+					const char *e = getenv("SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW");
+
+					sRdPredWin = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : 1;
+					if (sRdPredWin < 0)
+					{
+						sRdPredWin = 0;
+					}
+					port_log("SSB64 NetPeer: real_delay predict_window=%d cushion=%u\n", sRdPredWin,
+					         (unsigned int)c);
+				}
+				remote_sim_frontier = (remote_sim_frontier > c) ? (remote_sim_frontier - c) : 0U;
+				out->shared_confirmed_sim = remote_sim_frontier;
+				effective_window = (u32)sRdPredWin;
+			}
+#endif
 #if defined(SSB64_NETMENU)
 			/*
 			 * Zero-onset: HardStall≡Restrict (no invent under frontier cover;
@@ -5914,6 +5961,15 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 			u32 effective_cap;
 
 			remote_sim_frontier = syNetPeerDelaySimTickFromWire(sSYNetPeerHighestRemoteTick);
+#if defined(PORT) && defined(SSB64_NETMENU)
+			/* REAL-DELAY: same margin anchor as the predict branch above. */
+			if (syNetSessionParamsRealDelayActive() != FALSE)
+			{
+				u32 c = syNetPeerRealDelayCushionTicks();
+
+				remote_sim_frontier = (remote_sim_frontier > c) ? (remote_sim_frontier - c) : 0U;
+			}
+#endif
 			/* remote_sim+PL — not +D+PL (D already folded into DelaySim). */
 			rollback_sim_cap = remote_sim_frontier + prediction_window;
 			effective_cap = rollback_sim_cap;

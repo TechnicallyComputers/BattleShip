@@ -264,6 +264,20 @@ witness cushion series, never via resim/GGPO counts.
       `SSB64_NETPLAY_REAL_DELAY_CUSHION` overrides. Demands below D are
       vacuous (sample t owns row t+D, so rows < D never exist).
       Witness `NetCw: WINDOW` now prints `C=`.
+      **Follow-up (same day): the offset alone did nothing** — `required_wire`
+      gates only the RING path. Prediction admits off
+      `remote_sim_frontier + window` and ignored C, so the sim predicted
+      straight through the margin: `ring=0 predict=120` in every window,
+      `pct_R` 2.6%/0.3% (fast again, and rbe back in shadow with `veto=0`),
+      cushion pinned negative because the metric moved by C while the physics
+      did not. Fixed by anchoring the prediction path to the same margin:
+      `remote_sim_frontier -= C`, prediction window clamped to
+      `SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW` (default **1**, `0` = never
+      predict), and the ZERO-DELAY anti-stall window widening
+      (`RollbackEffectivePredictionWindow`) disabled under the flip — it
+      widens by exactly the deficit we are trying to hold. Deadlock-free for
+      any `C < D`: mutual stall needs `S_local > S_peer + (D−C)` **and**
+      `S_peer > S_local + (D−C)`, whose sum is `0 > 2(D−C)`.
       Remaining: soak-verify the C equilibrium; then tier-3 (adaptive D) soak;
       then re-derive the RTT→D bands from measured margin.
 
