@@ -80,6 +80,33 @@ int syNetRbeSchedTier(void)
 	return sTierCache;
 }
 
+/*
+ * Effective tier for the CURRENT session. Under a negotiated REAL-DELAY session
+ * tier 1 auto-raises to 2: tier 1's meaning was "shadow only, because the veto
+ * is destructive under ZERO-DELAY" (30 Hz refutation) — under the flip that
+ * reasoning is void and the veto IS the pacing law that holds the cushion
+ * (contract doc Phase 2 finding; two soaks lost to debug.env pinning tier 1).
+ * Explicit 0 stays a hard opt-out; explicit >=2 is honored as-is. ZERO-DELAY
+ * sessions never auto-raise.
+ */
+int syNetRbeSchedEffectiveTier(void)
+{
+	int tier = syNetRbeSchedTier();
+
+	if ((tier == 1) && (syNetSessionParamsRealDelayActive() != FALSE))
+	{
+		static sb32 sAutoRaiseLogged = FALSE;
+
+		if (sAutoRaiseLogged == FALSE)
+		{
+			sAutoRaiseLogged = TRUE;
+			port_log("SSB64 NetSchedRbe: tier 1 -> 2 auto-raise (REAL-DELAY session; predict-veto pacing active)\n");
+		}
+		return 2;
+	}
+	return tier;
+}
+
 /* ------------------------------------------------------------------ */
 /* Bridge state                                                        */
 /* ------------------------------------------------------------------ */
@@ -544,7 +571,7 @@ void syNetRbeSchedShadowObserve(u32 sim_tick, struct SYNetPeerSharedCommitStep *
 	int actual_confirmed;
 	int actual_predicted;
 	int actual_hold;
-	int tier = syNetRbeSchedTier();
+	int tier = syNetRbeSchedEffectiveTier(); /* auto-raises 1->2 in REAL-DELAY sessions */
 
 	if ((tier <= 0) || (shared == NULL))
 	{

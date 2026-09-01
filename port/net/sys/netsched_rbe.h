@@ -29,6 +29,8 @@
 struct SYNetPeerSharedCommitStep;
 
 /* 0 off / 1 shadow / 2 conservative veto (env SSB64_NETPLAY_RBE_SCHED). */
+/* Session-effective tier: 1 auto-raises to 2 under a negotiated REAL-DELAY session (0 stays off). */
+extern int syNetRbeSchedEffectiveTier(void);
 extern int syNetRbeSchedTier(void);
 
 /* TRUE when tier 3 is on AND the consumption mapping makes D a latency budget
