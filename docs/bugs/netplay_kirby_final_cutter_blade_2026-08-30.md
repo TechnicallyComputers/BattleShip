@@ -399,3 +399,40 @@ symmetrically at the single chokepoint.
 This also reframes the earlier entries: the enforce mis-kills, pre-mint culls,
 and lifetime drift were all *downstream* of a baseline that could only ever
 hold one of the two live blades. Both-peers rebuild required (fold semantics).
+
+---
+
+## 2026-09-01 (follow-on): coexisting blades broke blob↔live pairing
+
+The coexist fix worked — `count=2` appeared **325 times on both peers**
+(identical), `count=3` too, and both `own_p=0` and `own_p=1` blades folded. The
+dual-blade blindness is gone and `PEER_SNAPSHOT_DIVERGE` went to 0.
+
+It exposed the next layer: `LOAD_HASH_DRIFT` 8 → 68 (linux) / 46 (android),
+`eff=0x8D270B8F/0xB7665C33` at tick 422 with `effect save effect_count=2`
+followed immediately by two `slot_effect_enforce_id_collision` ejects. Capture
+was right; the *load* could not reproduce it.
+
+Cause: three places resolved a blob to a live effect **by gobj_id**, which is
+ambiguous now that two live blades share id 1011.
+
+1. `syNetRbSnapFindLiveUserdataJointEffectForBlob` returned the first identity
+   match with no exclusion of shells already claimed by an earlier blob — so
+   every blade blob resolved to the *same* shell.
+2. `syNetRbSnapEnsureUserdataJointEffectsFromSlot` used `gcFindGObjByID`, which
+   returns the first gobj with that id — same shell for both blobs, so the
+   second blade never received its pose.
+3. The reconcile resolver's USERDATA_JOINT branch guarded with
+   `ReconciledEffectGobjIdListed` (**id**) while the quake branch directly above
+   it correctly used `reconciled_gobj_ptrs` (**pointer**) — so once blade A
+   claimed id 1011, blade B's own shell was rejected as "already reconciled".
+
+With one blob unmatched, `slot_effect_enforce` saw a live effect whose id was
+canonical but whose pointer was not, and ejected the real second blade as an
+id collision.
+
+**Fix:** `...ForBlobExcept(slot, blob, except, except_count)` (mirroring
+`FindLiveQuakeEffectForBlobExcept`); site (2) resolves by blob identity with a
+per-pass claim list and falls back to the id lookup only when identity finds
+nothing and the id is unclaimed; site (3) switches to pointer exclusion.
+Pairing is now one blob ↔ one shell, keyed on owner player + joint.

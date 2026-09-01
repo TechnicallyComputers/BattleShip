@@ -22199,8 +22199,17 @@ static void syNetRbSnapEnsureQuakeEffectsFromSlot(const SYNetRbSnapshotSlot *slo
 	}
 }
 
-static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlob(const SYNetRbSnapshotSlot *slot,
-                                                           const SYNetRbSnapEffectBlob *blob)
+/*
+ * `except` skips GObjs already claimed by an earlier blob this pass. Mandatory
+ * since two joint-attached blades coexist (both Kirbys' blades carry gobj_id
+ * 1011): without it every blade blob resolves to the SAME first live shell, one
+ * blob is left unmatched, and slot_effect_enforce then ejects the real second
+ * blade as an id_collision — capture effect_count=2, verify 1, eff
+ * LOAD_HASH_DRIFT. Mirrors syNetRbSnapFindLiveQuakeEffectForBlobExcept.
+ */
+static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlobExcept(const SYNetRbSnapshotSlot *slot,
+                                                                 const SYNetRbSnapEffectBlob *blob,
+                                                                 GObj *const *except, s32 except_count)
 {
 	s32 pass;
 	GObj *gobj;
@@ -22223,6 +22232,12 @@ static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlob(const SYNetRbSnapshot
 			{
 				continue;
 			}
+			if ((except != NULL) &&
+			    (syNetRbSnapReconciledEffectGobjPtrListed((GObj *const *)except, except_count, gobj) !=
+			     FALSE))
+			{
+				continue;
+			}
 			if (syNetRbSnapLiveEffectMatchesBlob(slot, blob, gobj, ep) != FALSE)
 			{
 				return gobj;
@@ -22230,6 +22245,12 @@ static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlob(const SYNetRbSnapshot
 		}
 	}
 	return NULL;
+}
+
+static GObj *syNetRbSnapFindLiveUserdataJointEffectForBlob(const SYNetRbSnapshotSlot *slot,
+                                                           const SYNetRbSnapEffectBlob *blob)
+{
+	return syNetRbSnapFindLiveUserdataJointEffectForBlobExcept(slot, blob, NULL, 0);
 }
 
 static GObj *syNetRbSnapResolveUserdataJointParentGobj(const SYNetRbSnapshotSlot *slot,
@@ -22313,12 +22334,15 @@ static GObj *syNetRbSnapResolveUserdataJointParentGobj(const SYNetRbSnapshotSlot
  */
 static void syNetRbSnapEnsureUserdataJointEffectsFromSlot(const SYNetRbSnapshotSlot *slot)
 {
+	GObj *claimed[SYNETRB_SNAPSHOT_MAX_EFFECTS];
+	s32 claimed_count;
 	s32 ei;
 
 	if (slot == NULL)
 	{
 		return;
 	}
+	claimed_count = 0;
 	for (ei = 0; ei < slot->effect_count; ei++)
 	{
 		const SYNetRbSnapEffectBlob *blob;
@@ -22329,12 +22353,31 @@ static void syNetRbSnapEnsureUserdataJointEffectsFromSlot(const SYNetRbSnapshotS
 		{
 			continue;
 		}
-		gobj = gcFindGObjByID(blob->gobj_id);
-		if ((gobj == NULL) || (efGetStruct(gobj) == NULL))
+		/*
+		 * gcFindGObjByID is ambiguous here: both Kirbys' blades carry gobj_id
+		 * 1011, so it returned the SAME shell for every blade blob and the
+		 * second blade never received its pose. Resolve by blob identity
+		 * (owner player + joint) excluding shells already claimed this pass;
+		 * fall back to the id lookup only when identity finds nothing and the
+		 * id is unclaimed.
+		 */
+		gobj = syNetRbSnapFindLiveUserdataJointEffectForBlobExcept(slot, blob, claimed, claimed_count);
+		if (gobj == NULL)
 		{
-			gobj = syNetRbSnapFindLiveUserdataJointEffectForBlob(slot, blob);
+			gobj = gcFindGObjByID(blob->gobj_id);
+			if ((gobj != NULL) &&
+			    ((efGetStruct(gobj) == NULL) ||
+			     (syNetRbSnapReconciledEffectGobjPtrListed((GObj *const *)claimed, claimed_count,
+			                                               gobj) != FALSE)))
+			{
+				gobj = NULL;
+			}
 		}
-		(void)syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
+		gobj = syNetRbSnapApplyEffectBlobToGObj(slot, gobj, blob);
+		if ((gobj != NULL) && (claimed_count < (s32)SYNETRB_SNAPSHOT_MAX_EFFECTS))
+		{
+			claimed[claimed_count++] = gobj;
+		}
 	}
 }
 
@@ -35123,9 +35166,17 @@ static GObj *syNetRbSnapResolveLiveEffectGobjForBlobApply(const SYNetRbSnapshotS
 	}
 	if (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT)
 	{
-		gobj = syNetRbSnapFindLiveUserdataJointEffectForBlob(slot, blob);
+		/*
+		 * Pointer exclusion, not id: coexisting blades share gobj_id 1011, so the
+		 * old id test rejected the second blade's own shell as "already
+		 * reconciled" and left that blob unmatched. Same shape as the quake
+		 * branch directly above.
+		 */
+		gobj = syNetRbSnapFindLiveUserdataJointEffectForBlobExcept(slot, blob, reconciled_gobj_ptrs,
+		                                                           reconciled_gobj_count);
 		if ((gobj != NULL) &&
-		    (syNetRbSnapReconciledEffectGobjIdListed(reconciled_ids, reconciled_count, gobj->id) == FALSE))
+		    (syNetRbSnapReconciledEffectGobjPtrListed(reconciled_gobj_ptrs, reconciled_gobj_count, gobj) ==
+		     FALSE))
 		{
 			return gobj;
 		}
