@@ -93,17 +93,15 @@ int syNetRbeSchedEffectiveTier(void)
 {
 	int tier = syNetRbeSchedTier();
 
-	if ((tier == 1) && (syNetSessionParamsRealDelayActive() != FALSE))
-	{
-		static sb32 sAutoRaiseLogged = FALSE;
-
-		if (sAutoRaiseLogged == FALSE)
-		{
-			sAutoRaiseLogged = TRUE;
-			port_log("SSB64 NetSchedRbe: tier 1 -> 2 auto-raise (REAL-DELAY session; predict-veto pacing active)\n");
-		}
-		return 2;
-	}
+	/*
+	 * Auto-raise REVERTED 2026-09-01. Tier 2 converts every rbe stall verdict
+	 * into a whole-frame R-hold, but rbe's verdicts are calibrated for a host
+	 * whose steady state is lead ~ D and which can retry sub-frame; BattleShip
+	 * measured lead_avg = 0 under the flip, so cushion_rebuild (wants lead >=
+	 * D-1) and the timesync ahead-skew never clear and stall without bound
+	 * (665 + 741 holds in one match). Pacing is the admission demand offset's
+	 * job now. Tier 2 stays available for experiments, explicitly.
+	 */
 	return tier;
 }
 
@@ -399,21 +397,16 @@ static void syNetRbeSchedBind(void)
 	 * NOT promote tiers 2/3 — sRbeRealDelayForced stays 0 until Phase 3.
 	 */
 	rbe_sched_set_real_delay((syNetSessionParamsRealDelayActive() != FALSE) ? 1 : 0);
-#if defined(PORT) && defined(SSB64_NETMENU)
 	/*
-	 * Phase 3a: pace-to-target. Under the flip, default the timesync ahead
-	 * threshold to lead >= 1 so the leading seat keeps shaving until the
-	 * follower banks a one-tick margin instead of parking at the just-in-time
-	 * edge (gap1 storm). setenv without overwrite — an explicit
-	 * RBE_RB_TS_LEAD_TARGET in the environment or debug.env wins.
+	 * Phase 3a pace-to-target was REVERTED 2026-09-01. Raising the ahead
+	 * threshold to lead >= 1 destroyed the actuator's one-sidedness: `lead < 0`
+	 * can only be true for one peer at a time, but `lead < 1` was true for BOTH
+	 * simultaneously (measured lead_avg = 0 on both seats), so both paced, both
+	 * stalled, and timesync_pace went 1 -> 741 with pct_R 34% -> 40%. The
+	 * arrival margin is now held by the admission demand offset instead
+	 * (syNetPeerRealDelayCushionTicks). RBE_RB_TS_LEAD_TARGET still exists in
+	 * rbe for experiments; the bridge no longer sets it.
 	 */
-	if (syNetSessionParamsRealDelayActive() != FALSE)
-	{
-		extern int setenv(const char *name, const char *value, int overwrite);
-
-		setenv("RBE_RB_TS_LEAD_TARGET", "1", 0);
-	}
-#endif
 	/*
 	 * Phase 3 gateway (2026-09-01): under a negotiated REAL-DELAY session the
 	 * tier-2 predict-veto and tier-3 adaptive-D gates unlock — waiting one frame

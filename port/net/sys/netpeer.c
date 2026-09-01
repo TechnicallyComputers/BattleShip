@@ -13948,21 +13948,81 @@ static u32 syNetPeerSaturatingAddU32(u32 a, u32 b)
 	return a + b;
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * REAL-DELAY cushion target C (Phase 3c, 2026-09-01).
+ *
+ * Phase 1 demanded exactly row T for tick T (C = 0). That is satisfiable the
+ * instant the row lands, so the sim races to the arrival frontier and parks
+ * there with ZERO margin: measured lead_avg = 0 at D = 4, i.e. the local sim
+ * runs a full D ticks ahead of the peer's sim, forever. Every downstream
+ * policy then reads permanent starvation (rbe wants lead ~ D; its cushion
+ * rebuild waits for lead >= D-1 and never clears), and no amount of stalling
+ * repairs it — a stall also stops local sampling, so symmetric stalling just
+ * converges to just-in-time more slowly.
+ *
+ * Demanding row T+C instead holds the sim back by construction:
+ *   hr = S_peer + D  =>  admit requires  S_peer + D >= T + C
+ *                    =>  local sim may lead the peer's sim by at most D - C.
+ * So C is the arrival margin in ticks and (D - C) is the remaining slack for
+ * one peer to run ahead. C must stay < D: at C = D the two demands become
+ * mutual exact lockstep and deadlock.
+ *
+ * Note the peer's samples only ever produce rows >= D (sample t owns row
+ * t + D), so a demand below D is unsatisfiable-but-vacuous: those early ticks
+ * have no remote input on either peer and both consume neutral.
+ *
+ * SSB64_NETPLAY_REAL_DELAY_CUSHION overrides; default D/2 clamped to [1, D-1].
+ */
+u32 syNetPeerRealDelayCushionTicks(void)
+{
+	static s32 sCached = -1;
+	u32 d;
+	u32 c;
+
+	d = syNetPeerGetInputDelay();
+	if (d == 0U)
+	{
+		return 0U;
+	}
+	if (sCached < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_REAL_DELAY_CUSHION");
+
+		sCached = ((e != NULL) && (e[0] != '\0')) ? atoi(e) : -2; /* -2 = auto */
+		if (sCached < -2)
+		{
+			sCached = -2;
+		}
+	}
+	c = (sCached == -2) ? (d / 2U) : (u32)sCached;
+	if (c < 1U)
+	{
+		c = (sCached == 0) ? 0U : 1U;
+	}
+	if (c > (d - 1U))
+	{
+		c = d - 1U;
+	}
+	return c;
+}
+#endif
+
 u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick)
 {
 #if defined(PORT) && defined(SSB64_NETMENU)
 	/*
-	 * REAL-DELAY (Phase 1): tick T consumes wire row T. Labels physically unchanged
-	 * (sample staged at owner sample+D, emitted verbatim) — they now NAME the
-	 * consumption tick. Ticks <= D demand rows that never exist (their samples
-	 * would predate the session); 0 marks the demand vacuous — the admission
-	 * treats it as present. See docs/netplay_real_delay_contract_2026-08-31.md.
+	 * REAL-DELAY: tick T consumes wire row T; admission demands row T + C so a
+	 * real arrival margin is held instead of racing the frontier. See
+	 * syNetPeerRealDelayCushionTicks and docs/netplay_real_delay_contract_2026-08-31.md.
 	 */
 	if (syNetSessionParamsRealDelayActive() != FALSE)
 	{
 		u32 d = syNetPeerGetInputDelay();
+		u32 w = syNetPeerSaturatingAddU32(sim_tick, syNetPeerRealDelayCushionTicks());
 
-		return (sim_tick > d) ? sim_tick : 0U;
+		/* Rows below D never exist (sample t owns row t+D): vacuous demand. */
+		return (w >= d) ? w : 0U;
 	}
 #endif
 	return syNetPeerSaturatingAddU32(sim_tick, syNetPeerGetInputDelay());

@@ -203,6 +203,10 @@ extern sb32 syNetPeerSnapAgreeEscalateBypassInputSkew(void);
 #endif
 /* `sim_tick + D` with saturating add (base strict frontier; no extra slack). */
 extern u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick);
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* REAL-DELAY arrival-margin target C in ticks (admission demands row sim+C). 0 outside the flip. */
+extern u32 syNetPeerRealDelayCushionTicks(void);
+#endif
 /* `sim_tick + D + strict_extra_slack` with saturating add (strict-only frontier). */
 extern u32 syNetPeerGetStrictRequiredWireTick(u32 sim_tick);
 #ifdef PORT

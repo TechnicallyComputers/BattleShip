@@ -237,6 +237,33 @@ witness cushion series, never via resim/GGPO counts.
          `DELAY_RAISE_GAP_FILL` log). Lowering needs nothing — the colliding
          row is wire-locked to first-transmitted on both sides. Tier 3
          (adaptive proposals) remains explicit opt-in: `SSB64_NETPLAY_RBE_SCHED=3`.
-      Remaining: soak-verify the tier-2 equilibrium (duty cap + pace-to-target);
-      then a tier-3 soak; then re-derive the RTT→D bands from measured cushion.
+      **Steps 3a (pace-to-target) and the tier-1→2 auto-raise were REVERTED
+      on 2026-09-01 — see Phase 3c.**
+- [x] **Phase 3c — the arrival margin is a demand offset, not a stall policy.**
+      Soak with duty cap + pace-to-target got *worse*: veto 525 → 1465,
+      `timesync_pace` 1 → 741, `cushion_rebuild` 0 → 665, `pct_R` 34% → 40%.
+      Root cause, measured: **`lead_avg = 0` at D = 4.** `lead = hr − sim =
+      (S_peer + D) − S_local`, so lead 0 means the local sim runs a full D
+      ticks ahead of the peer's. Phase 1 demanded exactly row T (C = 0), which
+      is satisfiable the instant the row lands — the sim races to the arrival
+      frontier at session start (the ≤ D window is free) and parks there with
+      zero margin forever. Every rbe policy then reads permanent starvation
+      (it expects lead ≈ D; cushion-rebuild waits for lead ≥ D−1 and never
+      clears), and tier 2 turns each verdict into a whole-frame hold.
+      Two refutations recorded:
+      - *Stalling cannot build margin.* A stall also halts local sampling, so
+        it starves the peer symmetrically; both seats converge to
+        just-in-time, only slower.
+      - *pace-to-target destroyed one-sidedness.* `lead < 0` is true for at
+        most one peer; `lead < 1` was true for **both**, so both paced.
+      **Fix:** admission demands row `T + C`. Since `hr = S_peer + D`, admit
+      requires `S_peer + D ≥ T + C`, i.e. the local sim may lead the peer's by
+      at most `D − C`. C *is* the arrival margin; `D − C` is the slack for one
+      peer to run ahead. `C < D` is required (at `C = D` the two demands are
+      mutual exact lockstep → deadlock). Default `D/2`, clamped `[1, D−1]`,
+      `SSB64_NETPLAY_REAL_DELAY_CUSHION` overrides. Demands below D are
+      vacuous (sample t owns row t+D, so rows < D never exist).
+      Witness `NetCw: WINDOW` now prints `C=`.
+      Remaining: soak-verify the C equilibrium; then tier-3 (adaptive D) soak;
+      then re-derive the RTT→D bands from measured margin.
 

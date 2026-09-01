@@ -120,9 +120,10 @@ static void syNetCwFlushWindow(u32 d)
 	}
 	avg_x100 = (sSYNetCwWindowCushionSum * 100) / (s64)sSYNetCwWindowAdmitted;
 	port_log(
-	    "SSB64 NetCw: WINDOW ticks=%u..%u D=%u admitted=%u ring=%u predict=%u hold_frames=%u "
+	    "SSB64 NetCw: WINDOW ticks=%u..%u D=%u C=%u admitted=%u ring=%u predict=%u hold_frames=%u "
 	    "cushion_min=%d cushion_max=%d cushion_avg_x100=%d\n",
 	    (unsigned int)sSYNetCwWindowFirstTick, (unsigned int)sSYNetCwLastAdmittedTick, (unsigned int)d,
+	    (unsigned int)((syNetSessionParamsRealDelayActive() != FALSE) ? syNetPeerRealDelayCushionTicks() : d),
 	    (unsigned int)sSYNetCwWindowAdmitted, (unsigned int)sSYNetCwWindowRing,
 	    (unsigned int)sSYNetCwWindowPredict, (unsigned int)sSYNetCwWindowHoldFrames,
 	    (int)sSYNetCwWindowCushionMin, (int)sSYNetCwWindowCushionMax, (int)avg_x100);
