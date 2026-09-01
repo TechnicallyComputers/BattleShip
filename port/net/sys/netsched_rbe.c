@@ -371,7 +371,17 @@ static void syNetRbeSchedBind(void)
 	 * NOT promote tiers 2/3 — sRbeRealDelayForced stays 0 until Phase 3.
 	 */
 	rbe_sched_set_real_delay((syNetSessionParamsRealDelayActive() != FALSE) ? 1 : 0);
-	sRbeRealDelayForced = 0;
+	/*
+	 * Phase 3 gateway (2026-09-01): under a negotiated REAL-DELAY session the
+	 * tier-2 predict-veto and tier-3 adaptive-D gates unlock — waiting one frame
+	 * is now productive (the needed row was sampled D ticks before it is needed
+	 * and is en route). First flip soak 257428529 measured why this is required:
+	 * without a pacing law the leader free-runs, spends the whole D budget, and
+	 * cushion re-pins at the prediction frontier (rbe_wait_on_predict 789/328).
+	 * Still env-gated: tiers only act when SSB64_NETPLAY_RBE_SCHED >= 2.
+	 * ZERO-DELAY sessions keep Forced=0 — the 30 Hz veto refutation stands.
+	 */
+	sRbeRealDelayForced = (syNetSessionParamsRealDelayActive() != FALSE) ? 1 : 0;
 	rbe_sched_bind(&br); /* also resets rbe session state */
 
 	sBridgeDelay = (int)syNetPeerGetCommittedInputDelay();

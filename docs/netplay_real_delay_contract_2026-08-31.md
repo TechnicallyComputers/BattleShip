@@ -190,8 +190,31 @@ witness cushion series, never via resim/GGPO counts.
         both `SSB64_NETPLAY_CONSUMPTION_WITNESS=1`. Expect `NetCw: WINDOW`
         cushion ≈ +D − RTT_ticks/2 > 0, predict ≈ 0, and D ticks of added local
         input latency (the feel trade).
-- [ ] **Phase 2** — re-baseline: expect cushion > 0, predict ≈ 0, light
-      episodes only on genuine late arrivals; re-derive RTT→D bands; verify
-      DELAY_SYNC under new meaning.
-- [ ] **Phase 3** — `sRbeRealDelayForced` TRUE; promote rbe tier 2, then
-      tier 3 (adaptive D regulating a real cushion). WAN soaks.
+- [~] **Phase 2** — first flip soak 257428529 (2026-09-01, LAN, D=4):
+      negotiation + wire clean (`rb_flags=0x07`, dropped=0, zero
+      CONTRACT_VIOLATION), match ran full length. **Finding: the flip alone
+      does not hold cushion.** Both peers opened near their expected regime
+      (linux ring=120 cushion 0..+8, android predicting) and then converged
+      back to the zero-cushion fixed point, trading the predictor role
+      (cushion_min −4 = the full D budget spent by free-running). Nothing in
+      admission *waits* while prediction is allowed, so the leader consumes
+      ahead until it re-pins at the prediction frontier — the flip provides
+      the budget; a **pacing law** must hold it. That law is exactly the rbe
+      tier-2 wait-on-predict (shadow said wait 789/328 ticks this soak), which
+      was destructive under ZERO-DELAY (waiting could never be satisfied) and
+      is productive under REAL-DELAY (the row is en route). Residual: two
+      figh diverges @1123/1132 with byte-identical dumped scalars — a
+      non-dumped per-status overlay fold (Kirby stone-scope duration/resist
+      restore in ReconcileStoneAfterRollback is the suspect); small tail,
+      needs a dump extension, not a class.
+      Remaining for Phase 2 closure: tier-2 A/B soak (below), RTT→D bands,
+      DELAY_SYNC-under-flip design.
+- [ ] **Phase 3** — `sRbeRealDelayForced` now follows the negotiated flip
+      (2026-09-01), so tiers unlock ONLY in REAL-DELAY sessions and only when
+      `SSB64_NETPLAY_RBE_SCHED >= 2`. A/B: same build both peers, host
+      `SSB64_NETPLAY_REAL_DELAY=1`, both `SSB64_NETPLAY_RBE_SCHED=2` +
+      witness=1 — expect cushion held positive, predict/resims collapsing,
+      full sim rate (the ZERO-DELAY 30 Hz veto refutation does not apply:
+      Forced stays 0 in ZERO-DELAY sessions). Then tier 3 (adaptive D) and
+      re-derived RTT→D bands.
+
