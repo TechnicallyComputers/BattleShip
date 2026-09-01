@@ -1,5 +1,6 @@
 #include <sys/netrollback.h>
 #include <sys/netsched_rbe.h>
+#include <sys/netconsumption_witness.h>
 
 #include <sys/netrollback_episode.h>
 #include <sys/netinput.h>
@@ -1837,6 +1838,7 @@ void syNetRollbackStartVSSession(void)
 		return;
 	}
 	syNetRbSnapshotResetSession();
+	syNetConsumptionWitnessResetForSession(); /* REAL-DELAY Phase 0 witness — re-arm from env per session */
 #if defined(PORT) && defined(SSB64_NETMENU)
 	syNetplayStatusVarsBankResetSession();
 #endif

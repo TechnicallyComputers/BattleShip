@@ -1,5 +1,6 @@
 #include <sys/netinput.h>
 #include <sys/netsched_rbe.h>
+#include <sys/netconsumption_witness.h>
 
 /*
  * NetInput implementation: ring buffers keyed by `tick % SYNETINPUT_HISTORY_LENGTH`.
@@ -11112,6 +11113,8 @@ void syNetTickCommitEvaluate(u32 tick, SYNetTickCommitPhase phase, SYNetTickComm
 		/* retcomm-rbengine admission shadow (SSB64_NETPLAY_RBE_SCHED):
 		 * observes the verdict; tier 2 may veto predict-advance to R-hold. */
 		syNetRbeSchedShadowObserve(tick, &shared);
+		/* REAL-DELAY Phase 0: consumption witness (SSB64_NETPLAY_CONSUMPTION_WITNESS, observe-only). */
+		syNetConsumptionWitnessNote(tick, &shared);
 		if (shared.advance == FALSE)
 		{
 			out->allow_full_input_publish = FALSE;
