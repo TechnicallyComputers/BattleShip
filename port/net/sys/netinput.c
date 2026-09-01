@@ -1457,6 +1457,24 @@ static sb32 syNetInputIsLocalDelaySlot(s32 player)
 static u32 syNetInputLocalGameplayOwnerTick(u32 sample_tick)
 {
 #if defined(SSB64_NETMENU)
+	/*
+	 * REAL-DELAY (Phase 1): the sample taken at tick t becomes the input for sim
+	 * tick t+D on BOTH machines — gameplay ring keys at the consumption tick, so
+	 * MakeLocalFrame(T) picks up the sample from T-D and the remote peer consumes
+	 * the identically-labeled wire row. This is the whole feel cost of the flip
+	 * (feel 0 -> D) and the whole source of its transit budget.
+	 * ZERO-DELAY sessions keep feel-0 (owner = sample tick), bit-identical.
+	 */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		u32 d = syNetPeerGetCommittedInputDelay();
+
+		if ((~(u32)0 - sample_tick) < d)
+		{
+			return ~(u32)0;
+		}
+		return sample_tick + d;
+	}
 	return sample_tick;
 #else
 	u32 d;

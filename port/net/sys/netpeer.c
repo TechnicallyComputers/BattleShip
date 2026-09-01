@@ -196,7 +196,9 @@ static int syNetPeerGetStateDetailDiagLevel(void)
 #define SYNETPEER_VERSION_LEGACY_CONNECT 4
 #define SYNETPEER_VERSION_DUAL_LOCAL_LEGACY 5
 /* 6/7 (pre auth-frontier) retired 2026-07-12; 8/9 append auth_wire_frontier to the INPUT header. */
-#define SYNETPEER_VERSION 8
+/* 9: REAL-DELAY flip capability (2026-09-01). Bumped so pre-flip builds refuse at the
+ * packet layer instead of silently running a different consumption mapping. */
+#define SYNETPEER_VERSION 9
 #define SYNETPEER_VERSION_DUAL_LOCAL 9
 #define SYNETPEER_MAX_PACKET_FRAMES 16
 #define SYNETPEER_FRAME_BYTES 8
@@ -3799,6 +3801,15 @@ static void syNetPeerMaybeAutoRunwayDelayBump(u32 tick_now)
 	{
 		return;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* REAL-DELAY (Phase 1): D is frozen for the session — a mid-battle change re-keys
+	 * sample->consumption staging and forks the gameplay ring against the wire fills.
+	 * Dynamic D under the flip is the Phase 3 (adaptive controller) milestone. */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		return;
+	}
+#endif
 	eff_tick = syNetPeerSaturatingAddU32(tick_now, syNetPeerDelaySyncCommitLeadTicks());
 	sSYNetPeerDelaySyncPending = proposed;
 	sSYNetPeerDelaySyncEffectiveTick = eff_tick;
@@ -3869,6 +3880,13 @@ sb32 syNetPeerRequestAdaptiveInputDelay(u32 target, const char *tag)
 	{
 		return FALSE;
 	}
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* REAL-DELAY (Phase 1): D frozen for the session — see auto_runway guard above. */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		return FALSE;
+	}
+#endif
 	eff_tick = syNetPeerSaturatingAddU32(tick_now, syNetPeerDelaySyncCommitLeadTicks());
 	sSYNetPeerDelaySyncPending = proposed;
 	sSYNetPeerDelaySyncEffectiveTick = eff_tick;
@@ -5742,6 +5760,13 @@ void syNetPeerEvaluateSharedCommitStep(u32 sim_tick, SYNetPeerSharedCommitStep *
 	}
 #endif
 	required_wire = out->required_wire;
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* REAL-DELAY: demand for ticks <= D is vacuous (required_wire == 0) — nothing to wait for. */
+	if ((required_wire == 0U) && (syNetSessionParamsRealDelayActive() != FALSE))
+	{
+		return;
+	}
+#endif
 	/* Strict RemoteConfirmed only — provisional gap-fill must fall through to prediction. */
 	ring_ready = syNetPeerRemoteInputsPresentForWireTick(required_wire);
 	if (ring_ready != FALSE)
@@ -13891,6 +13916,21 @@ static u32 syNetPeerSaturatingAddU32(u32 a, u32 b)
 
 u32 syNetPeerGetBaseRequiredWireTick(u32 sim_tick)
 {
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/*
+	 * REAL-DELAY (Phase 1): tick T consumes wire row T. Labels physically unchanged
+	 * (sample staged at owner sample+D, emitted verbatim) — they now NAME the
+	 * consumption tick. Ticks <= D demand rows that never exist (their samples
+	 * would predate the session); 0 marks the demand vacuous — the admission
+	 * treats it as present. See docs/netplay_real_delay_contract_2026-08-31.md.
+	 */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		u32 d = syNetPeerGetInputDelay();
+
+		return (sim_tick > d) ? sim_tick : 0U;
+	}
+#endif
 	return syNetPeerSaturatingAddU32(sim_tick, syNetPeerGetInputDelay());
 }
 
@@ -14604,7 +14644,16 @@ sb32 syNetPeerMatchDelayStarvationUpdateAndShouldHold(u32 sim_tick, u32 required
 
 u32 syNetPeerDelayWireTickFromSim(u32 sim_tick)
 {
-	return syNetPeerGetBaseRequiredWireTick(sim_tick);
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* REAL-DELAY: encode is identity — rings and labels all key at consumption ticks.
+	 * Kept separate from GetBaseRequiredWireTick (demand clamps <=D to vacuous; the
+	 * egress/frontier encode must stay pure). */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		return sim_tick;
+	}
+#endif
+	return syNetPeerSaturatingAddU32(sim_tick, syNetPeerGetInputDelay());
 }
 
 u32 syNetPeerDelayWireLookupTickFromSim(u32 sim_tick)
@@ -14616,6 +14665,13 @@ u32 syNetPeerDelaySimTickFromWire(u32 wire_tick)
 {
 	u32 d;
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+	/* REAL-DELAY: decode is identity — a row labeled w is the input for sim tick w. */
+	if (syNetSessionParamsRealDelayActive() != FALSE)
+	{
+		return wire_tick;
+	}
+#endif
 	d = syNetPeerGetCommittedInputDelay();
 	/* wire_tick = sim_tick + D => sim = wire - D. When D==0, sim index equals wire index (do not fold to 0). */
 	if (d == 0U)

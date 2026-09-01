@@ -365,9 +365,12 @@ static void syNetRbeSchedBind(void)
 	br.sess_ops.get_stats = syNetRbeSchedOpsGetStats;
 
 	rbe_set_log_sink(syNetRbeSchedLogSink, NULL);
-	/* BattleShip live VS consumes wire = sim + D (rbe "legacy" mapping).
-	 * REAL-DELAY is the step-6 milestone, not a shadow decision. */
-	rbe_sched_set_real_delay(0);
+	/*
+	 * Consumption mapping follows the negotiated session (Phase 1 flip): REAL-DELAY
+	 * sessions tell the library so its shadow evaluates the correct model. This does
+	 * NOT promote tiers 2/3 — sRbeRealDelayForced stays 0 until Phase 3.
+	 */
+	rbe_sched_set_real_delay((syNetSessionParamsRealDelayActive() != FALSE) ? 1 : 0);
 	sRbeRealDelayForced = 0;
 	rbe_sched_bind(&br); /* also resets rbe session state */
 

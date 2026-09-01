@@ -163,9 +163,33 @@ witness cushion series, never via resim/GGPO counts.
 
 ## 5. Phase ledger
 
-- [x] **Phase 0** — this contract; witness landed observe-only (this commit).
-- [ ] **Phase 1** — the flip behind negotiated session param + env; fixed D;
-      LAN loopback + synctest green before any soak.
+- [x] **Phase 0** — this contract; witness landed observe-only (commit 4219d369).
+- [x] **Phase 1** — landed 2026-09-01. **As-built formulation (simpler than §2's
+      sketch):** egress staging and wire labels are physically unchanged
+      (sample stages at owner `sample+D`, emitted verbatim) — under the flip
+      those labels *name* the consumption tick, so **encode, decode, and demand
+      all become identity**. D lives solely in `LocalGameplayOwnerTick`
+      (sample → consumption keying of the gameplay ring). Demand for ticks ≤ D
+      is vacuous (`required_wire = 0`, admission treats as present) — no
+      startup row-seeding needed, since those ticks' samples predate the
+      session on both peers symmetrically (both consume neutral).
+      - Negotiation: `SYNETSESSION_ROLLBACK_FLAG_REAL_DELAY` (0x04) in
+        `rollback_flags`, host-authoritative; **host env
+        `SSB64_NETPLAY_REAL_DELAY=1`** arms it, guest follows. Default off —
+        ZERO-DELAY sessions are bit-identical.
+      - Mixed builds: `SYNETPEER_VERSION` 8 → 9; pre-flip builds refuse at the
+        packet layer (`ver_ok=0` drop) instead of desyncing.
+      - D frozen for the session: mid-battle DELAY_SYNC queue writers
+        (auto-runway bump, adaptive request) return early under the flip; the
+        startup delay-align still runs (lands in intro, neutral inputs).
+        Dynamic D under REAL-DELAY is Phase 3.
+      - Witness contract check is mode-aware; rbe shadow told
+        `rbe_sched_set_real_delay(1)` (tiers still gated — `sRbeRealDelayForced`
+        stays 0).
+      - First soak: LAN, both peers same build, host `SSB64_NETPLAY_REAL_DELAY=1`,
+        both `SSB64_NETPLAY_CONSUMPTION_WITNESS=1`. Expect `NetCw: WINDOW`
+        cushion ≈ +D − RTT_ticks/2 > 0, predict ≈ 0, and D ticks of added local
+        input latency (the feel trade).
 - [ ] **Phase 2** — re-baseline: expect cushion > 0, predict ≈ 0, light
       episodes only on genuine late arrivals; re-derive RTT→D bands; verify
       DELAY_SYNC under new meaning.

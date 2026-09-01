@@ -16,6 +16,7 @@
 #include <sys/netconsumption_witness.h>
 #include <sys/netpeer.h>
 #include <sys/netrollback.h>
+#include <sys/netsession_params.h>
 
 extern char *getenv(const char *name);
 extern int atoi(const char *s);
@@ -91,16 +92,21 @@ static void syNetCwContractCheck(u32 sim_tick)
 	u32 d;
 	u32 wire;
 	u32 back;
+	u32 want_wire;
 
 	d = syNetPeerGetCommittedInputDelay();
 	wire = syNetPeerDelayWireTickFromSim(sim_tick);
 	back = syNetPeerDelaySimTickFromWire(wire);
-	if ((wire != (sim_tick + d)) || (back != sim_tick))
+	/* Mode-aware law (updated with the Phase 1 flip in the same commit that changed
+	 * the mapping): REAL-DELAY encode/decode are identity; ZERO-DELAY is +/-D. */
+	want_wire = (syNetSessionParamsRealDelayActive() != FALSE) ? sim_tick : (sim_tick + d);
+	if ((wire != want_wire) || (back != sim_tick))
 	{
 		port_log(
-		    "SSB64 NetCw: CONTRACT_VIOLATION zero_delay mapping sim=%u D=%u encode=%u (want %u) decode=%u (want %u)\n",
+		    "SSB64 NetCw: CONTRACT_VIOLATION mode=%s mapping sim=%u D=%u encode=%u (want %u) decode=%u (want %u)\n",
+		    (syNetSessionParamsRealDelayActive() != FALSE) ? "real_delay" : "zero_delay",
 		    (unsigned int)sim_tick, (unsigned int)d, (unsigned int)wire,
-		    (unsigned int)(sim_tick + d), (unsigned int)back, (unsigned int)sim_tick);
+		    (unsigned int)want_wire, (unsigned int)back, (unsigned int)sim_tick);
 	}
 }
 

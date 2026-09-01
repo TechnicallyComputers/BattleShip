@@ -481,6 +481,19 @@ void syNetSessionParamsComputeFromRttMs(u32 rtt_ms, SYNetSessionParams *out_para
 		fuzz_ticks = 2U;
 	}
 	rollback_flags = (u8)(SYNETSESSION_ROLLBACK_FLAG_ENABLED | SYNETSESSION_ROLLBACK_FLAG_SYMMETRIC);
+	/*
+	 * REAL-DELAY flip (Phase 1): host env SSB64_NETPLAY_REAL_DELAY=1 arms the flag;
+	 * the guest applies whatever the host composed, like every other param here.
+	 * Default off — ZERO-DELAY behavior is bit-identical without the env.
+	 */
+	{
+		const char *env_rd = getenv("SSB64_NETPLAY_REAL_DELAY");
+
+		if ((env_rd != NULL) && (env_rd[0] != '\0') && (atoi(env_rd) != 0))
+		{
+			rollback_flags |= (u8)SYNETSESSION_ROLLBACK_FLAG_REAL_DELAY;
+		}
+	}
 	out_params->input_delay = (u8)d_ticks;
 	out_params->phase_lock_ticks = (u8)phase_lock;
 	out_params->bundle_redundancy = (u8)redundancy;
@@ -668,6 +681,16 @@ u32 syNetSessionParamsGetEffectiveStrictRingFuzzTicks(void)
 		return (u32)sSYNetSessionParamsNegotiated.strict_ring_fuzz_ticks;
 	}
 	return 0U;
+}
+
+sb32 syNetSessionParamsRealDelayActive(void)
+{
+	if (sSYNetSessionParamsNegotiatedValid == FALSE)
+	{
+		return FALSE;
+	}
+	return ((sSYNetSessionParamsNegotiated.rollback_flags & SYNETSESSION_ROLLBACK_FLAG_REAL_DELAY) != 0U) ? TRUE
+	                                                                                                      : FALSE;
 }
 
 sb32 syNetSessionParamsRollbackEnabled(void)

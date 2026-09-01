@@ -8,6 +8,10 @@
 
 #define SYNETSESSION_ROLLBACK_FLAG_ENABLED  0x01U
 #define SYNETSESSION_ROLLBACK_FLAG_SYMMETRIC 0x02U
+/* REAL-DELAY consumption mapping (Phase 1, docs/netplay_real_delay_contract_2026-08-31.md).
+ * Host-authoritative like every other negotiated param; guest follows the flag. Mixed
+ * old/new builds are refused at the packet layer by the SYNETPEER_VERSION bump. */
+#define SYNETSESSION_ROLLBACK_FLAG_REAL_DELAY 0x04U
 
 typedef struct SYNetSessionParams
 {
@@ -57,6 +61,8 @@ extern u32 syNetSessionParamsGetEffectiveRollbackResimTicksPerFrame(void);
 extern u32 syNetSessionParamsGetEffectiveStrictRingFuzzTicks(void);
 extern u32 syNetSessionParamsGetEffectiveFrameCommitValidationTicks(void);
 extern sb32 syNetSessionParamsRollbackEnabled(void);
+/* TRUE when the negotiated session runs the REAL-DELAY consumption mapping (tick T consumes wire row T). */
+extern sb32 syNetSessionParamsRealDelayActive(void);
 extern sb32 syNetSessionParamsRollbackSymmetricEnabled(void);
 
 #endif /* _SYNETSESSION_PARAMS_H_ */
