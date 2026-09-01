@@ -359,3 +359,43 @@ blade from all slots.
    tick can re-mint what the slot now correctly carries.
 
 Both-peers rebuild required (fold semantics changed).
+
+---
+
+## 2026-09-01 (root cause, PROVEN): both blades share gobj_id 1011
+
+The fold-path columns settled it — and refuted my own hypothesis first:
+`bladefold=1` on **every** line of both logs (872/785, zero `bladefold=0`), so
+the peers were never taking different fold paths.
+
+The real evidence was in the same tick being captured twice on one peer with
+*different* results:
+
+```
+linux tick 1360 pass 1:  bladefold=1 own_p=0 own_st=256 own_tt=23   hash=0x61B153EA
+linux tick 1360 pass 2:  bladefold=1 own_p=1 own_st=256 own_tt=16   hash=0xBBA05CA5
+android      (both):     bladefold=1 own_p=1 own_st=256 own_tt=16   hash=0xBBA05CA5
+```
+
+The eff fold described **a different fighter's blade between two passes of the
+same tick** — intra-peer nondeterminism. FRAME_COMMIT then compared linux's
+first-pass value against android's, and diverged.
+
+**Cause:** both Kirbys' blades carry `gobj_id = 1011`.
+`syNetRbSnapEffectGobjIdCollisionAllowsCoexist` had no rule for two
+USERDATA_JOINT effects, so they were treated as a recycled-id collision and one
+was dropped — from the fold *and* the capture (`reason=gobj_id_duplicate`) —
+with the survivor decided by effect-list link order, which changes across a
+rollback. This is why `effect_count` never exceeded 1 during dual-blade play,
+across every soak in this file.
+
+**Fix:** two USERDATA_JOINT effects coexist. They are not a recycled-id
+collision — they are simultaneously live, distinct state. The blob carries
+`fighter_gobj_id` and the joint index, and blob↔live matching already
+discriminates on owner player + joint, so two blobs sharing a gobj_id
+round-trip. Capture and fold share this predicate, so both are fixed
+symmetrically at the single chokepoint.
+
+This also reframes the earlier entries: the enforce mis-kills, pre-mint culls,
+and lifetime drift were all *downstream* of a baseline that could only ever
+hold one of the two live blades. Both-peers rebuild required (fold semantics).

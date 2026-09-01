@@ -27968,6 +27968,30 @@ static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b)
 	{
 		return TRUE;
 	}
+	/*
+	 * Joint-attached per-fighter FX (Kirby Final Cutter blades, Captain Falcon
+	 * punch flame). PROVEN 2026-09-01: both Kirbys' blades carry gobj_id 1011,
+	 * so with no coexist rule they were treated as a recycled-id collision and
+	 * one was dropped — from the fold AND the capture — with the survivor
+	 * decided by effect-list link order, which changes across a rollback.
+	 * Measured on one peer, same tick captured twice:
+	 *     pass 1: bladefold=1 own_p=0 own_tt=23
+	 *     pass 2: bladefold=1 own_p=1 own_tt=16   (peer agreed with pass 2)
+	 * i.e. the eff fold silently described a DIFFERENT fighter's blade between
+	 * passes — intra-peer nondeterminism, and the eff-only forks and
+	 * PEER_SNAPSHOT_DIVERGE teardowns this class has produced.
+	 *
+	 * These are not recycled-id collisions: they are simultaneously live,
+	 * distinct state. The blob carries fighter_gobj_id and the joint index, and
+	 * blob<->live matching already discriminates on owner player + joint, so
+	 * two blobs sharing gobj_id round-trip correctly. Coexist is the honest
+	 * answer; dropping one can only ever be a lie about live state.
+	 */
+	if ((kind_a == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
+	    (kind_b == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT))
+	{
+		return TRUE;
+	}
 	return FALSE;
 }
 
