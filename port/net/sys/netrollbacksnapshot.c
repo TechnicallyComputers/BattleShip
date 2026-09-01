@@ -30719,6 +30719,34 @@ static void syNetRbSnapApplyEffectBlobTranslate(GObj *gobj, const SYNetRbSnapEff
 #endif
 }
 
+#if defined(SSB64_NETMENU)
+/*
+ * Kirby Final Cutter blade lifecycle trace (SSB64_NETPLAY_KIRBY_BLADE_TRACE=1,
+ * default OFF — soak baselines are unaffected unless armed).
+ *
+ * Standing question after soak 2026-09-01 (eff-only FC@961): the blade's
+ * animation and motion ran ~2 ticks apart across peers while the owning
+ * fighter was byte-identical. Blade ejects during load reconcile were 89
+ * (linux, 64 resims) vs 47 (android, 41 resims) — the peer that rolls back
+ * more churns the blade more. The restore path DOES reapply blob->anim_frame,
+ * so the drift is lifecycle timing (spawn/eject/respawn ordering), not a lost
+ * value. This trace records every anim-frame write with the sim tick and
+ * resim flag so the two peers' blade timelines can be diffed directly.
+ */
+static sb32 syNetRbSnapKirbyBladeTraceEnabled(void)
+{
+	static sb32 cached = -1;
+
+	if (cached < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_KIRBY_BLADE_TRACE");
+
+		cached = ((e != NULL) && (e[0] != '\0') && (e[0] != '0')) ? TRUE : FALSE;
+	}
+	return cached;
+}
+#endif
+
 static void syNetRbSnapApplyEffectBlobAnimFrame(GObj *gobj, f32 anim_frame, EFStruct *ep)
 {
 #if defined(SSB64_NETMENU)
@@ -30737,6 +30765,13 @@ static void syNetRbSnapApplyEffectBlobAnimFrame(GObj *gobj, f32 anim_frame, EFSt
 	if ((ep != NULL) && (syNetplayLiveEffectIsNessPsychicMagnet(gobj, ep) != FALSE))
 	{
 		q = syNetplayQuantizeAnimScalar(anim_frame);
+	}
+	if ((syNetRbSnapKirbyBladeTraceEnabled() != FALSE) &&
+	    (syNetRbSnapLiveEffectIsKirbyFinalCutterBlade(gobj, ep) != FALSE))
+	{
+		port_log("SSB64 BladeTrace: anim_apply tick=%u resim=%d gobj_id=%d before=%.1f after=%.1f\n",
+		         (unsigned int)syNetInputGetTick(), (int)(syNetRollbackIsResimulating() != FALSE),
+		         (int)gobj->id, (double)gobj->anim_frame, (double)q);
 	}
 	if (anim_dobj != NULL)
 	{
