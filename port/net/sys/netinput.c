@@ -8647,6 +8647,66 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 	}
 }
 
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
+ * Rewind the edge-derivation baseline to the snapshot load tick.
+ *
+ * `last_published` is a running latch: PublishFrame derives button_tap/release
+ * for tick T against last_published.buttons. It was never rewound on rollback
+ * load, so the FIRST replayed tick derived edges against the pre-rollback
+ * frontier's buttons: pressed = hold(L+1) & ~hold(F) instead of & ~hold(L).
+ * A button held across (L, F] lost its genuine replayed tap; a button released
+ * inside the window minted a phantom tap. Both directions observed as the
+ * Kirby Stone 262/263 status fork (soak 1486098688 FC@811/858/904, one status
+ * apart, flipping sides) and the ledge-attack CliffDiag family. Root cause of
+ * docs/bugs/netplay_derived_input_latch_forks_2026-09-01.md.
+ *
+ * Reseed from the published history row at load_tick — the authoritative
+ * shared record both peers agree on at or below the negotiated load tick — so
+ * replay edge derivation is a pure function of (restored state, inputs).
+ * Device tap/release are cleared for the same reason: the same-tick republish
+ * branch preserves them, and post-load they hold frontier-stale edges.
+ */
+void syNetInputReseedPublishEdgeBaselineAfterLoad(u32 load_tick)
+{
+	static u32 sReseedLogBudget = 4U;
+	s32 player;
+	SYNetInputFrame row;
+
+	if ((syNetPeerIsVSSessionActive() == FALSE) || (load_tick == 0U))
+	{
+		return;
+	}
+	for (player = 0; player < MAXCONTROLLERS; player++)
+	{
+		if ((syNetInputIsLocalDelaySlot(player) == FALSE) &&
+		    (syNetInputIsRemoteHumanSlot(player) == FALSE))
+		{
+			continue;
+		}
+		if (syNetInputGetHistoryFrame(player, load_tick, &row) == FALSE)
+		{
+			continue;
+		}
+		sSYNetInputSlots[player].last_published = row;
+		gSYControllerDevices[player].button_hold = row.buttons;
+		gSYControllerDevices[player].button_tap = 0;
+		gSYControllerDevices[player].button_release = 0;
+		gSYControllerDevices[player].button_update = 0;
+		gSYControllerDevices[player].stick_range.x = row.stick_x;
+		gSYControllerDevices[player].stick_range.y = row.stick_y;
+		if (sReseedLogBudget > 0U)
+		{
+			sReseedLogBudget--;
+			port_log(
+			    "SSB64 NetInput: EDGE_BASELINE_RESEED player=%d load_tick=%u buttons=0x%04X sx=%d sy=%d\n",
+			    (int)player, (unsigned int)load_tick, (unsigned int)row.buttons,
+			    (int)row.stick_x, (int)row.stick_y);
+		}
+	}
+}
+#endif
+
 /* Write resolved frame into sim-facing `gSYControllerDevices` + published history ring (`sSYNetInputHistory`). */
 void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame)
 {

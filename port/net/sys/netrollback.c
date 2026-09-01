@@ -16571,6 +16571,12 @@ static sb32 syNetRollbackBeginResim(u32 mismatch_tick, u32 target_tick, s32 corr
 					      : sSYNetRollbackEpochId);
 	sSYNetRollbackResimStallFrames = 0U;
 	sSYNetRollbackResimNextTick = mismatch_tick;
+	/*
+	 * State is restored to load_tick; the first replayed publish must derive
+	 * button edges against hold(load_tick), not the pre-rollback frontier.
+	 * See syNetInputReseedPublishEdgeBaselineAfterLoad (derived-latch root fix).
+	 */
+	syNetInputReseedPublishEdgeBaselineAfterLoad(load_tick);
 	sSYNetRollbackResimDepth = 1U;
 	sSYNetRollbackResimBaselineWaitFrames = 0U;
 	syNetPeerSendLocalInput();

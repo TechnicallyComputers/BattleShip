@@ -362,6 +362,10 @@ extern void syNetInputMakeLocalFrame(s32 player, u32 tick, SYNetInputFrame *out_
 /* Live phase-locked VS: local hardware sampled at sim `t` is owned by future sim `t + D`; senders expose that ring here. */
 extern sb32 syNetInputGetLocalDelayedFrame(s32 player, u32 tick, SYNetInputFrame *out_frame);
 extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
+#if defined(PORT) && defined(SSB64_NETMENU)
+/* Rewind button_tap/release edge-derivation baseline to the rollback load tick (see netinput.c). */
+extern void syNetInputReseedPublishEdgeBaselineAfterLoad(u32 load_tick);
+#endif
 /*
  * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`
  * that tic so sim does not double-step while `sSYNetInputTick` stays unchanged.

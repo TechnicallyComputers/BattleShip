@@ -76,3 +76,54 @@ accounting apart, not a state fork.
 `tap=0x0000 hold=0x0000 fires=0`, identical tick by tick. The ledge grabs happened; the
 ledge-attack fork did not reproduce. The instrument is confirmed working, so the next
 occurrence gets captured rather than inferred.
+
+---
+
+## ROOT CAUSE FOUND + FIXED (2026-09-01): stale `last_published` edge baseline
+
+Soak 1486098688 (Kirby Stone, FC@811/858/904, p0 statuses 262/263 one apart with
+sides flipping) finally exposed the writer for the `button_tap` member — and it is
+not in the fighter code at all.
+
+**Mechanism.** `syNetInputPublishFrame` derives `button_tap`/`button_release` for
+tick T against `sSYNetInputSlots[player].last_published.buttons` — a running latch
+updated at every publish and **never rewound on rollback load**. After a load to
+tick L (pre-rollback frontier F), the first replayed publish derived
+`pressed = hold(L+1) & ~hold(F)`:
+
+- button held across (L, F] → its genuine replayed tap at L+1 **lost**;
+- button released inside (L, F] → **phantom tap** minted at L+1.
+
+Only the first replayed tick is corrupt (the latch chains correctly afterwards),
+which is why the family always looked like a one-tick accounting offset.
+
+**Why Stone made it visible twice over.** Two netplay-only band-aids sat on top of
+the stale edges in `ftkirbyspeciallw.c` and each was itself a fork generator:
+
+1. `IsGenuineButtonTapB` ate any tap during resim when B was also held — but tap
+   implies hold on every genuine press frame, so **all** authentic replayed
+   release edges were discarded, while the peer that ran the tick live honored
+   them (replay-vs-live routing, same disease as the cosmetic-RNG trap).
+2. `ReconcileStoneAfterRollback` armed `unk_0x2 = 4`: post-load, B taps were
+   eaten for 4 ticks. Loads happen at each peer's own rollback cadence, so a
+   genuine release inside one peer's window and outside the other's forked
+   status by construction — invisibly (the counter is not in the hash fold).
+
+**Fix (one commit):**
+
+- `syNetInputReseedPublishEdgeBaselineAfterLoad(load_tick)` (netinput.c): on
+  resim begin (netrollback.c, at the `ResimDepth = 1` arm, after the snapshot
+  load succeeded), reseed `last_published` and the sim-facing device rows from
+  the published history row at `load_tick` for every participating slot. Edge
+  derivation on replay is again a pure function of (restored state, inputs).
+  Logs `EDGE_BASELINE_RESEED` (first 4 occurrences per session).
+- Both stone band-aids removed; `ReconcileStoneAfterRollback` now zeroes
+  `unk_0x2` so mixed-era blobs cannot re-enter the suppression path.
+
+**Both peers must run this build** (sim-behavior change under rollback).
+
+**Verification for next soak:** `SSB64_NETPLAY_KIRBY_STONE_RELEASE_DIAG=1` on
+both peers — release decisions must agree tick-for-tick with `reason=` matching;
+expect zero one-status-apart figh diverges. The `tap_stick_*` counter and
+`shield_health` members of this family are expected to shrink or vanish too:
+their derivation consumed the same corrupted first-replayed-tick edges.
