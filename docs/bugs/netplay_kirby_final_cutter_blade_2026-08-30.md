@@ -290,3 +290,39 @@ the refusal existed.
 
 Closing it needs an ACMD-driven re-arm rather than another snapshot heuristic: the
 inference route (re-mint from the snapshot layer) already wedged a match on 2026-08-30.
+
+---
+
+## 2026-09-01: refusal slot-consultation REMOVED — third local-state-in-sim-path instance
+
+Session 2026-09-01 (REAL-DELAY, window 3) ended in `PEER_SNAPSHOT_DIVERGE`
+(load_tick 1760, both peers) with the blade at the center. The mechanism:
+
+1. `syNetRbSnapBladeEjectRefusalHoldsForOwner` consulted
+   `sSYNetRbSnapActiveLoadSlot` — a **peer-local** variable — so whether a live
+   in-scope blade survived an eject depended on which slot happened to be
+   active on that peer at that moment. Same anti-pattern as the cosmetic-RNG
+   replay routing and the stone `unk_0x2` window, third instance.
+2. The refusal kept blades alive past their sim deaths; the `id_collision`
+   enforce (which **bypasses** the refusal — its tick-1762 eject succeeded
+   during active refusals) provided the only mortality, at each peer's own
+   load times.
+3. Blade lifetimes forked → the blade's interactions forked the **fighters**
+   (`figh` mismatch at load 1762/1761/1760, map/world equal) → baseline
+   deepening exhausted → session teardown.
+
+**Fix:** the slot consultation is deleted. The refusal is now a pure function
+of sim state: owner in cutter scope + context ≠ `force_clear_sim` → refuse,
+identically on both peers, live or resim. This also closes the "slot lists no
+shell → allow the cull" hole — load-time canonicalization goes through
+`slot_effect_enforce`, which never reached this function, so the hole only ever
+served the pre-mint case recorded above (~1 cull per 2000 ticks, the residual
+blade-drop). Both symptoms should retire together.
+
+`SSB64_NETPLAY_KIRBY_BLADE_TRACE` now defaults ON (=0 disables) — the class
+ends sessions and three soaks ran unarmed.
+
+**Open question for the next armed soak:** why slot capture held
+`effect_count=1` during dual-blade play (both gobjs carry class id 1011 —
+capture-side scoping vs the id-keyed dedup in `slot_effect_enforce` needs the
+trace to disambiguate).

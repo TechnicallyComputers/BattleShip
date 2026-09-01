@@ -21096,36 +21096,28 @@ static sb32 syNetRbSnapEffectBlobIsUserdataJoint(const SYNetRbSnapEffectBlob *bl
 static s32 syNetRbSnapUserdataJointPlayerFromEffectBlob(const SYNetRbSnapEffectBlob *blob);
 static s32 syNetRbSnapPlayerForFighterGobjId(const SYNetRbSnapshotSlot *slot, u32 fighter_gobj_id);
 
-static sb32 syNetRbSnapBladeEjectRefusalHoldsForOwner(const FTStruct *owner_fp)
-{
-	const SYNetRbSnapshotSlot *slot = sSYNetRbSnapActiveLoadSlot;
-	s32 ei;
-
-	if (slot == NULL)
-	{
-		return TRUE;
-	}
-	for (ei = 0; ei < slot->effect_count; ei++)
-	{
-		const SYNetRbSnapEffectBlob *blob = &slot->effects[ei];
-		s32 blob_player;
-
-		if ((blob->is_valid == FALSE) || (syNetRbSnapEffectBlobIsUserdataJoint(blob) == FALSE))
-		{
-			continue;
-		}
-		blob_player = syNetRbSnapUserdataJointPlayerFromEffectBlob(blob);
-		if (blob_player < 0)
-		{
-			blob_player = syNetRbSnapPlayerForFighterGobjId(slot, blob->fighter_gobj_id);
-		}
-		if (blob_player == (s32)owner_fp->player)
-		{
-			return TRUE; /* slot lists a shell for this owner: canonical, keep refusing */
-		}
-	}
-	return FALSE; /* slot says no shell for this owner at this tick: allow the cull */
-}
+/*
+ * 2026-09-01: syNetRbSnapBladeEjectRefusalHoldsForOwner is REMOVED — it
+ * consulted sSYNetRbSnapActiveLoadSlot, a PEER-LOCAL variable, so whether a
+ * live in-scope blade survived an eject depended on which slot happened to be
+ * active on that peer at that moment. Third instance of the local-state-in-
+ * sim-path anti-pattern (cosmetic RNG routing; Kirby stone unk_0x2), and the
+ * one that ended session 2026-09-01: refusal kept the blade alive past its
+ * deaths, the id_collision enforce (which bypasses this refusal entirely —
+ * its eject at tick 1762 succeeded during active refusals) provided mortality
+ * only at each peer's own load times, blade lifetimes forked, the blade's
+ * interactions forked the FIGHTERS, and baseline deepening exhausted into
+ * PEER_SNAPSHOT_DIVERGE (load_tick 1760, both peers).
+ *
+ * The "allow the cull when the slot lists no shell" hole this implemented was
+ * for pre-mint load targets — but load-time canonicalization goes through
+ * slot_effect_enforce, which never reaches this function. Closing the hole
+ * also closes the recorded ~1-per-2000-ticks in-scope cull-through (the
+ * residual blade-drop, docs/bugs/netplay_kirby_final_cutter_blade_2026-08-30.md).
+ *
+ * The refusal below is now a pure function of sim state (owner scope) and
+ * eject context: identical decision on both peers, live or resim.
+ */
 
 static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct *owner_fp)
 {
@@ -21158,8 +21150,7 @@ static void syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj(GObj *gobj, FTStruct
 	 * unaffected; the slot ensure/apply owns the in-scope shell set everywhere.
 	 */
 	if ((owner_fp != NULL) && (syNetRbSnapFighterInKirbyFinalCutterScope(owner_fp) != FALSE) &&
-	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0) &&
-	    (syNetRbSnapBladeEjectRefusalHoldsForOwner(owner_fp) != FALSE))
+	    (strcmp(sSYNetRbBladeEjectContext, "force_clear_sim") != 0))
 	{
 		if (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE)
 		{
@@ -30741,7 +30732,9 @@ static sb32 syNetRbSnapKirbyBladeTraceEnabled(void)
 	{
 		const char *e = getenv("SSB64_NETPLAY_KIRBY_BLADE_TRACE");
 
-		cached = ((e != NULL) && (e[0] != '\0') && (e[0] != '0')) ? TRUE : FALSE;
+		/* Default ON (2026-09-01): the class now ends sessions and three soaks
+		 * ran unarmed. Volume is a few lines per blade event. =0 disables. */
+		cached = ((e != NULL) && (e[0] != '\0') && (e[0] == '0')) ? FALSE : TRUE;
 	}
 	return cached;
 }
