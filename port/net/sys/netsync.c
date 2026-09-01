@@ -4055,13 +4055,31 @@ void syNetSyncLogActiveEffectsFoldDiag(const char *tag, u32 tick)
 		{
 			special_tag = 2U;
 		}
-		port_log("SSB64 NetSync: eff_fold_diag tag=%s tick=%u idx=%d gobj_id=%u bank=%u respawn=%u parent_id=%u "
-		         "is_pause=%u anim_frame=0x%08X quake_pri=%u shield_player=%d shield_dmg=%u special=%u "
-		         "pos=(0x%08X,0x%08X,0x%08X)\n",
-		         (tag != NULL) ? tag : "?", tick, (int)i, (unsigned int)gobj->id, (u32)ep->bank_id, respawn_kind,
-		         parent_id, (ep->is_pause_effect != FALSE) ? 1U : 0U, syNetSyncHashF32(gobj->anim_frame),
-		         (u32)ep->effect_vars.quake.priority, (s32)shield_player, shield_dmg, special_tag,
-		         syNetSyncHashF32(pos.x), syNetSyncHashF32(pos.y), syNetSyncHashF32(pos.z));
+		/*
+		 * 2026-09-01: fold-path + fold-input columns. Soak this date had every
+		 * printed column identical at the diverging tick while the eff hash
+		 * differed — proof the two peers folded the same effect down DIFFERENT
+		 * paths, which the old line could not show. `bladefold` is the blade
+		 * carve-out predicate (status-identity fold vs the generic anim_frame
+		 * fold); `own_p/own_st/own_tt` are that carve-out's actual fold inputs.
+		 */
+		{
+			sb32 blade_fold = syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(gobj, ep);
+			FTStruct *fp_own = (ep->fighter_gobj != NULL) ? ftGetStruct(ep->fighter_gobj) : NULL;
+
+			port_log("SSB64 NetSync: eff_fold_diag tag=%s tick=%u idx=%d gobj_id=%u bank=%u respawn=%u parent_id=%u "
+			         "is_pause=%u anim_frame=0x%08X quake_pri=%u shield_player=%d shield_dmg=%u special=%u "
+			         "bladefold=%d own_p=%d own_st=%d own_tt=%u proc=%p pos=(0x%08X,0x%08X,0x%08X)\n",
+			         (tag != NULL) ? tag : "?", tick, (int)i, (unsigned int)gobj->id, (u32)ep->bank_id,
+			         respawn_kind, parent_id, (ep->is_pause_effect != FALSE) ? 1U : 0U,
+			         syNetSyncHashF32(gobj->anim_frame), (u32)ep->effect_vars.quake.priority,
+			         (s32)shield_player, shield_dmg, special_tag, (int)(blade_fold != FALSE),
+			         (fp_own != NULL) ? (int)fp_own->player : -1,
+			         (fp_own != NULL) ? (int)fp_own->status_id : -1,
+			         (fp_own != NULL) ? (unsigned int)fp_own->status_total_tics : 0U,
+			         (void *)ep->proc_update, syNetSyncHashF32(pos.x), syNetSyncHashF32(pos.y),
+			         syNetSyncHashF32(pos.z));
+		}
 	}
 }
 #endif
