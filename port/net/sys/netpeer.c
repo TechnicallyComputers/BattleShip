@@ -14090,7 +14090,29 @@ u32 syNetPeerRealDelayCushionTicks(void)
 	 *   D<=2 -> 0 (Phase 1 behaviour: fast, frontier-parked)
 	 *   D=4  -> 2      D=6 -> 4
 	 */
-	c = (sCached == -2) ? ((d >= 3U) ? (d - 2U) : 0U) : (u32)sCached;
+	/*
+	 * Default 0 — cushion enforcement is OFF unless asked for.
+	 *
+	 * Measured 2026-09-01 (D=4, C=2): admission caps the sim at
+	 * S_peer + K with K = D - transit - C, where `transit` is the FULL
+	 * receive lag (RTT/2 + packet cadence + processing ~ 2-3 ticks), not
+	 * RTT/2 alone. K <= 0 means both peers demand to lag each other —
+	 * unsatisfiable — and the stall cap turns it into a fixed 2:1
+	 * stall:admit rhythm: pct_R 66%, hold_frames 240 per 120 admits.
+	 *
+	 * More fundamentally, `cushion` held at exactly -C all match (hr = T):
+	 * the sim parks at the arrival frontier at ANY D, because admission
+	 * always permits frontier + window. A symmetric gate cannot re-phase two
+	 * peers whose production is coupled to their consumption, so there is no
+	 * margin to hold and no D that creates one. (Same fixed point that
+	 * measured cushion 0.00 at D=4..8 under ZERO-DELAY.)
+	 *
+	 * The flip's real win is elsewhere and is kept: with rows labelled at
+	 * consumption ticks, a SHALLOW prediction window is viable
+	 * (SSB64_NETPLAY_REAL_DELAY_PREDICT_WINDOW, default 1) where ZERO-DELAY
+	 * structurally required a deep one. Same soak: 1 and 0 resims.
+	 */
+	c = (sCached == -2) ? 0U : (u32)sCached;
 	if (c > (d - 1U))
 	{
 		c = d - 1U;

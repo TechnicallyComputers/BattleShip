@@ -295,10 +295,31 @@ witness cushion series, never via resim/GGPO counts.
         cushion-driven holds, admission falls back to the true frontier. A
         mis-tuned C now costs at most N frames per drift event instead of a
         whole session.
-      Corollary worth recording: **margin is bought with D, not with waiting.**
-      `C < D − transit` is a hard budget, so a LAN session at D = 2 has no
-      margin to hold; getting one means raising D (i.e. the Phase 3b adaptive
-      controller), not tightening admission.
-      Remaining: soak-verify the C equilibrium at D ≥ 4; then tier-3 soak;
-      then re-derive the RTT→D bands from measured margin.
+- [x] **Phase 3d — the cushion is abandoned; the win is the shallow window.**
+      Rebuild at D = 4, C = 2 produced `hold_frames = 240` per 120 admits —
+      exactly 2 stalls per advance (the stall cap firing every tick),
+      `pct_R = 66%`. Admission caps the sim at `S_peer + K`,
+      `K = D − transit − C`, where `transit` is the FULL receive lag
+      (RTT/2 **plus packet cadence plus processing**, ~2–3 ticks) rather than
+      RTT/2. K ≤ 0 makes both peers demand to lag each other — unsatisfiable.
+      The decisive measurement is `cushion = −C` exactly, all match
+      (`hr = T`): **the sim parks at the arrival frontier at any D**, because
+      admission always permits `frontier + window`. A symmetric gate cannot
+      re-phase two peers whose production is coupled to their consumption, so
+      there is no margin to hold and no D that manufactures one — the same
+      fixed point that measured cushion 0.00 at D = 4…8 under ZERO-DELAY.
+      This retires the earlier "margin is bought with D" corollary: **margin
+      cannot be bought at all under coupled production.** C now defaults to 0
+      (`SSB64_NETPLAY_REAL_DELAY_CUSHION` to experiment).
+
+      **What the flip actually bought, and it is real:** with wire rows
+      labelled at consumption ticks, a *shallow* prediction window is viable.
+      ZERO-DELAY structurally required a deep one (the row for tick T could
+      not exist yet, so the window WAS the mechanism); REAL-DELAY lets the sim
+      sit one tick past the frontier and predict a single tick. Same soak:
+      **1 and 0 resims** — against 134/294 in the ZERO-DELAY era and 33/20 at
+      window 6. Shipping config: `C = 0`, `PREDICT_WINDOW = 1`.
+      Remaining: confirm full cadence at C = 0; then decide whether the
+      residual prediction depth is worth a tier-3 (adaptive D) soak at all,
+      given D no longer buys margin.
 
