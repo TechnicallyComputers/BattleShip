@@ -133,7 +133,8 @@ static u32 sCmpAgreeStall;
 static u32 sCmpRbeStricterConfirmed; /* row present, rbe would pace/stall */
 static u32 sCmpRbeWaitOnPredict;     /* actual invented, rbe would wait — headline */
 static u32 sCmpRbeInventOnHold;      /* actual R-stalled, rbe would invent */
-static u32 sCmpVetoApplied;          /* tier 2 only */
+static u32 sCmpVetoApplied;
+static u32 sCmpGap1Bypass; /* gap1 stalls converted to 1-tick predicted admits by the duty cap */          /* tier 2 only */
 static u32 sWouldDelayChanges;
 static int sWouldDelayLast = -1;
 static u32 sAdaptiveDelayApplied = 0U;
@@ -426,6 +427,7 @@ static void syNetRbeSchedBind(void)
 	sCmpRbeWaitOnPredict = 0U;
 	sCmpRbeInventOnHold = 0U;
 	sCmpVetoApplied = 0U;
+	sCmpGap1Bypass = 0U;
 	sWouldDelayChanges = 0U;
 	sWouldDelayLast = -1;
 	sAdaptiveDelayApplied = 0U;
@@ -450,11 +452,11 @@ static void syNetRbeSchedEmitSummary(const char *tag)
 
 	port_log("SSB64 NetSchedRbe: %s attempts=%u agree(hit=%u invent=%u stall=%u) "
 	         "rbe_wait_on_predict=%u rbe_stricter_on_confirmed=%u rbe_invent_on_hold=%u "
-	         "veto=%u would_delay=%u adaptive_d_applied=%u skipped(host_hold=%u zero_onset=%u)\n",
+	         "veto=%u gap1_bypass=%u would_delay=%u adaptive_d_applied=%u skipped(host_hold=%u zero_onset=%u)\n",
 	         tag, (unsigned int)sCmpAttempts, (unsigned int)sCmpAgreeHit, (unsigned int)sCmpAgreeInvent,
 	         (unsigned int)sCmpAgreeStall, (unsigned int)sCmpRbeWaitOnPredict,
 	         (unsigned int)sCmpRbeStricterConfirmed, (unsigned int)sCmpRbeInventOnHold,
-	         (unsigned int)sCmpVetoApplied, (unsigned int)sWouldDelayChanges,
+	         (unsigned int)sCmpVetoApplied, (unsigned int)sCmpGap1Bypass, (unsigned int)sWouldDelayChanges,
 	         (unsigned int)sAdaptiveDelayApplied, (unsigned int)sCmpSkippedHostHold, (unsigned int)sCmpSkippedZeroOnset);
 	for (i = 0; i < SYNETSCHED_RBE_REASONS; i++)
 	{
@@ -723,6 +725,59 @@ void syNetRbeSchedShadowObserve(u32 sim_tick, struct SYNetPeerSharedCommitStep *
 	if ((tier >= 2) && (sRbeRealDelayForced != 0) && (actual_predicted != 0) &&
 	    ((rbe_pre_stall != 0) || (rbe_miss_stall != 0)))
 	{
+		/*
+		 * gap1 duty cap (2026-09-01, first tier-2 flip soak 257428529): the needed
+		 * row being exactly 1 tick out is the just-in-time boundary, and hard-stalling
+		 * every occurrence locked both peers into a mutual 34% stall duty (veto=525,
+		 * gap1_grace=512, pct_R=34, sim ~40 Hz — the "slow sim" report; blade anim
+		 * stutter is the same stalls made visible). Production is coupled to
+		 * consumption here — my stall delays my sampling, which starves the peer —
+		 * so symmetric full-frame stalls cannot bank cushion; they converge to
+		 * cushion 0 at heavy duty. Cap gap1 stalls at a small duty and admit the
+		 * rest with 1-tick prediction: depth stays <= 1 (deeper gaps still veto),
+		 * corrections are span-1 with the true row arriving next frame.
+		 * SSB64_NETPLAY_RBE_GAP1_DUTY_PCT overrides (0 disables gap1 vetoes; 100
+		 * restores hard stalls).
+		 */
+		sb32 gap1 = ((why != NULL) && (why[0] == 'g') && (syNetRbeSchedReasonEquals("gap1_grace", why, 16) != 0))
+		                ? TRUE
+		                : FALSE;
+
+		if (gap1 != FALSE)
+		{
+			static s32 sGap1DutyCapPct = -1;
+			static u32 sGap1WindowAttempts;
+			static u32 sGap1WindowStalls;
+
+			if (sGap1DutyCapPct < 0)
+			{
+				const char *de = getenv("SSB64_NETPLAY_RBE_GAP1_DUTY_PCT");
+
+				sGap1DutyCapPct = ((de != NULL) && (de[0] != '\0')) ? atoi(de) : 12;
+				if (sGap1DutyCapPct < 0)
+				{
+					sGap1DutyCapPct = 0;
+				}
+				if (sGap1DutyCapPct > 100)
+				{
+					sGap1DutyCapPct = 100;
+				}
+				port_log("SSB64 NetSchedRbe: gap1 stall duty cap = %d%%\n", sGap1DutyCapPct);
+			}
+			if (sGap1WindowAttempts >= 120U)
+			{
+				sGap1WindowAttempts = 0U;
+				sGap1WindowStalls = 0U;
+			}
+			sGap1WindowAttempts++;
+			if ((sGap1WindowStalls * 100U) >= ((u32)sGap1DutyCapPct * sGap1WindowAttempts))
+			{
+				/* Over budget: admit with 1-tick prediction instead of stalling. */
+				sCmpGap1Bypass++;
+				goto veto_skipped;
+			}
+			sGap1WindowStalls++;
+		}
 		shared->advance = FALSE;
 		shared->uses_prediction = FALSE;
 		shared->hold_reason = 'R';
@@ -735,6 +790,7 @@ void syNetRbeSchedShadowObserve(u32 sim_tick, struct SYNetPeerSharedCommitStep *
 		}
 	}
 
+veto_skipped:
 	/* Feed post-admit only for ticks that actually advance (post-veto). */
 	if ((shared->advance != FALSE) && (sim_tick != sLastAdmittedTick))
 	{
