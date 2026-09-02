@@ -551,3 +551,38 @@ android494: (0,0) pred=0 → (0,84) pred=0 → (0,84) pred=1
 Scan artifact (it compares one indexed sample per tick; the script itself notes
 this false-positive class). Both FC diverges this soak are `inputs=DIFFER` →
 PROTOCOL bucket, i.e. GGPO-corrected input skew, not determinism failures.
+
+---
+
+## 2026-09-02 (owner-aware coexist soak): the drift flipped to missing-live
+
+After the owner-aware coexist fix, the surplus-live shape is gone and the
+remaining drift is its mirror image — read directly off the dump:
+
+```
+slot_eff_dump  tick=410 effect_count=2
+  idx=0 gobj_id=1011 own_p=1 joint=17
+  idx=1 gobj_id=1011 own_p=0 joint=17
+eff_fold_diag  tag=drift_live tick=410 count=1 hash=0xA29922C7
+  live idx=0 gobj=1011 bladefold=1 own_p=0 own_st=258
+```
+
+The slot captured **both** blades; the load reproduced **only p0's**. p1 was
+genuinely in cutter scope at that tick (`status=256`), so its blade was real.
+
+**Cause:** the enforce reconcile loop has explicit respawn fallbacks for
+`QUAKE` and `NESS_PK_WAVE` when `ResolveLiveEffectGobjForBlobApply` returns
+NULL — but **none for `USERDATA_JOINT`**. A blade blob whose shell was gone at
+load time simply stayed unmatched, and the load reproduced fewer blades than
+the slot held. The mint was never the problem:
+`TryRespawnEffectFromBlob`'s USERDATA_JOINT case succeeded on **all 12**
+occasions it was reached (7 android / 5 linux, `result=ok` every time) — it
+just was not reached from this path.
+
+**Fix:** add the USERDATA_JOINT respawn fallback alongside the existing two.
+
+Session state at this point: FC diverges down to **1**, `PROTOCOL` bucket
+(`inputs=DIFFER`, GGPO-corrected input skew — not a determinism failure); no
+`PEER_SNAPSHOT_DIVERGE`; no `REPLAY_DETERMINISM`. Drift ticks no longer
+coincide across peers (asymmetric, per-peer load timing), consistent with a
+load-path gap rather than a shared-state fork.

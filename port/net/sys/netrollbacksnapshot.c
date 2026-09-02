@@ -40419,6 +40419,20 @@ static void syNetRbSnapRetrackCanonicalSlotEffectsBeforeVerifyEject(SYNetRbSnaps
 				live = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
 			}
 		}
+		/*
+		 * 2026-09-02: joint FX had no respawn fallback here, unlike QUAKE and
+		 * NESS_PK_WAVE above — so a blade blob whose shell was gone at load time
+		 * simply stayed unmatched and the load reproduced fewer blades than the
+		 * slot captured. Read straight off the drift dump: slot effect_count=2
+		 * (own_p=1 + own_p=0) vs post-load live count=1 (own_p=0 only), with p1
+		 * genuinely in cutter scope (status=256) at that tick. The mint itself was
+		 * always fine — TryRespawnEffectFromBlob's USERDATA_JOINT case succeeded
+		 * on all 12 occasions it was reached; it just was not reached from here.
+		 */
+		if ((live == NULL) && (blob->respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT))
+		{
+			live = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
+		}
 		if (live != NULL)
 		{
 			live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
