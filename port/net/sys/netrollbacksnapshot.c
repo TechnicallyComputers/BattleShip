@@ -15769,6 +15769,33 @@ static sb32 syNetRbSnapEffectGobjListed(const GObj * const *out, s32 count, cons
 	return FALSE;
 }
 
+/*
+ * Deterministic tiebreak for effects sharing a gobj_id: the owning fighter's
+ * player index, or -1 when the effect has no fighter owner. See the sort in
+ * syNetRbEnumerateActiveEffectsSorted.
+ */
+static s32 syNetRbSnapEffectSortOwnerRank(const GObj *gobj)
+{
+	const EFStruct *ep;
+	const FTStruct *fp;
+
+	if (gobj == NULL)
+	{
+		return -1;
+	}
+	ep = efGetStruct((GObj *)gobj);
+	if ((ep == NULL) || (ep->fighter_gobj == NULL))
+	{
+		return -1;
+	}
+	fp = ftGetStruct(ep->fighter_gobj);
+	if (fp == NULL)
+	{
+		return -1;
+	}
+	return (s32)fp->player;
+}
+
 s32 syNetRbEnumerateActiveEffectsSorted(GObj **out, s32 max, sb32 *truncated_out)
 {
 	s32 link_pass;
@@ -15854,16 +15881,47 @@ s32 syNetRbEnumerateActiveEffectsSorted(GObj **out, s32 max, sb32 *truncated_out
 			}
 		}
 	}
+	/*
+	 * Sort key is (gobj_id, owner player) — 2026-09-02.
+	 *
+	 * The eff fold is an ORDER-SENSITIVE FNV over this array, so it is only a
+	 * function of the effect SET if the order is a function of the set too.
+	 * Sorting on gobj_id alone left ties resolved by effect-list link order,
+	 * which changes across ejects/respawns — and ties are now normal, since two
+	 * coexisting blades legitimately share id 1011. Measured at drift tick 631
+	 * on BOTH peers: slot held [own_p=0, own_p=1], live enumerated
+	 * [own_p=1, own_p=0]; same set, same per-effect fold inputs
+	 * (own_tt 22 and 52), different hash. Owner player is stable and
+	 * deterministic, so it is the tiebreak. Equal on both keys stays stable
+	 * (that case is a same-owner collision the canonicalization below resolves).
+	 */
 	for (i = 1; i < count; i++)
 	{
 		GObj *key_gobj;
 		u32 key_id;
+		s32 key_owner;
 
 		key_gobj = out[i];
 		key_id = key_gobj->id;
+		key_owner = syNetRbSnapEffectSortOwnerRank(key_gobj);
 		j = i;
-		while ((j > 0) && (out[j - 1]->id > key_id))
+		while (j > 0)
 		{
+			u32 prev_id = out[j - 1]->id;
+			s32 prev_owner;
+
+			if (prev_id < key_id)
+			{
+				break;
+			}
+			if (prev_id == key_id)
+			{
+				prev_owner = syNetRbSnapEffectSortOwnerRank(out[j - 1]);
+				if (prev_owner <= key_owner)
+				{
+					break;
+				}
+			}
 			out[j] = out[j - 1];
 			j--;
 		}

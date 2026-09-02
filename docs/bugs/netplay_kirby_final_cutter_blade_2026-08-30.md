@@ -586,3 +586,37 @@ Session state at this point: FC diverges down to **1**, `PROTOCOL` bucket
 `PEER_SNAPSHOT_DIVERGE`; no `REPLAY_DETERMINISM`. Drift ticks no longer
 coincide across peers (asymmetric, per-peer load timing), consistent with a
 load-path gap rather than a shared-state fork.
+
+---
+
+## 2026-09-02 (respawn-fallback soak): first STABLE verdict; order-sensitivity found
+
+Both peers report **STABLE (soft recovery)**, **zero FC diverges**, scan
+`RESULT: WARN` (was FAIL). Drift 15/19 → **8/7** ticks, resims 43/79 → 19/49.
+Joint respawn now fires and always succeeds (1 and 3 attempts, `result=ok`).
+
+Two shapes remain, both with peers producing **identical hashes** — symmetric
+fidelity drift, not a desync source:
+
+**(a) tick 751 — missing-live.** slot `count=2` (own_p=0 + own_p=1), live
+`count=1` (own_p=1). Residual of the class the new respawn fallback targets.
+
+**(b) tick 631 — ORDER.** slot and live both hold 2 blades with matching
+owners, but in opposite order:
+
+```
+slot: [own_p=0 joint=0], [own_p=1 joint=17]
+live: [own_p=1 own_tt=52], [own_p=0 own_tt=22]     same set, different order
+```
+
+The eff fold is an **order-sensitive FNV** over the enumerated array, so it is
+only a function of the effect *set* if the order is also a function of the set.
+`syNetRbEnumerateActiveEffectsSorted` sorted on `gobj_id` alone, leaving ties to
+effect-list link order — which changes across ejects/respawns. Ties were rare
+before; they are now normal, because two coexisting blades legitimately share
+id 1011. This was a latent nondeterminism that the coexist work exposed.
+
+**Fix:** sort key is `(gobj_id, owner player)`. Owner player is stable and
+deterministic; equal on both keys stays stable (that is the same-owner
+collision the canonicalization resolves). Capture and load use the same
+enumerator, so both sides order identically.
