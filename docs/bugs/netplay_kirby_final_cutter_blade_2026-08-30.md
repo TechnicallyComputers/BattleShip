@@ -474,3 +474,36 @@ keep the shell when it still matches a blob in the slot. Genuine extras match no
 blob and are ejected exactly as before. This is deliberately the conservative
 direction: a missed eject leaves a cosmetic shell alive, a wrong eject destroys
 hashed state.
+
+---
+
+## 2026-09-02 (later): the self-diagnosing dump refuted the fix that shipped with it
+
+First soak with `slot_eff_dump` + `drift_live`. The instrumentation paid for
+itself immediately — one grep at a drift tick, no inference:
+
+```
+slot_eff_dump tag=drift tick=403 effect_count=1
+slot_eff_dump tag=drift tick=403 idx=0 valid=1 gobj_id=1011 own_p=1 joint=17 ...
+eff_fold_diag tag=drift_live tick=403 count=2 hash=0xAE53D0D7
+```
+
+The SLOT held **one** blade (`own_p=1`); the post-load live set held **two**.
+That is the opposite of the assumption behind the previous entry's fix. The
+surplus shell is not a real second blade whose blob failed to pair — it is a
+**stale blade carried back from the frontier with no blob at all**, and the
+exemption added that morning was keeping it alive.
+
+Compounding it: `syNetRbSnapLiveEffectMatchesAnyBlobInSlot` does not consider
+whether the blob it matched was already claimed, so with one blob and two live
+shells **both** shells "matched" and both were exempted.
+
+Capture is authoritative and self-consistent — fold counts and slot saves agree
+exactly (36 × count=1, 138 × count=2, 32 × count=3) — and blob↔shell pairing is
+fixed (b5c47db4). So an unclaimed live shell whose id is canonical is genuinely
+surplus. **Exemption reverted**; the id-collision eject stands.
+
+Method note worth keeping: the two preceding blade commits were reasoned from
+capture-side data alone and one of them was wrong in its premise. The dump
+turned the next question into a single grep. Instrument before inferring when a
+class has already cost more than two speculative fixes.

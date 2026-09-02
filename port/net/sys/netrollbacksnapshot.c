@@ -40604,27 +40604,23 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(SYNetRbSnapshotSlot *sl
 				                                              gobj) == FALSE)
 				{
 					/*
-					 * "id is canonical but this pointer was not claimed" stopped
-					 * being proof of a stale duplicate once coexisting effects were
-					 * allowed to share a gobj_id: both Kirbys' blades are id 1011,
-					 * so a legitimately live second blade whose blob simply failed
-					 * to pair this pass looks identical to a stale one — and
-					 * ejecting it destroys real state, which is the residual
-					 * eff LOAD_HASH_DRIFT (measured 2026-09-02: 11% of count=2
-					 * ticks drift vs 1.6% of count=1).
+					 * REVERTED 2026-09-02 (same day it landed). This branch briefly
+					 * exempted coexist-capable joint FX that still "matched a blob",
+					 * on the theory that an unclaimed same-id shell might be a real
+					 * second blade whose blob failed to pair. The self-diagnosing
+					 * drift dump refuted it on the first soak: at the drift tick the
+					 * SLOT held effect_count=1 (own_p=1 only) while the post-load
+					 * live set held 2 — so the surplus shell was a STALE blade
+					 * carried back from the frontier with no blob at all, and the
+					 * exemption was keeping it. Compounding it,
+					 * MatchesAnyBlobInSlot ignores whether that blob was already
+					 * claimed, so with one blob and two live shells BOTH matched.
 					 *
-					 * For coexist-capable joint FX, require positive evidence of
-					 * staleness: keep the shell when it still matches a blob in
-					 * the slot. Genuine extras match no blob and are ejected below
-					 * as before.
+					 * Capture is authoritative (fold counts and slot saves agree
+					 * exactly: 36/138/32), and blob<->shell pairing is fixed
+					 * (b5c47db4), so an unclaimed live shell whose id is canonical
+					 * is genuinely surplus. Eject it.
 					 */
-					if ((syNetRbSnapEffectRespawnKindFromLive(gobj, ep) ==
-					     SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
-					    (slot != NULL) &&
-					    (syNetRbSnapLiveEffectMatchesAnyBlobInSlot(slot, gobj, ep) != FALSE))
-					{
-						continue;
-					}
 					if (syNetRbSnapLiveEffectIsQuake(gobj, ep) != FALSE)
 					{
 						syNetRbSnapEndQuakeProcUpdate(gobj);
