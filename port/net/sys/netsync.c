@@ -403,6 +403,30 @@ u32 syNetSyncHashFighterStructLight(const FTStruct *fp)
 		h = syNetSyncFnvAccumulateU32(h,
 		                              (u32)(ftStatusVarsFallSpecial(fp)->is_allow_interrupt != FALSE));
 	}
+	/*
+	 * Kirby Final Cutter scope: fold is_effect_attach. 2026-09-02 — it GATES
+	 * blade creation in ftKirbySpecialHiUpdateEffect, is captured and restored
+	 * by the snapshot (blob field), but was absent from every fighter fold, so
+	 * two peers could disagree on it with figh still matching. Measured:
+	 * session 519079125 ended in PEER_SNAPSHOT_DIVERGE at load 623 with the
+	 * bisector reporting eff=1 and figh/world/item/rng/wpn/map/cam/anim all 0;
+	 * android ran p1's 10->256 up-B entry LIVE (resim=0) while linux ran the
+	 * same transition inside a RESIM (resim=1), after which linux held p1's
+	 * blade and android did not.
+	 *
+	 * Deliberately scoped to cutter statuses rather than folded globally:
+	 * netsync.c:3856 records that load/prune legitimately mutate this flag
+	 * around Ness jibaku while a wave shell is still live, so a global fold
+	 * would manufacture figh diverges there. Inside cutter scope the flag is
+	 * sim-authoritative. Precondition satisfied: never hash what is not
+	 * restored — this is (netrollbacksnapshot.c 9049 capture / 11112 apply).
+	 */
+	if (((fp->fkind == nFTKindKirby) || (fp->fkind == nFTKindNKirby)) &&
+	    ((fp->status_id == nFTKirbyStatusSpecialHi) || (fp->status_id == nFTKirbyStatusSpecialHiLanding) ||
+	     (fp->status_id == nFTKirbyStatusSpecialAirHi) || (fp->status_id == nFTKirbyStatusSpecialAirHiFall)))
+	{
+		h = syNetSyncFnvAccumulateU32(h, (fp->is_effect_attach != FALSE) ? 1U : 0U);
+	}
 	/* Kirby-audit 2026-08-31: cover NKirby too -- every snapshot-side scope accepts both
 	 * kinds, and a one-sided fold means an NKirby stone would hash-diverge silently. */
 	if (((fp->fkind == nFTKindKirby) || (fp->fkind == nFTKindNKirby)) &&

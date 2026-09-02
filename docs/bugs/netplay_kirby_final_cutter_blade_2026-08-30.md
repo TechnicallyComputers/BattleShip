@@ -620,3 +620,50 @@ id 1011. This was a latent nondeterminism that the coexist work exposed.
 deterministic; equal on both keys stays stable (that is the same-owner
 collision the canonicalization resolves). Capture and load use the same
 enumerator, so both sides order identically.
+
+---
+
+## 2026-09-02 (order-fix soak): drift nearly gone; the real fork is unhashed state
+
+The deterministic sort worked — drift **8/7 → 1/3 ticks**, resims 19/49 → 9/22.
+The tick-631 order shape is gone.
+
+What is left is not drift at all. Session 519079125 ended in
+`PEER_SNAPSHOT_DIVERGE` at load 623, with the bisector reporting the same
+verdict at 623/624/625:
+
+```
+figh=0 world=0 item=0 rng=0 wpn=0 map=0 cam=0 eff=1 anim=0
+```
+
+`eff` alone — a genuine **cross-peer** fork, not the symmetric fidelity drift of
+previous soaks. The dump shows the peers holding different blade sets at 625
+(android slot 0 / live 1; linux slot 1 (own_p=1) / live 2) while every other
+partition matched.
+
+The setstatus trace names the trigger:
+
+```
+android:  t=618  p1 10->256  resim=0     ran the up-B entry LIVE
+linux:    t=618  p1 10->256  resim=1     ran the same transition in a RESIM
+```
+
+**Cause:** `FTStruct::is_effect_attach` gates blade creation in
+`ftKirbySpecialHiUpdateEffect`, is captured (`netrollbacksnapshot.c:9049`) and
+restored (`:11112`) — but appears in **no fighter fold**. netsync.c:3856 states
+it outright: *"absent from fighter hash"*. Two peers could therefore disagree on
+a flag that decides whether a blade exists, with `figh` matching, until the
+disagreement surfaced as an eff fork. This is the same class as the quake
+`effect_vars.priority` union fold and the stale joint-rotate member: sim-relevant
+state outside the hash.
+
+**Fix:** fold `is_effect_attach` into the fighter light hash **within Kirby
+cutter scope**. Scoped rather than global on purpose — netsync.c:3856 records
+that load/prune legitimately mutate the flag around Ness jibaku while a wave
+shell is live, so a global fold would manufacture figh diverges there. Inside
+cutter scope it is sim-authoritative, and the "never hash what is not restored"
+precondition holds.
+
+Expected effect: the disagreement now surfaces as a figh mismatch at its own
+onset tick — where a span-1 resim can correct it — instead of silently becoming
+an unrecoverable eff fork ~5 ticks later.
