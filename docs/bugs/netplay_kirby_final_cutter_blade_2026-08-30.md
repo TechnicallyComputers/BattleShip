@@ -507,3 +507,47 @@ Method note worth keeping: the two preceding blade commits were reasoned from
 capture-side data alone and one of them was wrong in its premise. The dump
 turned the next question into a single grep. Instrument before inferring when a
 class has already cost more than two speculative fixes.
+
+---
+
+## 2026-09-02 (final narrowing): coexist must be OWNER-aware, not kind-aware
+
+With the exemption reverted, enforce ejects rose to 50/37 (surplus being cleaned
+up correctly) and every remaining drift is `diverged=eff`. The dump read it in
+one grep, and this time the shape is different from tick 403:
+
+```
+slot_eff_dump tag=drift tick=492 effect_count=1
+slot_eff_dump tag=drift tick=492 idx=0 gobj_id=1011 own_p=0 joint=17
+eff_fold_diag tag=drift_live tick=492 count=2 hash=0x36ECE4CD
+  live idx=0 gobj=1011 bladefold=1 own_p=0
+  live idx=1 gobj=1011 bladefold=1 own_p=0     <-- SAME owner
+```
+
+Both peers, identical hash `0x36ECE4CD` — a **symmetric** drift (which is why
+it classifies "sim-core-ok" and never becomes a cross-peer desync).
+
+**Cause:** the coexist rule added for the dual-Kirby case keyed on *kind* only,
+so it also let **two shells of the SAME fighter** coexist — precisely the
+recycled-id collision the canonicalization exists to resolve. The slot stores
+one (id-keyed), the fold counts two, drift every time.
+
+**Fix:** joint FX coexist only across **different fighters**
+(`syNetRbSnapJointFxOwnersDiffer`). Same owner → collision, canonicalize as
+before. Applied at both chokepoints so capture and fold agree on the same set:
+the fold enumerator (live↔live, compare owner players) and the capture blob loop
+(blob packed `own_p` vs candidate's live owner).
+
+### Not a blade issue: RESIM_STICK_FORK @494/570/596
+
+The scan flagged p0 `sy=0` vs `sy=84`. Per-pass samples show both peers reach
+the same final value; they merely pass through prediction in a different order:
+
+```
+linux  494: (0,0) pred=1 → (0,0) pred=1 → (0,84) pred=0
+android494: (0,0) pred=0 → (0,84) pred=0 → (0,84) pred=1
+```
+
+Scan artifact (it compares one indexed sample per tick; the script itself notes
+this false-positive class). Both FC diverges this soak are `inputs=DIFFER` →
+PROTOCOL bucket, i.e. GGPO-corrected input skew, not determinism failures.

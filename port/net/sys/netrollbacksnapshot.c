@@ -5306,6 +5306,8 @@ static sb32 syNetRbSnapLiveEffectIsStaleCaptainFalconKickCosmetic(const GObj *go
 static sb32 syNetRbSnapshotSlotGuardEscapeOverlapFragile(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapshotSlotAnyFighterRebirthScope(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b);
+static sb32 syNetRbSnapJointFxOwnersDiffer(const GObj *gobj_a, const EFStruct *ep_a, const GObj *gobj_b,
+                                           const EFStruct *ep_b);
 static sb32 syNetRbSnapSlotHasQuakeEffectBlob(const SYNetRbSnapshotSlot *slot);
 static sb32 syNetRbSnapSlotEffectBlobConflictsWithShieldRespawn(const SYNetRbSnapshotSlot *slot,
                                                                 const SYNetRbSnapEffectBlob *shield_blob);
@@ -15919,7 +15921,18 @@ s32 syNetRbEnumerateActiveEffectsSorted(GObj **out, s32 max, sb32 *truncated_out
 				                              : (u8)SYNETRB_EFFECT_RESPAWN_NONE;
 				if (syNetRbSnapEffectGobjIdCollisionAllowsCoexist(kept_kind, cand_kind) != FALSE)
 				{
-					continue;
+					/* Joint FX coexist only across DIFFERENT fighters; two shells of
+					 * one fighter are a recycled-id collision (see helper above). */
+					if ((kept_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
+					    (cand_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
+					    (syNetRbSnapJointFxOwnersDiffer(out[j], kept_ep, cand, cand_ep) == FALSE))
+					{
+						/* fall through to priority/drop resolution below */
+					}
+					else
+					{
+						continue;
+					}
 				}
 				if (syNetRbSnapEffectRespawnKindGobjCollisionPriority(cand_kind) >
 				    syNetRbSnapEffectRespawnKindGobjCollisionPriority(kept_kind))
@@ -27988,6 +28001,45 @@ static sb32 syNetRbSnapEffectRespawnKindGobjCollisionPriority(u8 respawn_kind)
  * stock respawn (tick 3102); do not dedupe/sanitize them into a single blob.
  * Whispy quake + guard shield bubble can also share id 1011 during shield hold (tick 3602 class).
  */
+/*
+ * Owner-aware coexist for joint-attached FX (2026-09-02).
+ *
+ * The kind-only rule added when both Kirbys' blades were found to share
+ * gobj_id 1011 was too broad: it also let TWO SHELLS OF THE SAME FIGHTER
+ * coexist, which is the recycled-id collision the canonicalization exists to
+ * resolve. Measured at drift tick 492 on BOTH peers: slot effect_count=1
+ * (own_p=0) but live count=2 with both shells own_p=0 — a symmetric eff
+ * LOAD_HASH_DRIFT (identical hash 0x36ECE4CD on both, hence "sim-core-ok"
+ * rather than a cross-peer desync).
+ *
+ * Distinct owners => genuinely simultaneous state, coexist. Same owner =>
+ * collision, canonicalize as before.
+ */
+static sb32 syNetRbSnapJointFxOwnersDiffer(const GObj *gobj_a, const EFStruct *ep_a, const GObj *gobj_b,
+                                           const EFStruct *ep_b)
+{
+	const FTStruct *fp_a;
+	const FTStruct *fp_b;
+
+	(void)gobj_a;
+	(void)gobj_b;
+	if ((ep_a == NULL) || (ep_b == NULL) || (ep_a->fighter_gobj == NULL) || (ep_b->fighter_gobj == NULL))
+	{
+		return FALSE;
+	}
+	if (ep_a->fighter_gobj == ep_b->fighter_gobj)
+	{
+		return FALSE;
+	}
+	fp_a = ftGetStruct(ep_a->fighter_gobj);
+	fp_b = ftGetStruct(ep_b->fighter_gobj);
+	if ((fp_a == NULL) || (fp_b == NULL))
+	{
+		return FALSE;
+	}
+	return (fp_a->player != fp_b->player) ? TRUE : FALSE;
+}
+
 static sb32 syNetRbSnapEffectGobjIdCollisionAllowsCoexist(u8 kind_a, u8 kind_b)
 {
 	if ((kind_a == SYNETRB_EFFECT_RESPAWN_QUAKE) && (kind_b == SYNETRB_EFFECT_RESPAWN_QUAKE))
@@ -40822,7 +40874,38 @@ static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)
 				if (syNetRbSnapEffectGobjIdCollisionAllowsCoexist(slot->effects[wi].respawn_kind,
 				                                                respawn_kind_precheck) != FALSE)
 				{
-					continue;
+					/*
+					 * Same owner-aware rule as the fold enumerator, so capture and
+					 * fold agree on the coexisting set. Joint FX coexist only across
+					 * DIFFERENT fighters; two shells of one fighter collide.
+					 * Compare the stored blob's packed owner against the candidate's
+					 * live owner (both authoritative for USERDATA_JOINT).
+					 */
+					if ((slot->effects[wi].respawn_kind == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
+					    (respawn_kind_precheck == SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT))
+					{
+						EFStruct *cand_ep_uj = efGetStruct(gobj_iter);
+						FTStruct *cand_fp_uj =
+						    ((cand_ep_uj != NULL) && (cand_ep_uj->fighter_gobj != NULL))
+						        ? ftGetStruct(cand_ep_uj->fighter_gobj)
+						        : NULL;
+						s32 blob_own_p =
+						    syNetRbSnapUserdataJointPlayerFromEffectBlob(&slot->effects[wi]);
+
+						if ((cand_fp_uj == NULL) || (blob_own_p < 0) ||
+						    ((s32)cand_fp_uj->player == blob_own_p))
+						{
+							/* same (or unknown) owner: fall through to collision resolution */
+						}
+						else
+						{
+							continue;
+						}
+					}
+					else
+					{
+						continue;
+					}
 				}
 				if (syNetRbSnapEffectRespawnKindGobjCollisionPriority(respawn_kind_precheck) >
 				    syNetRbSnapEffectRespawnKindGobjCollisionPriority(slot->effects[wi].respawn_kind))
