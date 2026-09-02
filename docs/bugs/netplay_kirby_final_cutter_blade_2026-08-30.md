@@ -698,3 +698,34 @@ chose to eject on the way. One u8 per player.
 Pattern worth noting: this is the third time in the class that hashing a field
 was correct but insufficient — the field also has to be *stable across the whole
 load*, not just restored at the start of it.
+
+---
+
+## 2026-09-02 (re-stamp soak): figh drift closed; eff residual localized
+
+The `is_effect_attach` re-stamp worked — **all figh drift runs are gone**; every
+remaining drift line is `eff`. Longest session yet (1363/1361), eff drift
+12/24 → **5/9 ticks**, all FC diverges `inputs=DIFFER` (PROTOCOL).
+
+`SYNCTEST_FAIL x2` is not new breakage: ticks 511 and 631 are eff drift that
+happened to land on synctest probe ticks (`[synctest probe]` in the scan).
+
+Residual shape, identical on both peers (`0xA7478DC7` @511, `0x9741CC4F` @631) —
+symmetric fidelity drift, not a desync path:
+
+```
+slot: effect_count=2   own_p=0 joint=17 , own_p=1 joint=17
+live: count=1          own_p=1
+```
+
+p0's blade blob has no live counterpart. **New and unexplained:** the
+USERDATA_JOINT respawn fallback fires **10 times on linux (all result=ok) and 0
+times on android**, for the same symmetric drift — so the two peers reach that
+code differently. Counts alone cannot distinguish "pairing found nothing" from
+"respawn declined", which are opposite fixes, so a `blob_unmatched` line now
+names every blob that finishes the reconcile loop with no live counterpart
+(slot tick, blob index, respawn kind, owner player, joint, resim flag).
+
+Deliberately instrumenting rather than guessing: this class has already cost one
+wrong fix (`ee4cb4d2`) that was reasoned from counts, and the drift is currently
+symmetric and non-fatal — there is no urgency that justifies another inference.

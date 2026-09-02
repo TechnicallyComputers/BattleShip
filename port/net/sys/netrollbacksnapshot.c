@@ -40491,6 +40491,27 @@ static void syNetRbSnapRetrackCanonicalSlotEffectsBeforeVerifyEject(SYNetRbSnaps
 		{
 			live = syNetRbSnapTryRespawnEffectFromBlob(slot, blob);
 		}
+		/*
+		 * 2026-09-02: name every blob that finishes this loop with no live
+		 * counterpart. Residual eff drift is exactly "slot has 2 blades, live has
+		 * 1", symmetric on both peers — but the respawn fallback fires 10 times on
+		 * one peer and 0 on the other for the same drift, so the two are reaching
+		 * this code differently and the counts alone cannot say why. `resolved`
+		 * distinguishes "pairing found nothing" from "respawn declined/failed",
+		 * which are opposite fixes.
+		 */
+		if ((live == NULL) && (syNetRbSnapSnapshotEffectDiagEnabled() != FALSE))
+		{
+			port_log("SSB64 NetRbSnapshot: blob_unmatched tick=%u idx=%d gobj_id=%u respawn=%u own_p=%d "
+			         "joint=%u resim=%d\n",
+			         (unsigned int)slot->tick, (int)ei, (unsigned int)blob->gobj_id,
+			         (unsigned int)blob->respawn_kind,
+			         (syNetRbSnapEffectBlobIsUserdataJoint(blob) != FALSE)
+			             ? (int)syNetRbSnapUserdataJointPlayerFromEffectBlob(blob)
+			             : -1,
+			         (unsigned int)blob->quake_magnitude,
+			         (int)(syNetRollbackIsResimulating() != FALSE));
+		}
 		if (live != NULL)
 		{
 			live = syNetRbSnapApplyEffectBlobToGObj(slot, live, blob);
