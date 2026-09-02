@@ -436,3 +436,41 @@ id collision.
 per-pass claim list and falls back to the id lookup only when identity finds
 nothing and the id is unclaimed; site (3) switches to pointer exclusion.
 Pairing is now one blob ↔ one shell, keyed on owner player + joint.
+
+---
+
+## 2026-09-02: enforce's id-collision test is no longer valid evidence
+
+Soak after the pairing fix — the class keeps improving but is not closed:
+
+| | 2 soaks ago | prev | now |
+|---|---|---|---|
+| PEER_SNAPSHOT_DIVERGE | 2 / 2 | 0 / 0 | 0 / 0 |
+| enforce id_collision ejects | 146 / 102 | — | **20 / 16** |
+| FC diverge partition | eff | eff | **figh only (eff EQUAL)** |
+| LOAD_HASH_DRIFT | 8 | 68 / 46 | 88 / 48 (901 ticks) |
+
+The eff partition now agrees at frame-commit; both remaining FC diverges are
+figh-only. What survives is intra-peer eff drift (capture vs post-load), and it
+is squarely a multi-blade problem — drift rate by capture count:
+
+```
+count=1:  2/129 = 1.6%
+count=2: 14/127 = 11%
+count=3:  5/60  = 8.3%
+```
+
+Single-blade ticks round-trip exactly (tick 511: capture and verify both
+count=1, hash 0x9857F8C8 identical).
+
+**Cause:** `slot_effect_enforce`'s test — *id is canonical but this pointer was
+not claimed* — stopped being proof of a stale duplicate the moment coexisting
+effects were allowed to share a gobj_id. Both Kirbys' blades are id 1011, so a
+legitimately live second blade whose blob merely failed to pair on that pass is
+indistinguishable from a stale one, and ejecting it destroys real state.
+
+**Fix:** for coexist-capable joint FX, require positive evidence of staleness —
+keep the shell when it still matches a blob in the slot. Genuine extras match no
+blob and are ejected exactly as before. This is deliberately the conservative
+direction: a missed eject leaves a cosmetic shell alive, a wrong eject destroys
+hashed state.

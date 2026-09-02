@@ -40556,6 +40556,28 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(SYNetRbSnapshotSlot *sl
 				if (syNetRbSnapReconciledEffectGobjPtrListed(canonical_gobj_ptrs, canonical_gobj_count,
 				                                              gobj) == FALSE)
 				{
+					/*
+					 * "id is canonical but this pointer was not claimed" stopped
+					 * being proof of a stale duplicate once coexisting effects were
+					 * allowed to share a gobj_id: both Kirbys' blades are id 1011,
+					 * so a legitimately live second blade whose blob simply failed
+					 * to pair this pass looks identical to a stale one — and
+					 * ejecting it destroys real state, which is the residual
+					 * eff LOAD_HASH_DRIFT (measured 2026-09-02: 11% of count=2
+					 * ticks drift vs 1.6% of count=1).
+					 *
+					 * For coexist-capable joint FX, require positive evidence of
+					 * staleness: keep the shell when it still matches a blob in
+					 * the slot. Genuine extras match no blob and are ejected below
+					 * as before.
+					 */
+					if ((syNetRbSnapEffectRespawnKindFromLive(gobj, ep) ==
+					     SYNETRB_EFFECT_RESPAWN_USERDATA_JOINT) &&
+					    (slot != NULL) &&
+					    (syNetRbSnapLiveEffectMatchesAnyBlobInSlot(slot, gobj, ep) != FALSE))
+					{
+						continue;
+					}
 					if (syNetRbSnapLiveEffectIsQuake(gobj, ep) != FALSE)
 					{
 						syNetRbSnapEndQuakeProcUpdate(gobj);
