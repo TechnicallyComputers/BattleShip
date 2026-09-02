@@ -8982,6 +8982,25 @@ static sb32 syNetRollbackVerifyLoadedSlot(u32 tick)
 		    live_a,
 		    syNetRbSnapshotGetSlotHashEffect(tick),
 		    live_ef);
+#if defined(PORT) && defined(SSB64_NETMENU)
+		/*
+		 * Eff-drift self-diagnosis (2026-09-02). Verify-tagged effect enumeration
+		 * only ran under synctest (~10 lines a session), so every eff
+		 * LOAD_HASH_DRIFT had to be diagnosed by inference from capture-side
+		 * lines alone — which is how four successive blade fixes each had to
+		 * unmask the next. When eff is the partition that drifted, dump BOTH
+		 * sides in the same identity terms: what the slot holds
+		 * (`slot_eff_dump`: gobj_id, own_p, joint, respawn kind) and what the
+		 * post-load live set is (`eff_fold_diag tag=drift_live`). A drift then
+		 * reads directly as "blob X had no live counterpart" or "live Y matched
+		 * no blob" instead of requiring a hunt.
+		 */
+		if ((sSYNetRollbackVerifyEffectHash != FALSE) && (live_ef != syNetRbSnapshotGetSlotHashEffect(tick)))
+		{
+			syNetRbSnapshotLogSlotEffectBlobsDiag("drift", tick);
+			syNetSyncLogActiveEffectsFoldDiag("drift_live", tick);
+		}
+#endif
 		syNetRbSnapshotLogFighterLoadVerifyDiag(tick,
 		                                        live_f,
 		                                        syNetRbSnapshotGetSlotHashFighter(tick),

@@ -139,6 +139,8 @@ extern sb32 syNetRbSnapshotDObjRotateIsLive(const void *dobj_ptr);
 /* Owner-in-scope Kirby Final Cutter blade shell (netsync eff fold: fold owner identity,
  * never raw anim_frame -- presentation anim advances 0/1/2 per tick cross-ISA). */
 extern sb32 syNetRbSnapshotLiveEffectIsKirbyCutterBladeInScope(const struct GObj *gobj, const struct EFStruct *ep);
+/* Dump the slot's effect blobs in live-comparable identity terms (eff-drift self-diagnosis). */
+extern void syNetRbSnapshotLogSlotEffectBlobsDiag(const char *tag, u32 tick);
 extern void syNetRbSnapshotReconcileYoshiEggLayEffectsAtTick(u32 tick);
 extern void syNetRbSnapReconcileYoshiEggLayEffectsLive(void);
 extern void syNetRbSnapForwardPruneStaleKirbyInhaleWindEffects(void);

@@ -40381,6 +40381,53 @@ static void syNetRbSnapRetrackCanonicalSlotEffectsBeforeVerifyEject(SYNetRbSnaps
 }
 
 /*
+ * Slot-side half of the eff-drift self-diagnosis (2026-09-02). The live/post-load
+ * half already exists as syNetSyncLogActiveEffectsFoldDiag; verify-tagged
+ * enumeration only ran under synctest (~10 lines a session), so every eff
+ * LOAD_HASH_DRIFT had to be diagnosed by inference. This prints what the SLOT
+ * holds in the same identity terms, so a drift can be read directly as
+ * "blob X had no live counterpart" or "live Y matched no blob".
+ *
+ * `own_p` is the packed owner player for joint FX (the blob's authoritative
+ * owner identity) and `joint` its captured joint index — the two fields that
+ * distinguish two blades sharing gobj_id 1011.
+ */
+void syNetRbSnapshotLogSlotEffectBlobsDiag(const char *tag, u32 tick)
+{
+	const SYNetRbSnapshotSlot *slot;
+	s32 ei;
+
+	if (syNetRbSnapSnapshotEffectDiagEnabled() == FALSE)
+	{
+		return;
+	}
+	slot = syNetRbSnapshotSlotForTick(tick);
+	if (slot == NULL)
+	{
+		port_log("SSB64 NetRbSnapshot: slot_eff_dump tag=%s tick=%u slot=missing\n", (tag != NULL) ? tag : "?",
+		         (unsigned int)tick);
+		return;
+	}
+	port_log("SSB64 NetRbSnapshot: slot_eff_dump tag=%s tick=%u effect_count=%d\n", (tag != NULL) ? tag : "?",
+	         (unsigned int)tick, (int)slot->effect_count);
+	for (ei = 0; ei < slot->effect_count; ei++)
+	{
+		const SYNetRbSnapEffectBlob *blob = &slot->effects[ei];
+		s32 own_p;
+
+		own_p = (syNetRbSnapEffectBlobIsUserdataJoint(blob) != FALSE)
+		            ? syNetRbSnapUserdataJointPlayerFromEffectBlob(blob)
+		            : -1;
+		port_log("SSB64 NetRbSnapshot: slot_eff_dump tag=%s tick=%u idx=%d valid=%d gobj_id=%u respawn=%u "
+		         "fighter_gobj_id=%u own_p=%d joint=%u anim_frame=%.1f proc_fp=0x%08X\n",
+		         (tag != NULL) ? tag : "?", (unsigned int)tick, (int)ei, (int)(blob->is_valid != FALSE),
+		         (unsigned int)blob->gobj_id, (unsigned int)blob->respawn_kind,
+		         (unsigned int)blob->fighter_gobj_id, (int)own_p, (unsigned int)blob->quake_magnitude,
+		         (double)blob->anim_frame, (unsigned int)blob->proc_update_fingerprint);
+	}
+}
+
+/*
  * Verify-only: exactly one live effect per slot blob; eject extras that match blob identity but were
  * stacked by stale-id respawn (save N → verify 3N quake class). Respawn any slot blob still missing.
  */
