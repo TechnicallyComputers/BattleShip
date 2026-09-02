@@ -40784,6 +40784,45 @@ static void syNetRbSnapEnforceSlotAuthoritativeEffectSet(SYNetRbSnapshotSlot *sl
 	                                                       &canonical_gobj_count);
 	syNetRbSnapPruneSurplusBlobMatchedQuakesForVerify(slot, canonical_gobj_ptrs, canonical_gobj_count);
 	syNetRbSnapEjectAllNonCanonicalEffectsForVerify(slot, canonical_gobj_ptrs, canonical_gobj_count);
+	/*
+	 * Re-stamp is_effect_attach from the fighter blobs — LAST, after every
+	 * effect eject/prune above.
+	 *
+	 * 2026-09-02: folding this flag into the cutter-scope fighter hash made a
+	 * previously invisible disagreement visible, and it immediately showed up as
+	 * intra-peer figh drift in contiguous runs (linux 414-420, 963-972). Cause:
+	 * ApplySlotToLive restores the flag from the blob, but the effect reconcile
+	 * that runs afterwards clears it whenever it ejects a blade and the owner has
+	 * no other live shell (syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj). So
+	 * the load ends with a flag the capture never had, and capture-vs-verify
+	 * differ on a field that is now hashed.
+	 *
+	 * The slot is authoritative for the tick being restored: whatever the sim's
+	 * flag was at capture is what the load must reproduce, regardless of which
+	 * shells reconcile decided to eject on the way. Cheap and bounded — one u8
+	 * per player.
+	 */
+	{
+		GObj *fighter_gobj;
+
+		for (fighter_gobj = gGCCommonLinks[nGCCommonLinkIDFighter]; fighter_gobj != NULL;
+		     fighter_gobj = fighter_gobj->link_next)
+		{
+			FTStruct *fp = ftGetStruct(fighter_gobj);
+			const SYNetRbSnapFighterBlob *fb;
+
+			if ((fp == NULL) || (fp->player < 0) || (fp->player >= GMCOMMON_PLAYERS_MAX))
+			{
+				continue;
+			}
+			fb = &slot->fighters[fp->player];
+			if (fb->is_valid == FALSE)
+			{
+				continue;
+			}
+			fp->is_effect_attach = (fb->is_effect_attach != 0U) ? TRUE : FALSE;
+		}
+	}
 }
 
 static sb32 syNetRbSnapCaptureEffects(SYNetRbSnapshotSlot *slot)

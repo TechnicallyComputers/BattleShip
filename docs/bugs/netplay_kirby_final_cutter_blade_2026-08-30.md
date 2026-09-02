@@ -667,3 +667,34 @@ precondition holds.
 Expected effect: the disagreement now surfaces as a figh mismatch at its own
 onset tick — where a span-1 resim can correct it — instead of silently becoming
 an unrecoverable eff fork ~5 ticks later.
+
+---
+
+## 2026-09-02 (is_effect_attach fold soak): the fork became visible and recoverable
+
+The fold did what it was meant to. Session ran **1251/1254 ticks** (previous:
+638), both peers **STABLE (soft recovery)**, **zero FC diverges**, **zero
+PEER_SNAPSHOT_DIVERGE** — no session-ending desync. The disagreement that used
+to surface ~5 ticks late as an unrecoverable `eff` fork now surfaces as `figh`,
+which the recovery path handles.
+
+It also exposed the flag's second problem, as intra-peer figh drift in
+contiguous runs (linux 414–420, 963–972, `defer-stop (fidelity)`):
+
+`syNetRbSnapApplySlotToLive` restores `is_effect_attach` from the blob, but the
+effect reconcile that runs **after** it clears the flag whenever it ejects a
+blade and the owner has no other live shell
+(`syNetRbSnapEjectKirbyFinalCutterBladeEffectGObj`). `sSYNetRbSnapActiveLoadSlot`
+only spans `ApplySlotToLive`, so nothing marked that region as load-owned. The
+load therefore ended with a flag value the capture never had — invisible before,
+a hashed mismatch now.
+
+**Fix:** re-stamp `is_effect_attach` from the fighter blobs at the very end of
+`syNetRbSnapEnforceSlotAuthoritativeEffectSet`, after every eject/prune. The
+slot is authoritative for the tick being restored: whatever the sim's flag was
+at capture is what the load must reproduce, regardless of which shells reconcile
+chose to eject on the way. One u8 per player.
+
+Pattern worth noting: this is the third time in the class that hashing a field
+was correct but insufficient — the field also has to be *stable across the whole
+load*, not just restored at the start of it.
