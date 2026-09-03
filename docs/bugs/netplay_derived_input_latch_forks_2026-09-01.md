@@ -192,3 +192,32 @@ Next instrument (not yet built): log, per tick, when a fighter's tap/hold
 counters are derived from a row whose provenance is `prediction`, together with
 whether that tick was later marked incorrect. That distinguishes "never marked"
 from "marked but resim loaded too late" — opposite fixes.
+
+### Instrument built (2026-09-02): `SSB64_NETPLAY_LATCH_WITNESS=1`
+
+Two paired lines, both off by default:
+
+- **`latch_pred tick=T player=P range_y= prev_y= tap_y= hold_y= resim=`** —
+  emitted from `ftMainProcUpdateInterrupt` (via
+  `syNetInputLatchWitnessNoteStickDerive`) whenever the counters are derived
+  while the published row for that (player, tick) has
+  `provenance == prediction`. Confirmed rows are skipped: they replay
+  identically and cannot poison the counter.
+- **`latch_incorrect player=P tick=T scanned_from= frontier=`** — emitted from
+  `syNetInputTimelineRefreshPlayerEarliest` each time it classifies a tick as
+  incorrect.
+
+**How to read the pair.** Find the `latch_pred` tick where the counter resets to
+254 (`range_y` in (-20,20)) on the peer that ends up wrong, then:
+
+- **no matching `latch_incorrect` for that tick** → cause (a): the tick was
+  never classified incorrect, so no resim could target it. Fix belongs in the
+  published-vs-remote comparison / REPLACE-in-place path.
+- **matching `latch_incorrect`, but every `resim begin ... load_tick=` is
+  greater than that tick** → cause (b): it was detected but every replay
+  started too late to repair an integrative counter. Fix belongs in resim
+  load-point selection.
+
+Both halves are netmenu-gated and observe-only; the decomp hook sits beside the
+existing `syNetFighterPhaseOnInterruptAfterInputControl` call and is stripped
+from offline builds.

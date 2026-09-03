@@ -8667,6 +8667,71 @@ void syNetInputResolveFrame(s32 player, u32 tick, SYNetInputFrame *out_frame)
 
 #if defined(PORT) && defined(SSB64_NETMENU)
 /*
+ * Derived stick-latch witness (SSB64_NETPLAY_LATCH_WITNESS=1, default off).
+ *
+ * ftMainProcUpdateInterrupt derives the tap_stick / hold_stick counters per sim tick from
+ * (stick_range, stick_prev, prior counter). The derivation is INTEGRATIVE: a
+ * single tick simmed with a neutral stick resets the counter to
+ * FTINPUT_STICKBUFFER_TICS_MAX and every later tick inherits it, so one bad
+ * tick is a permanent fork. Soak 1387370931 ended that way — p1 tapy 14
+ * (android) vs 254 (linux) at snap 740, every other fighter field identical.
+ *
+ * Two candidate causes need opposite fixes, and counts cannot separate them:
+ *   (a) the tick was never marked incorrect, so no resim ever targeted it;
+ *   (b) it was marked, but every resim loaded AFTER it, so the replay could
+ *       not repair the counter.
+ *
+ * This logs each derivation whose input row is provenance=prediction, and the
+ * timeline logs each tick it marks incorrect. Correlating the two answers it:
+ * a `latch_pred` line with no matching `latch_incorrect` is (a); one with a
+ * matching mark but a later resim load is (b).
+ */
+static sb32 syNetInputLatchWitnessEnabled(void)
+{
+	static sb32 cached = -1;
+
+	if (cached < 0)
+	{
+		const char *e = getenv("SSB64_NETPLAY_LATCH_WITNESS");
+
+		cached = ((e != NULL) && (e[0] != '\0') && (e[0] != '0')) ? TRUE : FALSE;
+	}
+	return cached;
+}
+
+void syNetInputLatchWitnessNoteStickDerive(s32 player, s32 range_y, s32 prev_y, u32 tap_y, u32 hold_y)
+{
+	u32 tick;
+	u8 prov;
+
+	if ((syNetInputLatchWitnessEnabled() == FALSE) || (syNetPeerIsVSSessionActive() == FALSE))
+	{
+		return;
+	}
+	if ((player < 0) || (player >= MAXCONTROLLERS))
+	{
+		return;
+	}
+	tick = syNetInputGetTick();
+	prov = syNetInputHistoryProvenanceGet(player, tick);
+	/* Only the speculative rows can poison the counter; confirmed rows replay identically. */
+	if (prov != (u8)nSYNetInputHistoryProvPrediction)
+	{
+		return;
+	}
+	port_log("SSB64 NetInput: latch_pred tick=%u player=%d range_y=%d prev_y=%d tap_y=%u hold_y=%u resim=%d\n",
+	         (unsigned int)tick, (int)player, (int)range_y, (int)prev_y, (unsigned int)tap_y,
+	         (unsigned int)hold_y, (int)(syNetRollbackIsResimulating() != FALSE));
+}
+
+sb32 syNetInputLatchWitnessActive(void)
+{
+	return syNetInputLatchWitnessEnabled();
+}
+#endif
+
+#if defined(PORT) && defined(SSB64_NETMENU)
+/*
  * REAL-DELAY adaptive D (Phase 3b): fill the consumption-row gap left by a D
  * raise. Under the flip, the sample at tick t owns consumption row t+D. A
  * commit-lead raise D1->D2 at effective tick E means sample E-1 owned

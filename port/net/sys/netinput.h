@@ -367,6 +367,9 @@ extern void syNetInputPublishFrame(s32 player, SYNetInputFrame *frame);
 extern void syNetInputReseedPublishEdgeBaselineAfterLoad(u32 load_tick);
 /* REAL-DELAY adaptive D: fabricate + stage the consumption rows a D raise leaves unowned (see netinput.c). */
 extern void syNetInputFillDelayRaiseGapConsumptionRows(u32 effective_tick, u32 d_old, u32 d_new);
+/* Derived stick-latch witness (SSB64_NETPLAY_LATCH_WITNESS): note a tap/hold derivation off a predicted row. */
+extern void syNetInputLatchWitnessNoteStickDerive(s32 player, s32 range_y, s32 prev_y, u32 tap_y, u32 hold_y);
+extern sb32 syNetInputLatchWitnessActive(void);
 #endif
 /*
  * After `syNetInputFuncRead`, call once: returns TRUE if skew pacing held sim — taskman must skip `scene_update`

@@ -77,6 +77,19 @@ static void syNetInputTimelineRefreshPlayerEarliest(s32 player, u32 frontier_tic
 		if (syNetInputTimelinePublishedMatchesRemoteAtTick(player, t) == FALSE)
 		{
 			sSYNetInputEarliestIncorrectSimTick[player] = t;
+			/*
+			 * Latch-witness pair (see syNetInputLatchWitnessNoteStickDerive):
+			 * a `latch_pred` line with NO matching `latch_incorrect` means the
+			 * poisoning tick was never classified incorrect, so no resim could
+			 * ever target it. One WITH a mark means it was seen, and the
+			 * question moves to whether any resim loaded early enough.
+			 */
+			if (syNetInputLatchWitnessActive() != FALSE)
+			{
+				port_log("SSB64 NetInput: latch_incorrect player=%d tick=%u scanned_from=%u frontier=%u\n",
+				         (int)player, (unsigned int)t, (unsigned int)earliest,
+				         (unsigned int)frontier_tick);
+			}
 			return;
 		}
 	}
