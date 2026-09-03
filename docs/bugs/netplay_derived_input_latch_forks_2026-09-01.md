@@ -127,3 +127,68 @@ both peers — release decisions must agree tick-for-tick with `reason=` matchin
 expect zero one-status-apart figh diverges. The `tap_stick_*` counter and
 `shield_health` members of this family are expected to shrink or vanish too:
 their derivation consumed the same corrupted first-replayed-tick edges.
+
+---
+
+## 2026-09-02: blade class closed as a fork source; tap counters are now the desync
+
+Soak 1387370931. The blade work has removed `eff` as a fork source:
+
+- FC@741 diverged `figh` only, with **`eff` EQUAL** on both peers.
+- `blob_unmatched` = **0** on both peers (every slot blob found a live shell).
+- Remaining eff drift is **symmetric** (identical hashes, e.g. `0xF2256B33`
+  @729) — surplus live shell vs slot, a fidelity cost, not a desync path.
+
+The genuine `REPLAY_DETERMINISM` fork is this family. Field-diff of the fighter
+dumps at the FC (snap 740), everything else byte-identical:
+
+```
+p1 light:  android tapy=14  holdy=14   |  linux tapy=254  holdy=254
+p1 full:   joints 0x0B334EAE           |  joints 0x8CCE1EAE   (consequence)
+```
+
+`254` is `FTINPUT_STICKBUFFER_TICS_MAX` — the neutral/not-held value.
+`14` means fourteen consecutive held ticks.
+
+### Why it persists once wrong
+
+`ftMainProcUpdateInterrupt` (ftmain.c ~1519) derives the counters per sim tick:
+
+```c
+if (pl->stick_range.y >= 20) {
+    if (pl->stick_prev.y >= 20) { tap_stick_y++; hold_stick_y++; }
+    else                        { tap_stick_y = hold_stick_y = 1; }
+} else if (... <= -20) { ...same... }
+else                    { tap_stick_y = hold_stick_y = MAX; }
+```
+
+It is **integrative**: a single tick simmed with a neutral stick resets the
+counter, and every later tick inherits the wrong value. All three inputs
+(`stick_range`, `stick_prev`, prior counter) are captured and restored, so a
+resim *from before* the bad tick repairs it — but a resim starting after it
+cannot, and the corrupted value is then baked into every subsequent snapshot.
+
+### The upstream tick
+
+At 740 both peers hold `sy=82` for p1 (android `prov=local_publish pred=0`,
+linux `prov=prediction pred=1`), so 740 itself would increment on both — the
+divergence predates it. android's `tapy=14` puts the hold start near tick 726,
+and `RESIM_STICK_FORK tick=727 player=1` shows linux publishing a neutral
+`(0,0)` pass for p1 there before the real `(-10,82)`.
+
+Linux's resim spans in that window load from **728, 731, 735, 738** — all
+*after* 727 — and its earliest-incorrect mark was **729**, so tick 727 was
+never classified incorrect and never re-simulated. Verified against the actual
+spans (an initial reading that 740 went unresimmed was wrong; it is covered by
+`load=738 target=741` and `load=731 target=742`).
+
+**So the defect is in input-timeline incorrect-marking, not in rollback
+coverage or the snapshot:** a published row that is corrected in place without
+being marked incorrect leaves no resim target, and an integrative consumer turns
+that one tick into a permanent fork. Compare the `SEALED_RESIM_LEDGER_SKIP` /
+publish-keeps-seal notes in the scan output.
+
+Next instrument (not yet built): log, per tick, when a fighter's tap/hold
+counters are derived from a row whose provenance is `prediction`, together with
+whether that tick was later marked incorrect. That distinguishes "never marked"
+from "marked but resim loaded too late" — opposite fixes.
